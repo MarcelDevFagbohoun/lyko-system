@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-size: 14px;
+    line-height: 20px;
+  }
+
+  /* Montants FCFA : alignement en colonnes garanti. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Anneau de focus cohérent sur toute la plateforme. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: none;
+    @apply ring-2 ring-primary ring-offset-2 ring-offset-canvas;
+  }
+
+  ::selection {
+    background-color: #1e3a8a22;
+  }
+}
+
+@layer components {
+  /* Conteneur de contenu principal borné à 1408px, comme la maquette. */
+  .content-shell {
+    @apply mx-auto w-full max-w-content-max px-4 sm:px-6;
+  }
+}

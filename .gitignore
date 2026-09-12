@@ -1,0 +1,27 @@
+# Dépendances
+node_modules/
+**/node_modules/
+
+# Build
+frontend/.next/
+frontend/out/
+dist/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs & divers
+*.log
+npm-debug.log*
+.DS_Store
+coverage/
+
+# Éditeurs
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Sauvegardes de production (deploy/backup-db.sh)
+backups/

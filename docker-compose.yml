@@ -1,0 +1,29 @@
+# Base MySQL locale prête à l'emploi (optionnel).
+# Si vous préférez utiliser un MySQL déjà installé, ignorez ce fichier
+# et renseignez simplement backend/.env.
+#
+#   docker compose up -d db
+#
+services:
+  db:
+    image: mysql:8.0
+    container_name: lyko-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: lyko_system
+      MYSQL_USER: lyko
+      MYSQL_PASSWORD: lyko_dev_password
+      MYSQL_ROOT_PASSWORD: root_dev_password
+    ports:
+      - "3306:3306"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - lyko_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  lyko_mysql_data:

@@ -1,0 +1,28 @@
+{
+  "name": "Lyko System",
+  "short_name": "Lyko",
+  "description": "Gestion de cabinets immobiliers et juridiques — locataires, propriétaires, paiements, comptabilité.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F8FAFC",
+  "theme_color": "#1E3A8A",
+  "lang": "fr",
+  "dir": "ltr",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

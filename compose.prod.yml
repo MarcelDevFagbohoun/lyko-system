@@ -1,0 +1,110 @@
+# ── Lyko System — pile de production (VPS + Docker Compose) ───────────────────
+#
+#   cp .env.prod.example .env      # puis renseigner domaines / secrets / mots de passe
+#   docker compose -f compose.prod.yml build
+#   docker compose -f compose.prod.yml up -d
+#
+# Exposé sur l'hôte : uniquement Caddy (80/443). db et api ne sont joignables
+# que sur les réseaux internes. Voir docs/DEPLOIEMENT.md pour le détail.
+
+name: lyko-system
+
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:?}
+      MYSQL_USER: ${DB_USER:?}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      # Origine(s) autorisée(s) en CORS = l'URL publique du front.
+      CORS_ORIGIN: ${PUBLIC_APP_URL:?}
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_USER: ${DB_USER:?}
+      DB_PASSWORD: ${DB_PASSWORD:?}
+      DB_NAME: ${DB_NAME:?}
+      DB_CONNECTION_LIMIT: ${DB_CONNECTION_LIMIT:-10}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-7d}
+      JWT_ISSUER: ${JWT_ISSUER:-lyko-system}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - backend
+      - edge
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        # ⚠ Figée dans le bundle client AU BUILD — rebuild obligatoire si elle change.
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    networks:
+      - edge
+    depends_on:
+      api:
+        condition: service_started
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?}
+      API_DOMAIN: ${API_DOMAIN:?}
+      ACME_EMAIL: ${ACME_EMAIL:?}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+    depends_on:
+      - web
+      - api
+
+networks:
+  edge:
+  backend:
+    internal: true
+
+volumes:
+  db_data:
+  uploads:
+  caddy_data:
+  caddy_config:

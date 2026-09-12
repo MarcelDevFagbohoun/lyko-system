@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hors-ligne · Lyko System</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0; min-height: 100vh; display: grid; place-items: center;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: #f8fafc; color: #0f172a;
+      }
+      .box {
+        max-width: 30rem; margin: 1.5rem; padding: 2rem;
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 0.5rem;
+        box-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.05); text-align: center;
+      }
+      h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
+      p { color: #334155; line-height: 1.5; margin: 0.25rem 0; }
+      .dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 9999px; background: #dc2626; margin-right: 0.4rem; }
+      button {
+        margin-top: 1.25rem; height: 2.5rem; padding: 0 1rem; border: 0; cursor: pointer;
+        background: #1e3a8a; color: #fff; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 500;
+      }
+      button:hover { background: #1e40af; }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <p><span class="dot"></span>Hors-ligne</p>
+      <h1>Connexion internet indisponible</h1>
+      <p>
+        Lyko System fonctionne hors-ligne : les actions déjà chargées restent
+        accessibles et vos saisies seront synchronisées au retour du réseau.
+      </p>
+      <p>Cette page n'a pas encore été mise en cache.</p>
+      <button onclick="location.reload()">Réessayer</button>
+    </div>
+  </body>
+</html>

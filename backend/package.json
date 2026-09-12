@@ -1,0 +1,39 @@
+{
+  "name": "lyko-system-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "API Lyko System — gestion de cabinets immobiliers / juridiques (multi-tenant)",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "db:check": "node scripts/check-db.js",
+    "db:migrate": "node src/db/migrate.js up",
+    "db:migrate:status": "node src/db/migrate.js status"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.0",
+    "mysql2": "^3.12.0",
+    "pdfkit": "^0.15.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  }
+}

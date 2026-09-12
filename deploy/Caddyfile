@@ -1,0 +1,45 @@
+# ── Reverse-proxy Lyko System (Caddy 2) ──────────────────────────────────────
+# HTTPS automatique (Let's Encrypt). Deux sous-domaines :
+#   {$APP_DOMAIN}  → conteneur web (Next.js, :3000)
+#   {$API_DOMAIN}  → conteneur api (Express, :4000)
+# Les variables viennent de compose.prod.yml (issues du .env).
+
+{
+	email {$ACME_EMAIL}
+	# Décommenter pour tester sans consommer le quota Let's Encrypt :
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# En-têtes de sécurité communs (complètent ceux posés par l'appli).
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+{$APP_DOMAIN} {
+	import security_headers
+	encode zstd gzip
+
+	# L'optimiseur d'images Next n'est pas utilisé par l'appli (balises <img>
+	# simples) — on ferme l'endpoint par précaution (defense-in-depth).
+	@next_image path /_next/image*
+	respond @next_image 404
+
+	reverse_proxy web:3000
+}
+
+{$API_DOMAIN} {
+	import security_headers
+
+	# Corps de requête borné (l'API borne déjà à 1 Mo ; upload de logo 2 Mo).
+	request_body {
+		max_size 3MB
+	}
+
+	reverse_proxy api:4000
+}

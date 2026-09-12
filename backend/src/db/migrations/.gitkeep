@@ -1,0 +1,2 @@
+# Les fichiers de migration NNN_*.sql sont ajoutés à partir de l'étape 2
+# (schéma tenants + utilisateurs). L'étape 0 ne fournit que le runner.
