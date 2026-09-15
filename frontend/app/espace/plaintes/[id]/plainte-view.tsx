@@ -9,12 +9,12 @@ import { API_URL, ApiError } from "@/lib/api/client";
 import { getComplaint, updateComplaint, updateComplaintStatus, type Complaint, type ComplaintCategory, type ComplaintPriority } from "@/lib/api/complaints";
 import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_PRIORITY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Attribution } from "@/components/ui/attribution";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { useToast } from "@/lib/toast/toast-context";
 
 const STATUS_BADGE = {
   ouverte: "warning" as const,
@@ -52,7 +52,6 @@ function PlainteContent() {
   if (loadError) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10">
           <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
             {loadError}
@@ -65,7 +64,6 @@ function PlainteContent() {
   if (!complaint) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10 text-body-sm text-ink-muted">Chargement…</div>
       </div>
     );
@@ -73,7 +71,6 @@ function PlainteContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/plaintes" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />
@@ -195,8 +192,9 @@ function StatusActions({
   const [resolutionNote, setResolutionNote] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
-  async function setStatus(status: Complaint["status"], note?: string) {
+  async function setStatus(status: Complaint["status"], note?: string, message?: string) {
     if (!accessToken) return;
     setSubmitting(true);
     setError(null);
@@ -205,6 +203,7 @@ function StatusActions({
       setResolving(false);
       setResolutionNote("");
       onChanged();
+      if (message) toast.success(message);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de modifier le statut.");
     } finally {
@@ -227,7 +226,7 @@ function StatusActions({
               <Input id="resolutionNote" value={resolutionNote} onChange={(e) => setResolutionNote(e.target.value)} />
             </Field>
             <div className="flex items-center gap-2">
-              <Button size="sm" disabled={submitting || !resolutionNote.trim()} onClick={() => setStatus("resolue", resolutionNote.trim())}>
+              <Button size="sm" disabled={submitting || !resolutionNote.trim()} onClick={() => setStatus("resolue", resolutionNote.trim(), "Plainte résolue.")}>
                 {submitting ? "Enregistrement…" : "Confirmer la résolution"}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setResolving(false)} disabled={submitting}>
@@ -238,7 +237,7 @@ function StatusActions({
         ) : (
           <div className="flex flex-wrap gap-2">
             {complaint.status === "ouverte" && (
-              <Button size="sm" onClick={() => setStatus("en_cours")} disabled={submitting}>
+              <Button size="sm" onClick={() => setStatus("en_cours", undefined, "Dossier pris en charge.")} disabled={submitting}>
                 <PlayCircle size={16} />
                 Prendre en charge
               </Button>
@@ -250,13 +249,13 @@ function StatusActions({
               </Button>
             )}
             {complaint.status === "resolue" && (
-              <Button size="sm" onClick={() => setStatus("fermee")} disabled={submitting}>
+              <Button size="sm" onClick={() => setStatus("fermee", undefined, "Dossier clôturé.")} disabled={submitting}>
                 <Archive size={16} />
                 Clôturer le dossier
               </Button>
             )}
             {(complaint.status === "resolue" || complaint.status === "fermee") && (
-              <Button size="sm" variant="ghost" onClick={() => setStatus("en_cours")} disabled={submitting}>
+              <Button size="sm" variant="ghost" onClick={() => setStatus("en_cours", undefined, "Dossier rouvert.")} disabled={submitting}>
                 <RotateCcw size={16} />
                 Rouvrir le dossier
               </Button>
@@ -285,6 +284,7 @@ function EditComplaintForm({
   const [priority, setPriority] = React.useState<ComplaintPriority>(complaint.priority);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -300,6 +300,7 @@ function EditComplaintForm({
         priority,
       });
       onSaved(res.complaint);
+      toast.success("Plainte modifiée.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ces modifications.");
     } finally {

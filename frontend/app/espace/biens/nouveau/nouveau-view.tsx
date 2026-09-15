@@ -2,21 +2,27 @@
 
 import * as React from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ImagePlus, X } from "lucide-react";
+import { ArrowLeft, ImagePlus, MapPin, X } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import { createProperty, type PropertyTypeKey } from "@/lib/api/properties";
 import type { OwnerListItem } from "@/lib/api/owners";
 import { PROPERTY_TYPE_LABELS } from "@/lib/constants/properties";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { OwnerPicker } from "@/components/properties/owner-picker";
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { useToast } from "@/lib/toast/toast-context";
+
+const LocationPicker = dynamic(() => import("@/components/properties/location-picker"), {
+  ssr: false,
+  loading: () => <div className="flex h-[320px] items-center justify-center rounded-lg border border-border-strong bg-surface-muted text-body-sm text-ink-muted">Chargement de la carte…</div>,
+});
 
 const PROPERTY_TYPES = Object.entries(PROPERTY_TYPE_LABELS) as [PropertyTypeKey, string][];
 const MAX_PHOTOS = 5;
@@ -41,10 +47,13 @@ function NouveauContent() {
   const { accessToken } = useAuth();
   const router = useRouter();
   const online = useOnlineStatus();
+  const toast = useToast();
   const [form, setForm] = React.useState<FormState>(INITIAL);
   const [selectedOwner, setSelectedOwner] = React.useState<OwnerListItem | null>(null);
   const [photos, setPhotos] = React.useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = React.useState<string[]>([]);
+  const [showMap, setShowMap] = React.useState(false);
+  const [coords, setCoords] = React.useState<{ lat: number; lng: number } | null>(null);
   const [touched, setTouched] = React.useState<Partial<Record<keyof FormState, boolean>>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
@@ -89,10 +98,13 @@ function NouveauContent() {
       const res = await createProperty(accessToken, {
         ownerId: selectedOwner.id,
         address: form.address.trim() || undefined,
+        latitude: coords?.lat,
+        longitude: coords?.lng,
         propertyType: form.propertyType,
         levels: form.levels ? Number(form.levels) : undefined,
         photos,
       });
+      toast.success(`Bien ${res.code} créé.`);
       router.push(`/espace/biens/${res.propertyId}`);
     } catch (err) {
       setServerError(err instanceof ApiError ? err.message : "Une erreur est survenue. Réessayez.");
@@ -103,7 +115,6 @@ function NouveauContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/biens" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />
@@ -135,6 +146,25 @@ function NouveauContent() {
               <Field label="Adresse (optionnel)" htmlFor="address">
                 <Input id="address" value={form.address} onChange={(e) => set("address", e.target.value)} />
               </Field>
+
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-label-sm uppercase tracking-wider text-ink-muted">
+                    Localisation sur la carte (optionnel)
+                  </span>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setShowMap((v) => !v)}>
+                    <MapPin size={14} />
+                    {showMap ? "Fermer la carte" : coords ? "Modifier le repère" : "Placer sur la carte"}
+                  </Button>
+                </div>
+                {showMap && (
+                  <LocationPicker
+                    latitude={coords?.lat ?? null}
+                    longitude={coords?.lng ?? null}
+                    onChange={(lat, lng) => setCoords({ lat, lng })}
+                  />
+                )}
+              </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Type de bien" htmlFor="propertyType" required>

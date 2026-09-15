@@ -164,6 +164,11 @@ export function getDashboard(accessToken: string, from: string, to: string) {
   );
 }
 
+/** Rapport mensuel exportable (étape 18) — même période que le tableau de bord écran. */
+export function accountingReportPdfPath(from: string, to: string) {
+  return `/api/accounting/dashboard.pdf?from=${from}&to=${to}`;
+}
+
 export type RentPaymentEntry = {
   id: number;
   renter: { id: number; firstName: string; lastName: string };
@@ -271,4 +276,25 @@ export type PortfolioArrearsEntry = {
 
 export function listPortfolioArrears(accessToken: string) {
   return apiFetch<{ arrears: PortfolioArrearsEntry[]; total: number }>("/api/accounting/arrears", { accessToken });
+}
+
+// Alertes prédictives de retard (étape 13, idée n°4) : locataires à jour,
+// échéance proche, mais historiquement en retard — pour relancer avant que
+// le retard n'arrive.
+export type PredictiveAlertEntry = {
+  leaseId: number;
+  renterId: number;
+  renterName: string;
+  phone: string;
+  unitCode: string;
+  propertyCode: string;
+  monthlyRent: number;
+  dueDate: string;
+  daysUntilDue: number;
+  lateCount: number;
+  recentPaymentsCount: number;
+};
+
+export function listPredictiveAlerts(accessToken: string) {
+  return apiFetch<{ alerts: PredictiveAlertEntry[] }>("/api/accounting/predictive-alerts", { accessToken });
 }

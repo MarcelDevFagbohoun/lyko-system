@@ -2,7 +2,6 @@
 
 const { z } = require('zod');
 const { phoneSchema, nameSchema } = require('./auth');
-const { INSPECTION_CONDITIONS } = require('../constants/inspection');
 
 const emailSchema = z
   .string()
@@ -87,45 +86,15 @@ const createPaymentSchema = z.object({
   notes: optionalText(255),
 });
 
-const inspectionItemSchema = z.object({
-  label: z.string().trim().min(1).max(150),
-  condition: z.enum(INSPECTION_CONDITIONS, { errorMap: () => ({ message: 'État invalide' }) }),
-  comment: optionalText(255),
-});
-
-const createMoveInReportSchema = z.object({
-  conductedAt: dateSchema,
-  items: z.array(inspectionItemSchema).min(1, 'Au moins un poste requis'),
-  generalNotes: optionalText(2000),
-});
-
-// État des lieux de sortie : même grille que l'entrée, avec en plus une
-// retenue chiffrée par poste (dégradation imputable au locataire, sur la
-// caution) — section 6 (Sorties de locataires).
-const moveOutItemSchema = z.object({
-  label: z.string().trim().min(1).max(150),
-  condition: z.enum(INSPECTION_CONDITIONS, { errorMap: () => ({ message: 'État invalide' }) }),
-  comment: optionalText(255),
-  deduction: amountSchema.default(0),
-});
-
-const createMoveOutReportSchema = z.object({
-  conductedAt: dateSchema,
-  items: z.array(moveOutItemSchema).min(1, 'Au moins un poste requis'),
-  generalNotes: optionalText(2000),
-  // Retenue libre optionnelle (arriérés de loyer, factures SONEB/SBEE...) —
-  // distincte de la grille de dégradations, qui ne porte que sur l'état du bien.
-  otherDeductionsAmount: amountSchema.default(0),
-  otherDeductionsNote: optionalText(255),
-});
-
 module.exports = {
   createRenterSchema,
   updateRenterSchema,
   createLeaseSchema,
   endLeaseSchema,
   createPaymentSchema,
-  createMoveInReportSchema,
-  createMoveOutReportSchema,
   PAYMENT_METHODS,
+  // Primitives réutilisées par validators/inspections.js (états des lieux par zones).
+  optionalText,
+  dateSchema,
+  amountSchema,
 };

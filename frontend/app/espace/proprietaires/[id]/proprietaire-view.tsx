@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, FileDown, Wallet, Building2, ShieldCheck, Pencil, Percent } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, FileDown, Wallet, Building2, ShieldCheck, Pencil, Percent, Link2, Copy, Check, MessageCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
@@ -11,6 +11,7 @@ import {
   updateOwner,
   createPayout,
   updateCommissionRate,
+  generateOwnerPortalLink,
   statementPdfPath,
   type Owner,
   type OwnerProperty,
@@ -18,15 +19,16 @@ import {
   type CreatePayoutInput,
   type CommissionRate,
 } from "@/lib/api/owners";
+import { buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa, formatDateLabel, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Attribution } from "@/components/ui/attribution";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { useToast } from "@/lib/toast/toast-context";
 
 const UNIT_STATUS_BADGE = {
   libre: { variant: "success" as const, label: "Libre" },
@@ -94,7 +96,6 @@ function ProprietaireContent() {
   if (loadError) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10">
           <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
             {loadError}
@@ -107,7 +108,6 @@ function ProprietaireContent() {
   if (!owner || !properties || !payouts) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10 text-body-sm text-ink-muted">Chargement…</div>
       </div>
     );
@@ -122,7 +122,6 @@ function ProprietaireContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/proprietaires" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />
@@ -172,7 +171,7 @@ function ProprietaireContent() {
                 </span>
               )}
             </div>
-            <Attribution actor={owner.createdBy} verb="Fiche créée par" className="mt-1 block" />
+            <Attribution actor={owner.createdBy} verb="Fiche créée par" at={owner.createdAt} className="mt-1 block" />
           </div>
           {canReadDocs && (
             <Button
@@ -186,6 +185,8 @@ function ProprietaireContent() {
           )}
         </div>
         )}
+
+        {canManage && <PortalLinkCard owner={owner} accessToken={accessToken} onGenerated={load} />}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card>
@@ -313,6 +314,139 @@ function ProprietaireContent() {
   );
 }
 
+/**
+ * Portail propriétaire (étape 13, idée n°1) : génère/régénère le lien secret
+ * (sans mot de passe) donnant accès à sa recette du mois, son patrimoine et
+ * l'historique de ses versements. Même révélation unique que le portail
+ * locataire (`locataire-view.tsx`) et les identifiants d'un employé.
+ */
+function PortalLinkCard({
+  owner,
+  accessToken,
+  onGenerated,
+}: {
+  owner: Owner;
+  accessToken: string | null;
+  onGenerated: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [generating, setGenerating] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [link, setLink] = React.useState<{ url: string } | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  async function handleGenerate() {
+    if (!accessToken) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const res = await generateOwnerPortalLink(accessToken, owner.id);
+      const url = `${window.location.origin}${res.path}`;
+      setLink({ url });
+      setOpen(true);
+      onGenerated();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de générer le lien.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function copy() {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Presse-papiers indisponible : le lien reste visible pour une copie manuelle.
+    }
+  }
+
+  const message = link
+    ? [
+        `Bonjour ${owner.name},`,
+        `Voici votre espace personnel pour suivre la recette de vos biens et vos versements :`,
+        link.url,
+        `Ce lien est personnel, ne le partagez pas.`,
+      ].join("\n")
+    : "";
+  const whatsappHref = link && owner.phone ? buildWhatsAppHref(owner.phone, message) : "#";
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <CardTitle>Portail propriétaire</CardTitle>
+            <CardDescription>
+              Lien personnel, sans mot de passe, pour que {owner.name} consulte sa recette et ses versements
+              lui-même.
+            </CardDescription>
+            {owner.hasPortalLink && owner.portalLinkCreatedAt && !open && (
+              <p className="mt-1 text-body-xs text-ink-faint">
+                Lien généré le {new Date(owner.portalLinkCreatedAt).toLocaleDateString("fr-FR")}
+              </p>
+            )}
+          </div>
+          {!open && (
+            <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating}>
+              <Link2 size={14} />
+              {generating ? "Génération…" : owner.hasPortalLink ? "Régénérer le lien" : "Générer le lien"}
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      {(error || (open && link)) && (
+        <CardContent className="flex flex-col gap-3">
+          {error && (
+            <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
+              {error}
+            </div>
+          )}
+          {open && link && (
+            <>
+              {owner.hasPortalLink && (
+                <p className="text-body-xs text-warning-fg">
+                  L&apos;ancien lien vient d&apos;être invalidé — seul celui-ci fonctionne désormais.
+                </p>
+              )}
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface-muted px-4 py-3">
+                <code className="truncate text-body-sm text-ink">{link.url}</code>
+                <Button type="button" variant="ghost" size="sm" onClick={copy}>
+                  {copied ? <Check size={16} /> : <Copy size={16} />}
+                  {copied ? "Copié" : "Copier"}
+                </Button>
+              </div>
+              <p className="text-body-xs text-ink-muted">
+                Ce lien ne sera plus affiché ensuite — envoyez-le maintenant, ou régénérez-en un autre plus tard.
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {owner.phone ? (
+                  <a href={whatsappHref} target="_blank" rel="noopener noreferrer" className="flex-1">
+                    <Button type="button" variant="whatsapp" className="w-full">
+                      <MessageCircle size={18} />
+                      Envoyer par WhatsApp
+                    </Button>
+                  </a>
+                ) : (
+                  <span className="flex flex-1 items-center justify-center gap-2 rounded border border-border px-4 py-2 font-label-md text-ink-faint">
+                    <MessageCircle size={18} />
+                    Aucun numéro renseigné
+                  </span>
+                )}
+                <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+                  Fermer
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
 /** Formulaire de modification de la fiche propriétaire (nom, téléphone, email, adresse, notes). */
 function EditOwnerForm({
   owner,
@@ -332,6 +466,7 @@ function EditOwnerForm({
   const [notes, setNotes] = React.useState(owner.notes ?? "");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -350,6 +485,7 @@ function EditOwnerForm({
         notes: notes.trim(),
       });
       onSaved(res.owner);
+      toast.success("Modifications enregistrées.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ces modifications.");
     } finally {
@@ -434,6 +570,7 @@ function PayoutForm({
   const [error, setError] = React.useState<string | null>(null);
 
   const methodLabel = PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
+  const toast = useToast();
 
   function reset() {
     setOpen(false);
@@ -465,8 +602,10 @@ function PayoutForm({
         paymentMethod: method,
         notes: notes.trim() || undefined,
       });
+      const paidAmount = Number(amount);
       reset();
       onRecorded();
+      toast.success(`Versement de ${formatFcfa(paidAmount)} enregistré pour ${ownerName}.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce versement.");
       setStep("form");
@@ -589,6 +728,7 @@ function CommissionCard({
   const [startsOn, setStartsOn] = React.useState(new Date().toISOString().slice(0, 10));
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   function reset() {
     setOpen(false);
@@ -614,8 +754,10 @@ function CommissionCard({
     setError(null);
     try {
       await updateCommissionRate(accessToken, ownerId, { rate: Number(rate), startsOn });
+      const newRate = Number(rate);
       reset();
       onUpdated();
+      toast.success(`Nouveau taux de commission enregistré : ${newRate} %.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce taux.");
       setStep("form");

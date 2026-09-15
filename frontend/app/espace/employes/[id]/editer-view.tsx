@@ -21,12 +21,12 @@ import {
 } from "@/lib/api/employees";
 import { listProperties, type PropertyListItem } from "@/lib/api/properties";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { PermissionPicker } from "@/components/employees/permission-picker";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/lib/toast/toast-context";
 
 export function EditerView() {
   return (
@@ -56,9 +56,9 @@ function EditerEmployeContent() {
 
   const [saving, setSaving] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
-  const [saved, setSaved] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+  const toast = useToast();
 
   React.useEffect(() => {
     if (!accessToken || !Number.isInteger(employeeId)) return;
@@ -85,7 +85,6 @@ function EditerEmployeContent() {
     if (!accessToken) return;
     setSaving(true);
     setServerError(null);
-    setSaved(false);
     try {
       const res = await updateEmployee(accessToken, employeeId, {
         firstName: firstName.trim(),
@@ -96,7 +95,7 @@ function EditerEmployeContent() {
         permissions,
       });
       setEmployee(res.employee);
-      setSaved(true);
+      toast.success("Modifications enregistrées.");
     } catch (err) {
       setServerError(err instanceof ApiError ? err.message : "Une erreur est survenue. Réessayez.");
     } finally {
@@ -120,7 +119,6 @@ function EditerEmployeContent() {
   if (loadError) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10">
           <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
             {loadError}
@@ -133,7 +131,6 @@ function EditerEmployeContent() {
   if (!employee) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10 text-body-sm text-ink-muted">Chargement…</div>
       </div>
     );
@@ -141,7 +138,6 @@ function EditerEmployeContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link
           href="/espace/employes"
@@ -171,12 +167,6 @@ function EditerEmployeContent() {
                   {serverError}
                 </div>
               )}
-              {saved && (
-                <div className="rounded-lg border border-success-border bg-success-bg px-3 py-2 text-body-sm text-success-fg">
-                  Modifications enregistrées.
-                </div>
-              )}
-
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Prénom" htmlFor="firstName" required>
                   <Input id="firstName" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
@@ -305,6 +295,7 @@ function ManagedPropertiesCard({
   onChanged: (properties: ManagedProperty[]) => void;
 }) {
   const { accessToken } = useAuth();
+  const toast = useToast();
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<PropertyListItem[]>([]);
   const [showResults, setShowResults] = React.useState(false);
@@ -337,11 +328,13 @@ function ManagedPropertiesCard({
     setSubmitting(true);
     setError(null);
     try {
+      const count = selected.size;
       const res = await assignProperties(accessToken, employeeId, [...selected.keys()]);
       onChanged(res.managedProperties);
       setSelected(new Map());
       setQuery("");
       setShowResults(false);
+      toast.success(count > 1 ? `${count} Biens attribués.` : "Bien attribué.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'attribuer ces Biens.");
     } finally {
@@ -356,6 +349,7 @@ function ManagedPropertiesCard({
     try {
       const res = await unassignProperty(accessToken, employeeId, propertyId);
       onChanged(res.managedProperties);
+      toast.info("Bien retiré du portefeuille de cet agent.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de retirer ce Bien.");
     } finally {
@@ -390,6 +384,11 @@ function ManagedPropertiesCard({
                     {p.ownerName}
                     {p.address ? ` · ${p.address}` : ""}
                   </p>
+                  {p.assignedAt && (
+                    <p className="text-body-xs text-ink-faint">
+                      Attribué le {new Date(p.assignedAt).toLocaleDateString("fr-FR")}
+                    </p>
+                  )}
                 </div>
                 <Button
                   variant="ghost"

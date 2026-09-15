@@ -1,6 +1,8 @@
 'use strict';
 
 const { Router } = require('express');
+const fs = require('fs/promises');
+const path = require('path');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requirePermission, requireAnyPermission } = require('../middleware/auth');
@@ -12,6 +14,7 @@ const {
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { computeArrears } = require('../services/rentTracking');
 const { streamCertificatePdf } = require('../services/pdf');
+const { toPublicInspectionReport, toPublicMoveOutReport } = require('../services/inspection');
 const { toActor } = require('../utils/actor');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { resolvePropertyScope, assertRenterInScope } = require('../services/scope');
@@ -19,6 +22,28 @@ const logger = require('../utils/logger');
 
 const router = Router();
 router.use(requireAuth);
+
+const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
+
+/**
+ * Marketplace : une Unité qui reçoit un nouveau bail n'est plus vacante —
+ * son éventuelle annonce doit disparaître, pour ne jamais réafficher un
+ * contenu obsolète (prix, description, photos) la prochaine fois qu'elle
+ * se libère. Renvoie les chemins de photos à supprimer du disque APRÈS le
+ * commit (jamais avant, pour ne rien perdre si la transaction échoue).
+ */
+async function clearMarketplaceListing(conn, tenantId, unitId) {
+  const [rows] = await conn.query(
+    'SELECT photo_paths FROM marketplace_listings WHERE unit_id = :unitId AND tenant_id = :tenantId',
+    { unitId, tenantId },
+  );
+  if (!rows[0]) return [];
+  await conn.query('DELETE FROM marketplace_listings WHERE unit_id = :unitId AND tenant_id = :tenantId', {
+    unitId,
+    tenantId,
+  });
+  return rows[0].photo_paths || [];
+}
 
 // Lecture de la liste/fiche (nom, téléphone, adresse, statut du bail) :
 // ouverte à tout employé authentifié de l'entreprise, même sans permission
@@ -79,6 +104,7 @@ function toPublicLease(row) {
     endDate: isoDate(row.end_date),
     status: row.lease_status ?? row.status,
     createdBy: toActor(row.lease_creator_first_name, row.lease_creator_last_name, row.lease_creator_role),
+    createdAt: row.lease_created_at ?? row.created_at,
     unit: toPublicUnitSummary(row),
   };
 }
@@ -97,6 +123,7 @@ function toPublicRenter(row) {
     // Jamais le token/hash lui-même ici (uniquement renvoyé une fois, à la
     // création du lien) — juste de quoi afficher « Générer » ou « Régénérer ».
     hasPortalLink: !!row.portal_token_hash,
+    portalLinkCreatedAt: row.portal_link_created_at,
   };
 }
 
@@ -113,6 +140,7 @@ const PAYMENT_METHOD_LABELS = {
 const LEASE_UNIT_PROPERTY_SELECT = `
   l.id AS lease_id, l.monthly_rent AS lease_monthly_rent, l.deposit_amount,
   l.deposit_status, l.rent_due_day, l.start_date, l.end_date, l.status AS lease_status,
+  l.created_at AS lease_created_at,
   lu.first_name AS lease_creator_first_name, lu.last_name AS lease_creator_last_name, lu.role AS lease_creator_role,
   u.id AS unit_id, u.code AS unit_code, u.designation, u.designation_custom,
   u.soneb_meter_number, u.sbee_meter_number, u.furnished,
@@ -265,16 +293,22 @@ router.get('/:id', canRead, async (req, res, next) => {
       }
 
       const [reports] = await pool.query(
-        `SELECT mir.*, mu.first_name AS conductor_first_name, mu.last_name AS conductor_last_name, mu.role AS conductor_role
-         FROM move_in_reports mir JOIN users mu ON mu.id = mir.conducted_by
+        `SELECT mir.*, cu.first_name AS conductor_first_name, cu.last_name AS conductor_last_name, cu.role AS conductor_role,
+                fu.first_name AS finalizer_first_name, fu.last_name AS finalizer_last_name, fu.role AS finalizer_role
+         FROM move_in_reports mir
+         LEFT JOIN users cu ON cu.id = mir.conducted_by
+         LEFT JOIN users fu ON fu.id = mir.finalized_by
          WHERE mir.lease_id IN (${placeholders})`,
         leaseIds,
       );
       moveInByLease = new Map(reports.map((r) => [r.lease_id, r]));
 
       const [outReports] = await pool.query(
-        `SELECT mor.*, mu.first_name AS conductor_first_name, mu.last_name AS conductor_last_name, mu.role AS conductor_role
-         FROM move_out_reports mor JOIN users mu ON mu.id = mor.conducted_by
+        `SELECT mor.*, cu.first_name AS conductor_first_name, cu.last_name AS conductor_last_name, cu.role AS conductor_role,
+                fu.first_name AS finalizer_first_name, fu.last_name AS finalizer_last_name, fu.role AS finalizer_role
+         FROM move_out_reports mor
+         LEFT JOIN users cu ON cu.id = mor.conducted_by
+         LEFT JOIN users fu ON fu.id = mor.finalized_by
          WHERE mor.lease_id IN (${placeholders})`,
         leaseIds,
       );
@@ -285,37 +319,14 @@ router.get('/:id', canRead, async (req, res, next) => {
       const lease = toPublicLease(row);
       const payments = paymentsByLease.get(row.id) || [];
       const isActive = row.status === 'active';
-      const report = moveInByLease.get(row.id);
-      const outReport = moveOutByLease.get(row.id);
       return {
         ...lease,
         payments,
         arrears: isActive
           ? computeArrears({ startDate: lease.startDate, rentDueDay: lease.rentDueDay, payments })
           : null,
-        moveInReport: report
-          ? {
-              id: report.id,
-              conductedAt: isoDate(report.conducted_at),
-              items: report.items,
-              generalNotes: report.general_notes,
-              conductedBy: toActor(report.conductor_first_name, report.conductor_last_name, report.conductor_role),
-            }
-          : null,
-        moveOutReport: outReport
-          ? {
-              id: outReport.id,
-              conductedAt: isoDate(outReport.conducted_at),
-              items: outReport.items,
-              generalNotes: outReport.general_notes,
-              otherDeductionsAmount: Number(outReport.other_deductions_amount),
-              otherDeductionsNote: outReport.other_deductions_note,
-              depositAmount: Number(outReport.deposit_amount),
-              totalDeductions: Number(outReport.total_deductions),
-              netRefund: Number(outReport.net_refund),
-              conductedBy: toActor(outReport.conductor_first_name, outReport.conductor_last_name, outReport.conductor_role),
-            }
-          : null,
+        moveInReport: toPublicInspectionReport(moveInByLease.get(row.id)),
+        moveOutReport: toPublicMoveOutReport(moveOutByLease.get(row.id)),
       };
     });
 
@@ -400,6 +411,7 @@ router.post('/', canManage, async (req, res, next) => {
     const leaseId = leaseResult.insertId;
 
     await conn.query("UPDATE property_units SET status = 'loue' WHERE id = :unitId", { unitId: data.unitId });
+    const clearedMarketplacePhotos = await clearMarketplaceListing(conn, req.user.tenantId, data.unitId);
 
     // Lien du portail locataire (étape 13, idée n°2) : généré automatiquement
     // dès la création, jamais une étape à part que quelqu'un pourrait oublier
@@ -408,12 +420,15 @@ router.post('/', canManage, async (req, res, next) => {
     // renvoyé qu'ici, une seule fois (voir `POST /:id/portal-link` pour le
     // régénérer plus tard s'il est perdu/compromis).
     const portalToken = generatePortalToken();
-    await conn.query('UPDATE renters SET portal_token_hash = :hash WHERE id = :id', {
+    await conn.query('UPDATE renters SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id', {
       hash: hashToken(portalToken),
       id: renterId,
     });
 
     await conn.commit();
+    for (const rel of clearedMarketplacePhotos) {
+      await fs.unlink(path.join(UPLOADS_ROOT, rel)).catch(() => {});
+    }
 
     logger.info('Locataire créé', { tenantId: req.user.tenantId, renterId, leaseId, unitId: data.unitId, by: req.user.id });
     res.status(201).json({
@@ -516,8 +531,12 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
     const leaseId = leaseResult.insertId;
 
     await conn.query("UPDATE property_units SET status = 'loue' WHERE id = :unitId", { unitId: data.unitId });
+    const clearedMarketplacePhotos = await clearMarketplaceListing(conn, req.user.tenantId, data.unitId);
 
     await conn.commit();
+    for (const rel of clearedMarketplacePhotos) {
+      await fs.unlink(path.join(UPLOADS_ROOT, rel)).catch(() => {});
+    }
     logger.info('Nouveau bail', { tenantId: req.user.tenantId, renterId: id, leaseId, unitId: data.unitId, by: req.user.id });
     res.status(201).json({ leaseId, unitId: data.unitId });
   } catch (err) {
@@ -598,7 +617,7 @@ router.post('/:id/portal-link', canManage, async (req, res, next) => {
     if (!renterRows[0]) throw new ApiError(404, 'Locataire introuvable');
 
     const token = generatePortalToken();
-    await pool.query('UPDATE renters SET portal_token_hash = :hash WHERE id = :id', {
+    await pool.query('UPDATE renters SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id', {
       hash: hashToken(token),
       id,
     });

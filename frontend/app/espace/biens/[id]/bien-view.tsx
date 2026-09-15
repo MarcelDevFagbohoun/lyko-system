@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Plus, Phone, MapPin, Layers, DoorOpen, Check, Gauge, Receipt } from "lucide-react";
+import { ArrowLeft, Plus, Phone, MapPin, Layers, DoorOpen, Check, Gauge, Receipt, Store } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { API_URL } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/client";
@@ -11,6 +12,7 @@ import {
   getProperty,
   createUnit,
   releaseUnit,
+  updateProperty,
   getPropertiesMeta,
   getPropertyRecette,
   type Property,
@@ -20,14 +22,14 @@ import {
   type PropertyRecette,
 } from "@/lib/api/properties";
 import { updatePropertyUtilityConfig, type UtilityConfigInput } from "@/lib/api/charges";
-import { UTILITY_TYPE_LABELS } from "@/lib/constants/charges";
+import { publishListing } from "@/lib/api/marketplace";
+import { UTILITY_TYPE_LABELS, LOSS_ALLOCATION_LABELS } from "@/lib/constants/charges";
 import { createExpense, type ExpenseCategory } from "@/lib/api/accounting";
 import { EXPENSE_CATEGORY_LABELS } from "@/lib/constants/expenses";
 import type { PaymentMethod } from "@/lib/api/renters";
 import { PROPERTY_TYPE_LABELS, unitDesignationLabel } from "@/lib/constants/properties";
 import { formatFcfa } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
@@ -35,6 +37,12 @@ import { Attribution } from "@/components/ui/attribution";
 import { StatCard } from "@/components/ui/stat-card";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { useToast } from "@/lib/toast/toast-context";
+
+const LocationPicker = dynamic(() => import("@/components/properties/location-picker"), {
+  ssr: false,
+  loading: () => <div className="flex h-[280px] items-center justify-center rounded-lg border border-border-strong bg-surface-muted text-body-sm text-ink-muted">Chargement de la carte…</div>,
+});
 
 const UNIT_STATUS_BADGE = {
   libre: { variant: "success" as const, label: "Libre" },
@@ -71,6 +79,7 @@ function BienContent() {
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [showUnitForm, setShowUnitForm] = React.useState(false);
   const [justFreed, setJustFreed] = React.useState<string | null>(null);
+  const [publishingUnit, setPublishingUnit] = React.useState<Unit | null>(null);
 
   const load = React.useCallback(() => {
     if (!accessToken || !Number.isInteger(propertyId)) return;
@@ -87,7 +96,6 @@ function BienContent() {
   if (loadError) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10">
           <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
             {loadError}
@@ -100,7 +108,6 @@ function BienContent() {
   if (!property || !units) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10 text-body-sm text-ink-muted">Chargement…</div>
       </div>
     );
@@ -108,7 +115,6 @@ function BienContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/biens" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />
@@ -152,7 +158,7 @@ function BienContent() {
                 </span>
               )}
             </div>
-            <Attribution actor={property.createdBy} verb="Bien créé par" />
+            <Attribution actor={property.createdBy} verb="Bien créé par" at={property.createdAt} />
 
             {property.photoUrls.length > 0 && (
               <div className="flex flex-wrap gap-3">
@@ -169,6 +175,8 @@ function BienContent() {
             )}
           </CardContent>
         </Card>
+
+        <LocationCard property={property} accessToken={accessToken} onSaved={load} />
 
         <UtilityConfigCard property={property} accessToken={accessToken} onSaved={load} />
 
@@ -256,7 +264,7 @@ function BienContent() {
                       {u.sbeeMeterNumber && <div>SBEE : {u.sbeeMeterNumber}</div>}
                     </TableCell>
                     <TableCell className="text-right">
-                      {u.status !== "libre" && (
+                      {u.status !== "libre" ? (
                         <ReleaseUnitAction
                           propertyId={propertyId}
                           unit={u}
@@ -266,6 +274,11 @@ function BienContent() {
                             load();
                           }}
                         />
+                      ) : (
+                        <Button variant="ghost" size="sm" onClick={() => setPublishingUnit(u)}>
+                          <Store size={14} />
+                          Publier
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>
@@ -273,6 +286,18 @@ function BienContent() {
               })}
             </TableBody>
           </Table>
+        )}
+
+        {publishingUnit && (
+          <PublishListingForm
+            unit={publishingUnit}
+            accessToken={accessToken}
+            onCancel={() => setPublishingUnit(null)}
+            onPublished={() => {
+              setPublishingUnit(null);
+              load();
+            }}
+          />
         )}
       </div>
     </div>
@@ -426,6 +451,7 @@ function NewPropertyExpenseForm({
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -447,6 +473,7 @@ function NewPropertyExpenseForm({
         unitId: unitId ? Number(unitId) : undefined,
       });
       onRecorded();
+      toast.success("Dépense enregistrée.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer cette dépense.");
     } finally {
@@ -520,6 +547,111 @@ function NewPropertyExpenseForm({
 }
 
 /**
+ * Repère GPS du Bien (étape 13, idée n°10 : carte du portefeuille) — placé à
+ * la main sur une carte (jamais géocodé depuis l'adresse texte libre, trop
+ * imprécise au Bénin). Permet de retrouver ce Bien sur « Nos biens » → Carte.
+ */
+function LocationCard({
+  property,
+  accessToken,
+  onSaved,
+}: {
+  property: Property;
+  accessToken: string | null;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [coords, setCoords] = React.useState<{ lat: number; lng: number } | null>(
+    property.latitude != null && property.longitude != null
+      ? { lat: property.latitude, lng: property.longitude }
+      : null,
+  );
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setCoords(
+      property.latitude != null && property.longitude != null
+        ? { lat: property.latitude, lng: property.longitude }
+        : null,
+    );
+  }, [property.latitude, property.longitude]);
+
+  const toast = useToast();
+
+  async function handleSave() {
+    if (!accessToken || !coords) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateProperty(accessToken, property.id, { latitude: coords.lat, longitude: coords.lng });
+      setEditing(false);
+      onSaved();
+      toast.success("Repère enregistré.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Enregistrement impossible.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MapPin size={16} className="text-ink-muted" />
+            <CardTitle>Localisation</CardTitle>
+          </div>
+          {!editing && (
+            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+              {property.latitude != null ? "Modifier" : "Placer sur la carte"}
+            </Button>
+          )}
+        </div>
+        <CardDescription>Repère utilisé par la carte du portefeuille (« Nos biens » → Carte).</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+
+        {!editing ? (
+          property.latitude != null && property.longitude != null ? (
+            <div>
+              <p className="text-body-sm text-ink-soft">
+                {property.latitude.toFixed(5)}, {property.longitude.toFixed(5)}
+              </p>
+              {property.locationSetAt && (
+                <p className="text-body-xs text-ink-faint">
+                  Repère placé le {new Date(property.locationSetAt).toLocaleDateString("fr-FR")}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-body-sm text-ink-muted">Aucun repère placé pour ce bien.</p>
+          )
+        ) : (
+          <>
+            <LocationPicker
+              latitude={coords?.lat ?? null}
+              longitude={coords?.lng ?? null}
+              onChange={(lat, lng) => setCoords({ lat, lng })}
+            />
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={handleSave} disabled={saving || !coords}>
+                {saving ? "Enregistrement…" : "Enregistrer"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={saving}>
+                Annuler
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
  * Section « Compteurs & fluides » — configuration du sous-comptage SONEB/SBEE
  * par immeuble (étape 9bis) : active/désactive, tarif au m³/kWh, n° du
  * compteur principal. Sert de base au relevé mensuel par immeuble.
@@ -536,6 +668,7 @@ function UtilityConfigCard({
   const [editing, setEditing] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   const cfg = property.utilityConfig;
   const anySubmetered = cfg.soneb.submetered || cfg.sbee.submetered;
@@ -549,6 +682,8 @@ function UtilityConfigCard({
     sbeeMainMeterNumber: cfg.sbee.mainMeterNumber ?? "",
     sonebAccountNumber: cfg.soneb.accountNumber ?? "",
     sbeeAccountNumber: cfg.sbee.accountNumber ?? "",
+    sonebLossAllocation: cfg.soneb.lossAllocation,
+    sbeeLossAllocation: cfg.sbee.lossAllocation,
   }));
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -565,11 +700,14 @@ function UtilityConfigCard({
       sbeeMainMeterNumber: form.sbeeMainMeterNumber,
       sonebAccountNumber: form.sonebAccountNumber,
       sbeeAccountNumber: form.sbeeAccountNumber,
+      sonebLossAllocation: form.sonebLossAllocation as "proprietaire" | "prorata",
+      sbeeLossAllocation: form.sbeeLossAllocation as "proprietaire" | "prorata",
     };
     try {
       await updatePropertyUtilityConfig(accessToken, property.id, payload);
       setEditing(false);
       onSaved();
+      toast.success("Configuration des compteurs enregistrée.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Enregistrement impossible.");
     } finally {
@@ -614,6 +752,7 @@ function UtilityConfigCard({
                         <li>Tarif : {cfg[u].unitPrice != null ? `${formatFcfa(cfg[u].unitPrice ?? 0)} / unité` : "à définir"}</li>
                         {cfg[u].mainMeterNumber && <li>Compteur principal : {cfg[u].mainMeterNumber}</li>}
                         {cfg[u].accountNumber && <li>Abonnement : {cfg[u].accountNumber}</li>}
+                        <li>Écart compteur/décompteurs : {LOSS_ALLOCATION_LABELS[cfg[u].lossAllocation]}</li>
                       </ul>
                     ) : (
                       <p className="mt-1 text-body-sm text-ink-muted">Non sous-compté</p>
@@ -668,6 +807,25 @@ function UtilityConfigCard({
                           value={form[`${cap}AccountNumber`]}
                           onChange={(e) => set(`${cap}AccountNumber`, e.target.value)}
                         />
+                      </Field>
+                    </div>
+                  )}
+                  {form[`${cap}Submetered`] === "1" && (
+                    <div className="mt-3">
+                      <Field
+                        label="Écart compteur principal / décompteurs"
+                        htmlFor={`${cap}LossAllocation`}
+                        hint="Par défaut, à la charge du propriétaire — jamais refacturé sans ce réglage."
+                      >
+                        <select
+                          id={`${cap}LossAllocation`}
+                          value={form[`${cap}LossAllocation`]}
+                          onChange={(e) => set(`${cap}LossAllocation`, e.target.value)}
+                          className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink"
+                        >
+                          <option value="proprietaire">{LOSS_ALLOCATION_LABELS.proprietaire}</option>
+                          <option value="prorata">{LOSS_ALLOCATION_LABELS.prorata}</option>
+                        </select>
                       </Field>
                     </div>
                   )}
@@ -747,6 +905,94 @@ function ReleaseUnitAction({
   );
 }
 
+/**
+ * Marketplace (demande directe de l'utilisateur) : publier une Unité
+ * vacante en une seule action. Le panneau flotte au-dessus du tableau
+ * (`absolute`) plutôt que de s'insérer dans la ligne — une cellule de
+ * tableau ne peut pas accueillir un textarea + un champ fichier sans
+ * casser la mise en page des colonnes voisines.
+ */
+/**
+ * Marketplace (demande directe de l'utilisateur) : publier une Unité
+ * vacante en une seule action. Rendu comme une Card à part, EN DEHORS du
+ * tableau des unités (jamais en `absolute` dans une cellule) — le
+ * conteneur du tableau est `overflow-x-auto`, ce qui force aussi
+ * `overflow-y` à se comporter en `auto` (règle CSS : un axe non-`visible`
+ * force l'autre à quitter `visible`), un panneau plus haut que la ligne
+ * s'y retrouverait tronqué avec un défilement interne peu visible.
+ */
+function PublishListingForm({
+  unit,
+  accessToken,
+  onCancel,
+  onPublished,
+}: {
+  unit: Unit;
+  accessToken: string | null;
+  onCancel: () => void;
+  onPublished: () => void;
+}) {
+  const [description, setDescription] = React.useState("");
+  const [photos, setPhotos] = React.useState<File[]>([]);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  async function handlePublish() {
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await publishListing(accessToken, unit.id, { description: description || undefined, photos });
+      toast.success(`Unité ${unit.code} publiée sur la marketplace.`);
+      onPublished();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de publier cette annonce.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          <span className="inline-flex items-center gap-2">
+            <Store size={16} />
+            Publier {unit.code} sur la marketplace
+          </span>
+        </CardTitle>
+        <CardDescription>Description et photos (optionnelles) — visibles sur la page publique.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={3}
+          placeholder="Description de l'annonce (optionnel)"
+          className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-md text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        />
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          multiple
+          onChange={(e) => setPhotos(Array.from(e.target.files ?? []).slice(0, 6))}
+          className="text-body-sm text-ink-soft"
+        />
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={submitting}>
+            Annuler
+          </Button>
+          <Button variant="primary" size="sm" onClick={handlePublish} disabled={submitting}>
+            {submitting ? "Publication…" : "Publier"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function NewUnitForm({
   propertyId,
   accessToken,
@@ -765,6 +1011,7 @@ function NewUnitForm({
   const [furnished, setFurnished] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   React.useEffect(() => {
     if (!accessToken) return;
@@ -777,7 +1024,7 @@ function NewUnitForm({
     setSubmitting(true);
     setError(null);
     try {
-      await createUnit(accessToken, propertyId, {
+      const res = await createUnit(accessToken, propertyId, {
         designation,
         designationCustom: designation === "autre" ? designationCustom.trim() : undefined,
         monthlyRent: Number(monthlyRent),
@@ -786,6 +1033,7 @@ function NewUnitForm({
         furnished,
       });
       onCreated();
+      toast.success(`Unité ${res.code} créée.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de créer cette unité.");
     } finally {

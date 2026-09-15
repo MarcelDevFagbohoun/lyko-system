@@ -11,9 +11,9 @@ import type { RenterListItem } from "@/lib/api/renters";
 import { createComplaint, type ComplaintCategory, type ComplaintPriority } from "@/lib/api/complaints";
 import { COMPLAINT_CATEGORY_LABELS } from "@/lib/constants/complaints";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { RenterLeasePicker } from "@/components/complaints/renter-lease-picker";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
+import { useToast } from "@/lib/toast/toast-context";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -33,6 +33,7 @@ function NouveauContent() {
   const { accessToken } = useAuth();
   const router = useRouter();
   const online = useOnlineStatus();
+  const toast = useToast();
   const searchParams = useSearchParams();
   const prefillRenterId = Number(searchParams.get("renterId"));
   const hasPrefill = Number.isInteger(prefillRenterId) && prefillRenterId > 0;
@@ -98,8 +99,12 @@ function NouveauContent() {
         photos: online ? photos : [],
       });
       if (res.queued) {
-        router.push("/espace/plaintes?queued=1");
+        toast.warning(
+          "Plainte enregistrée hors-ligne — elle sera envoyée automatiquement dès le retour de la connexion.",
+        );
+        router.push("/espace/plaintes");
       } else {
+        toast.success("Plainte déclarée.");
         router.push(`/espace/plaintes/${res.complaintId}`);
       }
     } catch (err) {
@@ -111,7 +116,6 @@ function NouveauContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/plaintes" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />

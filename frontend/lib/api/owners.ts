@@ -11,6 +11,9 @@ export type Owner = {
   notes: string | null;
   createdBy: Actor;
   createdAt: string;
+  /** Un lien de portail a déjà été généré pour ce propriétaire (jamais le token lui-même). */
+  hasPortalLink: boolean;
+  portalLinkCreatedAt: string | null;
 };
 
 export type OwnerListItem = Owner & {
@@ -144,4 +147,16 @@ export function updateCommissionRate(accessToken: string, ownerId: number, input
       body: JSON.stringify(input),
     },
   );
+}
+
+/**
+ * (Re)génère le lien du portail propriétaire (étape 13, idée n°1). Le token
+ * n'est renvoyé qu'une seule fois ici, jamais stocké en clair côté serveur —
+ * régénérer invalide l'ancien lien.
+ */
+export function generateOwnerPortalLink(accessToken: string, ownerId: number) {
+  return apiFetch<{ token: string; path: string }>(`/api/owners/${ownerId}/portal-link`, {
+    method: "POST",
+    accessToken,
+  });
 }

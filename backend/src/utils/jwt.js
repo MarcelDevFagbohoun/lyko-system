@@ -37,9 +37,30 @@ function verifyRefreshToken(token) {
   return jwt.verify(token, config.jwt.refreshSecret, VERIFY_OPTS);
 }
 
+// Comptes du grand public sur Quick Immo (site externe séparé) — un seul
+// token, sans rotation de refresh token (pas d'enjeu financier/sensible
+// comparable aux comptes employé, une session longue simplifie le client
+// public). Signé avec une clé DÉDIÉE (`marketplaceAccountSecret`, distincte
+// de celle des employés) : une séparation cryptographique, pas seulement un
+// indicateur applicatif — `verifyAccessToken` (employé) ne peut PAS vérifier
+// avec succès un token de ce realm, même si son payload ressemblait à un
+// payload employé (même `sub` numérique par coïncidence, etc.).
+function signMarketplaceToken(payload) {
+  return jwt.sign(payload, config.jwt.marketplaceAccountSecret, {
+    expiresIn: '30d',
+    issuer: config.jwt.issuer,
+  });
+}
+
+function verifyMarketplaceToken(token) {
+  return jwt.verify(token, config.jwt.marketplaceAccountSecret, VERIFY_OPTS);
+}
+
 module.exports = {
   signAccessToken,
   signRefreshToken,
   verifyAccessToken,
   verifyRefreshToken,
+  signMarketplaceToken,
+  verifyMarketplaceToken,
 };

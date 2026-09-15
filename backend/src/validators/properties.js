@@ -16,21 +16,40 @@ const propertyTypeSchema = z.enum(PROPERTY_TYPE_KEYS, {
   errorMap: () => ({ message: 'Type de bien invalide' }),
 });
 
+// Coordonnées GPS (étape 13, idée n°10 : carte du portefeuille) : placées à la
+// main par le DG sur une carte, jamais géocodées depuis l'adresse texte libre.
+const latitudeSchema = z.coerce.number().min(-90, 'Latitude invalide').max(90, 'Latitude invalide');
+const longitudeSchema = z.coerce.number().min(-180, 'Longitude invalide').max(180, 'Longitude invalide');
+
+const coordinatesTogether = (data) => (data.latitude == null) === (data.longitude == null);
+const coordinatesTogetherRefinement = {
+  message: 'Latitude et longitude doivent être renseignées ensemble',
+  path: ['longitude'],
+};
+
 // Le propriétaire est désormais une fiche à part entière (étape 5) : le Bien
 // référence son id, sélectionné (ou créé à la volée) via /api/owners.
-const createPropertySchema = z.object({
-  ownerId: z.coerce.number().int('Propriétaire requis').positive('Propriétaire requis'),
-  address: optionalText(255),
-  propertyType: propertyTypeSchema,
-  levels: z.coerce.number().int('Nombre entier requis').min(1).max(50).optional(),
-});
+const createPropertySchema = z
+  .object({
+    ownerId: z.coerce.number().int('Propriétaire requis').positive('Propriétaire requis'),
+    address: optionalText(255),
+    propertyType: propertyTypeSchema,
+    levels: z.coerce.number().int('Nombre entier requis').min(1).max(50).optional(),
+    latitude: latitudeSchema.nullable().optional(),
+    longitude: longitudeSchema.nullable().optional(),
+  })
+  .refine(coordinatesTogether, coordinatesTogetherRefinement);
 
-const updatePropertySchema = z.object({
-  ownerId: z.coerce.number().int('Propriétaire invalide').positive('Propriétaire invalide').optional(),
-  address: optionalText(255).optional(),
-  propertyType: propertyTypeSchema.optional(),
-  levels: z.coerce.number().int('Nombre entier requis').min(1).max(50).optional(),
-});
+const updatePropertySchema = z
+  .object({
+    ownerId: z.coerce.number().int('Propriétaire invalide').positive('Propriétaire invalide').optional(),
+    address: optionalText(255).optional(),
+    propertyType: propertyTypeSchema.optional(),
+    levels: z.coerce.number().int('Nombre entier requis').min(1).max(50).optional(),
+    latitude: latitudeSchema.nullable().optional(),
+    longitude: longitudeSchema.nullable().optional(),
+  })
+  .refine(coordinatesTogether, coordinatesTogetherRefinement);
 
 const unitDesignationSchema = z.enum(UNIT_DESIGNATION_KEYS, {
   errorMap: () => ({ message: 'Désignation invalide' }),

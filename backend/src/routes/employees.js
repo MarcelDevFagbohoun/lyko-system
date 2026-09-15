@@ -67,13 +67,19 @@ router.get('/', async (req, res, next) => {
 /** Biens actuellement attribués à un agent (étape 14), pour sa fiche. */
 async function loadManagedProperties(tenantId, agentId) {
   const [rows] = await pool.query(
-    `SELECT p.id, p.code, p.address, o.name AS owner_name
+    `SELECT p.id, p.code, p.address, p.agent_assigned_at, o.name AS owner_name
      FROM properties p JOIN owners o ON o.id = p.owner_id
      WHERE p.tenant_id = :tenantId AND p.agent_id = :agentId
      ORDER BY p.code`,
     { tenantId, agentId },
   );
-  return rows.map((r) => ({ id: r.id, code: r.code, address: r.address, ownerName: r.owner_name }));
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code,
+    address: r.address,
+    ownerName: r.owner_name,
+    assignedAt: r.agent_assigned_at,
+  }));
 }
 
 // GET /api/employees/:id — fiche d'un employé (isolation par tenant).
@@ -129,11 +135,10 @@ router.post('/:id/properties', async (req, res, next) => {
     }
 
     await conn.beginTransaction();
-    await conn.query(`UPDATE properties SET agent_id = ? WHERE tenant_id = ? AND id IN (${placeholders})`, [
-      id,
-      req.user.tenantId,
-      ...propertyIds,
-    ]);
+    await conn.query(
+      `UPDATE properties SET agent_id = ?, agent_assigned_at = NOW() WHERE tenant_id = ? AND id IN (${placeholders})`,
+      [id, req.user.tenantId, ...propertyIds],
+    );
     await conn.commit();
 
     logger.info('Biens attribués à un agent', {
@@ -162,7 +167,7 @@ router.delete('/:id/properties/:propertyId', async (req, res, next) => {
 
   try {
     const [result] = await pool.query(
-      `UPDATE properties SET agent_id = NULL
+      `UPDATE properties SET agent_id = NULL, agent_assigned_at = NULL
        WHERE id = :propertyId AND tenant_id = :tenantId AND agent_id = :agentId`,
       { propertyId, tenantId: req.user.tenantId, agentId: id },
     );

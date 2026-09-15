@@ -22,8 +22,14 @@ function isoDate(d) {
  * Dépenses et charges SONEB/SBEE supprimées logiquement (suppression =
  * marquage, jamais un DELETE physique — étape 8) : détail, auteur de la
  * suppression, justification obligatoire. Visible du DG uniquement.
+ *
+ * `actorUserId` (étape 18, historique personnel) restreint aux suppressions
+ * effectuées PAR cet utilisateur précis — sinon comportement inchangé.
  */
-async function listDeletedEntries(tenantId) {
+async function listDeletedEntries(tenantId, actorUserId = null) {
+  const p = { tenantId, actorUserId };
+  const actorFilter = actorUserId ? 'AND e.deleted_by = :actorUserId' : '';
+  const actorFilterUc = actorUserId ? 'AND uc.deleted_by = :actorUserId' : '';
   const [expenseRows] = await pool.query(
     `SELECT e.id, e.category, e.label, e.amount, e.expense_date,
             cu.first_name AS created_first_name, cu.last_name AS created_last_name, cu.role AS created_role,
@@ -32,9 +38,9 @@ async function listDeletedEntries(tenantId) {
      FROM expenses e
      JOIN users cu ON cu.id = e.recorded_by
      JOIN users du ON du.id = e.deleted_by
-     WHERE e.tenant_id = :tenantId AND e.deleted_at IS NOT NULL
+     WHERE e.tenant_id = :tenantId AND e.deleted_at IS NOT NULL ${actorFilter}
      ORDER BY e.deleted_at DESC`,
-    { tenantId },
+    p,
   );
   const [chargeRows] = await pool.query(
     `SELECT uc.id, uc.utility_type, uc.amount, uc.billed_at,
@@ -48,9 +54,9 @@ async function listDeletedEntries(tenantId) {
      JOIN property_units un ON un.id = l.unit_id
      JOIN users cu ON cu.id = uc.recorded_by
      JOIN users du ON du.id = uc.deleted_by
-     WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NOT NULL
+     WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NOT NULL ${actorFilterUc}
      ORDER BY uc.deleted_at DESC`,
-    { tenantId },
+    p,
   );
 
   return [
@@ -80,14 +86,20 @@ async function listDeletedEntries(tenantId) {
 }
 
 /**
- * Journal d'activité unifié (DG uniquement) : les `limitPerType` dernières
- * actions de chaque nature, à travers tous les modules, fusionnées et
- * triées par horodatage. Chaque requête est indépendante et bornée
- * (`LIMIT`) — pas d'UNION SQL géant, plus simple à maintenir et à étendre.
+ * Journal d'activité unifié : les `limitPerType` dernières actions de
+ * chaque nature, à travers tous les modules, fusionnées et triées par
+ * horodatage. Chaque requête est indépendante et bornée (`LIMIT`) — pas
+ * d'UNION SQL géant, plus simple à maintenir et à étendre.
+ *
+ * `actorUserId` (étape 18, historique personnel comptable/agent) restreint
+ * aux actions effectuées PAR cet utilisateur précis (colonne d'auteur —
+ * `created_by`/`recorded_by`/`conducted_by`/`closed_by`/`set_by` selon le
+ * module) — sinon comportement inchangé, c'est le journal DG complet.
  */
-async function listRecentActivity(tenantId, limit = 60) {
+async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
   const limitPerType = Math.min(limit, 30);
-  const p = { tenantId, n: limitPerType };
+  const p = { tenantId, n: limitPerType, actorUserId };
+  const f = (col) => (actorUserId ? `AND ${col} = :actorUserId` : '');
 
   const [
     renters,
@@ -110,25 +122,25 @@ async function listRecentActivity(tenantId, limit = 60) {
     pool.query(
       `SELECT r.id, r.first_name, r.last_name, r.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM renters r LEFT JOIN users u ON u.id = r.created_by
-       WHERE r.tenant_id = :tenantId ORDER BY r.created_at DESC LIMIT :n`,
+       WHERE r.tenant_id = :tenantId ${f('r.created_by')} ORDER BY r.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
       `SELECT o.id, o.name, o.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM owners o LEFT JOIN users u ON u.id = o.created_by
-       WHERE o.tenant_id = :tenantId ORDER BY o.created_at DESC LIMIT :n`,
+       WHERE o.tenant_id = :tenantId ${f('o.created_by')} ORDER BY o.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
       `SELECT p.id, p.code, p.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM properties p LEFT JOIN users u ON u.id = p.created_by
-       WHERE p.tenant_id = :tenantId ORDER BY p.created_at DESC LIMIT :n`,
+       WHERE p.tenant_id = :tenantId ${f('p.created_by')} ORDER BY p.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
       `SELECT un.id, un.code, un.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM property_units un LEFT JOIN users u ON u.id = un.created_by
-       WHERE un.tenant_id = :tenantId ORDER BY un.created_at DESC LIMIT :n`,
+       WHERE un.tenant_id = :tenantId ${f('un.created_by')} ORDER BY un.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
@@ -138,7 +150,7 @@ async function listRecentActivity(tenantId, limit = 60) {
        JOIN renters r ON r.id = l.renter_id
        JOIN property_units un ON un.id = l.unit_id
        LEFT JOIN users u ON u.id = l.created_by
-       WHERE l.tenant_id = :tenantId ORDER BY l.created_at DESC LIMIT :n`,
+       WHERE l.tenant_id = :tenantId ${f('l.created_by')} ORDER BY l.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
@@ -148,7 +160,7 @@ async function listRecentActivity(tenantId, limit = 60) {
        JOIN leases l ON l.id = rp.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = rp.recorded_by
-       WHERE rp.tenant_id = :tenantId ORDER BY rp.created_at DESC LIMIT :n`,
+       WHERE rp.tenant_id = :tenantId ${f('rp.recorded_by')} ORDER BY rp.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
@@ -157,13 +169,13 @@ async function listRecentActivity(tenantId, limit = 60) {
        FROM owner_payouts op
        JOIN owners o ON o.id = op.owner_id
        LEFT JOIN users u ON u.id = op.recorded_by
-       WHERE op.tenant_id = :tenantId ORDER BY op.created_at DESC LIMIT :n`,
+       WHERE op.tenant_id = :tenantId ${f('op.recorded_by')} ORDER BY op.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
       `SELECT e.id, e.label, e.amount, e.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM expenses e LEFT JOIN users u ON u.id = e.recorded_by
-       WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL ORDER BY e.created_at DESC LIMIT :n`,
+       WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL ${f('e.recorded_by')} ORDER BY e.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
@@ -173,21 +185,21 @@ async function listRecentActivity(tenantId, limit = 60) {
        JOIN leases l ON l.id = uc.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = uc.recorded_by
-       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL ORDER BY uc.created_at DESC LIMIT :n`,
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL ${f('uc.recorded_by')} ORDER BY uc.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
       `SELECT c.id, c.code, c.title, c.created_at, c.reported_via_portal,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM complaints c LEFT JOIN users u ON u.id = c.created_by
-       WHERE c.tenant_id = :tenantId ORDER BY c.created_at DESC LIMIT :n`,
+       WHERE c.tenant_id = :tenantId ${f('c.created_by')} ORDER BY c.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
       `SELECT c.id, c.code, c.title, c.updated_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM complaints c LEFT JOIN users u ON u.id = c.resolved_by
        WHERE c.tenant_id = :tenantId AND c.status IN ('resolue', 'fermee') AND c.resolved_by IS NOT NULL
-       ORDER BY c.updated_at DESC LIMIT :n`,
+       ${f('c.resolved_by')} ORDER BY c.updated_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
@@ -197,7 +209,7 @@ async function listRecentActivity(tenantId, limit = 60) {
        JOIN leases l ON l.id = mi.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = mi.conducted_by
-       WHERE mi.tenant_id = :tenantId ORDER BY mi.created_at DESC LIMIT :n`,
+       WHERE mi.tenant_id = :tenantId ${f('mi.conducted_by')} ORDER BY mi.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
@@ -207,13 +219,13 @@ async function listRecentActivity(tenantId, limit = 60) {
        JOIN leases l ON l.id = mo.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = mo.conducted_by
-       WHERE mo.tenant_id = :tenantId ORDER BY mo.created_at DESC LIMIT :n`,
+       WHERE mo.tenant_id = :tenantId ${f('mo.conducted_by')} ORDER BY mo.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
       `SELECT ap.id, ap.period, ap.closed_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM accounting_periods ap LEFT JOIN users u ON u.id = ap.closed_by
-       WHERE ap.tenant_id = :tenantId ORDER BY ap.closed_at DESC LIMIT :n`,
+       WHERE ap.tenant_id = :tenantId ${f('ap.closed_by')} ORDER BY ap.closed_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
@@ -222,10 +234,10 @@ async function listRecentActivity(tenantId, limit = 60) {
        FROM owner_commission_rates cr
        JOIN owners o ON o.id = cr.owner_id
        LEFT JOIN users u ON u.id = cr.set_by
-       WHERE cr.tenant_id = :tenantId ORDER BY cr.created_at DESC LIMIT :n`,
+       WHERE cr.tenant_id = :tenantId ${f('cr.set_by')} ORDER BY cr.created_at DESC LIMIT :n`,
       p,
     ),
-    listDeletedEntries(tenantId),
+    listDeletedEntries(tenantId, actorUserId),
   ]);
 
   const entries = [

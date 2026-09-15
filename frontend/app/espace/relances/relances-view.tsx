@@ -2,14 +2,18 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { MessageCircleWarning, Send } from "lucide-react";
+import { MessageCircleWarning, Send, Radar } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
-import { listPortfolioArrears, type PortfolioArrearsEntry } from "@/lib/api/accounting";
+import {
+  listPortfolioArrears,
+  listPredictiveAlerts,
+  type PortfolioArrearsEntry,
+  type PredictiveAlertEntry,
+} from "@/lib/api/accounting";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
-import { formatFcfa, formatDateLabel, buildRentReminderMessage } from "@/lib/utils";
+import { formatFcfa, formatDateLabel, buildRentReminderMessage, buildPredictiveReminderMessage } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
@@ -33,6 +37,7 @@ function RelancesContent() {
   const { accessToken, tenant } = useAuth();
   const [arrears, setArrears] = React.useState<PortfolioArrearsEntry[] | null>(null);
   const [total, setTotal] = React.useState(0);
+  const [predictive, setPredictive] = React.useState<PredictiveAlertEntry[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -43,11 +48,13 @@ function RelancesContent() {
         setTotal(res.total);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les impayés."));
+    listPredictiveAlerts(accessToken)
+      .then((res) => setPredictive(res.alerts))
+      .catch(() => setPredictive([]));
   }, [accessToken]);
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <div>
           <h1 className="font-display text-headline-xl text-ink">Centre de relance</h1>
@@ -134,6 +141,71 @@ function RelancesContent() {
             </TableBody>
           </Table>
         ) : null}
+
+        {predictive && predictive.length > 0 && (
+          <div className="flex flex-col gap-3 border-t border-border pt-6">
+            <div>
+              <h2 className="inline-flex items-center gap-2 font-display text-headline-md text-ink">
+                <Radar size={20} className="text-warning-fg" />
+                Alertes prédictives
+              </h2>
+              <p className="text-body-sm text-ink-soft">
+                Locataires à jour pour l&apos;instant, mais habituellement en retard, dont l&apos;échéance approche.
+                Relancez-les avant que le retard n&apos;arrive.
+              </p>
+            </div>
+            <Table>
+              <TableHeader>
+                <tr>
+                  <TableHead>Locataire</TableHead>
+                  <TableHead>Bien / unité</TableHead>
+                  <TableHead>Historique</TableHead>
+                  <TableHead>Échéance</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </tr>
+              </TableHeader>
+              <TableBody>
+                {predictive.map((a) => {
+                  const message = buildPredictiveReminderMessage({
+                    renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
+                    unitLabel: a.unitCode,
+                    monthlyRent: a.monthlyRent,
+                    dueDate: formatDateLabel(a.dueDate),
+                    companyName: tenant?.companyName,
+                  });
+                  return (
+                    <TableRow key={a.leaseId}>
+                      <TableCell>
+                        <Link href={`/espace/locataires/${a.renterId}`} className="text-primary hover:underline">
+                          {a.renterName}
+                        </Link>
+                        <div className="text-body-xs text-ink-muted">{a.phone}</div>
+                      </TableCell>
+                      <TableCell className="text-ink-soft">
+                        {a.propertyCode} · {a.unitCode}
+                      </TableCell>
+                      <TableCell className="text-warning-fg">
+                        {a.lateCount}/{a.recentPaymentsCount} derniers paiements en retard
+                      </TableCell>
+                      <TableCell className="text-ink-soft">
+                        {formatDateLabel(a.dueDate)}
+                        {a.daysUntilDue >= 0 && ` (dans ${a.daysUntilDue} j)`}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex">
+                          <span className={buttonVariants({ variant: "warning", size: "sm" })}>
+                            <Send size={14} />
+                            Relancer
+                          </span>
+                        </a>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </div>
     </div>
   );

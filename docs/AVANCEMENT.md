@@ -19,7 +19,15 @@ On ne fusionne jamais deux étapes.
 | 11 | Mode hors-ligne (lecture + file d'écriture limitée) | 🟢 Validée (2026-09-10, navigateur) |
 | 12a | Sécurité & audit (durcissement) | 🟡 Codé — validation navigateur/build en attente |
 | 12b | Déploiement (VPS + Docker Compose) | 🟡 Codé — build/déploiement à valider sur le VPS |
-| 13 | Fonctionnalités additionnelles (post-lancement) | 🟡 En cours — portail locataire validé, autres idées non démarrées |
+| 13 | Fonctionnalités additionnelles (post-lancement) | 🟡 En cours — portails locataire/propriétaire, alertes prédictives et carte du portefeuille validés, autres idées non démarrées |
+| 14 | Attribution de Biens à un agent (portefeuille restreint) | 🟢 Validée |
+| 15 | État des lieux par zones (refonte) | 🟢 Validée |
+| 16 | Toutes les opérations datées | 🟢 Validée |
+| 17 | Retour immédiat sur chaque action (toasts) | 🟢 Validée |
+| 18 | Outils comptables/agents (tâches, rapport, historique) | 🟢 Validée |
+| 19 | Refonte design professionnel des documents PDF | 🟢 Validée |
+| 20 | Marketplace des Unités vacantes (back-office) | 🟢 Validée |
+| 21 | Quick Immo — site externe (vitrine, comptes, demandes) | 🟢 Validée |
 
 ---
 
@@ -327,6 +335,23 @@ Tests (contre le serveur de dev déjà actif, sans purger les données de l'util
   backend automatiquement) : `/connexion` affiche bien les deux onglets « Direction » /
   « Employé »
 
+### Bug UX trouvé et corrigé — carte « Gestion des employés » visible par un comptable
+
+Signalé par l'utilisateur : un comptable connecté voyait sur son tableau de bord
+(`/espace`) une carte « Gestion des employés » (grisée, non cliquable), alors que ce module
+est réservé au DG. Le backend était déjà correctement verrouillé
+(`requireRole('dg')` sur tout `routes/employees.js`) — c'était un bug d'affichage seul :
+`app/espace/espace-view.tsx` remplaçait la carte « Ajouter mon premier employé » par une
+carte de substitution nommant explicitement la fonctionnalité (« Réservée à la direction
+générale ») au lieu de ne rien afficher, contrairement à tous les autres points d'entrée
+DG-only de l'application (`espace-header.tsx` : les liens « Employés » et « Paramètres »
+utilisent `isDg && (...)`, donc disparaissent entièrement plutôt que d'apparaître grisés).
+Corrigé en appliquant le même principe : rien n'est affiché à la place, jamais un nom de
+fonctionnalité révélé à un rôle qui n'y a pas droit.
+Testé en navigateur (Firefox headless, cabinet jetable, compte comptable réel créé et
+connecté) : carte absente, aucun vide dans la grille, la carte « Enregistrer un paiement »
+(module réellement autorisé) s'affiche normalement à sa place. `tsc`/`lint` propres.
+
 ---
 
 ## Étape 4 — Module Gestion des locataires
@@ -351,7 +376,9 @@ Nommage anglais (`renters`/`leases`/`properties`) pour ne jamais entrer en colli
 - `rent_payments` (paiements) : mois couvert, montant, mode, date, saisi par.
 - `receipts` (quittances) : une par paiement, numérotée `QT-{année}-{séquence}`.
 - `move_in_reports` (états des lieux d'entrée) : checklist JSON (9 postes standards),
-  notes générales — un seul par bail.
+  notes générales — un seul par bail. *(Refondu en zones/éléments personnalisables +
+  brouillon/signatures à l'étape 15 — la grille plate à 9 postes ci-dessous ne décrit plus
+  le comportement actuel, gardée comme trace historique.)*
 
 ### Backend
 
@@ -910,7 +937,10 @@ seule opération — avec un PV téléchargeable a posteriori.
   murs/peinture, sol, plafond, plomberie, électricité, portes/fenêtres, cuisine,
   sanitaires, serrures), avec en plus une retenue chiffrée par poste. Montants figés au
   moment de la sortie (caution, retenues, net) : comme les quittances, ils ne doivent pas
-  bouger rétroactivement si le bail est modifié plus tard.
+  bouger rétroactivement si le bail est modifié plus tard. *(Refondu en zones/éléments à
+  l'étape 15 : `status`/`finalized_at`/signatures ajoutés, montants désormais figés à la
+  **finalisation** plutôt qu'à la création du brouillon — la grille à 9 postes ci-dessus ne
+  décrit plus le comportement actuel.)*
 - Retenue libre optionnelle (« Autres retenues », ex. arriérés de loyer, facture
   SONEB/SBEE résiduelle) distincte de la grille d'état des lieux, qui ne porte que sur
   l'état physique du bien.
@@ -1233,6 +1263,28 @@ d'explication.
   encaissé, bleu = reversé, orange = dépensé, mêmes tons que les cartes de synthèse
   au-dessus).
 - Vérifié en navigateur (Firefox headless, tenant réel). `tsc --noEmit`/`next lint` propres.
+
+### Bug-fix (2026-09-14) : clutter DG-only retiré de la vue comptable/agent
+
+Demande directe de l'utilisateur (« supprime tous ça au niveau de la comptabilité et agent »),
+en collant le texte visible sur la page — qui correspondait exactement à trois blocs
+informatifs affichés à TOUT LE MONDE sans condition de rôle : la carte « Comment fonctionne
+l'ouverture et la clôture d'un mois ? » (`HowMonthsWorkCard`), la carte de date de démarrage
+(`StartDateCard`, y compris sa ligne « Aucune date de démarrage définie... »), et la bannière
+« Mois X ouvert, clôturable à partir du... Seul l'Admin peut clôturer un mois. » de
+`ClotureBanner` (déjà une branche dédiée non-DG, mais purement informative). Ces trois blocs
+expliquent une action que seul le DG peut faire — inutile, voire confus, pour un comptable ou
+un agent qui ne peut pas clôturer de toute façon.
+- `comptabilite-view.tsx` : les deux premières cartes désormais dans `{isDg && (...)}`.
+- `ClotureBanner` : sa branche `!isDg` (mois OUVERT) renvoie maintenant `null` — retiré
+  entièrement pour le comptable/agent. Sa branche « mois CLÔTURÉ » reste affichée à tous les
+  rôles (information opérationnelle nécessaire : explique pourquoi une saisie est refusée).
+- Le sélecteur de période et le bouton « Rapport mensuel » (étape 18) restent inchangés pour
+  tous les rôles — ce sont des contrôles fonctionnels, pas du texte explicatif.
+Vérifié en navigateur (Firefox headless, cabinet jetable) : un comptable ne voit plus aucun
+des trois blocs (page directement du sélecteur de période aux cartes chiffrées) ; le DG,
+lui, voit toujours exactement les trois blocs comme avant (aucune régression). `tsc --noEmit`/
+`next lint` propres. Cabinet de test supprimé après coup, KIko Store (14 baux) inchangé.
 
 ---
 
@@ -2306,8 +2358,10 @@ Seul `caddy` publie des ports (80/443). `db` n'a aucun `ports:` et vit sur un r�
 Le cahier des charges initial (étapes 0 à 12b) est entièrement codé. Cette étape regroupe
 des idées nouvelles, proposées après une revue des manques et brainstorm à la demande de
 l'utilisateur, ajoutées une par une — même règle : codée → testée → validée avant la
-suivante. Idée n°2 retenue en premier (« commençant par 2 ») ; les idées n°1 et n°3 à n°10
-restent en attente, non commencées.
+suivante. Retenues jusqu'ici, dans l'ordre choisi par l'utilisateur : idée n°2 (portail
+locataire), n°1 (portail propriétaire), n°4 (alertes prédictives de retard), n°10 (carte du
+portefeuille). Idées n°3 et 5 à 9 restent en attente, non commencées (voir la liste en fin
+d'étape).
 
 ### Portail locataire minimal (idée n°2)
 
@@ -2406,15 +2460,212 @@ séparée (le bouton « Générer le lien ») — il doit exister dès la créat
   (Firefox headless, cabinet jetable) : écran de succès affiché avec le lien réel. Cabinet
   de test supprimé après coup, KIko Store non touché.
 
-### Attribution de Biens à un agent (gestion d'un sous-ensemble du portefeuille)
+### Portail propriétaire (idée n°1)
 
-Demande de l'utilisateur : « ajouter un nombre donné de Biens à un agent pour la gestion ».
-Décisions prises avec l'utilisateur avant codage (question posée, car structurante) :
+Demandée après une nouvelle session de réflexion sur « ce qui reste pour que le projet soit
+vraiment innovant » — choisie en premier (meilleur rapport valeur/effort : le calculateur de
+recette et le relevé PDF existaient déjà, seul le mécanisme d'accès manquait).
+
+**Objectif** : donner à chaque propriétaire un accès en libre-service à sa recette du mois,
+sa commission, sa part, son patrimoine géré et l'historique de ses versements, sans appeler
+le cabinet — même mécanique que le portail locataire (lien secret, sans mot de passe, sans
+compte).
+
+### Fichiers ajoutés/modifiés
+
+- **`backend/src/db/migrations/025_owner_portal.sql`** : `owners.portal_token_hash`
+  (unique, nullable), même schéma que `renters.portal_token_hash` (022).
+- **`backend/src/middleware/portalAuth.js`** : nouvelle `requireOwnerPortalToken`
+  (parallèle à `requirePortalToken`), attache `req.portalOwner`.
+- **`backend/src/routes/ownerPortal.js`** (nouveau) : `GET /:token?mois=` (tableau de bord —
+  patrimoine, recette nette/commission/part par Bien **et** total portefeuille si plusieurs
+  Biens, réutilise directement `getRecetteProprietaire` du service de commission existant,
+  étape 5), `GET /:token/statement.pdf` (réutilise `streamOwnerStatementPdf`, déjà existant).
+  Limiteur de débit dédié (120/15 min), monté **avant** le routeur non préfixé des relevés de
+  compteurs dans `routes/index.js` (piège déjà documenté lors du portail locataire).
+- **`backend/src/routes/owners.js`** : `POST /:id/portal-link` (DG/gestion propriétaires,
+  scope agent respecté), `toPublicOwner` expose `hasPortalLink`.
+- **`backend/src/app.js`** : redaction du token étendue aux deux portails
+  (`/api/portal/`, `/api/owner-portal/`) dans les journaux d'accès.
+- **`frontend/lib/api/ownerPortal.ts`** (nouveau), **`frontend/app/portail/proprietaire/[token]/`**
+  (nouveau, page publique sans `RequireAuth`/`EspaceHeader`) : sélecteur de mois, carte
+  « Total du portefeuille » (si plusieurs Biens), recette détaillée par Bien, unités avec
+  locataire en cours, historique des versements, téléchargement du relevé.
+- **`frontend/lib/api/owners.ts`**, **`proprietaire-view.tsx`** : carte « Portail
+  propriétaire » (génération/régénération, révélation unique, envoi WhatsApp — grisé si le
+  propriétaire n'a pas de téléphone renseigné, seul le portail locataire pouvait supposer
+  un téléphone toujours présent).
+
+### Tests effectués (API + navigateur, tenant réel KIko Store)
+
+- [x] Génération du lien depuis la fiche propriétaire (DG) → token affiché une seule fois,
+  « Régénérer le lien » après une première génération.
+- [x] `GET /api/owner-portal/:token` (GBAGUIDI Rodrigue, propriétaire réel) → patrimoine,
+  recette du mois correcte, **taux de commission historique respecté** (10 % pour septembre,
+  alors que le taux actif aujourd'hui est 15 % depuis octobre — le calculateur existant
+  applique bien le taux en vigueur au mois affiché, pas le taux courant).
+- [x] `?mois=2026-08` → dépense de 15 000 FCFA rattachée au Bien correctement déduite de la
+  recette nette.
+- [x] Propriétaire avec 3 Biens (dont 2 sans loyer ce mois) → carte « Total du portefeuille »
+  correctement agrégée, chaque Bien détaillé séparément en dessous.
+- [x] Token invalide → 404 générique ; relevé PDF téléchargeable ; limiteur de débit propre
+  (120, pas celui de l'employé) confirmant que le routeur est bien atteint.
+- [x] `tsc --noEmit` et `next lint` sans erreur sur tous les fichiers touchés.
+
+### Alertes prédictives de retard
+
+Choisie ensuite dans la même liste (idée n°4) : relancer un locataire AVANT qu'il ne soit en
+retard, pas seulement après — en s'appuyant sur son propre historique de paiement.
+
+**Règle retenue** (aucune ne s'imposait, décision produit) : un bail est signalé si (1) il est
+actuellement **à jour** (jamais un doublon avec le centre de relance réactif), (2) son
+échéance à venir tombe dans les **5 prochains jours**, et (3) au moins **2 de ses 3 derniers
+mois réellement payés** ont été réglés après leur propre échéance. Il faut au moins 2
+paiements dans l'historique pour se prononcer — jamais d'alerte sur un locataire trop récent
+faute de recul.
+
+### Fichiers ajoutés/modifiés
+
+- **`backend/src/services/rentTracking.js`** : `isPaymentLate(coversMonth, rentDueDay,
+  paidAt)` (un paiement est-il arrivé après l'échéance de son propre mois ?) et
+  `listPredictiveLateAlerts(tenantId, scopeAgentId, daysAhead)` — même structure que
+  `listPortfolioArrears` déjà existant (même portée agent, étape 14), résultats triés par
+  échéance la plus proche.
+- **`backend/src/routes/accounting.js`** : `GET /predictive-alerts`, même permission que
+  `/arrears` (`locataires` ou `comptabilite`).
+- **`frontend/lib/api/accounting.ts`** : `PredictiveAlertEntry`, `listPredictiveAlerts`.
+- **`frontend/lib/utils.ts`** : `buildPredictiveReminderMessage` — ton différent du rappel de
+  retard existant (une échéance à venir, jamais « en retard »).
+- **`frontend/app/espace/relances/relances-view.tsx`** : nouvelle section « Alertes
+  prédictives » sous le centre de relance réactif existant, teinte orange (à surveiller, pas
+  rouge/déjà grave), bouton « Relancer » WhatsApp dédié.
+
+### Tests effectués (API + navigateur, cabinet jetable)
+
+- [x] Locataire à échéance dans 3 jours, 2/2 derniers paiements en retard → correctement
+  signalé, avec le bon décompte et la bonne échéance.
+- [x] Locataire à échéance tout aussi proche, mais bon payeur (0/2 en retard) → correctement
+  **pas** signalé.
+- [x] Aucun des deux n'apparaît dans `/arrears` (tous deux à jour) → confirme l'absence de
+  doublon entre réactif et prédictif.
+- [x] Vérifié sur le vrai portefeuille KIko Store : résultat vide actuellement, mais examen
+  bail par bail confirmant que c'est correct (aucun bail à jour n'a une échéance à moins de
+  5 jours en ce moment) — pas un faux négatif.
+- [x] Rendu en navigateur (Firefox headless, cabinet jetable) : section bien affichée,
+  distincte visuellement du centre de relance réactif. `tsc --noEmit`/`next lint` propres.
+- Cabinet de test supprimé après coup.
+
+### Carte du portefeuille (idée n°10)
+
+Choisie ensuite (dernière de la liste initiale — signalée comme la plus lourde, faute de
+géocodage fiable au Bénin où l'adresse est souvent un simple nom de quartier en texte libre).
+
+**Décision retenue** : pas de géocodage automatique de l'adresse (imprécis/payant pour des
+adresses informelles) — placement **manuel** du repère GPS par le DG/agent, en cliquant sur
+une carte OpenStreetMap (Leaflet, gratuit, sans clé API). Un Bien sans repère placé reste
+normalement visible en liste ; la vue Carte l'exclut simplement et l'indique en toutes
+lettres (jamais silencieusement absent).
+
+**Lacune trouvée en construisant la fonctionnalité** : aucune fiche d'édition d'un Bien
+existant n'existait côté frontend (`updateProperty` était défini dans le client API mais
+jamais appelé) — impossible pour le DG d'ajouter un repère à l'un des 5 Biens déjà créés
+sans elle. Comblée par une carte « Localisation » dédiée sur la fiche du Bien (schéma
+identique à la carte « Compteurs & fluides » déjà existante : bouton Configurer/Modifier,
+enregistrement via `PATCH /api/properties/:id`), plutôt qu'un formulaire d'édition complet
+du Bien — hors du périmètre demandé.
+
+**Bug non trivial trouvé et corrigé en testant dans le navigateur** : `react-leaflet`
+(`<MapContainer>`) lève `Map container is already initialized.` dès le premier affichage,
+uniquement en dev sous Next.js (React 18 + `reactStrictMode: true`, déjà actif dans
+`next.config.mjs` pour tout le projet). Cause : le `mapRef` interne de `react-leaflet` est un
+`useCallback` à dépendances vides — sa fermeture capture `context` (`null`) une fois pour
+toutes ; si React ré-invoque ce callback sur le même nœud DOM (monté/démonté deux fois par
+StrictMode, comportement volontaire de React 18 pour détecter les effets impurs), la
+vérification `context === null` reste vraie même après une première initialisation réelle,
+et `new L.Map()` explose sur un conteneur qui porte déjà `_leaflet_id` (confirmé en lisant
+`node_modules/leaflet/dist/leaflet-src.js`, `Map.prototype._initContainer`). Corrigé en
+n'utilisant **pas** `<MapContainer>` : `location-picker.tsx` et `portfolio-map.tsx` pilotent
+Leaflet à la main dans un `useEffect` classique (`L.map()` au montage, `map.remove()` au
+nettoyage) — un double montage/démontage StrictMode s'y comporte correctement puisque
+`map.remove()` efface bien `_leaflet_id` avant le remontage suivant. `react-leaflet` retiré
+des dépendances (devenu inutile).
+
+### Fichiers ajoutés/modifiés
+
+- **`backend/src/db/migrations/026_property_coordinates.sql`** : `properties.latitude`
+  (`DECIMAL(10,7)`), `properties.longitude` — nullables, jamais renseignées automatiquement.
+- **`backend/src/validators/properties.js`** : `latitude`/`longitude` optionnelles sur
+  création et modification, bornées (`[-90, 90]` / `[-180, 180]`), et un `refine` imposant
+  qu'elles soient renseignées **ensemble** (jamais l'une sans l'autre).
+- **`backend/src/routes/properties.js`** : `toPublicProperty` expose `latitude`/`longitude` ;
+  `POST`/`PATCH /api/properties/:id` les acceptent (mêmes règles de portée agent que le reste
+  du Bien).
+- **`frontend/lib/map-icon.ts`** (nouveau) : repère en forme de goutte en CSS pur
+  (`L.divIcon`) — évite de dépendre des images `marker-icon.png`/`marker-shadow.png` par
+  défaut de Leaflet, dont l'URL ne se résout pas correctement une fois passées par le
+  bundler de Next.js.
+- **`frontend/components/properties/location-picker.tsx`** (nouveau) : carte cliquable pour
+  placer/déplacer un repère (Leaflet impératif, voir le bug ci-dessus) — un seul marqueur,
+  jamais dupliqué au clic suivant.
+- **`frontend/components/properties/portfolio-map.tsx`** (nouveau) : un repère par Bien
+  localisé, popup (code, propriétaire, adresse, lien vers la fiche) construit **via le DOM**
+  (`createElement`/`textContent`, jamais une chaîne HTML interpolée) pour ne jamais injecter
+  du HTML à partir d'un champ texte libre (adresse, nom du propriétaire).
+- **`frontend/app/espace/biens/nouveau/nouveau-view.tsx`** : section « Localisation sur la
+  carte (optionnel) » — bouton Placer/Modifier, carte affichée à la demande seulement (jamais
+  chargée si le DG ne l'ouvre pas).
+- **`frontend/app/espace/biens/[id]/bien-view.tsx`** : nouvelle carte « Localisation »
+  (voir la lacune ci-dessus), même schéma d'édition que « Compteurs & fluides ».
+- **`frontend/app/espace/biens/biens-view.tsx`** : bascule Liste/Carte ; la vue Carte indique
+  en toutes lettres le nombre de Biens sans coordonnées (jamais silencieusement absents).
+- Les trois composants important Leaflet sont chargés via `next/dynamic(..., { ssr: false })`
+  (Leaflet accède à `window` au chargement du module — incompatible avec le rendu serveur).
+- `frontend/package.json` : `leaflet` + `@types/leaflet` ; `react-leaflet` installé puis
+  retiré (voir le bug ci-dessus).
+
+### Tests effectués (API + navigateur, cabinet jetable)
+
+- [x] Script API bout-en-bout : création d'un Bien avec coordonnées, création d'un second
+  sans coordonnées puis `PATCH` pour les ajouter après coup, les deux bien exposés par
+  `GET /api/properties` ensuite.
+- [x] Validateur : latitude hors `[-90, 90]` → 400 ; latitude fournie sans longitude → 400
+  (jamais l'une sans l'autre).
+- [x] Navigateur (Firefox headless) : vue Carte affiche les repères réels avec tuiles
+  OpenStreetMap chargées, popup correct au clic (code, propriétaire, adresse, lien) ;
+  formulaire de création — ouverture de la carte, clic pour placer un repère (exactement un
+  marqueur), second clic ailleurs (le repère se déplace, n'en crée pas un second), création
+  du Bien de bout en bout jusqu'à la fiche affichant la carte « Localisation ».
+- [x] `tsc --noEmit` et `next lint` sans erreur sur tous les fichiers touchés.
+- Cabinets de test supprimés après coup ; les 7 Biens réels de KIko Store non touchés.
+
+### Reste à faire (idées n°3, 5 à 9)
+
+Non commencées, à la demande explicite (une idée à la fois) : assistant de clôture
+mensuelle, score de fiabilité locataire, relances WhatsApp automatiques, envoi automatique
+des quittances, fiche de vacance/relocation, vérification d'authenticité des attestations
+(QR code), rappel de renouvellement de bail, carnet d'entretien préventif.
+
+---
+
+## Étape 14 — Attribution de Biens à un agent (portefeuille restreint)
+
+Demande directe de l'utilisateur (pas une idée du brainstorm de l'étape 13) : « ajouter un
+nombre donné de Biens à un agent pour la gestion ». Distincte des idées d'innovation
+ci-dessus, donc sa propre étape plutôt qu'une sous-section de plus — c'est ainsi qu'elle est
+nommée dans tout le code (`services/scope.js` et partout où la portée est appliquée).
+
+**Objectif** : un agent peut être restreint à un sous-ensemble du portefeuille (les seuls
+Biens qui lui sont attribués), en cascade sur tout ce qui en dépend — unités, locataires,
+baux, paiements, plaintes, propriétaires.
+
+**Décisions prises avec l'utilisateur avant codage** (question posée, car structurante) :
 l'attribution **restreint réellement l'accès** de l'agent (pas juste une étiquette
 informative) ; un agent **sans aucune attribution garde un accès complet** au portefeuille
 (comportement historique inchangé par défaut — ne jamais couper l'accès existant d'un agent
 réel du jour au lendemain) ; **un seul agent à la fois par Bien** (réattribuer en retire
 silencieusement un autre).
+
+### Fichiers ajoutés/modifiés
 
 - Migration `023_property_agent.sql` : `properties.agent_id` (nullable, FK `users`,
   `ON DELETE SET NULL` — supprimer un employé libère simplement ses Biens, jamais de
@@ -2442,20 +2693,1163 @@ silencieusement un autre).
 - Frontend : carte « Biens gérés » sur la fiche d'un agent (recherche + sélection multiple,
   un seul appel d'attribution, retrait par Bien) ; badge « Géré par… » sur la fiche du Bien
   (lecture seule — l'attribution se pilote depuis la fiche employé).
-- **Bug UX trouvé et corrigé en testant** : la liste déroulante de résultats de recherche
-  (position absolue) recouvrait le bouton « Attribuer », le rendant incliquable une fois un
-  résultat sélectionné. Corrigé en plaçant les puces sélectionnées + le bouton **au-dessus**
-  du champ de recherche plutôt qu'en dessous.
-- Testé : script bout-en-bout sur cabinet jetable (2 agents, 3 Biens, 1 propriétaire) — 25/25
-  (visibilité avant/après attribution, 404 hors portée sur Biens/locataires/baux/plaintes,
-  création de locataire refusée hors portée puis acceptée dans la portée, paiement de loyer
-  refusé/accepté selon la portée, fiche propriétaire filtrée, réattribution qui bascule la
-  portée d'un agent à l'autre, DG toujours complet) ; navigateur (Firefox headless, tenant
-  réel KIko Store, aucune attribution laissée après coup) pour la carte « Biens gérés ».
 
-### Reste à faire (idées n°1, 3 à 10)
+### Bug UX trouvé et corrigé en testant
 
-Non commencées, à la demande explicite (une idée à la fois) : portail propriétaire,
-assistant de clôture mensuelle, score de fiabilité locataire, alertes prédictives de
-retard, relances WhatsApp automatiques, envoi automatique des quittances, fiche de
-vacance/relocation, carte du portefeuille immobilier, carnet d'entretien des biens.
+La liste déroulante de résultats de recherche (position absolue) recouvrait le bouton
+« Attribuer », le rendant incliquable une fois un résultat sélectionné. Corrigé en plaçant
+les puces sélectionnées + le bouton **au-dessus** du champ de recherche plutôt qu'en dessous.
+
+### Tests effectués
+
+Script bout-en-bout sur cabinet jetable (2 agents, 3 Biens, 1 propriétaire) — 25/25
+(visibilité avant/après attribution, 404 hors portée sur Biens/locataires/baux/plaintes,
+création de locataire refusée hors portée puis acceptée dans la portée, paiement de loyer
+refusé/accepté selon la portée, fiche propriétaire filtrée, réattribution qui bascule la
+portée d'un agent à l'autre, DG toujours complet) ; navigateur (Firefox headless, tenant
+réel KIko Store, aucune attribution laissée après coup) pour la carte « Biens gérés ».
+
+---
+
+## Étape 15 — État des lieux par zones (refonte)
+
+Demande directe de l'utilisateur (pas une idée du brainstorm de l'étape 13) : remplacer la
+grille plate à 9 postes fixes (bon/moyen/mauvais) de l'étape 4/6 par une fiche organisée en
+zones, avec éléments personnalisables, photo par élément, verrouillage à la signature, et
+comparaison automatique entrée/sortie. Spécification très détaillée fournie par
+l'utilisateur (zones et éléments prédéfinis exacts, états BE/ME/SR) ; deux points
+réellement ouverts (non déductibles de la spec) tranchés avec l'utilisateur avant codage :
+**signature dessinée à l'écran** (plutôt qu'un nom tapé) à la finalisation, et une **échelle
+ordonnée BE > SR > ME** pour détecter une dégradation entre l'entrée et la sortie (SR n'est
+ni clairement meilleur ni pire que ME dans l'énoncé — l'utilisateur a confirmé cette lecture).
+
+**Zones/éléments standards** : Devanture (8), Chambre (12), Salon (7), Cuisine (8),
+Douche/Salle de bain (8) — voir `constants/inspection.js` pour la liste exacte. L'utilisateur
+peut ajouter un élément personnalisé dans une zone existante, ou une zone entièrement
+nouvelle (garage, cour, couloir…) — ad hoc, propres à ce Bien, jamais mémorisées comme
+catalogue réutilisable sur un autre Bien (hors périmètre demandé).
+
+**Cycle de vie** (nouveau — l'ancien système était un envoi unique, immédiatement figé) :
+brouillon (créé, modifiable zone par zone, photo par élément) → finalisation (exige un état
+renseigné sur CHAQUE élément + les deux signatures ; verrouille définitivement, aucune route
+de modification n'existe une fois finalisée). Pour la sortie, c'est la finalisation — pas la
+création du brouillon — qui termine le bail et libère l'unité, pour ne jamais impacter le
+bail tant que la fiche n'est pas réellement complète et signée.
+
+**Lacune trouvée en construisant la comparaison** : pour que les postes de l'entrée et de la
+sortie se correspondent élément par élément (y compris les zones/éléments personnalisés),
+le brouillon de sortie est amorcé en **copiant la structure de la fiche d'entrée** (mêmes
+`key` de zone/élément, état remis à zéro) plutôt que de repartir du modèle standard — sinon
+un élément personnalisé ajouté à l'entrée n'aurait eu aucun équivalent à comparer à la
+sortie. À défaut de fiche d'entrée, la sortie repart du modèle standard (comportement de
+repli, pas d'erreur).
+
+**Compatibilité avec les fiches déjà existantes** (2 états des lieux d'entrée + 1 de sortie
+réels chez KIko Store, ancien format) : la colonne `items` change de FORME (nouvel objet
+`{zones:[...]}`) mais pas de TYPE (toujours JSON) — aucune migration de données. Les fiches
+anciennes sont normalisées à l'AFFICHAGE seulement (`services/inspection.js`,
+`normalizeStoredItems`), regroupées dans une zone synthétique « Éléments vérifiés (ancien
+format) », `bon`/`moyen`/`mauvais` mappés vers `BE`/`SR`/`ME` — jamais réécrites en base.
+Elles apparaissent déjà comme `finalized` (`DEFAULT 'finalized'` sur la nouvelle colonne
+`status`, appliqué par MySQL aux lignes déjà présentes lors de l'`ALTER TABLE`).
+
+### Fichiers ajoutés/modifiés
+
+- **`backend/src/db/migrations/027_inspection_zones.sql`** : `status` (`draft`/`finalized`,
+  défaut `finalized` pour la compatibilité rétroactive), `finalized_at`, `finalized_by`,
+  `tenant_signature_path`, `agent_signature_path` — sur `move_in_reports` ET
+  `move_out_reports`.
+- **`backend/src/constants/inspection.js`** (réécrit) : zones/éléments standards, échelle
+  `INSPECTION_CONDITION_RANK` (BE=2, SR=1, ME=0), mappage de compatibilité
+  `LEGACY_CONDITION_TO_NEW`.
+- **`backend/src/services/inspection.js`** (nouveau) : `cloneMasterZones`/`cloneZonesFrom`
+  (amorçage), `normalizeStoredItems` (compatibilité ancien format), `findItem`,
+  `getMissingConditionLabels` (validation avant finalisation), `sumDeductions`,
+  `toPublicInspectionReport`/`toPublicMoveOutReport` (sérialisation partagée avec
+  `routes/renters.js`, qui embarque ces fiches dans la liste des baux d'un locataire).
+- **`backend/src/validators/inspections.js`** (nouveau) : schémas zones/éléments (`key`
+  borné par un motif strict, jamais interpolé dans un chemin de fichier), brouillon
+  entrée/sortie ; primitives (`optionalText`, `dateSchema`, `amountSchema`) exportées depuis
+  `validators/renters.js` pour être réutilisées ici plutôt que dupliquées.
+- **`backend/src/routes/leases.js`** : remplace les 5 anciennes routes par 12 nouvelles —
+  par type de fiche (entrée/sortie) : `GET`, `POST` (démarre le brouillon), `PATCH` (enregistre
+  zones/notes/retenues), `POST .../items/:zoneKey/:itemKey/photo` + `DELETE` (photo par
+  élément, réutilise `utils/uploads.js`), `POST .../finalize` (multipart 2 signatures,
+  verrouille). La sortie recalcule le décompte de caution à la finalisation à partir des
+  données PERSISTÉES (jamais confiance dans ce que le client prétend avoir calculé).
+- **`backend/src/services/pdf.js`** (`streamMoveOutPdf`) : adapté à la forme publique par
+  zones (au lieu de la ligne SQL brute à plat) ; insère désormais les deux images de
+  signature dans le PV de sortie.
+- **`backend/src/server.js`** : ajout d'un gestionnaire `uncaughtException` global — voir bug
+  ci-dessous.
+- Frontend : `lib/constants/inspection.ts` (miroir), `lib/api/renters.ts` (types
+  `InspectionZone`/`InspectionItem`/`InspectionReport`, fonctions draft/patch/photo/finalize
+  partagées entrée/sortie via un paramètre `kind`), `lib/inspection-comparison.ts` (nouveau —
+  `compareInspectionReports`, comparaison élément par élément), `components/inspections/`
+  (nouveau dossier : `inspection-form.tsx` éditeur de brouillon partagé, `inspection-readonly.tsx`
+  affichage figé, `signature-pad.tsx` pavé de signature en `<canvas>` pur — aucune
+  bibliothèque, `finalize-section.tsx`, `signature-block.tsx`), pages réécrites
+  `app/espace/locataires/[id]/etat-des-lieux/` et `.../sortie/` (brouillon → finalisation,
+  section de comparaison en direct pendant la saisie de la sortie).
+
+### Bug non trivial trouvé et corrigé en testant — crash serveur global sur un PNG corrompu
+
+En testant la finalisation avec un PNG de test mal formé (CRC invalide), **tout le process
+Express s'est arrêté** — pas seulement la requête en cours. Cause : `doc.image()` de PDFKit
+décode un PNG via l'API **asynchrone** de zlib (`png-js`) ; quand le décodage échoue, l'erreur
+est levée dans un callback natif, hors de toute pile synchrone — le `try/catch` autour de
+`doc.image()` (déjà présent pour l'attestation) ne peut structurellement pas l'intercepter,
+et Node la traite comme une exception non capturée qui tue le process. Un seul fichier
+corrompu (signature ou cachet) aurait donc mis l'API hors ligne pour **toutes les
+entreprises** jusqu'au redémarrage. Corrigé en ajoutant un gestionnaire
+`process.on('uncaughtException', ...)` dans `server.js` : ce process HTTP n'a pas d'état
+mémoire partagé entre requêtes (hors le pool MySQL, qui se reconnecte seul), donc
+journaliser et continuer est plus sûr ici que redémarrer à chaud pour un incident isolé.
+Une vraie signature dessinée au canvas ne produit jamais un PNG corrompu — ce filet est une
+protection en profondeur pour d'éventuels autres cas (upload tronqué, encodeur non standard).
+
+### Bug trouvé et corrigé en testant — état de brouillon jamais appliqué
+
+Les deux `INSERT` de démarrage de brouillon (entrée et sortie) omettaient la colonne
+`status` : ils héritaient donc du `DEFAULT 'finalized'` de la migration (posé pour la
+compatibilité rétroactive des fiches déjà existantes) — chaque nouvelle fiche démarrait déjà
+« finalisée », impossible à modifier. Corrigé en fixant explicitement `status = 'draft'`
+dans les deux `INSERT`. Trouvé immédiatement par le script de test bout-en-bout (le premier
+`PATCH` du brouillon échouait en 409).
+
+### Tests effectués (API + navigateur, cabinet jetable + tenant réel KIko Store)
+
+- [x] Script API bout-en-bout (32 vérifications) : brouillon d'entrée amorcé avec les 5
+  zones standards ; élément et zone personnalisés ajoutés puis persistés ; finalisation
+  refusée (400, liste des postes manquants) tant qu'un état manque ; finalisation réussie
+  avec 2 signatures PNG valides ; `PATCH` après finalisation → 409 ; brouillon de sortie
+  correctement amorcé depuis les zones/éléments de l'entrée (y compris personnalisés),
+  conditions remises à zéro ; retenues par élément + autres retenues → total/net calculés
+  puis recalculés à l'identique à la finalisation ; bail terminé + unité libérée seulement à
+  la finalisation de la sortie ; PDF téléchargeable seulement une fois finalisée ; règle de
+  dégradation (BE→ME signalé, SR→BE non signalé) vérifiée par calcul direct.
+- [x] Script API dédié (16 vérifications) : upload/suppression de photo par élément
+  (fichier statique ensuite accessible), élément/zone inconnu → 404 ; les 3 fiches réelles de
+  KIko Store (ancien format) toujours lisibles via les vraies routes, normalisées en zones,
+  PDF de sortie toujours généré sans erreur.
+- [x] Navigateur (Firefox headless, cabinet jetable) : brouillon d'entrée avec zone/élément
+  personnalisés visibles, sélection BE/ME/SR, pavé de signature réellement dessiné (tracé au
+  curseur) puis finalisation → fiche verrouillée avec les deux signatures affichées et
+  « Finalisée le … » ; brouillon de sortie amorcé avec la zone personnalisée de l'entrée ;
+  dégradation d'un élément → section de comparaison affichant immédiatement « 1 élément
+  dégradé » en rouge, avec le repli/déploiement des autres éléments comparés.
+- [x] `tsc --noEmit` et `next lint` sans erreur sur tous les fichiers touchés ;
+  `node --check` sur tous les fichiers backend touchés.
+- Cabinets de test supprimés après coup ; les 14 baux réels de KIko Store non touchés.
+
+---
+
+## Étape 16 — Toutes les opérations datées
+
+Demande directe de l'utilisateur : « toutes les opérations effectuées sur la plateforme
+doivent être datées ». Audit ciblé (agent dédié, lecture seule) pour trouver les écrans où
+seul l'auteur d'une action était visible, sans sa date — plutôt qu'une supposition, une revue
+systématique de `components/ui/attribution.tsx` (utilisé partout où « X créé par… » s'affiche)
+et des écrans de liste/historique.
+
+**Deux catégories de lacunes trouvées** :
+1. La donnée existait déjà côté serveur mais n'était pas affichée (`property.createdAt`,
+   `owner.createdAt`, `renter.createdAt` — jamais passés au composant `Attribution` ; liste
+   des employés et des plaintes sans colonne de date alors que le détail l'affiche déjà).
+2. La donnée n'existait carrément pas encore : l'attribution d'un Bien à un agent (étape 14)
+   et le placement d'un repère GPS (étape 13, idée n°10) ne posaient aucune colonne de date à
+   la base ; la génération du lien de portail (propriétaire/locataire, étape 13) n'était pas
+   datée non plus malgré son importance (un lien compromis doit pouvoir être daté).
+
+### Fichiers ajoutés/modifiés
+
+- **`backend/src/db/migrations/028_operation_dates.sql`** : `properties.agent_assigned_at`,
+  `properties.location_set_at`, `owners.portal_link_created_at`,
+  `renters.portal_link_created_at` — toutes nullables, `NULL` sur les enregistrements
+  antérieurs à cette étape (jamais de date inventée rétroactivement, voir tests ci-dessous).
+- **`backend/src/routes/employees.js`** : `agent_assigned_at = NOW()` à l'attribution,
+  remis à `NULL` au retrait ; `loadManagedProperties` renvoie désormais `assignedAt`.
+- **`backend/src/routes/properties.js`** : `location_set_at` posé/effacé en même temps que
+  `latitude`/`longitude` (création et modification) ; `toPublicProperty` expose
+  `agentAssignedAt`/`locationSetAt`.
+- **`backend/src/routes/owners.js`**, **`backend/src/routes/renters.js`** : `portal_link_created_at
+  = NOW()` à chaque (re)génération du lien portail — y compris la génération automatique à la
+  création d'un locataire (étape 13) ; exposé comme `portalLinkCreatedAt`.
+- **`backend/src/routes/renters.js`** (`LEASE_UNIT_PROPERTY_SELECT`/`toPublicLease`) : le bail
+  n'exposait `createdAt` nulle part malgré la colonne déjà présente — corrigé.
+- **`frontend/components/ui/attribution.tsx`** : nouvelle prop optionnelle `at`, affichée
+  comme « … le {date} » à la suite de l'auteur — un seul endroit à corriger pour dater les
+  6 usages du composant (Bien, Propriétaire, Locataire, Bail).
+- Frontend, dates rendues visibles : `employes-view.tsx` (liste, « Créé le »),
+  `plaintes-view.tsx` (liste, « Signalée le »), `employes/[id]/editer-view.tsx`
+  (« Biens gérés », « Attribué le » par Bien), `proprietaire-view.tsx` et `locataire-view.tsx`
+  (carte Portail, « Lien généré le »), `bien-view.tsx` (carte Localisation, « Repère placé
+  le »), `locataire-view.tsx` (les deux lignes état des lieux ajoutées à l'étape précédente
+  précisent maintenant depuis quand un brouillon est en cours, pas seulement son statut).
+
+### Tests effectués (API + navigateur, cabinet jetable + tenant réel KIko Store)
+
+- [x] Script API (16 vérifications) : propriétaire sans lien portail → `portalLinkCreatedAt`
+  `null` → généré → non `null` ; Bien sans repère → `locationSetAt` `null` → coordonnées
+  posées → daté ; locataire créé → lien portail auto-généré déjà daté ; régénération → date
+  mise à jour (postérieure à la précédente) ; bail exposé avec `createdAt` ; agent → Bien
+  attribué → `assignedAt` renseigné → retiré → `assignedAt` et `agentAssignedAt` à `null`.
+- [x] Vérifié sur le vrai portefeuille KIko Store (lecture seule) : tous les écrans touchés
+  chargent toujours sans erreur ; un lien de portail locataire généré **avant** cette étape
+  a bien `portalLinkCreatedAt: null` (donnée absente à l'époque, jamais inventée) — la carte
+  masque correctement la ligne de date dans ce cas plutôt que d'afficher une date invalide.
+- [x] Navigateur (Firefox headless, cabinet jetable) : fiche propriétaire affichant à la fois
+  « Fiche créée par … le 14 septembre 2026 » et « Lien généré le 14/09/2026 » ; liste des
+  employés affichant « Créé le 14/09/2026 » sous chaque ligne.
+- [x] `tsc --noEmit` et `next lint` sans erreur ; `node --check` sur tous les fichiers backend
+  touchés.
+- Cabinets de test supprimés après coup ; les 14 baux réels de KIko Store non touchés.
+
+---
+
+## Étape 17 — Retour immédiat sur chaque action (notifications toast)
+
+Demande directe de l'utilisateur : « je veux que la plateforme soit très réactive, que les
+utilisateurs soient vraiment heureux ». Trop large pour deviner un seul écran — question
+posée pour prioriser : entre le retour immédiat sur chaque action, la vitesse perçue au
+chargement, et le polish visuel, l'utilisateur a choisi le premier (impact le plus large,
+sur le plus d'écrans). Jusqu'ici, une action réussie n'avait souvent **aucun** retour visible
+(le formulaire se refermait silencieusement), ou un bandeau inline qui disparaissait à la
+navigation suivante (contournement par paramètre d'URL `?queued=1` pour les plaintes
+hors-ligne, devenu inutile).
+
+**Décision d'architecture** : un système de toasts monté une seule fois à la racine
+(`app/layout.tsx`, hors de tout écran), donc les confirmations survivent à une navigation
+(`router.push` juste après un `toast.success(...)` s'affiche bien sur la page de destination)
+— contrairement aux anciens bandeaux inline, détruits dès que le composant qui les affichait
+disparaissait.
+
+### Fichiers ajoutés/modifiés
+
+- **`frontend/lib/toast/toast-context.tsx`** (nouveau) : `ToastProvider`/`useToast()` —
+  `success`/`warning`/`error`/`info`, empilables, disparition automatique après 4 s ou
+  fermeture manuelle.
+- **`frontend/components/ui/toast.tsx`** (nouveau) : pile de toasts, positionnée sous
+  l'en-tête fixe (`top-[72px]`, sous peine de le recouvrir), icône + couleur par variante
+  (mêmes tokens success/warning/danger/info que `Badge`/`Button`), animation d'entrée
+  (`app/globals.css`, `@keyframes toast-in`).
+- **`frontend/app/layout.tsx`** : `<ToastProvider>` monté en dehors de `<AuthProvider>` —
+  disponible même sur les pages publiques (connexion, portails).
+- Environ 25 points de mutation, à travers 8 modules, dotés d'un toast là où il n'y avait
+  aucun retour ou un bandeau qui disparaissait à la navigation : paiements et baux
+  (`locataires/[id]`), dépenses/compteurs/unités/repère GPS (`biens/[id]`), plaintes
+  (déclaration, modification, changement de statut — `plaintes/nouveau` et
+  `plaintes/[id]`), employés (modifications, attribution/retrait de Biens —
+  `employes/[id]`), propriétaires (modifications, versement, taux de commission —
+  `proprietaires/[id]` et `proprietaires/nouveau`), Biens (création — `biens/nouveau`),
+  charges/relevés (nouvelle charge, création/sauvegarde/validation/réouverture/suppression
+  d'un relevé — `charges/nouveau`, `charges/releves`, `charges/releve/[id]`), comptabilité
+  (dépense, date de démarrage, clôture d'un mois — `comptabilite-view.tsx`), état des lieux
+  (brouillon, photo, finalisation — étape 15, `etat-des-lieux-view.tsx` et `sortie-view.tsx`).
+- Suppression du contournement `?queued=1` (paramètre d'URL) sur `plaintes/nouveau` /
+  `plaintes-view.tsx`, devenu inutile — le toast persiste naturellement à travers la
+  navigation, sans avoir besoin d'un paramètre pour transporter l'information.
+
+### Bug visuel trouvé et corrigé en testant
+
+Le premier jet positionnait la pile de toasts en haut absolu de l'écran (`top-0`), qui
+recouvrait l'en-tête `sticky` de l'espace (`z-40`) puisque les toasts sont au-dessus
+(`z-[100]`) — confirmé en navigateur, le toast s'affichait par-dessus le logo et le bouton
+« Se déconnecter ». Corrigé en décalant la pile sous l'en-tête (`top-[72px]`).
+
+### Tests effectués (navigateur, cabinet jetable)
+
+- [x] Firefox headless : modification d'un propriétaire → toast vert « Modifications
+  enregistrées. » affiché sous l'en-tête (jamais par-dessus), disparu automatiquement après
+  la fenêtre de 4 s, sans laisser de trace résiduelle dans le DOM.
+- [x] `tsc --noEmit` et `next lint` sans erreur (y compris un avertissement de dépendance de
+  `useEffect` sur une ref, corrigé en capturant sa valeur dans une variable locale).
+- Cabinets de test supprimés après coup.
+
+## Étape 18 — Outils comptables/agents (tâches, rapport, historique)
+
+Question ouverte posée à l'utilisateur : « quelle fonctionnalité ajouter pour les comptables
+et les agents, comme travail, qui soit vraiment importante ? ». Cinq idées proposées ;
+l'utilisateur en a choisi trois, dans cet ordre explicite : **« Tableau de bord en premier /
+Rapport mensuel exportable / Historique personnel »**.
+
+### Feature 1 — Tableau de bord « Mes tâches du jour » 🟢 Validée
+
+Objectif : à la connexion, un comptable ou un agent voit d'emblée ce qui attend une action de
+sa part, sans avoir à visiter chaque module un par un. Réservé aux employés — le DG a déjà sa
+propre vue d'ensemble (portefeuille, alertes prédictives) et cette carte ne lui apporterait
+rien de plus.
+
+Contenu, selon le rôle (déterminé par les permissions réelles de l'employé, jamais par un rôle
+supposé) :
+- **Agent** : relances en retard et alertes prédictives sur son portefeuille (respecte le
+  périmètre de l'étape 14), plaintes ouvertes, états des lieux en brouillon.
+- **Comptable** : relevés de compteurs en attente de validation, dépenses sans justificatif,
+  mois clôturable (réutilise `getPeriodClosability`/`isPeriodClosed` de la comptabilité —
+  aucune logique dupliquée).
+
+#### Fichiers ajoutés/modifiés
+
+- **`backend/src/routes/tasks.js`** (nouveau) : `GET /api/tasks` — construit
+  `{ agent, accountant }` (chacun `null` si l'employé n'a pas la permission correspondante),
+  en réutilisant `listPortfolioArrears`, `listPredictiveLateAlerts`, `getPeriodClosability`,
+  `isPeriodClosed` et `resolvePropertyScope` déjà existants plutôt que de recalculer quoi que
+  ce soit.
+- **`backend/src/routes/index.js`** : montage de `/tasks` **avant**
+  `router.use(utilityReadingRoutes)` — ce routeur, monté sans préfixe, intercepte toute
+  requête qui l'atteint (piège déjà rencontré aux étapes des portails).
+- **`frontend/lib/api/tasks.ts`** (nouveau) : types + `getMyTasks(accessToken)`.
+- **`frontend/components/espace/my-tasks-card.tsx`** (nouveau) : carte avec une section par
+  type de tâche (masquée si vide), 4 éléments visibles max + lien « Voir tout » vers l'écran
+  complet, ou lien direct par élément.
+- **`frontend/app/espace/espace-view.tsx`** : `{!isDg && <MyTasksCard />}` entre l'en-tête et
+  la grille de cartes existante.
+
+#### Bug trouvé et corrigé en testant
+
+`req.user.permissions` n'existe pas — les permissions ne sont jamais embarquées dans le JWT,
+uniquement stockées dans la table `user_permissions`. La première version renvoyait donc
+systématiquement `agent: null, accountant: null`, même pour un employé qui devait voir une
+des deux sections (détecté par les assertions du test automatisé, jamais vu par
+l'utilisateur). Corrigé en appelant `getPermissions(req.user.id, req.user.role)` du service
+`services/permissions.js`, comme le fait déjà le frontend au login.
+
+#### Tests effectués (cabinet jetable)
+
+- [x] 17 assertions automatisées (script API) : sections correctement peuplées/vides selon
+  le rôle et les permissions, respect du périmètre agent de l'étape 14 (un agent sans Bien
+  attribué garde un accès complet ; ce n'est qu'en lui attribuant un Bien à lui — pas à un
+  autre agent — qu'il perd la visibilité sur les Biens des autres).
+- [x] Firefox headless : les 6 sections attendues s'affichent, badge de total correct (« 6 »),
+  capture d'écran vérifiée visuellement.
+- Cabinet de test supprimé après coup, KIko Store (14 baux) inchangé.
+
+### Feature 2 — Rapport mensuel exportable 🟢 Validée
+
+Objectif : le comptable peut imprimer/exporter en PDF le même tableau de bord comptable qu'à
+l'écran, pour l'archiver ou le transmettre — même période (`from`/`to`) que l'écran.
+
+#### Fichiers ajoutés/modifiés
+
+- **`backend/src/routes/accounting.js`** : extraction du corps de `GET /dashboard` dans une
+  fonction réutilisable `computeAccountingDashboard(user, { from, to })` (aucun calcul
+  dupliqué), et nouvelle route `GET /dashboard.pdf` qui l'appelle puis passe le résultat à
+  `streamAccountingReportPdf`.
+- **`backend/src/services/pdf.js`** : nouvelle fonction `streamAccountingReportPdf(res,
+  { tenant, dashboard })` — en-tête/pied de page réutilisés, titre + période, statut
+  ouvert/clôturé, bloc de synthèse (loyers +, versements -, dépenses -, solde net, ligne
+  informative impayés/charges/travaux), puis trois sections listées de façon paginée
+  (dépenses par catégorie, charges SONEB/SBEE impayées par type, locataires en retard —
+  plafonné à 20 avec mention du dépassement).
+- **`frontend/lib/api/accounting.ts`** : `accountingReportPdfPath(from, to)`.
+- **`frontend/app/espace/comptabilite/comptabilite-view.tsx`** : bouton « Rapport mensuel »
+  (icône `FileDown`) à côté du sélecteur de mois, ouvre le PDF via `openAuthenticatedPdf`.
+
+#### Tests effectués (cabinet jetable)
+
+- [x] Script API : dashboard JSON toujours correct après le refactoring (non-régression),
+  téléchargement du PDF (`200`, `Content-Type: application/pdf`, en-tête `%PDF-` valide),
+  agent sans la permission comptabilité reçoit bien `403` sur `/dashboard.pdf` comme sur
+  `/dashboard`.
+- [x] Deuxième cabinet jetable avec données couvrant les trois sections à la fois (loyers,
+  versement, deux catégories de dépenses, une charge SONEB impayée générée via le cycle
+  complet relevé → validation, un locataire en retard) : PDF extrait avec `pdftotext`,
+  contenu vérifié ligne par ligne — montants signés corrects, solde net exact (55 000 −
+  30 000 − 23 000 = 2 000 FCFA), libellés de catégorie/fluide résolus correctement,
+  formatage FCFA cohérent avec l'écran.
+- Cabinets de test supprimés après coup, KIko Store (14 baux) inchangé.
+
+### Feature 3 — Historique personnel 🟢 Validée
+
+Objectif : le comptable/l'agent voit l'historique de ses propres actions passées. Le
+« Journal d'activité » existant (`/espace/journal`, `services/activity.js`) est réservé au
+DG (`RequireAuth roles={["dg"]}`) et montre TOUT le cabinet, sans filtre par auteur.
+
+#### Fichiers ajoutés/modifiés
+
+- **`backend/src/services/activity.js`** : `listRecentActivity(tenantId, limit, actorUserId)`
+  et `listDeletedEntries(tenantId, actorUserId)` acceptent désormais un `actorUserId`
+  optionnel — quand fourni, chaque sous-requête (l'une des 15 du journal) ajoute un filtre
+  sur sa propre colonne d'auteur (`created_by`/`recorded_by`/`conducted_by`/`closed_by`/
+  `set_by`/`resolved_by`/`deleted_by` selon le module). Aucun calcul dupliqué : le journal
+  DG (`routes/dashboard.js`) continue d'appeler ces mêmes fonctions sans ce paramètre
+  (comportement inchangé, toujours le journal complet).
+- **`backend/src/routes/history.js`** (nouveau) : `GET /api/history?limit=` — appelle
+  `listRecentActivity(tenantId, limit, req.user.id)`, c'est-à-dire toujours les actions du
+  *demandeur*, jamais d'un tiers.
+- **`backend/src/routes/index.js`** : montage de `/history` **avant**
+  `router.use(utilityReadingRoutes)`, même piège que les autres routes préfixées de cette
+  étape.
+- **`frontend/lib/api/history.ts`** (nouveau) : `getMyHistory(accessToken, limit)`, réutilise
+  le type `ActivityEntry` de `lib/api/dashboard.ts`.
+- **`frontend/app/espace/historique/`** (nouveau, `historique-view.tsx` + `page.tsx`) :
+  reprend la mise en page du Journal DG (mêmes icônes par type d'action), sans la ligne
+  d'auteur (redondante — c'est toujours l'utilisateur lui-même) ; `RequireAuth
+  roles={["comptable", "agent"]}` — explicitement fermée au DG, qui a déjà le Journal complet.
+- **`frontend/components/espace/espace-header.tsx`** : lien de navigation « Historique »
+  ajouté, gardé par `!isDg` (symétrique du lien « Journal », gardé par `isDg`).
+
+#### Bug trouvé en préparant le test (script de test, pas l'application)
+
+Le script de préparation du test navigateur envoyait `confirmPassword` à
+`POST /api/auth/change-password`, qui attend en réalité `confirmNewPassword`
+(`validators/auth.js`) — Zod rejetait silencieusement la requête (mon script ne vérifiait
+pas le code retour), si bien que le mot de passe temporaire restait actif et le login créé
+pour le test échouait en boucle avec un message générique. Corrigé dans le script de test
+uniquement ; le comportement de l'API était correct depuis le début.
+
+#### Tests effectués (cabinet jetable)
+
+- [x] Script API dédié : deux comptables distincts (A et B) sur le même cabinet, chacun
+  enregistrant une dépense + (pour A) une création de propriétaire — 14 assertions : chacun
+  voit ses propres actions et ne voit PAS celles de l'autre, ni celles du DG ; le Journal DG
+  non filtré (`GET /api/dashboard/activity`) continue de tout voir (non-régression).
+- [x] Firefox headless : connexion en comptable, page « Mon historique » affichant
+  exactement les deux actions de ce comptable (propriétaire créé, dépense enregistrée) avec
+  icône/libellé/montant/date corrects ; lien « Historique » présent dans la navigation,
+  liens DG-only (« Employés », « Journal ») absents ; capture d'écran vérifiée.
+- Quatre cabinets de test supprimés après coup (dont ceux des Features 1 et 2), KIko Store
+  (14 baux) confirmé inchangé.
+
+Les trois idées demandées par l'utilisateur sont maintenant toutes codées, testées et
+validées.
+
+## Étape 19 — Refonte design professionnel des documents PDF
+
+Demande directe de l'utilisateur : « les PDF ne sont pas du tout professionnels [...] pour
+les factures on va utiliser la police "Courier New" [...] fait un bon design pro comme celui
+des grandes entreprises comme Google et Apple ». Deux questions posées pour cadrer une refonte
+qui touche 5 gabarits différents : (1) Courier New partout ou seulement sur les chiffres ? →
+l'utilisateur a choisi seulement les chiffres (montants, dates, numéros de référence,
+RCCM/IFU/téléphone) — le texte courant reste en Helvetica moderne, comme le fait Stripe ; (2)
+quels documents redessiner ? → l'utilisateur a choisi les 5 (quittance, rapport mensuel,
+relevé propriétaire, PV de sortie, attestation de loyer).
+
+### Fichiers modifiés
+
+- **`backend/src/services/pdf.js`** : refonte de la charte partagée par les 5 documents.
+  - Palette alignée sur celle de l'écran (`frontend/tailwind.config.ts` — mêmes valeurs
+    hexadécimales que `primary`/`ink`/`border`/`success`/`danger`/`warning`), pour qu'un PDF
+    ressemble à un écran de Lyko System plutôt qu'à un document à part.
+  - `FONT_MONO`/`FONT_MONO_BOLD` (`Courier`/`Courier-Bold`, l'équivalent Courier New des 14
+    polices standard PDF — aucune police à embarquer) appliqués à tout ce qui est un chiffre :
+    montants FCFA, dates, numéros de quittance, RCCM/IFU/téléphone, décomptes.
+  - `drawHeader` : fine barre d'accent en tête de page (touche « letterhead » qui manquait),
+    ligne d'identité légale (RCCM/IFU/téléphone) en Courier.
+  - `drawFooter` : désormais sur **toutes** les pages d'un document (avant : seulement la
+    dernière), avec pagination « X / Y » en Courier.
+  - `drawPanel`/`drawPanelRow` (nouveaux) : cartes à coins arrondis pour les blocs de synthèse
+    (montant reçu, décompte de caution, résumé comptable) à la place des rectangles à angles
+    vifs — remplace les 3 occurrences dupliquées de ce motif.
+  - `drawMetaLine` (nouveau) : ligne libellé/valeur sous chaque titre (« N° QT-2026-0042 ·
+    émise le 14 septembre 2026 »), alternant Helvetica (libellés) et Courier (valeurs) via
+    l'API « continued » de PDFKit.
+  - `drawRow` accepte une option `{ mono: true }` pour les valeurs numériques.
+- **`backend/src/constants/contract.js`** : `renderContractTemplateSegments` tague désormais
+  chaque placeholder substitué `mono` (téléphone, RCCM, IFU, date d'entrée, loyer, date) ou
+  `bold` (noms propres — locataire, entreprise, signataire, bien) plutôt qu'un simple booléen
+  gras — l'attestation de loyer profite de la même refonte sans dupliquer la logique.
+
+### Deux bugs PDFKit réels trouvés en testant (pas des bugs applicatifs)
+
+1. **`doc.characterSpacing(...)` n'existe pas comme méthode chaînable** dans PDFKit 0.15.2 (seul
+   `.text(str, {characterSpacing: N})` fonctionne) — utilisé pour l'étiquette « MONTANT REÇU »
+   en petites capitales espacées ; corrigé en passant l'option directement à `.text()`.
+2. **Chevauchement du pied de page avec le corps du texte sur un document long** (constaté sur
+   le vrai contrat personnalisé de KIko Store, 48 000+ caractères) : PDFKit déclenche son saut
+   de page automatique sur `.text()` en comparant `y` à `page.height - page.margins.bottom`,
+   MÊME avec des coordonnées absolues après `switchToPage()` — sans contournement, dessiner le
+   pied de page à y≈780 créait une page **blanche supplémentaire** à chaque itération au lieu
+   d'écrire sur la page visée (un document de 2 pages en ressortait avec 4, les vrais pieds de
+   page invisibles, relégués sur les pages 3-4 jamais vues). Corrigé en mettant `page.margins.
+   bottom = 0` juste avant de dessiner le pied de page, puis en le restaurant après (contour-
+   nement documenté de PDFKit). Marge basse du document aussi portée de 50 à 75pt pour que le
+   texte de corps ne s'approche jamais du pied de page avant le saut de page automatique.
+
+### Tests effectués
+
+- [x] Script API sur cabinet jetable : génère les 5 documents (quittance, attestation, relevé
+  propriétaire, rapport mensuel, PV de sortie — ce dernier via le cycle complet démarrage →
+  brouillon avec conditions → finalisation avec 2 signatures) — 13/13 vérifications (`200`,
+  `Content-Type: application/pdf`, en-tête `%PDF-` valide).
+  Récupérer un « bail introuvable » a nécessité de reconstruire correctement le cycle de vie de
+  l'état des lieux de sortie (démarrage → PATCH avec toutes les conditions renseignées →
+  finalisation avec 2 fichiers de signature) — pas un bug, juste la mécanique déjà en place.
+- [x] Rendu visuel (`pdftoppm`) des 5 PDF sur cabinet jetable, page par page : barre d'accent,
+  Courier sur RCCM/IFU/téléphone/dates/montants/numéros, panneaux arrondis, montants colorés
+  (vert reçu, rouge sortant, bleu solde), pied de page avec pagination correcte sur un document
+  multi-page (PV de sortie, 3 pages).
+- [x] **Vérification en lecture seule sur le vrai cabinet KIko Store** (login réel du DG, aucune
+  écriture) : régénération de la vraie attestation de loyer (leur contrat personnalisé de 11
+  articles, avec leur vrai logo/cachet notarié/signature) et du vrai relevé propriétaire —
+  rendu correct sur 3 pages, aucun chevauchement, pagination « 3 / 3 » correcte. C'est ce test
+  qui a révélé le bug de chevauchement du pied de page (invisible sur les documents courts d'un
+  cabinet jetable, mais réel sur ce contrat long).
+- Cabinets de test supprimés après coup ; KIko Store (14 baux) confirmé inchangé.
+
+### Complément : date de téléchargement toujours affichée
+
+Demande directe de l'utilisateur, juste après la refonte ci-dessus : « faut toujours mettre
+le jour/mois/année de téléchargement des documents ». Certains documents avaient déjà une
+date (quittance : date d'émission ; PV de sortie : date de l'état des lieux ; attestation/
+relevé : date du jour) mais ce sont des dates MÉTIER, pas forcément celle du téléchargement
+— et le rapport mensuel n'en affichait aucune. Plutôt que d'ajouter une ligne différente à
+chacun des 5 gabarits, ajout au seul élément déjà commun aux 5 : le pied de page (déjà
+affiché sur chaque page depuis le complément ci-dessus). Nouveau `formatDateSlash(isoDate)`
+(format JJ/MM/AAAA — délibérément différent de `formatDateFr`, en lettres, utilisé partout
+ailleurs pour les dates métier) ; `drawFooter` affiche désormais « Document téléchargé le
+**14/09/2026** · Lyko System. » (date en Courier-Bold) sur chaque page de chaque document,
+calculée une seule fois par génération (`new Date()` au moment de la requête, ces PDF n'étant
+jamais stockés mais toujours générés à la demande).
+
+Tests : mêmes 13 vérifications API (cabinet jetable) toujours au vert, rendu visuel confirmant
+la date sur la quittance et sur les 3 pages du PV de sortie, puis re-vérification en lecture
+seule sur le vrai contrat KIko Store (toujours 3 pages, aucune régression du bug de
+chevauchement corrigé plus haut). KIko Store (14 baux) confirmé inchangé.
+
+---
+
+## Étape 20 — Marketplace des Unités vacantes
+
+Demande directe de l'utilisateur : « ajouter un marketplace au menu — si une personne libère
+une maison, le comptable, l'agent ou le DG peut publier ça avec un bouton publier ». Deux
+questions posées pour cadrer une fonctionnalité aux implications architecturales réelles :
+(1) page PUBLIQUE partageable (comme un vrai site d'annonces) ou outil purement interne ? →
+l'utilisateur a choisi **publique** ; (2) infos de base seulement, ou avec photos et
+description ? → l'utilisateur a choisi **avec photos et description**.
+
+**Décision d'architecture non posée en question** (déductible du reste de l'application) :
+une page publique **par cabinet** (comme les portails locataire/propriétaire), jamais un
+marketplace unique fusionnant tous les cabinets Lyko System entre eux — cohérent avec le
+principe déjà établi (chaque portail public existant est scopé à un seul cabinet). Contrai-
+rement aux portails locataire/propriétaire, **pas de lien secret** : une annonce est faite
+pour être vue et partagée largement, l'URL utilise simplement l'id du cabinet
+(`/marketplace/:tenantId`).
+
+### Modèle retenu (volontairement simplifié)
+
+Une seule action « Publier » plutôt qu'un vrai flux d'édition : republier une Unité déjà
+publiée remplace intégralement l'annonce précédente (description + photos), au lieu d'un
+formulaire de modification séparé (aurait ajouté la question « les nouvelles photos
+remplacent-elles ou s'ajoutent-elles aux anciennes ? », source d'un piège UX — vider les
+photos par accident en modifiant juste la description). Une annonce est supprimée AUTOMATI-
+QUEMENT dès qu'un nouveau bail est signé sur son Unité (elle n'est plus vacante) — la
+prochaine vacance repart d'une annonce fraîche plutôt que de réafficher un contenu qui
+aurait pu devenir obsolète (prix, description) sans qu'on y pense.
+
+### Fichiers ajoutés/modifiés
+
+- **`backend/src/db/migrations/029_marketplace_listings.sql`** (nouveau) : table
+  `marketplace_listings` — une ligne = une annonce active, `UNIQUE KEY` sur `unit_id` (jamais
+  de doublon, republier = remplacer). `photo_paths` en JSON, comme les autres photos de
+  l'application (Biens, plaintes).
+- **`backend/src/routes/marketplace.js`** (nouveau) :
+  - `GET /public/:tenantId` — **aucune authentification**, la seule route publique en dehors
+    des portails à lien secret.
+  - `GET /`, `POST /:unitId` (upload jusqu'à 6 photos, `multer.memoryStorage()` + validation
+    du contenu réel comme partout ailleurs), `DELETE /:unitId` — mêmes permissions que la
+    gestion des Biens (`locataires` OU `proprietaires`), même portée agent (étape 14) que le
+    reste du patrimoine. `POST` refuse (400) une Unité qui n'est plus `libre`.
+- **`backend/src/routes/index.js`** : montage de `/marketplace` avant `utilityReadingRoutes`
+  — même piège que tous les autres préfixes ajoutés cette session (sa route publique
+  `/public/:tenantId` doit rester joignable sans authentification).
+- **`backend/src/routes/renters.js`** : nouvelle fonction `clearMarketplaceListing` (+ ses
+  deux points d'appel, aux deux endroits où un bail est créé) — supprime l'annonce et ses
+  photos disque dès qu'une Unité change de statut vers `loue`.
+- **`frontend/lib/api/marketplace.ts`** (nouveau) : types + `listMyListings`,
+  `publishListing`, `unpublishListing`, `getPublicMarketplace` (seule fonction sans
+  `accessToken`).
+- **`frontend/app/espace/marketplace/`** (nouveau) : page interne de gestion — carte avec le
+  lien public (copier / partager sur WhatsApp / ouvrir), grille des annonces publiées avec
+  bouton « Retirer ». Publier une NOUVELLE annonce se fait depuis la fiche du Bien, pas ici.
+- **`frontend/app/marketplace/[tenantId]/`** (nouveau) : page publique, ni `RequireAuth` ni
+  `EspaceHeader` — en-tête minimal avec logo/nom du cabinet, grille de cartes (photo,
+  désignation, loyer, adresse, description, bouton WhatsApp pré-rempli via
+  `buildWhatsAppHref` déjà existant).
+- **`frontend/app/espace/biens/[id]/bien-view.tsx`** : bouton « Publier » sur chaque Unité
+  `libre` (colonne Actions du tableau), ouvrant un formulaire (description + photos) rendu
+  comme une `Card` **sous** le tableau plutôt qu'en superposition dans la cellule.
+- **`frontend/components/espace/espace-header.tsx`** : lien de navigation « Marketplace »,
+  même garde que « Nos biens » (`locataires` OU `proprietaires`, ou DG).
+
+### Bug trouvé et corrigé en testant
+
+Premier jet du formulaire de publication en `position: absolute` À L'INTÉRIEUR d'une cellule
+du tableau des Unités. Le conteneur du tableau (`components/ui/table.tsx`) est
+`overflow-x-auto` — règle CSS peu connue : dès qu'un seul axe (`overflow-x`) quitte
+`visible`, l'autre axe (`overflow-y`, resté à sa valeur par défaut `visible`) est
+automatiquement forcé à `auto` par la plupart des moteurs de rendu. Le panneau flottant
+(textarea + champ fichier + boutons, plus haut qu'une ligne de tableau) se retrouvait donc
+tronqué par ce défilement interne peu visible plutôt que de s'étendre naturellement dans la
+page — repéré en capture d'écran Firefox (formulaire visiblement coupé en bas). Corrigé en
+sortant entièrement le formulaire du tableau : l'état « quelle Unité est en cours de
+publication » est monté dans le composant parent, et le formulaire s'affiche comme une Card
+à part sous le tableau (même convention que `NewUnitForm`, déjà utilisée sur cette page pour
+« Ajouter une unité »).
+
+### Tests effectués (cabinet jetable)
+
+- [x] Script API, 17 vérifications : publication avec description + 2 photos (201, photos
+  bien attachées), l'annonce apparaît dans la gestion interne ET sur la page publique SANS
+  authentification, le fichier photo est bien joignable publiquement (`/uploads/...`, 200),
+  publier une Unité non-vacante est refusé (400), un agent sans permission `locataires`/
+  `proprietaires` reçoit 403, un nouveau bail signé sur l'Unité publiée supprime bien
+  l'annonce ET son fichier photo du disque (404 après), et le retrait manuel fonctionne.
+- [x] Firefox headless, trois surfaces : page publique (aucune session, annonce visible avec
+  photo/prix/description/bouton WhatsApp), page interne `/espace/marketplace` (lien public +
+  carte « Retirer » pour un comptable), formulaire de publication sur la fiche du Bien (bug
+  de superposition détecté puis corrigé, capture confirmant le rendu correct après le
+  correctif). `tsc --noEmit`/`next lint` propres.
+- Cabinets de test supprimés après coup, KIko Store (14 baux) confirmé inchangé.
+
+### Revirement (2026-09-14/15) : la page publique déménage hors de cette plateforme
+
+L'utilisateur est revenu sur la présence du marketplace « au menu » : la vitrine PUBLIQUE
+(`frontend/app/marketplace/[tenantId]/`) ne doit pas vivre dans Lyko System — elle devient un
+site externe séparé, « Quick Immo » (voir Étape 21), relié à cette plateforme par l'API déjà
+construite ci-dessus. Retiré de cette plateforme : le lien de navigation « Marketplace » et la
+page publique elle-même. Conservé (le back-office reste ici, décision explicite de
+l'utilisateur) : la route publique `GET /api/marketplace/public/:tenantId`, le bouton
+« Publier » sur la fiche du Bien, et la page interne `/espace/marketplace` — dont la carte
+« lien public à partager » a aussi été retirée (elle n'a plus de sens une fois la page
+publique déménagée) ; elle ne fait plus que lister/retirer les annonces déjà publiées, et
+affiche désormais aussi les demandes « confier un bien » reçues depuis Quick Immo (voir
+Étape 21). `tsc --noEmit`/`next lint` propres après le retrait.
+
+---
+
+## Étape 21 — Quick Immo (site externe, relié à cette plateforme)
+
+Demande directe de l'utilisateur : « marketplace ne doit être là, nous allons construire une
+page complète extérieure qui ne sera pas dans cette plateforme mais un autre site qui va
+permettre de vendre les biens mais il sera lié à cette plateforme ». Nom de marque donné par
+l'utilisateur : **Quick Immo**, avec la consigne explicite « même couleurs, même charte
+graphique » que Lyko System.
+
+Plusieurs séries de questions posées avant de coder, la portée s'étant élargie à chaque
+réponse :
+1. Page publique partageable vs outil interne → **publique**.
+2. Infos de base seulement vs + photos + description → **+ photos + description**.
+3. La gestion (publier une annonce) reste-t-elle sur Lyko System, ou le nouveau site a-t-il sa
+   propre gestion ? → **reste sur Lyko System** (aucune duplication de la gestion des
+   employés/permissions) — Quick Immo n'affiche que ce qui est publié via l'API existante.
+4. Menu voulu par l'utilisateur : Marketplace | Confier un bien | À propos | Contacter, plus
+   Inscription/Connexion — ce dernier point a révélé un besoin de comptes pour le grand
+   public (chercheurs de logement ET propriétaires), et un flux « confier un bien » qui
+   couvre en fait DEUX intentions (louer OU **vendre** — la vente n'existait nulle part dans
+   le modèle de données de Lyko System, construit entièrement autour de baux/loyers).
+5. Proposition d'ensemble soumise à validation avant de coder quoi que ce soit
+   (voir structure ci-dessous) → **validée telle que proposée**.
+
+### Architecture retenue
+
+- **Un site Next.js séparé** (`quick-immo/`, nouveau dossier à la racine du dépôt, pas dans
+  `frontend/`) — son propre `package.json`, tourne sur le port 3100 en dev. Même charte
+  graphique que Lyko System : `tailwind.config.ts` et `app/globals.css` copiés à l'identique
+  (mêmes tokens de couleur/typographie), composants `ui/` (Button/Card/Badge/Input/Toast)
+  copiés tels quels — ils ne dépendaient que du helper `cn()`, aucune adaptation nécessaire.
+- **Scopé à UN cabinet pour l'instant** (`NEXT_PUBLIC_TENANT_ID` = 8 = KIko Store en
+  production) — jamais un agrégateur multi-cabinets ; la même API accepterait déjà plusieurs
+  cabinets si un jour nécessaire, mais rien dans l'UI ne le permet aujourd'hui.
+- **La gestion (publier/retirer une annonce) reste entièrement sur Lyko System**, décision
+  explicite de l'utilisateur — Quick Immo ne fait qu'appeler
+  `GET /api/marketplace/public/:tenantId` (déjà construit, Étape 20), en lecture seule.
+- **« Confier un bien » = une simple DEMANDE, jamais une création automatique.** Lyko System
+  n'a aucune notion de « Bien à vendre » (tout son modèle est bâti autour de baux/loyers) —
+  créer un Bien reste un acte humain, réservé à l'employé qui accepte la demande.
+- **Comptes Quick Immo = un realm totalement séparé** des employés (`users`) et des
+  locataires/propriétaires à lien secret (portails) : de purs inconnus qui s'inscrivent
+  eux-mêmes (rôle `chercheur` ou `proprietaire`, choisi à l'inscription).
+
+### Fichiers ajoutés — backend (même serveur Express, même base MySQL)
+
+- **`backend/src/db/migrations/030_marketplace_accounts.sql`** (nouveau) : trois tables —
+  `marketplace_accounts` (comptes du grand public, `UNIQUE (tenant_id, phone)`),
+  `marketplace_requests` (une demande « confier un bien », `request_type` ENUM
+  `louer`/`vendre`, `status` ENUM `en_attente`/`contactee`/`acceptee`/`refusee`),
+  `marketplace_favorites` (favoris d'un compte `chercheur`).
+- **`backend/src/utils/jwt.js`** : `signMarketplaceToken`/`verifyMarketplaceToken` — signés
+  avec une clé **dédiée** (`JWT_MARKETPLACE_ACCOUNT_SECRET`, nouvelle variable d'env),
+  jamais celle des employés. Un seul token, 30 jours, pas de rotation de refresh token (pas
+  d'enjeu financier/sensible comparable à un compte employé).
+- **`backend/src/middleware/marketplaceAccountAuth.js`** (nouveau) : `requireMarketplaceAccount`
+  + `requireAccountRole(...)`, réalm strictement séparé de `requireAuth` (`middleware/auth.js`).
+- **`backend/src/routes/marketplaceAccounts.js`** (nouveau), monté sur `/api/marketplace-accounts`
+  (avant `utilityReadingRoutes`, même piège récurrent que toutes les routes publiques de cette
+  session) : `POST /register`, `POST /login`, `GET /me`, `POST /requests` (rôle `proprietaire`),
+  `GET /requests/mine`, `GET|POST|DELETE /favorites[/:unitId]` (rôle `chercheur`).
+- **`backend/src/routes/marketplace.js`** : deux routes ajoutées côté employé (gestion
+  interne) — `GET /requests` (toutes les demandes du cabinet, avec nom/téléphone du
+  propriétaire) et `PATCH /requests/:id` (contactée/acceptée/refusée).
+- **`backend/src/routes/renters.js`** : inchangé dans son fonctionnement, déjà couvert par
+  l'Étape 20 (suppression auto de l'annonce à la signature d'un nouveau bail).
+
+### Bug de sécurité réel trouvé en testant (corrigé avant d'aller plus loin)
+
+Premier jet : `signMarketplaceToken` réutilisait la clé `accessSecret` DES EMPLOYÉS, avec un
+simple champ `kind: 'marketplace_account'` dans le payload comme garde-fou applicatif. Un
+test croisé (« un token compte Quick Immo doit être refusé sur une route employé ») a
+répondu **403** au lieu du **401** attendu — creusé : `requireAuth` (employé) ne vérifie
+JAMAIS ce champ `kind`, donc un token Quick Immo, signé avec la MÊME clé, se décodait avec
+succès comme un `req.user` (avec `role: 'chercheur'`, un rôle qui n'existe pas côté employé)
+et passait `requireAuth` — seul un hasard (aucune permission trouvée pour cet id
+coïncidant) a produit un 403 au lieu d'un accès réel. Un compte du grand public aurait pu,
+dans le pire cas, accéder à des routes employé si son `id` de compte coïncidait
+numériquement avec l'`id` d'un vrai employé disposant de la permission requise. Corrigé
+avec une séparation CRYPTOGRAPHIQUE, pas juste applicative : nouvelle clé dédiée
+`JWT_MARKETPLACE_ACCOUNT_SECRET` (`config/env.js`) — un token de ce realm ne peut
+mathématiquement pas être vérifié avec succès par `verifyAccessToken` (employé), quel que
+soit son payload.
+
+### Fichiers ajoutés — site `quick-immo/` (nouveau projet Next.js)
+
+- Scaffold : `package.json`, `tsconfig.json`, `next.config.ts` (CSP adaptée, même schéma que
+  `frontend/`), `tailwind.config.ts` + `app/globals.css` (copiés à l'identique).
+- `lib/api/client.ts` : `apiFetch` simplifié (pas de cache hors-ligne IndexedDB, pas de
+  cookie de session — inutile pour ce realm de comptes) ; `TENANT_ID` configurable par env.
+- `lib/api/marketplace.ts` (lecture publique), `lib/api/accounts.ts` (comptes, demandes,
+  favoris), `lib/auth/auth-context.tsx` (un seul jeton en `localStorage`, pas de refresh
+  token httpOnly comme les employés — proportionné à l'absence d'enjeu sensible comparable).
+- `components/layout/header.tsx` (nav + Inscription/Connexion/compte, menu mobile) et
+  `footer.tsx`.
+- Pages : `/` (grille des annonces + favoris si connecté en `chercheur`), `/inscription`,
+  `/connexion`, `/confier-un-bien` (formulaire louer/vendre, réservé aux `proprietaire`
+  connectés), `/mon-compte` (favoris pour un `chercheur`, suivi des demandes avec statut pour
+  un `proprietaire`), `/a-propos`, `/contact` (coordonnées du cabinet résolues via l'API,
+  jamais codées en dur).
+
+### Bug d'environnement réel trouvé en testant (pas applicatif)
+
+La page d'accueil affichait « Impossible de charger les annonces » en navigateur alors que
+la même requête réussissait en `curl`/Node directement — `CORS_ORIGIN` (backend `.env`)
+n'autorisait que `http://localhost:3000` (Lyko System), pas `http://localhost:3100` (Quick
+Immo) : `fetch` depuis Node ne connaît pas les CORS (ce n'est qu'une politique de
+navigateur), donc mes premiers tests API en ligne de commande ne pouvaient pas révéler ce
+problème — seul un test EN NAVIGATEUR l'a montré. Corrigé en ajoutant `:3100` à
+`CORS_ORIGIN`.
+
+### Tests effectués
+
+- [x] Script API dédié, 27 vérifications (cabinet jetable) : inscription/connexion des deux
+  rôles, mauvais mot de passe rejeté, favoris (ajout/liste/retrait), un `chercheur` ne peut
+  PAS soumettre une demande (403), un `proprietaire` peut, la demande apparaît côté
+  propriétaire (`requests/mine`) ET côté employé (`GET /api/marketplace/requests`) avec le
+  bon nom/téléphone, le traitement employé (`PATCH .../requests/:id`) se répercute côté
+  propriétaire, téléphone dupliqué refusé (409), et — le test le plus important — un jeton
+  Quick Immo est bien rejeté (401) sur une route employé et vice-versa.
+- [x] Firefox headless, parcours complet sur Quick Immo (cabinet jetable, tenant pointé
+  temporairement via `NEXT_PUBLIC_TENANT_ID` avant d'être remis sur 8/KIko Store) : page
+  d'accueil avec les vraies annonces publiées, inscription `chercheur` → mise en favori
+  visible sur `/mon-compte`, déconnexion, inscription `proprietaire` → soumission « vendre »
+  → confirmation → statut « EN ATTENTE » visible sur `/mon-compte`.
+- [x] Firefox headless côté Lyko System : le DG voit la demande dans « Demandes reçues »
+  avec le nom/téléphone du propriétaire, clique « Accepter » → statut « ACCEPTÉE » avec
+  l'auteur du traitement affiché, toast de confirmation.
+- [x] `tsc --noEmit`/`next lint` propres sur les deux projets frontend (`frontend/` et
+  `quick-immo/`).
+- Cabinet de test supprimé après coup ; KIko Store (14 baux) confirmé inchangé — `quick-immo`
+  repointé sur `NEXT_PUBLIC_TENANT_ID=8` (production), où la liste des annonces est
+  légitimement vide (aucune Unité KIko Store n'est actuellement publiée).
+
+### Complément : vraie page d'accueil (au lieu de rediriger directement vers la grille)
+
+Demande directe de l'utilisateur : « on va ajouter une page d'accueil, expliquez le site,
+ajouter un background hyper optimisé et très jolie, ajouter des cards et d'images pour mieux
+expliquer les sujets, organisé de manière pro ». Jusqu'ici, `/` affichait directement la
+grille d'annonces (pas de vraie présentation du site) — restructuré :
+
+- **`/marketplace`** (nouveau) : reprend exactement l'ancien contenu de `/` (grille complète,
+  favoris) — extrait sans rien changer côté logique.
+- **`/`** redevient une vraie page d'accueil « pro », section par section :
+  - **Hero** : fond en **dégradé CSS pur** (`.hero-mesh`, `app/globals.css`) — trois dégradés
+    radiaux superposés + deux « halos » flous animés (transform/opacity uniquement, désactivés
+    si `prefers-reduced-motion`). Aucune image : zéro octet réseau, net à toute résolution,
+    coût de rendu minime — répond littéralement à « hyper optimisé et très jolie » sans le
+    compromis habituel (une vraie photo de fond aurait pesé plusieurs centaines de Ko).
+  - **Comment ça marche** : deux colonnes (chercheur de logement / propriétaire), 3 étapes
+    numérotées chacune avec une icône — explique concrètement les deux usages du site.
+  - **Pourquoi Quick Immo** : 3 cartes de réassurance (biens vérifiés, accompagnement complet,
+    gestion sérieuse via Lyko System) — réutilise la structure déjà éprouvée de `/a-propos`.
+  - **Annonces à la une** : aperçu de 3 vraies annonces publiées (mêmes cartes/photos que
+    `/marketplace`, `ListingCard` extrait dans `components/listing-card.tsx` pour être partagé
+    par les deux pages sans dupliquer le code) — jamais des images de remplissage/stock ;
+    message d'attente honnête si aucun bien n'est actuellement publié (le cas réel de KIko
+    Store aujourd'hui) plutôt qu'une section vide ou trompeuse.
+  - **CTA final** (créer un compte) + pied de page.
+  - Navigation mise à jour partout (en-tête + pied de page) : « Accueil » ajouté, « Marketplace »
+    pointe désormais vers `/marketplace`.
+
+Testé : Firefox headless, page d'accueil complète (capture pleine page) + `/marketplace`
+(toujours fonctionnelle après le déplacement) + un cabinet jetable avec une vraie annonce
+publiée pour vérifier que la section « Annonces à la une » affiche correctement une carte
+réelle (photo, prix, description, bouton WhatsApp). `tsc --noEmit`/`next lint` propres.
+Cabinet de test supprimé après coup ; `quick-immo` repointé sur `NEXT_PUBLIC_TENANT_ID=8`
+(KIko Store, 14 baux confirmés inchangés).
+
+### Complément : visuel dans le hero + refonte des deux cartes « Comment ça marche »
+
+Retour de l'utilisateur : « images en bannière et les cards "vous recherchez un logement"
+et "vous recherchez un bien" doit être bien design ». Aucune vraie photo disponible pour le
+hero (aucune Unité n'est encore publiée pour KIko Store) — plutôt qu'une image de
+remplissage/stock, un **visuel en CSS pur** : deux cartes d'annonce (mêmes proportions que
+`ListingCard`) superposées et légèrement inclinées, avec bandeau dégradé + icône maison, et
+un badge flottant « Bien vérifié » — aperçu honnête de ce à quoi ressemble une vraie annonce
+sur le site, toujours zéro octet réseau. Le hero passe en deux colonnes sur desktop (texte à
+gauche, visuel à droite), empilé sur mobile (`HeroVisual`, `app/page.tsx`).
+
+Les deux cartes « Vous cherchez un logement » / « Vous avez un bien » (`StepsColumn`)
+refaites avec : un bandeau d'en-tête en dégradé (bleu marine pour les chercheurs, bleu
+« info » pour les propriétaires) avec une grande icône + un sous-titre, et un bouton d'action
+en bas de carte (« Voir les annonces » / « Confier mon bien ») — les deux cartes s'alignent
+sur la même hauteur (`flex flex-col` + `flex-1` + `mt-auto` sur le bouton) quel que soit le
+nombre de lignes de texte de chaque étape.
+
+Testé : Firefox headless, capture du hero (visuel flottant bien positionné, badge « Bien
+vérifié » visible) + des deux cartes (bandeaux colorés, boutons alignés en bas) + un rendu
+mobile (390px, aucun débordement horizontal, hero empilé proprement). `tsc --noEmit`/
+`next lint` propres.
+
+### Complément : positionnement correct (plateforme, pas une agence) + plafond légal de commission
+
+Correction importante de l'utilisateur : « nous ne sommes pas une agence, Quick Immo est une
+plateforme qui permet directement aux agences ou à un propriétaire de vendre, louer ou
+confier ces biens aux agences partenaires de Quick Immo » — plus « nous faisons respecter la
+loi : tout bien loué ici ne doit pas excéder une commission de 50 % du loyer ». Le texte
+initial du site disait à plusieurs endroits « notre agence », ce qui laissait croire que
+Quick Immo EST une agence immobilière (faux) plutôt qu'une plateforme reliée à PLUSIEURS
+agences partenaires. Recherche exhaustive (`grep -rn "agence"`) et correction de toutes les
+occurrences trouvées : page d'accueil (bandeau du hero, sous-titre, cartes de réassurance,
+étapes « comment ça marche »), page À propos (introduction + cartes), page Confier un bien
+(intro + message de confirmation), page Marketplace, Mon compte, Inscription, métadonnées
+(`layout.tsx`). Partout, « notre agence »/« une agence de confiance » devient « une agence
+partenaire »/« nos agences partenaires ».
+
+Nouveau : un bloc « Notre engagement » sur la page À propos (icône `Scale`, fond vert
+succès) énonçant le plafond légal de commission, plus une ligne de rappel dans le pied de
+page du site entier (visible sur toutes les pages) et une note courte sur la page « Confier
+un bien » (pertinente au moment où un propriétaire envisage justement de louer). Portée
+volontairement limitée à un ajustement de contenu/texte — l'architecture technique reste
+inchangée (toujours scopée à un seul cabinet pour l'instant, `NEXT_PUBLIC_TENANT_ID`).
+
+Testé : Firefox headless (hero et À propos, texte corrigé bien affiché, bloc « Notre
+engagement » et ligne de pied de page visibles). `tsc --noEmit`/`next lint` propres.
+
+### Complément : vraie photo dans le hero (remplace la maquette de cartes)
+
+Demande de l'utilisateur, désignant précisément la maquette de cartes en CSS du hero : « nous
+allons mettre une image là ». Question posée : fournir un fichier précis, ou choisir une
+photo libre de droits ? → **libre de droits**. Recherche (`WebSearch`/`WebFetch`) d'une photo
+immobilière sous licence Unsplash (gratuite, usage commercial autorisé, aucune attribution
+requise) — une rue de maisons modernes au bord d'un lac, cohérente avec le ton du site.
+Téléchargée en local dans `quick-immo/public/hero-house.jpg` (jamais un lien externe : pas de
+dépendance à un hébergeur tiers, respecte la CSP existante `img-src 'self'` sans la modifier,
+et reste joignable même si Unsplash est indisponible). Affichée via `next/image` (`fill`,
+`priority`, `sizes` adapté) plutôt qu'une balise `<img>` brute — contrairement aux photos de
+biens (servies dynamiquement par l'API), celle-ci est un atout statique du site : `next/image`
+la redimensionne/optimise automatiquement, cohérent avec l'exigence « hyper optimisé » du
+premier jet du hero.
+
+La double maquette de cartes inclinées (`HeroVisual`) est remplacée par cette photo dans un
+cadre arrondi avec ombre, conservant les badges flottants (« Bien vérifié », nouveau
+« Agences partenaires » — cohérent avec la correction de positionnement ci-dessus).
+
+Testé : Firefox headless, rendu desktop (photo nette, badges bien positionnés) et mobile
+(390px, empilement propre, aucun débordement). `tsc --noEmit`/`next lint` propres.
+
+### Complément : refonte des cartes « Pourquoi Quick Immo »
+
+Demande de l'utilisateur : refaire le design de cette section, jusque-là trois cartes
+blanches identiques avec une petite icône. Chaque carte reçoit désormais sa propre couleur
+d'accent (vert succès = confiance, bleu marine = accompagnement, bleu info = sérieux du
+suivi) : une fine barre colorée en haut de la carte, une icône plus grande dans un cercle
+teinté assorti, et un léger effet de survol (translation + ombre) pour l'interactivité.
+Sous-titre ajouté pour introduire la section. Composants `Card`/`CardContent` remplacés par
+des `div` stylées directement — plus de contrôle sur la barre d'accent superposée
+(`absolute inset-x-0 top-0`) qu'avec la structure fixe de `Card`.
+
+Testé : Firefox headless (les trois couleurs d'accent bien rendues, icônes et texte alignés).
+`tsc --noEmit`/`next lint` propres.
+
+## Étape 22 — Journal des dépenses regroupé par jour (Comptabilité)
+
+Retour sur Lyko System : demande de l'utilisateur de transformer le Journal des dépenses en
+un journal d'activité daté, à l'exemple donné (« Mardi 23/01/2026 / Vidange des véhicules
+12h14 / Lundi 23/01/2026 / achat des matériels 09:45 / transport 09:12 ») — regrouper les
+écritures par jour avec un en-tête « nom du jour + date », afficher l'heure de chaque
+écriture, et le nom de la personne qui l'a enregistrée.
+
+Le nom de l'enregistreur était déjà affiché (`expense.recordedBy`) ; il manquait le
+regroupement par jour et l'heure. Point technique vérifié avant de coder : `Expense` expose
+déjà `createdAt` (horodatage complet), tandis que `expenseDate` (colonne affichée jusque-là)
+n'est qu'une date sans heure, et surtout **modifiable librement par l'utilisateur** dans le
+formulaire de saisie (`expDate`, `ExpenseForm`) — une dépense peut donc être enregistrée un
+jour et datée à un autre jour (passé ou futur). Le back-end trie déjà le journal par
+`created_at DESC` (ordre de saisie), précisément pour qu'une dépense ressaisie plus tard avec
+une date antérieure ne se retrouve pas « perdue » plus bas dans la liste (commentaire existant
+dans `backend/src/routes/accounting.js`). **Décision : regrouper par le jour de `createdAt`**
+(jour de saisie), pas par `expenseDate` — cohérent avec ce choix de tri déjà en place, et
+avec la formulation de l'utilisateur (« journal des activités daté »,  c'est-à-dire quand
+l'action a été faite). La colonne « Date » (= `expenseDate`) reste affichée sur chaque ligne
+en plus du nouvel en-tête de jour : les deux dates peuvent légitimement différer (constaté sur
+les vraies données de KIko Store, voir tests ci-dessous), et masquer l'une des deux aurait
+fait disparaître une information réelle.
+
+Piège de fuseau horaire identifié avant d'écrire le moindre code d'affichage : le pool MySQL
+est configuré en `timezone: 'Z'` alors que le serveur MySQL lui-même tourne en heure locale
+(`Africa/Porto-Novo`, WAT, UTC+1, vérifié via `SELECT @@session.time_zone, NOW(),
+UTC_TIMESTAMP()`) — les chiffres de `created_at` sont donc de l'heure locale, mais réétiquetés
+« UTC » à la sérialisation JSON. Formater ces horodatages avec la conversion de fuseau horaire
+par défaut du navigateur (`toLocaleTimeString` sans `timeZone`) aurait décalé l'heure affichée
+d'une heure. Deux nouveaux helpers dans `frontend/lib/utils.ts`, tous deux forçant
+`timeZone: "UTC"` pour relire les chiffres tels quels (même principe déjà appliqué par
+`formatDateLabel`, existant, pour les dates) :
+- `formatDateHeading(isoDate)` → en-tête « Mardi 23/01/2026 » (jour de semaine + date).
+- `formatTimeOfDay(isoTimestamp)` → heure « HH:MM » à partir de `createdAt`.
+
+Dans `frontend/app/espace/comptabilite/comptabilite-view.tsx` : les dépenses sont regroupées
+par jour (`createdAt.slice(0, 10)`, un simple découpage de chaîne — aucune conversion de
+`Date` nécessaire, donc aucun risque de décalage) via un `useMemo` qui préserve l'ordre déjà
+décroissant renvoyé par l'API. Chaque groupe affiche un en-tête (jour + date, nombre
+d'écritures, sous-total du jour) suivi d'un tableau à ses propres colonnes : **Heure** (nouvelle
+colonne) | Date | Libellé | Catégorie | Montant | Mode | Enregistré par | Actions.
+`ExpenseRow` inchangé à part l'ajout de la cellule Heure et le `colSpan` des formulaires
+d'édition/suppression en ligne, passé de 7 à 8.
+
+Testé : navigation réelle en tant que DG (Marcel Mahougnon) sur les vraies données KIko
+Store — le journal affiche bien « Vendredi 11/09/2026 · 3 écritures · 38 500 FCFA » puis
+« Mercredi 09/09/2026 · 3 écritures · 171 000 FCFA », heures affichées correctes (18:45,
+18:19, 18:13 puis 13:02, 13:01, 13:00, dans le bon ordre), enregistreur bien nommé pour
+chaque ligne. Repéré au passage un cas réel où `expenseDate` (30/09) diffère du jour de
+saisie (09/09) — confirme que garder les deux colonnes était le bon choix, aucune donnée
+perdue. `tsc --noEmit` propre sur les fichiers modifiés.
+
+Bug-fix (avant ce test) : découvert deux arbres `next dev`/`nodemon` dupliqués tournant en
+parallèle (déjà rencontré à plusieurs reprises cette session, voir Étape 21) — nettoyé
+(processus dupliqués tués, `frontend/.next` reconstruit, un seul serveur relancé) avant de
+constater que le premier test de connexion échouait silencieusement (soumission GET brute,
+React non hydraté) à cause du cache corrompu résiduel.
+
+## Étape 23 — Écart compteur/décompteur configurable, paiements partiels, index préremplis (Charges SONEB/SBEE)
+
+Demande de l'utilisateur : description écrite du fonctionnement voulu du module Charges —
+distinction compteur (abonnement officiel SONEB/SBEE) / décompteur (sous-compteur interne
+par locataire quand plusieurs logements partagent un même compteur), index début/fin à
+chaque niveau avec report automatique de l'index de fin précédent, écart compteur
+principal/Σ décompteurs réparti **de façon configurable par Bien** (à la charge du
+propriétaire OU répartie au prorata entre locataires — jusque-ici toujours et uniquement
+informatif, jamais facturé), et factures avec statut payé/partiellement payé/en retard
+pouvant recevoir plusieurs paiements successifs.
+
+Avant de coder : comparaison de cette description avec le module Charges existant
+(`backend/src/routes/{charges,utilityReadings}.js`, Étape 9/9bis). La mécanique de relevé
+(index début/fin, décompteur = `property_units.{soneb,sbee}_meter_number`, écart affiché)
+correspondait déjà à la description. Trois écarts réels identifiés et confirmés avec
+l'utilisateur avant d'implémenter : (1) aucune répartition configurable de l'écart —
+jusque-ici toujours et uniquement informative (décision explicite d'origine, migration 020,
+« jamais refacturée automatiquement ») ; (2) aucun report automatique de l'index dans le
+flux de charge directe (hors relevé par immeuble) ; (3) statut binaire payée/impayée,
+aucun paiement partiel. Question posée sur l'affichage de la part de pertes sur la facture
+→ **ajoutée comme ligne sur la facture du locataire** (montant mesuré + part de pertes,
+visibles séparément), pas une facture à part.
+
+Portée volontairement limitée à ces trois points, codés et testés comme un tout cohérent ;
+deux points de la description (plusieurs compteurs indépendants par fluide sur un même
+Bien, et le branchement du statut de facture sur le module de rappel WhatsApp) sont
+**différés** — signalés à l'utilisateur plutôt que traités par défaut, la description ne
+distinguant pas leur urgence des trois premiers.
+
+### 1. Répartition configurable de l'écart
+
+`properties.{soneb,sbee}_loss_allocation` — ENUM('proprietaire','prorata'), **défaut
+'proprietaire' partout** (comportement historique préservé pour tout Bien n'ayant jamais
+touché ce réglage). Configurable depuis la carte « Compteurs & fluides » de la fiche Bien,
+au même endroit que le tarif/n° de compteur. À la validation d'un relevé
+(`POST /utility-batches/:id/validate`), si le réglage est 'prorata' et l'écart réellement
+positif (jamais la différence « négative » — décompteurs > compteur principal — qui signale
+une anomalie de relevé, pas une perte) : l'écart est distribué au prorata de la consommation
+propre de chaque locataire **effectivement facturé** (bail actif) ce mois-ci, ajouté à sa
+facture comme `loss_share_amount` distinct du montant de consommation mesurée
+(`consumptionAmount`). Décision produit explicite (non spécifiée par l'utilisateur, donc
+consignée ici) : la part d'une unité vacante ou sans bail retombe sur les locataires en
+place plutôt que d'être simplement absorbée sans base — cohérent avec le choix « au prorata
+entre locataires », ajustable si l'utilisateur préfère une autre règle.
+
+### 2. Paiements multiples/partiels
+
+Nouvelle table `utility_payments` (miroir exact de `rent_payments` pour le loyer) : une
+ligne par règlement. `utility_charges.status` devient `impayee` / `partiellement_payee` /
+`payee`, dérivé de `SUM(utility_payments.amount)` vs `amount` — jamais resaisi à la main.
+`PATCH /:id/pay` (tout ou rien) remplacé par `POST /:id/payments` (montant libre, refusé si
+dépasse le solde restant) + `GET /:id/payments` (historique). Garde anti-doublon (paiement
+identique < 2 min) et verrou de ligne (`FOR UPDATE`), même principe que
+`routes/leases.js`. Rétro-remplissage migré : chaque facture déjà `payee` avant cette étape
+reçoit son paiement correspondant dans la nouvelle table (les 2 factures réelles de KIko
+Store, dont une déjà payée, vérifiées identiques après migration). Nouvelle garde : un
+paiement déjà enregistré (même partiel) fige les index/tarif de la facture (`PATCH /:id`
+refuse toute modification du montant, 409) — sinon la facture se désynchroniserait de ce qui
+a déjà été réglé.
+
+### 3. Index de début préremplis (flux de charge directe)
+
+`GET /api/charges/previous-reading?leaseId=&utilityType=` renvoie l'index de fin de la
+dernière facture de ce bail pour ce fluide ; la page « Nouvelle charge » préremplit l'index
+de début avec cette valeur (reste modifiable). Le flux du relevé par immeuble avait déjà ce
+report (Étape 9bis) — n'existait pas pour la charge directe, seul cas manquant.
+
+### Différé (signalé à l'utilisateur, pas traité silencieusement)
+
+- **Plusieurs compteurs indépendants par fluide sur un même Bien** (ex. deux abonnements
+  SBEE séparés) : le schéma actuel n'a qu'un seul compteur principal par fluide par Bien
+  (`soneb_main_meter_number`/`sbee_main_meter_number`, colonne unique) — passer à plusieurs
+  demanderait de transformer ce compteur en entité à part (table dédiée), une refonte plus
+  large et plus risquée sur des données réelles déjà en production que les trois points
+  ci-dessus.
+- **Statut de facture → module de rappel WhatsApp** : `rentTracking.js`/`/espace/relances`
+  ne connaissent aujourd'hui que le loyer (`rent_payments`), jamais `utility_charges`.
+
+### Tests
+
+Aucune tenant jetable pour la vérification visuelle finale (lecture/affichage seulement sur
+KIko Store) mais TOUTE écriture testée sur un tenant jetable créé via l'API réelle
+(`POST /api/auth/register`), jamais sur KIko Store :
+- Relevé SBEE avec écart positif délibéré (décompteurs 100+80 unités, compteur principal
+  200 unités, tarif 200 FCFA) et répartition 'prorata' activée : `consumptionAmount`
+  exacts (20 000 / 16 000), `lossShareAmount` proportionnels (2222/1778, somme exacte 4000),
+  `amount = consumptionAmount + lossShareAmount`.
+- Même scénario avec le réglage resté 'proprietaire' (par défaut) : `lossShareAmount = 0`
+  malgré un écart réel — non-régression du comportement d'origine confirmée.
+- Paiement partiel puis complémentaire exact → statut `partiellement_payee` puis `payee` ;
+  paiement sur facture déjà payée rejeté (400) ; dépassement du solde restant rejeté (400).
+- Modification des index sur une facture avec paiement → rejetée (409) ; sur une facture
+  sans aucun paiement → acceptée (200).
+- `previous-reading` renvoie bien l'index de fin de la facture la PLUS RÉCENTE (pas une
+  plus ancienne) pour un bail/fluide donné.
+- Nettoyage : tenant jetable entièrement supprimé (cascade FK vérifiée : 0 ligne restante
+  dans `properties`/`leases`/`utility_charges`/`utility_payments`) ; KIko Store (tenant 8)
+  reconfirmé intact après coup — 14 baux, les 2 factures réelles bit-à-bit inchangées.
+- Vérification visuelle réelle (Firefox headless, DG connecté) : onglet « Partiellement
+  payées », panneau de règlement avec montant modifiable et solde restant affiché,
+  sélecteur « Écart compteur principal / décompteurs » sur la fiche d'un Bien réellement
+  sous-compté (BIEN-008) — fermé sans enregistrer pour ne pas modifier sa configuration
+  réelle, reconfirmé inchangée en base après coup. `tsc --noEmit`/`next lint` propres sur
+  tous les fichiers modifiés.
+
+### Trouvaille annexe (hors périmètre de cette étape, signalée pas corrigée)
+
+Le script de test a découvert un bug préexistant, sans rapport avec ce qui précède :
+`POST /api/auth/register` immédiatement suivi d'un `POST /api/auth/login` pour le même
+utilisateur **dans la même seconde** renvoie une erreur 500 brute (au lieu de 200). Cause :
+`signRefreshToken()` (`backend/src/utils/jwt.js`) ne porte aucun identifiant unique par
+émission (`jti`) et `iat` n'a qu'une résolution à la seconde — deux jetons émis la même
+seconde pour le même utilisateur sont byte-à-byte identiques, ce qui viole la contrainte
+unique `refresh_tokens.uq_refresh_tokens_hash` (`services/session.js`) ; l'erreur MySQL
+brute n'étant pas interceptée, elle fuit telle quelle au client. Pourrait toucher un
+utilisateur réel qui double-clique sur « Se connecter » ou ouvre deux onglets à la fois.
+Non corrigé — hors périmètre de la demande, à traiter dans une étape dédiée si confirmé
+prioritaire.
+
+## Étape 24 — Menu vertical, responsive et animations (refonte du design de l'espace connecté)
+
+Demande de l'utilisateur : revoir le design dans son ensemble — menu vertical (jusque-là un
+en-tête horizontal), bonne responsivité, animations, éléments attractifs, couleurs « très
+attractives, jolies, très explicites, de qualité », avec l'exigence explicite d'un rendu
+« de travail d'expert » où chaque partie cliquée met l'utilisateur à l'aise.
+
+Portée traitée dans cette étape : la coquille de navigation (menu vertical + sa
+responsivité + ses animations) et une passe de polish sur les composants UI partagés — le
+levier le plus large possible en une fois, puisque ces deux points touchent automatiquement
+les ~29 pages de l'espace connecté sans avoir à en redessiner chacune individuellement.
+**Différé, signalé plutôt que traité silencieusement** : un remaniement bespoke du contenu
+propre à chaque page (mise en page spécifique des tableaux de bord, formulaires, etc.) —
+un chantier d'une toute autre ampleur, à traiter page par page si souhaité.
+
+### Architecture : un point d'entrée unique au lieu de 29 répétitions
+
+Avant : chaque page (`*-view.tsx`, 29 fichiers) montait individuellement `<EspaceHeader />`
+(en-tête horizontal, navigation repliée en tiroir sous `lg`) au sommet de son propre JSX —
+aucun `app/espace/layout.tsx` n'existait. Nouveau : `app/espace/layout.tsx` (nouveau fichier)
+monte le menu une seule fois pour tout l'espace connecté, et décale le contenu
+(`lg:pl-sidebar`, token déjà présent mais inutilisé dans `tailwind.config.ts` depuis l'étape
+0 — la maquette d'origine prévoyait déjà un sidebar, jamais construit jusqu'ici). Les 29
+fichiers ont eu leur `<EspaceHeader />` et son import supprimés (mécanique, vérifié par
+`tsc`/`lint` after coup — zéro référence orpheline) ; l'ancien composant
+`components/espace/espace-header.tsx` est supprimé, remplacé par
+`components/espace/espace-sidebar.tsx` (`EspaceSidebar`). Bénéfice concret au-delà du
+visuel : `startQueueAutoSync` (file hors-ligne, étape 11) n'est désormais appelé qu'une
+fois par session au lieu d'être remonté à chaque navigation — plus proche de l'intention
+d'origine du commentaire qui l'accompagnait.
+
+`EspaceSidebar` reste masqué (`return null`) tant que `status !== "authenticated"` — chaque
+page garde son propre écran de chargement/accès refusé (`RequireAuth`) affiché seul, jamais
+un menu peuplé qui flash avant une redirection vers `/connexion`. `EspaceLayout` applique
+lui-même le décalage `lg:pl-sidebar` seulement une fois authentifié (sinon l'écran de
+chargement, centré sur toute la largeur par `RequireAuth`, se serait retrouvé décalé à
+droite pendant que le menu ne rend encore rien).
+
+### Menu vertical
+
+Regroupé par section (Vue d'ensemble / Patrimoine / Opérations / Finances /
+Administration) avec libellé de groupe en majuscules discret — amélioration de clarté
+notable : l'ancienne barre horizontale n'avait aucun regroupement (liste plate de jusqu'à
+10 liens) ni la moindre icône. Chaque lien reçoit désormais une icône `lucide-react`
+distincte. État actif : liseré vertical en dégradé de marque (repris du logo, `#1E3A8A` →
+`#2563EB` → `#38BDF8`, nouveau token `bg-brand-gradient`) + fond teinté + icône colorée ;
+survol : léger déplacement horizontal + fond, transitions douces (150ms). Pied de menu :
+avatar (initiales, dégradé de marque), nom + rôle (`Badge`), indicateur de connexion,
+réglages (DG) et déconnexion (bouton icône seul — voir bug ci-dessous).
+
+Responsive : fixe (260px, token `sidebar` déjà défini) à partir de `lg` (1024px) ; en
+dessous, barre compacte (logo + connexion + hamburger) et un tiroir plein-hauteur
+coulissant (fond assombri + flou léger, fermeture au clic dehors ou sur le bouton ✕),
+plutôt que l'ancien simple repli en liste. Nouvelles animations (`tailwind.config.ts`) :
+`sidebar-in` (glissement du tiroir), `fade-in` (fond assombri), `page-in` (fondu + léger
+glissement vertical à chaque changement de page, `<main key={pathname}>` pour forcer un
+remontage — sans la clé, l'élément appartient à la coquille stable et ne rejouerait
+l'animation qu'au tout premier chargement).
+
+### Bug trouvé et corrigé en cours de route (pas dans le code d'origine — introduit puis corrigé dans cette étape)
+
+Le bouton « Se déconnecter » du pied de menu copiait un motif `hidden sm:inline` pensé pour
+l'ancien en-tête HORIZONTAL (le texte se cache sous le breakpoint `sm`, pensé par rapport à
+la largeur de tout le viewport). Dans une colonne verticale fixe de 260px, ce breakpoint ne
+correspond à rien d'utile : sur desktop (viewport large, `sm` toujours vrai) le texte
+« Se déconnecter » essayait de s'afficher à côté de « Réglages » dans une colonne trop
+étroite et retombait sur deux lignes, doublant la hauteur de la rangée. Repéré par une
+vérification du DOM en plus de la capture d'écran (hauteur de la rangée deux fois celle de
+« Réglages »). Corrigé : bouton de déconnexion en icône seule (`title`/`aria-label` pour
+l'accessibilité), `whitespace-nowrap` sur le lien Réglages — plus aucune ambiguïté de
+largeur disponible.
+
+### Polish des composants partagés (bénéficie à toutes les pages sans les toucher une par une)
+
+- `Button` : `transition-colors` → `transition-all` + `active:scale-[0.97]` — retour
+  tactile au clic sur tous les boutons de la plateforme, un seul fichier changé.
+- `StatCard` (tuiles de tableau de bord) : léger soulèvement au survol
+  (`hover:-translate-y-0.5 hover:shadow-md`) — même principe, un seul fichier.
+- `Table`/`TableRow` avait déjà `transition-colors hover:bg-surface-hover` (étape 0) —
+  inchangé, déjà cohérent avec cette passe.
+- Couleurs : délibérément **pas** de refonte des teintes sémantiques existantes
+  (`success`/`warning`/`danger`/`info`, déjà des teintes Tailwind vives et déjà utilisées de
+  façon cohérente et signifiante sur des dizaines de pages — les changer aurait été un
+  risque de régression visuelle large pour un gain incertain). Seul ajout : le token
+  `bg-brand-gradient`, réservé à des touches décoratives ponctuelles (liseré actif, avatar)
+  — jamais un grand aplat derrière un logo d'entreprise arbitraire, dont le contraste n'est
+  pas maîtrisé (vérifié : le logo réel de KIko Store est un monochrome noir/blanc, illisible
+  sur un fond sombre).
+
+### Tests
+
+Aucune écriture de données dans cette étape (uniquement de la navigation/affichage) — testé
+directement sur KIko Store, en lecture seule, DG connecté (Marcel Mahougnon) :
+- `tsc --noEmit` et `next lint` propres après la suppression des 29 `<EspaceHeader />` (une
+  suppression manquée ou un import orphelin serait immédiatement remonté par l'un des deux).
+- Firefox headless, desktop (1600px) : tableau de bord, comptabilité, charges, biens,
+  nouveau bien, employés, réglages — menu, groupes, icônes, état actif, dégradé, pied de
+  menu tous corrects ; toutes les données réelles de KIko Store rendues à l'identique
+  (taux d'occupation 73 %, 11 baux actifs, 2 575 000 FCFA encaissés, etc.).
+- Firefox headless, mobile (390px) : barre compacte, ouverture/fermeture du tiroir,
+  fond assombri correctement en arrière-plan (vérifié par inspection du DOM — `z-index`
+  calculé 30/40/50 pour barre/fond/tiroir respectivement, pas seulement à l'œil).
+- Bug du bouton de déconnexion trouvé ET corrigé avant validation finale (voir ci-dessus).
+- Bug-fix environnement (avant les tests) : `/tmp/geckodriver` et le lien symbolique
+  `node_modules` du scratchpad avaient de nouveau disparu (voir Étape 22/23) — recréés.

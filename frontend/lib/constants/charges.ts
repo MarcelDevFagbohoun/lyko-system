@@ -1,4 +1,4 @@
-import type { UtilityType, ChargeStatus, BatchStatus, DifferenceAlert } from "@/lib/api/charges";
+import type { UtilityType, ChargeStatus, BatchStatus, DifferenceAlert, LossAllocation } from "@/lib/api/charges";
 
 /** Miroir de backend/src/constants/charges.js pour l'affichage côté client. */
 export const UTILITY_TYPE_LABELS: Record<UtilityType, string> = {
@@ -8,7 +8,13 @@ export const UTILITY_TYPE_LABELS: Record<UtilityType, string> = {
 
 export const CHARGE_STATUS_LABELS: Record<ChargeStatus, string> = {
   impayee: "Impayée",
+  partiellement_payee: "Partiellement payée",
   payee: "Payée",
+};
+
+export const LOSS_ALLOCATION_LABELS: Record<LossAllocation, string> = {
+  proprietaire: "À la charge du propriétaire",
+  prorata: "Répartie entre les locataires (au prorata)",
 };
 
 export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {

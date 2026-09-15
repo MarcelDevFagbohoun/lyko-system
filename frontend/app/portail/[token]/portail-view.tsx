@@ -30,9 +30,10 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 
 /**
  * Portail locataire (étape 12, idée n°2) : page publique, sans compte ni mot
- * de passe — le token du chemin est le seul secret. Ni `RequireAuth` ni
- * `EspaceHeader` ici, volontairement : cette page ne doit jamais dépendre
- * d'une session employé.
+ * de passe — le token du chemin est le seul secret. Ni `RequireAuth` ni le
+ * menu de l'espace employé (`EspaceSidebar`) ici, volontairement : cette
+ * page ne doit jamais dépendre d'une session employé, ni vivre sous
+ * `app/espace/` (donc jamais sous sa coquille `layout.tsx`).
  */
 export function PortailView() {
   const { token } = useParams<{ token: string }>();

@@ -16,11 +16,11 @@ import {
 import { UTILITY_TYPE_LABELS, BATCH_STATUS_LABELS } from "@/lib/constants/charges";
 import { formatFcfa } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { useToast } from "@/lib/toast/toast-context";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 export function RelevesView() {
@@ -41,6 +41,7 @@ function submeteredTypes(p: PropertyListItem): UtilityType[] {
 function RelevesContent() {
   const { accessToken } = useAuth();
   const router = useRouter();
+  const toast = useToast();
   const [properties, setProperties] = React.useState<PropertyListItem[] | null>(null);
   const [propertyId, setPropertyId] = React.useState<number | null>(null);
   const [batches, setBatches] = React.useState<UtilityBatchSummary[] | null>(null);
@@ -75,7 +76,6 @@ function RelevesContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/charges" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />
@@ -138,7 +138,7 @@ function RelevesContent() {
                 accessToken={accessToken}
                 propertyId={selected.id}
                 types={submeteredTypes(selected)}
-                onCreated={(id) => router.push(`/espace/charges/releve/${id}`)}
+                onCreated={(id) => { toast.success("Relevé créé."); router.push(`/espace/charges/releve/${id}`); }}
               />
             )}
 

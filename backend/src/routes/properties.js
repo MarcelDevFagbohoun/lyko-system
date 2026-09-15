@@ -57,7 +57,13 @@ function toPublicProperty(row, extra = {}) {
     // attribué reste visible par n'importe quel agent SANS AUCUNE attribution
     // (accès complet par défaut), voir services/scope.js.
     agent: row.agent_id ? { id: row.agent_id, name: `${row.agent_first_name} ${row.agent_last_name}` } : null,
+    agentAssignedAt: row.agent_assigned_at,
     address: row.address,
+    // Coordonnées GPS (étape 13, idée n°10 : carte du portefeuille) : `null`
+    // tant que personne n'a placé le repère sur la carte.
+    latitude: row.latitude != null ? Number(row.latitude) : null,
+    longitude: row.longitude != null ? Number(row.longitude) : null,
+    locationSetAt: row.location_set_at,
     type: row.property_type,
     levels: row.levels,
     photoUrls: (row.photo_paths || []).map((p) => `/uploads/${p}`),
@@ -68,12 +74,14 @@ function toPublicProperty(row, extra = {}) {
         unitPrice: row.soneb_unit_price != null ? Number(row.soneb_unit_price) : null,
         mainMeterNumber: row.soneb_main_meter_number,
         accountNumber: row.soneb_account_number,
+        lossAllocation: row.soneb_loss_allocation,
       },
       sbee: {
         submetered: !!row.sbee_submetered,
         unitPrice: row.sbee_unit_price != null ? Number(row.sbee_unit_price) : null,
         mainMeterNumber: row.sbee_main_meter_number,
         accountNumber: row.sbee_account_number,
+        lossAllocation: row.sbee_loss_allocation,
       },
     },
     createdBy: toActor(row.creator_first_name, row.creator_last_name, row.creator_role),
@@ -256,15 +264,20 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_PROPERTY), async (req, re
     await conn.beginTransaction();
 
     const code = await nextPropertyCode(conn, req.user.tenantId);
+    const hasCoords = data.latitude != null && data.longitude != null;
     const [result] = await conn.query(
-      `INSERT INTO properties (tenant_id, code, owner_id, agent_id, address, property_type, levels, created_by)
-       VALUES (:tenantId, :code, :ownerId, :agentId, :address, :type, :levels, :createdBy)`,
+      `INSERT INTO properties
+         (tenant_id, code, owner_id, agent_id, agent_assigned_at, address, latitude, longitude, location_set_at, property_type, levels, created_by)
+       VALUES (:tenantId, :code, :ownerId, :agentId, ${scopeAgentId != null ? 'NOW()' : 'NULL'},
+               :address, :latitude, :longitude, ${hasCoords ? 'NOW()' : 'NULL'}, :type, :levels, :createdBy)`,
       {
         tenantId: req.user.tenantId,
         code,
         ownerId: data.ownerId,
         agentId: scopeAgentId,
         address: data.address,
+        latitude: data.latitude ?? null,
+        longitude: data.longitude ?? null,
         type: data.propertyType,
         levels: data.levels ?? null,
         createdBy: req.user.id,
@@ -324,6 +337,11 @@ router.patch('/:id', upload.array('photos', MAX_PHOTOS_PER_PROPERTY), async (req
     const params = { id };
     if (data.ownerId !== undefined) { fields.push('owner_id = :ownerId'); params.ownerId = data.ownerId; }
     if (data.address !== undefined) { fields.push('address = :address'); params.address = data.address; }
+    if (data.latitude !== undefined) { fields.push('latitude = :latitude'); params.latitude = data.latitude; }
+    if (data.longitude !== undefined) { fields.push('longitude = :longitude'); params.longitude = data.longitude; }
+    if (data.latitude !== undefined || data.longitude !== undefined) {
+      fields.push(data.latitude != null ? 'location_set_at = NOW()' : 'location_set_at = NULL');
+    }
     if (data.propertyType !== undefined) { fields.push('property_type = :type'); params.type = data.propertyType; }
     if (data.levels !== undefined) { fields.push('levels = :levels'); params.levels = data.levels; }
 

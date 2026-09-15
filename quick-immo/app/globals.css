@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-size: 14px;
+    line-height: 20px;
+  }
+
+  /* Montants FCFA : alignement en colonnes garanti. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Anneau de focus cohérent sur toute la plateforme. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: none;
+    @apply ring-2 ring-primary ring-offset-2 ring-offset-canvas;
+  }
+
+  ::selection {
+    background-color: #1e3a8a22;
+  }
+}
+
+@layer components {
+  /* Conteneur de contenu principal borné à 1408px, comme la maquette. */
+  .content-shell {
+    @apply mx-auto w-full max-w-content-max px-4 sm:px-6;
+  }
+}
+
+/* Retour immédiat sur chaque action (toasts) : glissement + fondu à l'entrée,
+   discret mais perceptible — jamais un simple pop-in sec. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-toast-in {
+  animation: toast-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Fond du hero de la page d'accueil : un dégradé « mesh » en CSS pur, jamais
+   une image — zéro octet réseau, net à toutes les résolutions (écrans
+   rétina inclus), coût de rendu minime (le navigateur ne fait que peindre
+   des dégradés radiaux, pas décoder/redimensionner un fichier). */
+.hero-mesh {
+  background-color: #eff3fc;
+  background-image:
+    radial-gradient(560px circle at 12% 18%, rgba(30, 58, 138, 0.16), transparent 60%),
+    radial-gradient(480px circle at 88% 8%, rgba(37, 99, 235, 0.14), transparent 60%),
+    radial-gradient(620px circle at 50% 105%, rgba(30, 58, 138, 0.08), transparent 65%),
+    linear-gradient(180deg, #eff3fc 0%, #f8fafc 100%);
+}
+
+/* Halo décoratif derrière le titre du hero — animation légère (transform/
+   opacity uniquement, accélérée par le compositeur GPU, jamais de reflow). */
+@keyframes hero-drift {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(12px, -10px) scale(1.04);
+  }
+}
+.hero-orb {
+  animation: hero-drift 14s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-orb {
+    animation: none;
+  }
+}

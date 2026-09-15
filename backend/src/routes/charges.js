@@ -4,8 +4,8 @@ const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requirePermission, requireRole } = require('../middleware/auth');
-const { createChargeSchema, updateChargeSchema, payChargeSchema, deleteReasonSchema } = require('../validators/charges');
-const { UTILITY_TYPES, CHARGE_STATUSES } = require('../constants/charges');
+const { createChargeSchema, updateChargeSchema, createUtilityPaymentSchema, deleteReasonSchema } = require('../validators/charges');
+const { UTILITY_TYPES, UTILITY_TYPE_KEYS, CHARGE_STATUSES } = require('../constants/charges');
 const { toActor } = require('../utils/actor');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const logger = require('../utils/logger');
@@ -29,6 +29,9 @@ function isoDate(d) {
 }
 
 function toPublicCharge(row) {
+  const amount = Number(row.amount);
+  const lossShareAmount = Number(row.loss_share_amount ?? 0);
+  const paidAmount = Number(row.paid_total ?? 0);
   return {
     id: row.id,
     utilityType: row.utility_type,
@@ -38,9 +41,16 @@ function toPublicCharge(row) {
     readingEnd: row.reading_end,
     consumption: row.reading_end - row.reading_start,
     unitPrice: Number(row.unit_price),
-    amount: Number(row.amount),
+    amount,
+    // Part de l'écart compteur/décompteur imputée à cette facture (étape 23,
+    // 0 sauf répartition « prorata » activée sur ce Bien) — distincte de la
+    // consommation mesurée pour un affichage séparé.
+    lossShareAmount,
+    consumptionAmount: amount - lossShareAmount,
     billedAt: isoDate(row.billed_at),
     status: row.status,
+    paidAmount,
+    remainingAmount: Math.max(0, amount - paidAmount),
     paidAt: isoDate(row.paid_at),
     paymentMethod: row.payment_method,
     paymentMethodLabel: row.payment_method ? PAYMENT_METHOD_LABELS[row.payment_method] ?? row.payment_method : null,
@@ -57,6 +67,7 @@ function toPublicCharge(row) {
 
 const CHARGE_SELECT = `
   uc.*,
+  COALESCE(pt.paid_total, 0) AS paid_total,
   l.status AS lease_status,
   r.id AS renter_id, r.first_name AS renter_first_name, r.last_name AS renter_last_name,
   u.id AS unit_id, u.code AS unit_code,
@@ -66,6 +77,7 @@ const CHARGE_SELECT = `
 `;
 const CHARGE_JOINS = `
   FROM utility_charges uc
+  LEFT JOIN (SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id) pt ON pt.charge_id = uc.id
   JOIN leases l ON l.id = uc.lease_id
   JOIN renters r ON r.id = l.renter_id
   JOIN property_units u ON u.id = l.unit_id
@@ -98,6 +110,29 @@ async function loadCharge(conn, tenantId, id) {
 // GET /api/charges/meta — catalogues pour construire les formulaires.
 router.get('/meta', (_req, res) => {
   res.json({ utilityTypes: UTILITY_TYPES, statuses: CHARGE_STATUSES });
+});
+
+// GET /api/charges/previous-reading?leaseId=&utilityType= — index de fin de
+// la dernière facture de ce bail pour ce fluide, pour préremplir l'index de
+// début d'une nouvelle facture (jamais besoin de le ressaisir) — même
+// principe que le relevé par immeuble (utilityReadings.js).
+router.get('/previous-reading', async (req, res, next) => {
+  const leaseId = Number(req.query.leaseId);
+  const utilityType = typeof req.query.utilityType === 'string' ? req.query.utilityType : '';
+  if (!Number.isInteger(leaseId) || leaseId <= 0) return next(new ApiError(400, 'Bail invalide'));
+  if (!UTILITY_TYPE_KEYS.includes(utilityType)) return next(new ApiError(400, 'Fluide invalide'));
+
+  try {
+    const [[row]] = await pool.query(
+      `SELECT reading_end FROM utility_charges
+       WHERE tenant_id = :tenantId AND lease_id = :leaseId AND utility_type = :utilityType AND deleted_at IS NULL
+       ORDER BY billed_at DESC, id DESC LIMIT 1`,
+      { tenantId: req.user.tenantId, leaseId, utilityType },
+    );
+    res.json({ readingEnd: row ? row.reading_end : null });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // GET /api/charges?status=&utilityType=&leaseId=&q= — registre des charges SONEB/SBEE.
@@ -213,6 +248,18 @@ router.patch('/:id', async (req, res, next) => {
       await assertPeriodOpen(req.user.tenantId, data.billedAt);
     }
 
+    // Un paiement (même partiel) déjà enregistré fige le montant : le
+    // modifier désynchroniserait la facture de ce qui a déjà été réglé.
+    if (data.readingStart !== undefined || data.readingEnd !== undefined || data.unitPrice !== undefined) {
+      const [[{ paidTotal }]] = await pool.query(
+        'SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id',
+        { id },
+      );
+      if (Number(paidTotal) > 0) {
+        throw new ApiError(409, 'Un paiement a déjà été enregistré sur cette facture — impossible de modifier le montant.');
+      }
+    }
+
     const fields = [];
     const params = { id };
     if (data.utilityType !== undefined) { fields.push('utility_type = :utilityType'); params.utilityType = data.utilityType; }
@@ -250,35 +297,120 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-// PATCH /api/charges/:id/pay — marquer la facture comme réglée par le locataire.
-router.patch('/:id/pay', async (req, res, next) => {
+// GET /api/charges/:id/payments — historique des règlements de cette facture.
+router.get('/:id/payments', async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
-  const parsed = payChargeSchema.safeParse(req.body);
+  try {
+    await loadCharge(pool, req.user.tenantId, id);
+    const [rows] = await pool.query(
+      `SELECT up.id, up.amount, up.payment_method, up.paid_at, up.notes, up.created_at,
+              pu.first_name AS recorder_first_name, pu.last_name AS recorder_last_name, pu.role AS recorder_role
+       FROM utility_payments up
+       LEFT JOIN users pu ON pu.id = up.recorded_by
+       WHERE up.charge_id = :id ORDER BY up.paid_at DESC, up.id DESC`,
+      { id },
+    );
+    res.json({
+      payments: rows.map((p) => ({
+        id: p.id,
+        amount: Number(p.amount),
+        paymentMethod: p.payment_method,
+        paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
+        paidAt: isoDate(p.paid_at),
+        notes: p.notes,
+        recordedBy: toActor(p.recorder_first_name, p.recorder_last_name, p.recorder_role),
+        createdAt: p.created_at,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/charges/:id/payments — enregistrer un règlement (total ou partiel).
+router.post('/:id/payments', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = createUtilityPaymentSchema.safeParse(req.body);
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
   const data = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
-    const charge = await loadCharge(pool, req.user.tenantId, id);
-    if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà marquée payée.');
+    const charge = await loadCharge(conn, req.user.tenantId, id);
+    if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée.');
     await assertPeriodOpen(req.user.tenantId, charge.billed_at);
 
-    await pool.query(
-      `UPDATE utility_charges
-       SET status = 'payee', paid_at = :paidAt, payment_method = :paymentMethod, paid_recorded_by = :by
-       WHERE id = :id`,
-      { paidAt: data.paidAt, paymentMethod: data.paymentMethod, by: req.user.id, id },
+    await conn.beginTransaction();
+    // Sérialise les enregistrements concurrents sur cette facture — même
+    // principe que les paiements de loyer (routes/leases.js).
+    await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id });
+
+    const [[{ paidTotal }]] = await conn.query(
+      'SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id',
+      { id },
+    );
+    const remaining = Number(charge.amount) - Number(paidTotal);
+    if (data.amount > remaining) {
+      throw new ApiError(400, `Le montant dépasse le solde restant (${remaining} FCFA).`);
+    }
+
+    // Garde anti-doublon : un règlement identique tout juste enregistré
+    // (< 2 min, même date/mode/montant) est très probablement un double-clic.
+    const [recent] = await conn.query(
+      `SELECT COUNT(*) AS n FROM utility_payments
+       WHERE charge_id = :id AND paid_at = :paidAt AND payment_method = :method AND amount = :amount
+         AND created_at > (NOW() - INTERVAL 2 MINUTE)`,
+      { id, paidAt: data.paidAt, method: data.paymentMethod, amount: data.amount },
+    );
+    if (Number(recent[0].n) > 0) {
+      throw new ApiError(409, 'Un règlement identique vient d\'être enregistré. Rechargez la page pour le voir.');
+    }
+
+    await conn.query(
+      `INSERT INTO utility_payments (tenant_id, charge_id, amount, payment_method, paid_at, notes, recorded_by)
+       VALUES (:tenantId, :chargeId, :amount, :paymentMethod, :paidAt, :notes, :recordedBy)`,
+      {
+        tenantId: req.user.tenantId,
+        chargeId: id,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        paidAt: data.paidAt,
+        notes: data.notes,
+        recordedBy: req.user.id,
+      },
     );
 
-    logger.info('Charge SONEB/SBEE réglée', { tenantId: req.user.tenantId, chargeId: id, by: req.user.id });
+    const newPaidTotal = Number(paidTotal) + data.amount;
+    const newStatus = newPaidTotal >= Number(charge.amount) ? 'payee' : 'partiellement_payee';
+    await conn.query(
+      `UPDATE utility_charges
+       SET status = :status, paid_at = :paidAt, payment_method = :paymentMethod, paid_recorded_by = :by
+       WHERE id = :id`,
+      { status: newStatus, paidAt: data.paidAt, paymentMethod: data.paymentMethod, by: req.user.id, id },
+    );
+    await conn.commit();
+
+    logger.info('Règlement facture SONEB/SBEE enregistré', {
+      tenantId: req.user.tenantId,
+      chargeId: id,
+      amount: data.amount,
+      newStatus,
+      by: req.user.id,
+    });
 
     const [rows] = await pool.query(`SELECT ${CHARGE_SELECT} ${CHARGE_JOINS} WHERE uc.id = :id`, { id });
-    res.json({ charge: toPublicCharge(rows[0]) });
+    res.status(201).json({ charge: toPublicCharge(rows[0]) });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 

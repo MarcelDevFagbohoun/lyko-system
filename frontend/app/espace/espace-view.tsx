@@ -4,7 +4,7 @@ import Link from "next/link";
 import { UserPlus, Building2, ArrowRight, Receipt } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
+import { MyTasksCard } from "@/components/espace/my-tasks-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
@@ -29,7 +29,6 @@ function EspaceContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
 
       <div className="content-shell flex flex-col gap-6 py-10">
         <div>
@@ -39,8 +38,10 @@ function EspaceContent() {
           </p>
         </div>
 
+        {!isDg && <MyTasksCard />}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {isDg ? (
+          {isDg && (
             <Link href="/espace/employes" className="group">
               <Card className="h-full transition-shadow group-hover:shadow-md">
                 <CardHeader>
@@ -57,16 +58,6 @@ function EspaceContent() {
                 </CardHeader>
               </Card>
             </Link>
-          ) : (
-            <Card className="opacity-80">
-              <CardHeader>
-                <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
-                  <UserPlus size={20} />
-                </div>
-                <CardTitle>Gestion des employés</CardTitle>
-                <CardDescription>Réservée à la direction générale de votre entreprise.</CardDescription>
-              </CardHeader>
-            </Card>
           )}
 
           {canLocataires ? (

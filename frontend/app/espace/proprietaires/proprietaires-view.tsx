@@ -8,7 +8,6 @@ import { listOwners, type OwnerListItem } from "@/lib/api/owners";
 import { ApiError } from "@/lib/api/client";
 import { formatFcfa } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -43,7 +42,6 @@ function ProprietairesContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>

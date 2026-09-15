@@ -1,8 +1,8 @@
 import { apiFetch, type Actor } from "./client";
 import type { PropertyOwner, PropertyTypeKey, UnitDesignationKey } from "./properties";
+import type { InspectionCondition } from "@/lib/constants/inspection";
 
 export type PaymentMethod = "especes" | "mobile_money" | "virement" | "cheque";
-export type InspectionCondition = "bon" | "moyen" | "mauvais";
 
 /** Bien (bâtiment) tel qu'imbriqué dans un bail, avec son propriétaire. */
 export type LeaseProperty = {
@@ -47,33 +47,48 @@ export type Payment = {
   receipt: { id: number; number: string; issuedAt: string } | null;
 };
 
-export type MoveInReportItem = { label: string; condition: InspectionCondition; comment: string | null };
-export type MoveInReport = {
-  id: number;
-  conductedAt: string;
-  items: MoveInReportItem[];
-  generalNotes: string | null;
-  conductedBy: Actor;
-};
-
-/** Poste d'état des lieux de sortie : même grille que l'entrée, + retenue chiffrée. */
-export type MoveOutReportItem = {
+/**
+ * Poste d'état des lieux (étape 13, idée n°9 : refonte par zones). `deduction`
+ * n'a de sens que sur une fiche de SORTIE (toujours 0, ignorée, sur une
+ * fiche d'entrée) — une seule forme, partagée entre entrée et sortie.
+ * `key` est stable pour un poste standard, généré côté client pour un poste
+ * personnalisé — utilisé pour retrouver le poste (photo) et pour la
+ * comparaison automatique entrée/sortie.
+ */
+export type InspectionItem = {
+  key: string;
   label: string;
-  condition: InspectionCondition;
+  custom: boolean;
+  condition: InspectionCondition | null;
   comment: string | null;
+  photoUrl: string | null;
   deduction: number;
 };
-export type MoveOutReport = {
+export type InspectionZone = { key: string; label: string; custom: boolean; items: InspectionItem[] };
+export type InspectionReportStatus = "draft" | "finalized";
+
+export type InspectionReport = {
   id: number;
+  status: InspectionReportStatus;
   conductedAt: string;
-  items: MoveOutReportItem[];
+  zones: InspectionZone[];
   generalNotes: string | null;
+  finalizedAt: string | null;
+  tenantSignatureUrl: string | null;
+  agentSignatureUrl: string | null;
+  conductedBy: Actor;
+  finalizedBy: Actor;
+};
+
+export type MoveInReport = InspectionReport;
+
+/** État des lieux de sortie : même fiche que l'entrée + décompte de caution. */
+export type MoveOutReport = InspectionReport & {
   otherDeductionsAmount: number;
   otherDeductionsNote: string | null;
   depositAmount: number;
   totalDeductions: number;
   netRefund: number;
-  conductedBy: Actor;
 };
 
 export type Lease = {
@@ -91,6 +106,7 @@ export type Lease = {
   moveInReport: MoveInReport | null;
   moveOutReport: MoveOutReport | null;
   createdBy: Actor;
+  createdAt: string;
 };
 
 export type Renter = {
@@ -105,6 +121,7 @@ export type Renter = {
   createdAt: string;
   /** Un lien de portail a déjà été généré pour ce locataire (jamais le token lui-même). */
   hasPortalLink: boolean;
+  portalLinkCreatedAt: string | null;
 };
 
 export type RenterListItem = Renter & { activeLease: Lease | null; arrears: Arrears | null };
@@ -280,43 +297,124 @@ export function certificatePdfPath(renterId: number) {
   return `/api/renters/${renterId}/certificate.pdf`;
 }
 
-export function createMoveInReport(
-  accessToken: string,
-  leaseId: number,
-  input: { conductedAt: string; items: MoveInReportItem[]; generalNotes?: string },
-) {
-  return apiFetch<{ reportId: number }>(`/api/leases/${leaseId}/move-in-report`, {
+// État des lieux (étape 13, idée n°9 : refonte par zones) — cycle
+// brouillon → finalisation, partagé entre entrée et sortie (le chemin
+// `${kind}-report` change, la forme de la fiche est identique).
+export type InspectionReportKind = "move-in" | "move-out";
+
+function inspectionReportPath(kind: InspectionReportKind, leaseId: number) {
+  return `/api/leases/${leaseId}/${kind}-report`;
+}
+
+export function getMoveInReport(accessToken: string, leaseId: number) {
+  return apiFetch<{ report: MoveInReport | null }>(inspectionReportPath("move-in", leaseId), { accessToken });
+}
+
+/** Démarre le brouillon (zones/éléments standards) — une fois par bail. */
+export function startMoveInReport(accessToken: string, leaseId: number, conductedAt?: string) {
+  return apiFetch<{ report: MoveInReport }>(inspectionReportPath("move-in", leaseId), {
     method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conductedAt }),
+  });
+}
+
+export type UpdateInspectionDraftInput = {
+  conductedAt?: string;
+  zones: InspectionZone[];
+  generalNotes?: string;
+};
+
+export function updateMoveInReport(accessToken: string, leaseId: number, input: UpdateInspectionDraftInput) {
+  return apiFetch<{ report: MoveInReport }>(inspectionReportPath("move-in", leaseId), {
+    method: "PATCH",
     accessToken,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
 }
 
+export function finalizeMoveInReport(accessToken: string, leaseId: number, tenantSignature: Blob, agentSignature: Blob) {
+  const fd = new FormData();
+  fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
+  fd.append("agentSignature", agentSignature, "signature-agent.png");
+  return apiFetch<{ report: MoveInReport }>(`${inspectionReportPath("move-in", leaseId)}/finalize`, {
+    method: "POST",
+    accessToken,
+    body: fd,
+  });
+}
+
 export function getMoveOutReport(accessToken: string, leaseId: number) {
   return apiFetch<{ report: MoveOutReport | null; arrears: Arrears | null }>(
-    `/api/leases/${leaseId}/move-out-report`,
+    inspectionReportPath("move-out", leaseId),
     { accessToken },
   );
 }
 
-export type CreateMoveOutReportInput = {
-  conductedAt: string;
-  items: MoveOutReportItem[];
-  generalNotes?: string;
+/** Démarre le brouillon, amorcé depuis la fiche d'entrée si elle existe (comparaison automatique). */
+export function startMoveOutReport(accessToken: string, leaseId: number, conductedAt?: string) {
+  return apiFetch<{ report: MoveOutReport }>(inspectionReportPath("move-out", leaseId), {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conductedAt }),
+  });
+}
+
+export type UpdateMoveOutDraftInput = UpdateInspectionDraftInput & {
   otherDeductionsAmount?: number;
   otherDeductionsNote?: string;
 };
 
-export function createMoveOutReport(accessToken: string, leaseId: number, input: CreateMoveOutReportInput) {
-  return apiFetch<{ reportId: number; totalDeductions: number; netRefund: number }>(
-    `/api/leases/${leaseId}/move-out-report`,
-    {
-      method: "POST",
-      accessToken,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    },
+export function updateMoveOutReport(accessToken: string, leaseId: number, input: UpdateMoveOutDraftInput) {
+  return apiFetch<{ report: MoveOutReport }>(inspectionReportPath("move-out", leaseId), {
+    method: "PATCH",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function finalizeMoveOutReport(accessToken: string, leaseId: number, tenantSignature: Blob, agentSignature: Blob) {
+  const fd = new FormData();
+  fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
+  fd.append("agentSignature", agentSignature, "signature-agent.png");
+  return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/finalize`, {
+    method: "POST",
+    accessToken,
+    body: fd,
+  });
+}
+
+/** Photo d'un élément (entrée ou sortie) — remplace la précédente le cas échéant. */
+export function uploadInspectionItemPhoto(
+  accessToken: string,
+  kind: InspectionReportKind,
+  leaseId: number,
+  zoneKey: string,
+  itemKey: string,
+  photo: File,
+) {
+  const fd = new FormData();
+  fd.append("photo", photo);
+  return apiFetch<{ report: InspectionReport }>(
+    `${inspectionReportPath(kind, leaseId)}/items/${zoneKey}/${itemKey}/photo`,
+    { method: "POST", accessToken, body: fd },
+  );
+}
+
+export function deleteInspectionItemPhoto(
+  accessToken: string,
+  kind: InspectionReportKind,
+  leaseId: number,
+  zoneKey: string,
+  itemKey: string,
+) {
+  return apiFetch<{ report: InspectionReport }>(
+    `${inspectionReportPath(kind, leaseId)}/items/${zoneKey}/${itemKey}/photo`,
+    { method: "DELETE", accessToken },
   );
 }
 

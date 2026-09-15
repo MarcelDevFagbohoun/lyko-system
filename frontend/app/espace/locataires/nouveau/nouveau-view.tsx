@@ -10,7 +10,6 @@ import type { Unit } from "@/lib/api/properties";
 import { normalizeBeninPhone, buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
@@ -136,7 +135,6 @@ function NouveauContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link
           href="/espace/locataires"

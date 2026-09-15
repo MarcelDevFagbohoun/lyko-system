@@ -15,6 +15,11 @@ const chargeRoutes = require('./charges');
 const utilityReadingRoutes = require('./utilityReadings');
 const dashboardRoutes = require('./dashboard');
 const portalRoutes = require('./portal');
+const ownerPortalRoutes = require('./ownerPortal');
+const taskRoutes = require('./tasks');
+const historyRoutes = require('./history');
+const marketplaceRoutes = require('./marketplace');
+const marketplaceAccountRoutes = require('./marketplaceAccounts');
 
 const router = Router();
 
@@ -35,6 +40,20 @@ router.use('/charges', chargeRoutes);
 // préfixe déjà consommé plus haut se retrouverait forcée par l'auth employé
 // avant même d'atteindre son propre routeur (bug constaté : 401 systématique).
 router.use('/portal', portalRoutes);
+// Portail propriétaire (étape 13, idée n°1) : même piège que ci-dessus, doit
+// aussi être monté avant `utilityReadingRoutes`.
+router.use('/owner-portal', ownerPortalRoutes);
+// Tableau de bord « Mes tâches » (comptable/agent, étape 18) : même piège
+// que ci-dessus, doit aussi être monté avant `utilityReadingRoutes`.
+router.use('/tasks', taskRoutes);
+// Historique personnel (comptable/agent, étape 18) : même piège, même raison.
+router.use('/history', historyRoutes);
+// Marketplace : sa route `/public/:tenantId` est PUBLIQUE (aucune auth) —
+// même piège que ci-dessus, doit être montée avant `utilityReadingRoutes`.
+router.use('/marketplace', marketplaceRoutes);
+// Comptes Quick Immo (grand public, site externe séparé) : entièrement
+// public/self-service, même piège, même raison.
+router.use('/marketplace-accounts', marketplaceAccountRoutes);
 // Relevé de compteurs par immeuble (étape 9bis) : routes /properties/:id/utility-*
 // et /utility-batches/* — montées à la racine de /api (permission `charges`).
 router.use(utilityReadingRoutes);

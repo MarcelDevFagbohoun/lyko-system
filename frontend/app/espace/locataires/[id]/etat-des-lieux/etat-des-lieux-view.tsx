@@ -3,18 +3,28 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ClipboardList } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
-import { getRenter, createMoveInReport, type Lease, type MoveInReportItem } from "@/lib/api/renters";
-import { INSPECTION_ITEMS, INSPECTION_CONDITIONS, CONDITION_LABELS, type InspectionCondition } from "@/lib/constants/inspection";
+import {
+  getRenter,
+  startMoveInReport,
+  updateMoveInReport,
+  uploadInspectionItemPhoto,
+  deleteInspectionItemPhoto,
+  finalizeMoveInReport,
+  type Lease,
+  type InspectionReport,
+  type InspectionZone,
+} from "@/lib/api/renters";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
-import { Field, Input } from "@/components/ui/input";
+import { InspectionForm } from "@/components/inspections/inspection-form";
+import { InspectionReadOnly } from "@/components/inspections/inspection-readonly";
+import { FinalizeSection } from "@/components/inspections/finalize-section";
+import { SignatureBlock } from "@/components/inspections/signature-block";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { useToast } from "@/lib/toast/toast-context";
 
 export function EtatDesLieuxView() {
   return (
@@ -34,6 +44,7 @@ function EtatDesLieuxContent() {
 
   const [lease, setLease] = React.useState<Lease | null>(null);
   const [renterName, setRenterName] = React.useState("");
+  const [report, setReport] = React.useState<InspectionReport | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -44,6 +55,7 @@ function EtatDesLieuxContent() {
         const found = res.leases.find((l) => l.id === leaseId);
         if (!found) throw new ApiError(404, "Bail introuvable");
         setLease(found);
+        setReport(found.moveInReport);
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Impossible de charger le bail."));
   }, [accessToken, renterId, leaseId]);
@@ -51,7 +63,6 @@ function EtatDesLieuxContent() {
   if (loadError) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10">
           <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
             {loadError}
@@ -64,7 +75,6 @@ function EtatDesLieuxContent() {
   if (!lease) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10 text-body-sm text-ink-muted">Chargement…</div>
       </div>
     );
@@ -72,7 +82,6 @@ function EtatDesLieuxContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link
           href={`/espace/locataires/${renterId}`}
@@ -82,13 +91,18 @@ function EtatDesLieuxContent() {
           Retour à la fiche de {renterName}
         </Link>
 
-        {lease.moveInReport ? (
-          <ReadOnlyReport lease={lease} />
+        {!report ? (
+          <StartCard leaseId={leaseId} accessToken={accessToken} onStarted={setReport} />
+        ) : report.status === "finalized" ? (
+          <FinalizedView lease={lease} report={report} />
         ) : (
-          <ReportForm
-            leaseId={lease.id}
+          <DraftEditor
+            leaseId={leaseId}
+            lease={lease}
+            report={report}
             accessToken={accessToken}
-            onDone={() => router.push(`/espace/locataires/${renterId}`)}
+            onReportChange={setReport}
+            onFinalized={() => router.push(`/espace/locataires/${renterId}`)}
           />
         )}
       </div>
@@ -96,78 +110,27 @@ function EtatDesLieuxContent() {
   );
 }
 
-function conditionVariant(c: InspectionCondition) {
-  if (c === "bon") return "success" as const;
-  if (c === "moyen") return "warning" as const;
-  return "danger" as const;
-}
-
-function ReadOnlyReport({ lease }: { lease: Lease }) {
-  const report = lease.moveInReport!;
-  return (
-    <Card className="max-w-2xl">
-      <CardHeader>
-        <CardTitle>État des lieux d&apos;entrée</CardTitle>
-        <CardDescription>
-          {lease.unit.designationLabel} ({lease.unit.code}) · réalisé le {report.conductedAt}
-          {report.conductedBy && ` par ${report.conductedBy.name} (${report.conductedBy.roleLabel})`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {report.items.map((item, i) => (
-          <div key={i} className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
-            <div>
-              <p className="font-label-md text-ink">{item.label}</p>
-              {item.comment && <p className="text-body-xs text-ink-muted">{item.comment}</p>}
-            </div>
-            <Badge variant={conditionVariant(item.condition)}>{CONDITION_LABELS[item.condition]}</Badge>
-          </div>
-        ))}
-        {report.generalNotes && (
-          <div className="rounded-lg border border-border bg-surface-muted p-3">
-            <p className="font-label-sm text-ink-muted">Notes générales</p>
-            <p className="text-body-sm text-ink">{report.generalNotes}</p>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ReportForm({
+function StartCard({
   leaseId,
   accessToken,
-  onDone,
+  onStarted,
 }: {
   leaseId: number;
   accessToken: string | null;
-  onDone: () => void;
+  onStarted: (report: InspectionReport) => void;
 }) {
-  const [conductedAt, setConductedAt] = React.useState(new Date().toISOString().slice(0, 10));
-  const [items, setItems] = React.useState<MoveInReportItem[]>(
-    INSPECTION_ITEMS.map((label) => ({ label, condition: "bon", comment: null })),
-  );
-  const [generalNotes, setGeneralNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  function setCondition(index: number, condition: InspectionCondition) {
-    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, condition } : it)));
-  }
-  function setComment(index: number, comment: string) {
-    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, comment: comment || null } : it)));
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleStart() {
     if (!accessToken) return;
     setSubmitting(true);
     setError(null);
     try {
-      await createMoveInReport(accessToken, leaseId, { conductedAt, items, generalNotes: generalNotes.trim() || undefined });
-      onDone();
+      const res = await startMoveInReport(accessToken, leaseId);
+      onStarted(res.report);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer l'état des lieux.");
+      setError(err instanceof ApiError ? err.message : "Impossible de démarrer l'état des lieux.");
     } finally {
       setSubmitting(false);
     }
@@ -175,64 +138,175 @@ function ReportForm({
 
   return (
     <Card className="max-w-2xl">
+      <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
+        <ClipboardList size={28} className="text-ink-muted" />
+        <p className="font-label-md text-ink">Aucun état des lieux d&apos;entrée pour ce bail</p>
+        <p className="text-body-sm text-ink-muted">
+          La fiche est organisée par zones (devanture, chambre, salon…) avec un état par élément.
+        </p>
+        {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+        <Button onClick={handleStart} disabled={submitting}>
+          {submitting ? "Démarrage…" : "Commencer l'état des lieux d'entrée"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DraftEditor({
+  leaseId,
+  lease,
+  report,
+  accessToken,
+  onReportChange,
+  onFinalized,
+}: {
+  leaseId: number;
+  lease: Lease;
+  report: InspectionReport;
+  accessToken: string | null;
+  onReportChange: (report: InspectionReport) => void;
+  onFinalized: () => void;
+}) {
+  const [zones, setZones] = React.useState<InspectionZone[]>(report.zones);
+  const [generalNotes, setGeneralNotes] = React.useState(report.generalNotes ?? "");
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [finalizing, setFinalizing] = React.useState(false);
+  const [finalizeError, setFinalizeError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  async function handleSave() {
+    if (!accessToken) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await updateMoveInReport(accessToken, leaseId, { zones, generalNotes: generalNotes.trim() || undefined });
+      onReportChange(res.report);
+      setZones(res.report.zones);
+      toast.success("Brouillon enregistré.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer le brouillon.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUploadPhoto(zoneKey: string, itemKey: string, file: File) {
+    if (!accessToken) return;
+    try {
+      const res = await uploadInspectionItemPhoto(accessToken, "move-in", leaseId, zoneKey, itemKey, file);
+      onReportChange(res.report);
+      setZones(res.report.zones);
+      toast.success("Photo envoyée.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'envoyer la photo.");
+    }
+  }
+
+  async function handleDeletePhoto(zoneKey: string, itemKey: string) {
+    if (!accessToken) return;
+    try {
+      const res = await deleteInspectionItemPhoto(accessToken, "move-in", leaseId, zoneKey, itemKey);
+      onReportChange(res.report);
+      setZones(res.report.zones);
+      toast.info("Photo retirée.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de retirer la photo.");
+    }
+  }
+
+  async function handleFinalize(tenantSignature: Blob, agentSignature: Blob) {
+    if (!accessToken) return;
+    // La finalisation exige les données déjà enregistrées côté serveur — on
+    // sauvegarde silencieusement le brouillon courant juste avant, pour ne
+    // jamais finaliser une version en retard sur ce qui est affiché à l'écran.
+    setFinalizing(true);
+    setFinalizeError(null);
+    try {
+      await updateMoveInReport(accessToken, leaseId, { zones, generalNotes: generalNotes.trim() || undefined });
+      const res = await finalizeMoveInReport(accessToken, leaseId, tenantSignature, agentSignature);
+      onReportChange(res.report);
+      toast.success("État des lieux d'entrée finalisé et verrouillé.");
+      onFinalized();
+    } catch (err) {
+      setFinalizeError(err instanceof ApiError ? err.message : "Impossible de finaliser la fiche.");
+    } finally {
+      setFinalizing(false);
+    }
+  }
+
+  return (
+    <Card className="max-w-3xl">
+      <CardHeader>
+        <CardTitle>État des lieux d&apos;entrée — brouillon</CardTitle>
+        <CardDescription>
+          {lease.unit.designationLabel} ({lease.unit.code}) · évaluez chaque élément, puis finalisez avec les signatures.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-6">
+        {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+
+        <InspectionForm
+          zones={zones}
+          onChange={setZones}
+          showDeductions={false}
+          onUploadPhoto={handleUploadPhoto}
+          onDeletePhoto={handleDeletePhoto}
+        />
+
+        <div className="flex flex-col gap-2">
+          <label className="font-label-sm text-ink-soft">Notes générales (optionnel)</label>
+          <textarea
+            value={generalNotes}
+            onChange={(e) => setGeneralNotes(e.target.value)}
+            rows={3}
+            className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-md text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button type="button" variant="secondary" onClick={handleSave} disabled={saving}>
+            {saving ? "Enregistrement…" : "Enregistrer le brouillon"}
+          </Button>
+        </div>
+
+        <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function FinalizedView({ lease, report }: { lease: Lease; report: InspectionReport }) {
+  return (
+    <Card className="max-w-3xl">
       <CardHeader>
         <CardTitle>État des lieux d&apos;entrée</CardTitle>
-        <CardDescription>Évaluez chaque poste au moment de la remise des clés.</CardDescription>
+        <CardDescription>
+          {lease.unit.designationLabel} ({lease.unit.code}) · réalisé le {report.conductedAt}
+          {report.conductedBy && ` par ${report.conductedBy.name} (${report.conductedBy.roleLabel})`}
+        </CardDescription>
       </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-5" noValidate>
-          {error && (
-            <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
-              {error}
-            </div>
-          )}
+      <CardContent className="flex flex-col gap-5">
+        <InspectionReadOnly zones={report.zones} showDeductions={false} />
 
-          <Field label="Date de l'état des lieux" htmlFor="conductedAt" required>
-            <Input id="conductedAt" type="date" value={conductedAt} onChange={(e) => setConductedAt(e.target.value)} />
-          </Field>
-
-          <div className="flex flex-col gap-3">
-            {items.map((item, i) => (
-              <div key={item.label} className="rounded-lg border border-border p-3">
-                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-                  <span className="font-label-md text-ink">{item.label}</span>
-                  <div className="flex gap-1.5">
-                    {INSPECTION_CONDITIONS.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setCondition(i, c)}
-                        className={cn(
-                          "rounded-full border px-3 py-1 font-label-sm transition-colors",
-                          item.condition === c
-                            ? "border-primary bg-surface-muted text-ink"
-                            : "border-border text-ink-soft hover:bg-surface-hover",
-                        )}
-                      >
-                        {CONDITION_LABELS[c]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <input
-                  type="text"
-                  placeholder="Commentaire (optionnel)"
-                  value={item.comment ?? ""}
-                  onChange={(e) => setComment(i, e.target.value)}
-                  className="mt-2 h-8 w-full rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                />
-              </div>
-            ))}
+        {report.generalNotes && (
+          <div className="rounded-lg border border-border bg-surface-muted p-3">
+            <p className="font-label-sm text-ink-muted">Notes générales</p>
+            <p className="text-body-sm text-ink">{report.generalNotes}</p>
           </div>
+        )}
 
-          <Field label="Notes générales (optionnel)" htmlFor="generalNotes">
-            <Input id="generalNotes" value={generalNotes} onChange={(e) => setGeneralNotes(e.target.value)} />
-          </Field>
-
-          <Button type="submit" size="lg" disabled={submitting}>
-            {submitting ? "Enregistrement…" : "Valider l'état des lieux"}
-          </Button>
-        </form>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} />
+          <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} />
+        </div>
+        {report.finalizedAt && (
+          <p className="text-body-xs text-ink-muted">
+            Finalisée le {new Date(report.finalizedAt).toLocaleDateString("fr-FR")}
+            {report.finalizedBy && ` par ${report.finalizedBy.name} (${report.finalizedBy.roleLabel})`}.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, FileText, Send, FileCheck2, DoorOpen, LogOut, Receipt, FileDown, Pencil, AlertTriangle, Plus, CloudOff, Link2, Copy, Check, MessageCircle } from "lucide-react";
+import { ArrowLeft, FileText, Send, FileCheck2, DoorOpen, LogOut, Receipt, FileDown, Pencil, AlertTriangle, Plus, Link2, Copy, Check, MessageCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
@@ -27,8 +27,8 @@ import { UTILITY_TYPE_LABELS, CHARGE_STATUS_LABELS } from "@/lib/constants/charg
 import { buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa, buildRentReminderMessage, previewRentAllocation, monthLabelFr } from "@/lib/utils";
 import { PROPERTY_TYPE_LABELS } from "@/lib/constants/properties";
+import { useToast } from "@/lib/toast/toast-context";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
 import { Attribution } from "@/components/ui/attribution";
 import { Badge } from "@/components/ui/badge";
@@ -81,7 +81,6 @@ function LocataireContent() {
   if (loadError) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10">
           <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
             {loadError}
@@ -94,7 +93,6 @@ function LocataireContent() {
   if (!renter || !leases) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10 text-body-sm text-ink-muted">Chargement…</div>
       </div>
     );
@@ -117,7 +115,6 @@ function LocataireContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/locataires" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />
@@ -157,7 +154,7 @@ function LocataireContent() {
               {renter.email ? ` · ${renter.email}` : ""}
               {renter.profession ? ` · ${renter.profession}` : ""}
             </p>
-            <Attribution actor={renter.createdBy} verb="Fiche créée par" className="mt-1 block" />
+            <Attribution actor={renter.createdBy} verb="Fiche créée par" at={renter.createdAt} className="mt-1 block" />
           </div>
           {activeLease && (
             <div className="flex flex-wrap gap-2">
@@ -314,6 +311,11 @@ function PortalLinkCard({
               Lien personnel, sans mot de passe, pour que {renter.firstName} consulte ses paiements et signale un
               incident lui-même.
             </CardDescription>
+            {renter.hasPortalLink && renter.portalLinkCreatedAt && !open && (
+              <p className="mt-1 text-body-xs text-ink-faint">
+                Lien généré le {new Date(renter.portalLinkCreatedAt).toLocaleDateString("fr-FR")}
+              </p>
+            )}
           </div>
           {!open && (
             <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating}>
@@ -389,6 +391,7 @@ function EditRenterForm({
   const [notes, setNotes] = React.useState(renter.notes ?? "");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -409,6 +412,7 @@ function EditRenterForm({
         notes: notes.trim(),
       });
       onSaved(res.renter);
+      toast.success("Modifications enregistrées.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ces modifications.");
     } finally {
@@ -485,6 +489,7 @@ function NewLeaseCard({
   const [startDate, setStartDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   function handleSelectUnit(unit: Unit) {
     setSelectedUnit(unit);
@@ -513,6 +518,7 @@ function NewLeaseCard({
         startDate,
       });
       onCreated();
+      toast.success("Nouveau bail créé.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de créer ce bail.");
     } finally {
@@ -622,7 +628,7 @@ function LeaseCard({
           {lease.unit.property.owner.name} · {PROPERTY_TYPE_LABELS[lease.unit.property.type]}
           {lease.unit.property.address ? ` · ${lease.unit.property.address}` : ""}
         </CardDescription>
-        <Attribution actor={lease.createdBy} verb="Bail créé par" className="mt-0.5 block" />
+        <Attribution actor={lease.createdBy} verb="Bail créé par" at={lease.createdAt} className="mt-0.5 block" />
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -649,23 +655,49 @@ function LeaseCard({
         )}
 
         {canManage && (
-          <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 border-t border-border pt-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2 text-body-sm text-ink-soft">
+                <DoorOpen size={16} className="text-primary" />
+                {lease.moveInReport?.status === "finalized" ? (
+                  <span>
+                    État des lieux d&apos;entrée réalisé le {lease.moveInReport.conductedAt}
+                    {lease.moveInReport.conductedBy && ` par ${lease.moveInReport.conductedBy.name} (${lease.moveInReport.conductedBy.roleLabel})`}
+                  </span>
+                ) : lease.moveInReport ? (
+                  <span className="text-warning-fg">
+                    État des lieux d&apos;entrée en brouillon depuis le {lease.moveInReport.conductedAt}
+                  </span>
+                ) : (
+                  <span className="text-ink-muted">État des lieux d&apos;entrée non réalisé</span>
+                )}
+              </div>
+              <Link href={`/espace/locataires/${renterId}/etat-des-lieux?leaseId=${lease.id}`}>
+                <Button variant="ghost" size="sm">
+                  {lease.moveInReport?.status === "finalized"
+                    ? "Voir l'état des lieux"
+                    : lease.moveInReport
+                      ? "Continuer le brouillon"
+                      : "Réaliser l'état des lieux"}
+                </Button>
+              </Link>
+            </div>
+
+            {/* État des lieux de sortie : ne peut être "finalized" tant que le bail est
+                actif (finaliser la sortie termine le bail) — seuls "non réalisé" et
+                "brouillon" sont possibles ici. Affiché en symétrie avec l'entrée
+                ci-dessus, pour que les deux fiches soient visibles côte à côte ; l'action
+                elle-même reste le bouton « Locataire quitte le logement » ci-dessous. */}
             <div className="flex items-center gap-2 text-body-sm text-ink-soft">
-              <DoorOpen size={16} className="text-primary" />
-              {lease.moveInReport ? (
-                <span>
-                  État des lieux d&apos;entrée réalisé le {lease.moveInReport.conductedAt}
-                  {lease.moveInReport.conductedBy && ` par ${lease.moveInReport.conductedBy.name} (${lease.moveInReport.conductedBy.roleLabel})`}
+              <LogOut size={16} className="text-danger-fg" />
+              {lease.moveOutReport ? (
+                <span className="text-warning-fg">
+                  État des lieux de sortie en brouillon depuis le {lease.moveOutReport.conductedAt}
                 </span>
               ) : (
-                <span className="text-ink-muted">État des lieux d&apos;entrée non réalisé</span>
+                <span className="text-ink-muted">État des lieux de sortie non réalisé</span>
               )}
             </div>
-            <Link href={`/espace/locataires/${renterId}/etat-des-lieux?leaseId=${lease.id}`}>
-              <Button variant="ghost" size="sm">
-                {lease.moveInReport ? "Voir l'état des lieux" : "Réaliser l'état des lieux"}
-              </Button>
-            </Link>
           </div>
         )}
 
@@ -680,7 +712,7 @@ function LeaseCard({
           <Link href={`/espace/locataires/${renterId}/sortie?leaseId=${lease.id}`}>
             <Button variant="destructive" size="sm">
               <LogOut size={16} />
-              Locataire quitte le logement
+              {lease.moveOutReport ? "Continuer la sortie" : "Locataire quitte le logement"}
             </Button>
           </Link>
         </CardFooter>
@@ -821,7 +853,9 @@ function ChargesSection({
                 </p>
                 <p className="text-body-xs text-ink-muted">{formatFcfa(c.amount)} · facturé le {c.billedAt}</p>
               </div>
-              <Badge variant={c.status === "payee" ? "success" : "warning"}>{CHARGE_STATUS_LABELS[c.status]}</Badge>
+              <Badge variant={c.status === "payee" ? "success" : c.status === "partiellement_payee" ? "info" : "warning"}>
+                {CHARGE_STATUS_LABELS[c.status]}
+              </Badge>
             </Link>
           ))}
         </div>
@@ -858,8 +892,7 @@ function PaymentRegister({
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [queuedNotice, setQueuedNotice] = React.useState(false);
-  const [savedNotice, setSavedNotice] = React.useState<number | null>(null);
+  const toast = useToast();
 
   // Mois de départ = prochain mois dû (le serveur enchaîne les mois suivants selon le montant).
   const startMonth = lease.arrears?.nextDueMonth ?? new Date().toISOString().slice(0, 7);
@@ -880,11 +913,13 @@ function PaymentRegister({
       setOpen(false);
       setNotes("");
       if (result.queued) {
-        setSavedNotice(null);
-        setQueuedNotice(true);
+        toast.warning(
+          "Paiement enregistré hors-ligne — sera synchronisé automatiquement dès le retour de la connexion.",
+        );
+      } else if (result.monthsCovered && result.monthsCovered > 1) {
+        toast.success(`${result.monthsCovered} paiements enregistrés — ${result.monthsCovered} quittances générées.`);
       } else {
-        setQueuedNotice(false);
-        setSavedNotice(result.monthsCovered);
+        toast.success("Paiement enregistré — quittance générée.");
       }
       onRecorded();
     } catch (err) {
@@ -905,21 +940,6 @@ function PaymentRegister({
           </Button>
         )}
       </div>
-
-      {queuedNotice && (
-        <div className="flex items-center gap-2 rounded-lg border border-warning-border bg-warning/10 px-3 py-2.5 text-body-sm text-warning-fg">
-          <CloudOff size={16} className="shrink-0" />
-          Paiement enregistré hors-ligne — sera synchronisé automatiquement dès le retour de la connexion (pas encore
-          de quittance PDF tant que ce n&apos;est pas fait).
-        </div>
-      )}
-
-      {savedNotice !== null && savedNotice > 1 && (
-        <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success-bg px-3 py-2.5 text-body-sm text-success-fg">
-          <Receipt size={16} className="shrink-0" />
-          {savedNotice} paiements enregistrés — {savedNotice} quittances générées.
-        </div>
-      )}
 
       {open && canManage && (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-4">

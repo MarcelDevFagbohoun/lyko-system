@@ -118,14 +118,35 @@ const config: Config = {
         md: "0 4px 6px -1px rgb(15 23 42 / 0.08), 0 2px 4px -2px rgb(15 23 42 / 0.04)",
         lg: "0 20px 25px -5px rgb(15 23 42 / 0.1), 0 8px 10px -6px rgb(15 23 42 / 0.06)",
       },
+      backgroundImage: {
+        // Dégradé de marque (repris du logo) — réservé aux petites touches
+        // décoratives (indicateur actif, liseré) : jamais un grand aplat
+        // derrière un logo d'entreprise arbitraire (contraste imprévisible).
+        "brand-gradient": "linear-gradient(135deg, #1E3A8A 0%, #2563EB 55%, #38BDF8 100%)",
+      },
       keyframes: {
         "pulse-dot": {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.35" },
         },
+        "fade-in": {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
+        "sidebar-in": {
+          from: { transform: "translateX(-100%)" },
+          to: { transform: "translateX(0)" },
+        },
+        "page-in": {
+          from: { opacity: "0", transform: "translateY(6px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
       },
       animation: {
         "pulse-dot": "pulse-dot 1.6s ease-in-out infinite",
+        "fade-in": "fade-in 0.18s ease-out",
+        "sidebar-in": "sidebar-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+        "page-in": "page-in 0.28s cubic-bezier(0.16, 1, 0.3, 1)",
       },
     },
   },

@@ -2,7 +2,7 @@ import { apiFetch, type Actor } from "./client";
 import type { PaymentMethod } from "./renters";
 
 export type UtilityType = "soneb" | "sbee";
-export type ChargeStatus = "impayee" | "payee";
+export type ChargeStatus = "impayee" | "partiellement_payee" | "payee";
 
 export type UtilityCharge = {
   id: number;
@@ -14,8 +14,15 @@ export type UtilityCharge = {
   consumption: number;
   unitPrice: number;
   amount: number;
+  // Part de l'écart compteur/décompteur imputée à cette facture (0 sauf
+  // répartition « prorata » activée sur ce Bien) — `consumptionAmount` est le
+  // reste, la seule consommation mesurée : amount = consumptionAmount + lossShareAmount.
+  lossShareAmount: number;
+  consumptionAmount: number;
   billedAt: string;
   status: ChargeStatus;
+  paidAmount: number;
+  remainingAmount: number;
   paidAt: string | null;
   paymentMethod: PaymentMethod | null;
   paymentMethodLabel: string | null;
@@ -26,6 +33,17 @@ export type UtilityCharge = {
   renter: { id: number; firstName: string; lastName: string };
   unit: { id: number; code: string };
   property: { id: number; code: string };
+  createdAt: string;
+};
+
+export type UtilityPayment = {
+  id: number;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  paymentMethodLabel: string;
+  paidAt: string;
+  notes: string | null;
+  recordedBy: Actor;
   createdAt: string;
 };
 
@@ -81,13 +99,28 @@ export function updateCharge(accessToken: string, id: number, input: UpdateCharg
   });
 }
 
-export function payCharge(accessToken: string, id: number, input: { paymentMethod: PaymentMethod; paidAt: string }) {
-  return apiFetch<{ charge: UtilityCharge }>(`/api/charges/${id}/pay`, {
-    method: "PATCH",
+export function getChargePayments(accessToken: string, id: number) {
+  return apiFetch<{ payments: UtilityPayment[] }>(`/api/charges/${id}/payments`, { accessToken });
+}
+
+export function recordChargePayment(
+  accessToken: string,
+  id: number,
+  input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string },
+) {
+  return apiFetch<{ charge: UtilityCharge }>(`/api/charges/${id}/payments`, {
+    method: "POST",
     accessToken,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+export function getPreviousReading(accessToken: string, leaseId: number, utilityType: UtilityType) {
+  return apiFetch<{ readingEnd: number | null }>(
+    `/api/charges/previous-reading?leaseId=${leaseId}&utilityType=${utilityType}`,
+    { accessToken },
+  );
 }
 
 export function deleteCharge(accessToken: string, id: number, reason: string) {
@@ -101,11 +134,14 @@ export function deleteCharge(accessToken: string, id: number, reason: string) {
 
 // ── Relevé de compteurs par immeuble (étape 9bis) ────────────────────────
 
+export type LossAllocation = "proprietaire" | "prorata";
+
 export type UtilityConfigEntry = {
   submetered: boolean;
   unitPrice: number | null;
   mainMeterNumber: string | null;
   accountNumber: string | null;
+  lossAllocation: LossAllocation;
 };
 export type UtilityConfig = { soneb: UtilityConfigEntry; sbee: UtilityConfigEntry };
 
@@ -118,6 +154,8 @@ export type UtilityConfigInput = Partial<{
   sbeeMainMeterNumber: string;
   sonebAccountNumber: string;
   sbeeAccountNumber: string;
+  sonebLossAllocation: LossAllocation;
+  sbeeLossAllocation: LossAllocation;
 }>;
 
 export function updatePropertyUtilityConfig(accessToken: string, propertyId: number, input: UtilityConfigInput) {
@@ -175,6 +213,7 @@ export type UtilityBatch = {
     unitPrice: number;
     status: BatchStatus;
     validatedAt: string | null;
+    lossAllocation: LossAllocation;
     main: { readingStart: number | null; readingEnd: number | null; consumption: number | null; invoiceAmount: number | null };
     recordedBy: Actor;
   };

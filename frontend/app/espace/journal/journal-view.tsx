@@ -20,7 +20,6 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import { listActivity, type ActivityEntry } from "@/lib/api/dashboard";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 
 const TYPE_ICON: Record<string, React.ElementType> = {
@@ -71,7 +70,6 @@ function JournalContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <div>
           <h1 className="font-display text-headline-xl text-ink">Journal d&apos;activité</h1>

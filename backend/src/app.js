@@ -25,13 +25,15 @@ function createApp() {
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
 
-  // Le token du portail locataire (lien secret, sans mot de passe) apparaît
-  // dans l'URL : jamais en clair dans les journaux d'accès, où que ce soit
-  // (même principe que ne jamais logguer un mot de passe). Redéfinit le
-  // token `:url` utilisé par les deux formats morgan ci-dessous.
+  // Le token des portails locataire/propriétaire (lien secret, sans mot de
+  // passe) apparaît dans l'URL : jamais en clair dans les journaux d'accès,
+  // où que ce soit (même principe que ne jamais logguer un mot de passe).
+  // Redéfinit le token `:url` utilisé par les deux formats morgan ci-dessous.
+  const PORTAL_URL_PREFIXES = ['/api/portal/', '/api/owner-portal/'];
   morgan.token('url', (req) => {
     const url = req.originalUrl || req.url;
-    return url.startsWith('/api/portal/') ? url.replace(/^(\/api\/portal\/)[^/]+/, '$1[redacted]') : url;
+    const prefix = PORTAL_URL_PREFIXES.find((p) => url.startsWith(p));
+    return prefix ? url.replace(new RegExp(`^(${prefix})[^/]+`), '$1[redacted]') : url;
   });
 
   // Journal d'accès : lisible en dev, une ligne HTTP par requête routée vers

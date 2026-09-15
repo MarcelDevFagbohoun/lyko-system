@@ -14,13 +14,13 @@ import {
   deleteUtilityBatch,
   type UtilityBatch,
 } from "@/lib/api/charges";
-import { UTILITY_TYPE_LABELS, BATCH_STATUS_LABELS, DIFFERENCE_ALERT_TEXT } from "@/lib/constants/charges";
+import { UTILITY_TYPE_LABELS, BATCH_STATUS_LABELS, DIFFERENCE_ALERT_TEXT, LOSS_ALLOCATION_LABELS } from "@/lib/constants/charges";
 import { formatFcfa, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useToast } from "@/lib/toast/toast-context";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 export function ReleveView() {
@@ -40,6 +40,7 @@ function ReleveContent() {
   const batchId = Number(id);
   const { accessToken } = useAuth();
   const router = useRouter();
+  const toast = useToast();
 
   const [data, setData] = React.useState<UtilityBatch | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -112,6 +113,7 @@ function ReleveContent() {
     setActionError(null);
     try {
       seed(await persist());
+      toast.success("Relevé enregistré.");
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Enregistrement impossible.");
     } finally {
@@ -127,6 +129,7 @@ function ReleveContent() {
       await persist();
       seed(await validateUtilityBatch(accessToken, batchId));
       setConfirmValidate(false);
+      toast.success("Relevé validé — les charges ont été générées.");
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Validation impossible.");
     } finally {
@@ -140,6 +143,7 @@ function ReleveContent() {
     setActionError(null);
     try {
       seed(await reopenUtilityBatch(accessToken, batchId));
+      toast.info("Relevé rouvert.");
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Réouverture impossible.");
     } finally {
@@ -152,6 +156,7 @@ function ReleveContent() {
     setBusy("delete");
     try {
       await deleteUtilityBatch(accessToken, batchId);
+      toast.info("Relevé supprimé.");
       router.push("/espace/charges/releves");
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Suppression impossible.");
@@ -162,7 +167,6 @@ function ReleveContent() {
   if (loadError) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10">
           <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">{loadError}</div>
         </div>
@@ -172,7 +176,6 @@ function ReleveContent() {
   if (!data) {
     return (
       <div className="min-h-screen bg-canvas">
-        <EspaceHeader />
         <div className="content-shell py-10 text-body-sm text-ink-muted">Chargement…</div>
       </div>
     );
@@ -182,7 +185,6 @@ function ReleveContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/charges/releves" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />
@@ -358,6 +360,13 @@ function ReleveContent() {
             </TableRow>
           </TableBody>
         </Table>
+
+        {computed.differenceAmount != null && computed.differenceAmount > 0 && (
+          <p className="text-body-xs text-ink-muted">
+            Répartition de cet écart : {LOSS_ALLOCATION_LABELS[b.lossAllocation]}
+            {b.lossAllocation === "prorata" && " — ajoutée à la facture de chaque locataire à la validation."}
+          </p>
+        )}
 
         {computed.alert !== "none" && (
           <div

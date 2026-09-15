@@ -19,9 +19,10 @@ const { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_KEYS, EXPENSE_PAYMENT_METHODS } = r
 const { toActor } = require('../utils/actor');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
 const { assertPeriodOpen, isPeriodClosed, getPeriodClosability } = require('../services/accountingPeriods');
-const { listPortfolioArrears } = require('../services/rentTracking');
+const { listPortfolioArrears, listPredictiveLateAlerts } = require('../services/rentTracking');
 const { listDeletedEntries } = require('../services/activity');
 const { resolvePropertyScope } = require('../services/scope');
+const { streamAccountingReportPdf } = require('../services/pdf');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -304,15 +305,14 @@ router.delete('/expenses/:id', canAccounting, async (req, res, next) => {
 // SONEB/SBEE impayées, et une estimation des impayés locataires (retards en
 // cours, pas seulement sur la période — un retard reste un retard tant qu'il
 // n'est pas soldé).
-router.get('/dashboard', canAccounting, async (req, res, next) => {
-  const parsed = dashboardQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    return next(new ApiError(400, 'Période invalide', parsed.error.flatten().fieldErrors));
-  }
-  const { from, to } = parsed.data;
-
-  try {
-    const params = { tenantId: req.user.tenantId, from, to };
+/**
+ * Calcul du tableau de bord comptable pour une période — extrait en
+ * fonction nommée pour être réutilisé tel quel par `GET /dashboard` (JSON,
+ * écran) et `GET /dashboard.pdf` (rapport mensuel exportable, étape 18) :
+ * un seul calcul, jamais dupliqué entre les deux formats de sortie.
+ */
+async function computeAccountingDashboard(user, { from, to }) {
+    const params = { tenantId: user.tenantId, from, to };
 
     const [[rentRow]] = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
@@ -363,13 +363,13 @@ router.get('/dashboard', canAccounting, async (req, res, next) => {
     const [[unpaidChargesRow]] = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
        FROM utility_charges WHERE tenant_id = :tenantId AND deleted_at IS NULL AND status = 'impayee'`,
-      { tenantId: req.user.tenantId },
+      { tenantId: user.tenantId },
     );
     const [unpaidByType] = await pool.query(
       `SELECT utility_type, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
        FROM utility_charges WHERE tenant_id = :tenantId AND deleted_at IS NULL AND status = 'impayee'
        GROUP BY utility_type`,
-      { tenantId: req.user.tenantId },
+      { tenantId: user.tenantId },
     );
 
     // Impayés locataires : estimation par bail actif en retard (jours de
@@ -378,8 +378,8 @@ router.get('/dashboard', canAccounting, async (req, res, next) => {
     // partagé avec GET /arrears (centre de relance groupée, étape 10).
     // Portée « Biens gérés » (étape 14) : un agent restreint (rare ici, ce
     // module exige `comptabilite`) ne voit que ses propres impayés.
-    const scopeAgentId = await resolvePropertyScope(req.user);
-    const portfolioArrears = await listPortfolioArrears(req.user.tenantId, scopeAgentId);
+    const scopeAgentId = await resolvePropertyScope(user);
+    const portfolioArrears = await listPortfolioArrears(user.tenantId, scopeAgentId);
     const tenantArrears = portfolioArrears.map((a) => ({
       leaseId: a.leaseId,
       renterName: a.renterName,
@@ -395,7 +395,7 @@ router.get('/dashboard', canAccounting, async (req, res, next) => {
     const propertyExpensesTotal = Number(propertyExpenseRow.total);
 
     const period = from.slice(0, 7);
-    const closed = await isPeriodClosed(req.user.tenantId, from);
+    const closed = await isPeriodClosed(user.tenantId, from);
     let closedInfo = null;
     let closability = null;
     if (closed) {
@@ -403,7 +403,7 @@ router.get('/dashboard', canAccounting, async (req, res, next) => {
         `SELECT ap.closed_at, ap.forced, u.first_name, u.last_name, u.role
          FROM accounting_periods ap JOIN users u ON u.id = ap.closed_by
          WHERE ap.tenant_id = :tenantId AND ap.period = :period LIMIT 1`,
-        { tenantId: req.user.tenantId, period },
+        { tenantId: user.tenantId, period },
       );
       closedInfo = {
         closedAt: row.closed_at,
@@ -415,7 +415,7 @@ router.get('/dashboard', canAccounting, async (req, res, next) => {
       // plus tardive parmi les baux actifs de ce mois précis, propre à
       // chaque locataire (`rent_due_day`), plus une marge de sécurité —
       // jamais une date de clôture choisie à l'aveugle.
-      const c = await getPeriodClosability(req.user.tenantId, period);
+      const c = await getPeriodClosability(user.tenantId, period);
       closability = {
         status: c.isClosable ? 'closable' : 'open',
         closableFrom: c.closableFrom,
@@ -424,7 +424,7 @@ router.get('/dashboard', canAccounting, async (req, res, next) => {
       };
     }
 
-    res.json({
+    return {
       period: { from, to },
       isClosed: closed,
       closedInfo,
@@ -454,7 +454,36 @@ router.get('/dashboard', canAccounting, async (req, res, next) => {
         count: Number(r.n),
       })),
       tenantArrears,
-    });
+    };
+}
+
+router.get('/dashboard', canAccounting, async (req, res, next) => {
+  const parsed = dashboardQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Période invalide', parsed.error.flatten().fieldErrors));
+  }
+  try {
+    const result = await computeAccountingDashboard(req.user, parsed.data);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/dashboard.pdf — rapport mensuel exportable pour le
+// comptable (étape 18, demande directe de l'utilisateur) : même calcul que
+// l'écran, mis en page pour être imprimé ou transmis (à la direction
+// générale, ou à un comptable externe).
+router.get('/dashboard.pdf', canAccounting, async (req, res, next) => {
+  const parsed = dashboardQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Période invalide', parsed.error.flatten().fieldErrors));
+  }
+  try {
+    const dashboard = await computeAccountingDashboard(req.user, parsed.data);
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+    if (!tenantRows[0]) throw new ApiError(404, 'Entreprise introuvable');
+    streamAccountingReportPdf(res, { tenant: tenantRows[0], dashboard });
   } catch (err) {
     next(err);
   }
@@ -474,6 +503,20 @@ router.get('/arrears', requireAnyPermission('locataires', 'comptabilite'), async
       arrears,
       total: arrears.reduce((sum, a) => sum + a.amountOwed, 0),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/predictive-alerts — alertes prédictives de retard
+// (étape 13, idée n°4) : locataires actuellement à jour, échéance proche,
+// mais historiquement en retard — pour relancer avant le retard, pas
+// seulement après. Même permission que le centre de relance (`/arrears`).
+router.get('/predictive-alerts', requireAnyPermission('locataires', 'comptabilite'), async (req, res, next) => {
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const alerts = await listPredictiveLateAlerts(req.user.tenantId, scopeAgentId);
+    res.json({ alerts });
   } catch (err) {
     next(err);
   }

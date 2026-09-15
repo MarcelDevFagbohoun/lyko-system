@@ -8,16 +8,16 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import { getRenter, type Lease } from "@/lib/api/renters";
 import type { RenterListItem } from "@/lib/api/renters";
-import { createCharge, type UtilityType } from "@/lib/api/charges";
+import { createCharge, getPreviousReading, type UtilityType } from "@/lib/api/charges";
 import { formatFcfa } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { RenterLeasePicker } from "@/components/complaints/renter-lease-picker";
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { useToast } from "@/lib/toast/toast-context";
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
@@ -33,6 +33,7 @@ function NouveauContent() {
   const { accessToken } = useAuth();
   const router = useRouter();
   const online = useOnlineStatus();
+  const toast = useToast();
   const searchParams = useSearchParams();
   const prefillRenterId = Number(searchParams.get("renterId"));
   const hasPrefill = Number.isInteger(prefillRenterId) && prefillRenterId > 0;
@@ -59,12 +60,27 @@ function NouveauContent() {
   const [periodStart, setPeriodStart] = React.useState("");
   const [periodEnd, setPeriodEnd] = React.useState("");
   const [readingStart, setReadingStart] = React.useState("");
+  const [readingStartTouched, setReadingStartTouched] = React.useState(false);
   const [readingEnd, setReadingEnd] = React.useState("");
   const [unitPrice, setUnitPrice] = React.useState("");
   const [billedAt, setBilledAt] = React.useState(todayIso());
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Index de début préremplible : jamais besoin de le ressaisir, il
+  // correspond à l'index de fin de la dernière facture de ce bail pour ce
+  // fluide (même principe que le relevé par immeuble). L'utilisateur reste
+  // libre de le corriger — on ne réécrase alors plus sa saisie manuelle.
+  React.useEffect(() => {
+    if (!accessToken || !leaseId || readingStartTouched) return;
+    getPreviousReading(accessToken, leaseId, utilityType)
+      .then((res) => setReadingStart(res.readingEnd != null ? String(res.readingEnd) : "0"))
+      .catch(() => {
+        // Non bloquant : l'utilisateur peut toujours saisir l'index à la main.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, leaseId, utilityType, readingStartTouched]);
 
   const consumption =
     readingStart !== "" && readingEnd !== "" && Number(readingEnd) >= Number(readingStart)
@@ -95,6 +111,7 @@ function NouveauContent() {
         billedAt,
         notes: notes.trim() || undefined,
       });
+      toast.success("Charge enregistrée.");
       router.push("/espace/charges");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Une erreur est survenue. Réessayez.");
@@ -105,7 +122,6 @@ function NouveauContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link href="/espace/charges" className="inline-flex w-fit items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink">
           <ArrowLeft size={16} />
@@ -174,8 +190,13 @@ function NouveauContent() {
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Index début" htmlFor="readingStart" required>
-                  <Input id="readingStart" inputMode="numeric" value={readingStart} onChange={(e) => setReadingStart(e.target.value.replace(/\D/g, ""))} />
+                <Field label="Index début" htmlFor="readingStart" required hint="Prérempli avec l'index de fin de la dernière facture">
+                  <Input
+                    id="readingStart"
+                    inputMode="numeric"
+                    value={readingStart}
+                    onChange={(e) => { setReadingStartTouched(true); setReadingStart(e.target.value.replace(/\D/g, "")); }}
+                  />
                 </Field>
                 <Field label="Index fin" htmlFor="readingEnd" required hint={consumption !== null ? `Consommation : ${consumption} unité(s)` : undefined}>
                   <Input id="readingEnd" inputMode="numeric" value={readingEnd} onChange={(e) => setReadingEnd(e.target.value.replace(/\D/g, ""))} />

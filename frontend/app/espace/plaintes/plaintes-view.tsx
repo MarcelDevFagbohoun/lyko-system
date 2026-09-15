@@ -2,19 +2,17 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { AlertTriangle, Plus, Search, CloudOff } from "lucide-react";
+import { AlertTriangle, Plus, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { listComplaints, type Complaint, type ComplaintStatus } from "@/lib/api/complaints";
 import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_PRIORITY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
 import { ApiError } from "@/lib/api/client";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { cn, formatDateLabel } from "@/lib/utils";
 
 const TABS: { key: ComplaintStatus | "all"; label: string }[] = [
   { key: "all", label: "Toutes" },
@@ -41,8 +39,6 @@ export function PlaintesView() {
 
 function PlaintesContent() {
   const { accessToken } = useAuth();
-  const searchParams = useSearchParams();
-  const justQueued = searchParams.get("queued") === "1";
   const [tab, setTab] = React.useState<ComplaintStatus | "all">("all");
   const [query, setQuery] = React.useState("");
   const [complaints, setComplaints] = React.useState<Complaint[] | null>(null);
@@ -62,7 +58,6 @@ function PlaintesContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>
@@ -76,14 +71,6 @@ function PlaintesContent() {
             </Button>
           </Link>
         </div>
-
-        {justQueued && (
-          <div className="flex items-center gap-2 rounded-lg border border-warning-border bg-warning/10 px-3 py-2.5 text-body-sm text-warning-fg">
-            <CloudOff size={16} className="shrink-0" />
-            Plainte enregistrée hors-ligne — elle sera envoyée automatiquement dès le retour de la connexion et
-            n&apos;apparaîtra dans cette liste qu&apos;à ce moment-là.
-          </div>
-        )}
 
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex flex-wrap gap-1.5">
@@ -151,6 +138,7 @@ function PlaintesContent() {
                   <TableCell>
                     <div className="font-label-md text-ink">{c.code}</div>
                     <div className="text-body-xs text-ink-muted">{c.title}</div>
+                    <div className="text-body-xs text-ink-faint">Signalée le {formatDateLabel(c.reportedAt)}</div>
                   </TableCell>
                   <TableCell className="text-ink-soft">{c.renter.firstName} {c.renter.lastName}</TableCell>
                   <TableCell className="text-ink-soft">

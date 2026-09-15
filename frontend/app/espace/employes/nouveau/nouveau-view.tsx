@@ -14,7 +14,6 @@ import {
 } from "@/lib/api/employees";
 import { normalizeBeninPhone, toE164Benin } from "@/lib/validation/auth";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { PermissionPicker } from "@/components/employees/permission-picker";
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
@@ -133,7 +132,6 @@ function NouvelEmployeContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link
           href="/espace/employes"

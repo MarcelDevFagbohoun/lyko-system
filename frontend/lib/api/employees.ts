@@ -28,7 +28,13 @@ export type Employee = {
 export type PermissionCatalogEntry = { key: PermissionKey; label: string };
 
 /** Bien géré par un agent (étape 14), tel qu'affiché sur sa fiche. */
-export type ManagedProperty = { id: number; code: string; address: string | null; ownerName: string };
+export type ManagedProperty = {
+  id: number;
+  code: string;
+  address: string | null;
+  ownerName: string;
+  assignedAt: string | null;
+};
 
 export function listEmployees(accessToken: string) {
   return apiFetch<{ employees: Employee[] }>("/api/employees", { accessToken });

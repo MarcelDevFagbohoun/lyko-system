@@ -62,6 +62,8 @@ export function OwnerPicker({
         notes: null,
         createdBy: null,
         createdAt: new Date().toISOString(),
+        hasPortalLink: false,
+        portalLinkCreatedAt: null,
         propertiesCount: 0,
         unitsCount: 0,
         unitsOccupied: 0,

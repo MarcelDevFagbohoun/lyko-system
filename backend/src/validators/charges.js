@@ -1,7 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
-const { UTILITY_TYPE_KEYS } = require('../constants/charges');
+const { UTILITY_TYPE_KEYS, LOSS_ALLOCATION_MODES } = require('../constants/charges');
 
 const optionalText = (max) =>
   z
@@ -65,9 +65,14 @@ const updateChargeSchema = z
     path: ['readingEnd'],
   });
 
-const payChargeSchema = z.object({
+// Paiement partiel ou total d'une facture (étape 23) : plusieurs paiements
+// successifs possibles, comme pour le loyer (rent_payments).
+const amountSchema = z.coerce.number().int('Montant entier requis').positive('Montant invalide').max(1_000_000_000, 'Montant hors limite');
+const createUtilityPaymentSchema = z.object({
+  amount: amountSchema,
   paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
   paidAt: dateSchema,
+  notes: optionalText(255),
 });
 
 // Suppression = suppression logique (traçabilité) : une justification est
@@ -80,6 +85,8 @@ const deleteReasonSchema = z.object({
 
 const nullablePrice = unitPriceSchema.nullable().optional();
 
+const lossAllocationSchema = z.enum(LOSS_ALLOCATION_MODES, { errorMap: () => ({ message: 'Répartition invalide' }) }).optional();
+
 /** Config sous-comptage d'un Bien (PATCH partiel). */
 const utilityConfigSchema = z.object({
   sonebSubmetered: z.coerce.boolean().optional(),
@@ -90,6 +97,8 @@ const utilityConfigSchema = z.object({
   sbeeMainMeterNumber: optionalText(50).optional(),
   sonebAccountNumber: optionalText(50).optional(),
   sbeeAccountNumber: optionalText(50).optional(),
+  sonebLossAllocation: lossAllocationSchema,
+  sbeeLossAllocation: lossAllocationSchema,
 });
 
 /** Création d'un relevé : fluide + période. Le tarif et les décompteurs sont dérivés du Bien. */
@@ -132,7 +141,7 @@ const saveBatchSchema = z.object({
 module.exports = {
   createChargeSchema,
   updateChargeSchema,
-  payChargeSchema,
+  createUtilityPaymentSchema,
   deleteReasonSchema,
   utilityConfigSchema,
   createBatchSchema,

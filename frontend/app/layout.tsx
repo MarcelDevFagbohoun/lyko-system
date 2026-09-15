@@ -3,6 +3,8 @@ import { Inter } from "next/font/google";
 import { GeistSans } from "geist/font/sans";
 import { ServiceWorkerRegister } from "@/components/system/sw-register";
 import { AuthProvider } from "@/lib/auth/auth-context";
+import { ToastProvider } from "@/lib/toast/toast-context";
+import { ToastStack } from "@/components/ui/toast";
 import "./globals.css";
 
 const inter = Inter({
@@ -35,7 +37,10 @@ export default function RootLayout({
   return (
     <html lang="fr" className={`${inter.variable} ${GeistSans.variable}`}>
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <ToastProvider>
+          <AuthProvider>{children}</AuthProvider>
+          <ToastStack />
+        </ToastProvider>
         <ServiceWorkerRegister />
       </body>
     </html>

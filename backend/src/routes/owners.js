@@ -15,6 +15,7 @@ const { streamOwnerStatementPdf } = require('../services/pdf');
 const { toActor } = require('../utils/actor');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
+const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -65,6 +66,10 @@ function toPublicOwner(row, extra = {}) {
     notes: row.notes,
     createdBy: toActor(row.creator_first_name, row.creator_last_name, row.creator_role),
     createdAt: row.created_at,
+    // Jamais le token/hash lui-même ici (uniquement renvoyé une fois, à la
+    // création du lien) — juste de quoi afficher « Générer » ou « Régénérer ».
+    hasPortalLink: !!row.portal_token_hash,
+    portalLinkCreatedAt: row.portal_link_created_at,
     ...extra,
   };
 }
@@ -484,6 +489,32 @@ router.get('/:id/statement.pdf', canReadDocs, async (req, res, next) => {
         paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
       })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/owners/:id/portal-link — (ré)génère le lien secret du portail
+// propriétaire (étape 13, idée n°1) : recette du mois, versements, relevé
+// PDF, sans compte ni mot de passe. Un seul lien valide à la fois —
+// régénérer révoque immédiatement l'ancien. Le token en clair n'est renvoyé
+// qu'ici, une seule fois (même principe que le portail locataire).
+router.post('/:id/portal-link', canManage, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+
+    const token = generatePortalToken();
+    await pool.query('UPDATE owners SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id', {
+      hash: hashToken(token),
+      id,
+    });
+
+    logger.info('Lien du portail propriétaire (re)généré', { tenantId: req.user.tenantId, ownerId: id, by: req.user.id });
+    res.status(201).json({ token, path: `/portail/proprietaire/${token}` });
   } catch (err) {
     next(err);
   }

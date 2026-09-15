@@ -37,13 +37,20 @@ function renderContractTemplate(template, vars) {
   });
 }
 
+// Placeholders dont la valeur est un CHIFFRE (téléphone, RCCM/IFU, date,
+// loyer) plutôt qu'un nom propre — rendus en Courier dans le PDF (refonte
+// « factures professionnelles », services/pdf.js) au lieu du gras Helvetica
+// utilisé pour les noms (locataire/entreprise/signataire/bien).
+const MONO_PLACEHOLDER_KEYS = new Set(['telephone', 'rccm', 'ifu', 'date_entree', 'loyer', 'date']);
+
 /**
  * Même substitution que `renderContractTemplate`, mais renvoie une liste de
- * segments `{ text, bold }` au lieu d'une chaîne à plat : les valeurs
- * substituées (nom, RCCM, loyer…) ressortent en gras dans le PDF, pour se
- * distinguer du texte juridique fixe autour — demandé par l'utilisateur.
- * `services/pdf.js` les enchaîne avec l'API « continued » de PDFKit pour
- * garder un seul paragraphe qui se justifie/retourne à la ligne normalement.
+ * segments `{ text, bold, mono }` au lieu d'une chaîne à plat : les valeurs
+ * substituées (nom, RCCM, loyer…) ressortent du texte juridique fixe autour
+ * — en gras pour un nom propre, en Courier (`mono`) pour un chiffre —
+ * demandé par l'utilisateur. `services/pdf.js` les enchaîne avec l'API
+ * « continued » de PDFKit pour garder un seul paragraphe qui se
+ * justifie/retourne à la ligne normalement.
  */
 function renderContractTemplateSegments(template, vars) {
   const segments = [];
@@ -54,8 +61,10 @@ function renderContractTemplateSegments(template, vars) {
     if (match.index > lastIndex) {
       segments.push({ text: template.slice(lastIndex, match.index), bold: false });
     }
-    const value = vars[match[1].toLowerCase()];
-    segments.push({ text: value !== undefined && value !== null ? String(value) : '', bold: true });
+    const key = match[1].toLowerCase();
+    const value = vars[key];
+    const isMono = MONO_PLACEHOLDER_KEYS.has(key);
+    segments.push({ text: value !== undefined && value !== null ? String(value) : '', bold: !isMono, mono: isMono });
     lastIndex = regex.lastIndex;
   }
   if (lastIndex < template.length) {

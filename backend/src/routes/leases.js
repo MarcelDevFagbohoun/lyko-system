@@ -1,20 +1,34 @@
 'use strict';
 
+const path = require('path');
+const fs = require('fs/promises');
+const multer = require('multer');
 const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requirePermission, requireAnyPermission } = require('../middleware/auth');
+const { createPaymentSchema, endLeaseSchema } = require('../validators/renters');
 const {
-  createPaymentSchema,
-  createMoveInReportSchema,
-  createMoveOutReportSchema,
-  endLeaseSchema,
-} = require('../validators/renters');
+  startInspectionReportSchema,
+  updateInspectionDraftSchema,
+  updateMoveOutDraftSchema,
+} = require('../validators/inspections');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { computeArrears, allocateRentPayment } = require('../services/rentTracking');
 const { streamReceiptPdf, streamMoveOutPdf } = require('../services/pdf');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
+const {
+  cloneMasterZones,
+  cloneZonesFrom,
+  normalizeStoredItems,
+  findItem,
+  getMissingConditionLabels,
+  sumDeductions,
+  toPublicInspectionReport,
+  toPublicMoveOutReport,
+} = require('../services/inspection');
+const { assertUploadType, randomFileName } = require('../utils/uploads');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -53,6 +67,57 @@ async function loadLease(conn, tenantId, leaseId, scopeAgentId = null) {
   row.property_label =
     row.designation === 'autre' ? row.designation_custom : DESIGNATION_LABELS[row.designation];
   return row;
+}
+
+const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
+// Photo par élément d'état des lieux : mêmes contraintes que les photos de
+// Bien (étape 5/9). Signatures (finalisation) : PNG issu d'un canvas, léger.
+const photoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 3 * 1024 * 1024 },
+});
+const signaturesUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1 * 1024 * 1024 },
+});
+
+const INSPECTION_REPORT_SELECT = `
+  t.*, cu.first_name AS conductor_first_name, cu.last_name AS conductor_last_name, cu.role AS conductor_role,
+  fu.first_name AS finalizer_first_name, fu.last_name AS finalizer_last_name, fu.role AS finalizer_role
+`;
+
+/** `reportsTable` : toujours l'un des deux littéraux ci-dessous, jamais une valeur venue du client. */
+async function loadInspectionReportRow(conn, reportsTable, leaseId) {
+  const [rows] = await conn.query(
+    `SELECT ${INSPECTION_REPORT_SELECT} FROM ${reportsTable} t
+     LEFT JOIN users cu ON cu.id = t.conducted_by
+     LEFT JOIN users fu ON fu.id = t.finalized_by
+     WHERE t.lease_id = :leaseId LIMIT 1`,
+    { leaseId },
+  );
+  return rows[0] ?? null;
+}
+
+function assertDraft(report, label) {
+  if (!report) throw new ApiError(404, `Aucun ${label} pour ce bail`);
+  if (report.status !== 'draft') {
+    throw new ApiError(409, `Cette fiche est déjà finalisée et ne peut plus être modifiée.`);
+  }
+}
+
+/** Enregistre un fichier téléversé (multer memoryStorage) sous `uploads/tenants/<id>/inspections/<leaseId>/`. */
+async function saveInspectionFile(tenantId, leaseId, file, baseName, label) {
+  const ext = assertUploadType(file, { label });
+  const dir = path.join(UPLOADS_ROOT, `tenants/${tenantId}/inspections/${leaseId}`);
+  await fs.mkdir(dir, { recursive: true });
+  const rel = `tenants/${tenantId}/inspections/${leaseId}/${randomFileName(baseName, ext)}`;
+  await fs.writeFile(path.join(UPLOADS_ROOT, rel), file.buffer);
+  return rel;
+}
+
+async function deleteInspectionFile(rel) {
+  if (!rel) return;
+  await fs.unlink(path.join(UPLOADS_ROOT, rel)).catch(() => {});
 }
 
 async function nextReceiptNumber(conn, tenantId) {
@@ -291,25 +356,23 @@ router.get('/:leaseId/move-in-report', canEtatsDesLieux, async (req, res, next) 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-    const [rows] = await pool.query('SELECT * FROM move_in_reports WHERE lease_id = :leaseId LIMIT 1', {
-      leaseId,
-    });
-    res.json({ report: rows[0] ?? null });
+    const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    res.json({ report: toPublicInspectionReport(row) });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/leases/:leaseId/move-in-report — réaliser l'état des lieux d'entrée (une fois par bail).
+// POST /api/leases/:leaseId/move-in-report — démarre le BROUILLON de l'état des
+// lieux d'entrée (une fois par bail), amorcé avec les zones/éléments standards.
 router.post('/:leaseId/move-in-report', canEtatsDesLieux, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
   if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
 
-  const parsed = createMoveInReportSchema.safeParse(req.body);
+  const parsed = startInspectionReportSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
-  const data = parsed.data;
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
@@ -320,25 +383,180 @@ router.post('/:leaseId/move-in-report', canEtatsDesLieux, async (req, res, next)
     });
     if (existing[0]) throw new ApiError(409, 'Un état des lieux existe déjà pour ce bail');
 
+    const zones = cloneMasterZones();
     const [result] = await pool.query(
-      `INSERT INTO move_in_reports (tenant_id, lease_id, conducted_at, items, general_notes, conducted_by)
-       VALUES (:tenantId, :leaseId, :conductedAt, :items, :notes, :by)`,
+      `INSERT INTO move_in_reports (tenant_id, lease_id, conducted_at, items, status, conducted_by)
+       VALUES (:tenantId, :leaseId, :conductedAt, :items, 'draft', :by)`,
       {
         tenantId: req.user.tenantId,
         leaseId,
-        conductedAt: data.conductedAt,
-        items: JSON.stringify(data.items),
-        notes: data.generalNotes,
+        conductedAt: parsed.data.conductedAt || new Date().toISOString().slice(0, 10),
+        items: JSON.stringify({ zones }),
         by: req.user.id,
       },
     );
 
-    logger.info('État des lieux réalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
-    res.status(201).json({ reportId: result.insertId });
+    logger.info('État des lieux d’entrée démarré (brouillon)', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+    const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    res.status(201).json({ report: toPublicInspectionReport(row) });
   } catch (err) {
     next(err);
   }
 });
+
+// PATCH /api/leases/:leaseId/move-in-report — enregistre le brouillon (zones,
+// éléments — y compris personnalisés —, notes). Refusé une fois finalisée.
+router.patch('/:leaseId/move-in-report', canEtatsDesLieux, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = updateInspectionDraftSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    assertDraft(report, 'état des lieux d’entrée');
+
+    await pool.query(
+      `UPDATE move_in_reports SET items = :items, general_notes = :notes${data.conductedAt ? ', conducted_at = :conductedAt' : ''}
+       WHERE lease_id = :leaseId`,
+      {
+        items: JSON.stringify({ zones: data.zones }),
+        notes: data.generalNotes,
+        conductedAt: data.conductedAt,
+        leaseId,
+      },
+    );
+
+    const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    res.json({ report: toPublicInspectionReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST/DELETE .../move-in-report/items/:zoneKey/:itemKey/photo — photo d'un élément.
+router.post(
+  '/:leaseId/move-in-report/items/:zoneKey/:itemKey/photo',
+  canEtatsDesLieux,
+  photoUpload.single('photo'),
+  async (req, res, next) => {
+    const leaseId = Number(req.params.leaseId);
+    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+    if (!req.file) return next(new ApiError(400, 'Photo requise'));
+
+    try {
+      const scopeAgentId = await resolvePropertyScope(req.user);
+      await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+      const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+      assertDraft(report, 'état des lieux d’entrée');
+
+      const zones = normalizeStoredItems(report.items);
+      const found = findItem(zones, req.params.zoneKey, req.params.itemKey);
+      if (!found) throw new ApiError(404, 'Élément introuvable sur cette fiche');
+
+      const rel = await saveInspectionFile(req.user.tenantId, leaseId, req.file, 'photo', 'Photo');
+      const oldPath = found.item.photoUrl;
+      found.item.photoUrl = `/uploads/${rel}`;
+
+      await pool.query('UPDATE move_in_reports SET items = :items WHERE lease_id = :leaseId', {
+        items: JSON.stringify({ zones }),
+        leaseId,
+      });
+      if (oldPath) await deleteInspectionFile(oldPath.replace(/^\/uploads\//, ''));
+
+      const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+      res.json({ report: toPublicInspectionReport(row) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete('/:leaseId/move-in-report/items/:zoneKey/:itemKey/photo', canEtatsDesLieux, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    assertDraft(report, 'état des lieux d’entrée');
+
+    const zones = normalizeStoredItems(report.items);
+    const found = findItem(zones, req.params.zoneKey, req.params.itemKey);
+    if (!found) throw new ApiError(404, 'Élément introuvable sur cette fiche');
+
+    const oldPath = found.item.photoUrl;
+    found.item.photoUrl = null;
+    await pool.query('UPDATE move_in_reports SET items = :items WHERE lease_id = :leaseId', {
+      items: JSON.stringify({ zones }),
+      leaseId,
+    });
+    if (oldPath) await deleteInspectionFile(oldPath.replace(/^\/uploads\//, ''));
+
+    const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    res.json({ report: toPublicInspectionReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/move-in-report/finalize — verrouille la fiche
+// (exige tous les états renseignés + les deux signatures).
+router.post(
+  '/:leaseId/move-in-report/finalize',
+  canEtatsDesLieux,
+  signaturesUpload.fields([
+    { name: 'tenantSignature', maxCount: 1 },
+    { name: 'agentSignature', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    const leaseId = Number(req.params.leaseId);
+    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+    const tenantSignatureFile = req.files?.tenantSignature?.[0];
+    const agentSignatureFile = req.files?.agentSignature?.[0];
+    if (!tenantSignatureFile || !agentSignatureFile) {
+      return next(new ApiError(400, 'Signature du locataire et de l’agent requises'));
+    }
+
+    try {
+      const scopeAgentId = await resolvePropertyScope(req.user);
+      await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+      const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+      assertDraft(report, 'état des lieux d’entrée');
+
+      const zones = normalizeStoredItems(report.items);
+      const missing = getMissingConditionLabels(zones);
+      if (missing.length > 0) {
+        throw new ApiError(400, `État manquant pour : ${missing.join(', ')}`);
+      }
+
+      const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
+      const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
+
+      await pool.query(
+        `UPDATE move_in_reports
+         SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
+             tenant_signature_path = :tenantSig, agent_signature_path = :agentSig
+         WHERE lease_id = :leaseId`,
+        { by: req.user.id, tenantSig: tenantSignaturePath, agentSig: agentSignaturePath, leaseId },
+      );
+
+      logger.info('État des lieux d’entrée finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+      const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+      res.json({ report: toPublicInspectionReport(row) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // GET /api/leases/:leaseId/move-out-report — état des lieux de sortie (le cas
 // échéant) + arriérés en cours (contexte pour aider à chiffrer les retenues).
@@ -349,9 +567,7 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-    const [reportRows] = await pool.query('SELECT * FROM move_out_reports WHERE lease_id = :leaseId LIMIT 1', {
-      leaseId,
-    });
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
 
     let arrears = null;
     if (lease.status === 'active') {
@@ -366,88 +582,261 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
       });
     }
 
-    res.json({ report: reportRows[0] ?? null, arrears });
+    res.json({ report: toPublicMoveOutReport(row), arrears });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/leases/:leaseId/move-out-report — réalise l'état des lieux de
-// sortie, calcule le décompte de caution, termine le bail et libère l'unité.
+// POST /api/leases/:leaseId/move-out-report — démarre le BROUILLON de l'état
+// des lieux de sortie, amorcé avec les zones/éléments de la fiche d'entrée
+// (mêmes `key`, pour que la comparaison automatique puisse faire correspondre
+// les postes un par un) — ou, à défaut de fiche d'entrée, les zones standards.
 router.post('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
   if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
 
-  const parsed = createMoveOutReportSchema.safeParse(req.body);
+  const parsed = startInspectionReportSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
+
+    const [existing] = await pool.query('SELECT id FROM move_out_reports WHERE lease_id = :leaseId LIMIT 1', {
+      leaseId,
+    });
+    if (existing[0]) throw new ApiError(409, 'Un état des lieux de sortie existe déjà pour ce bail');
+
+    const moveInRow = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    const zones = moveInRow ? cloneZonesFrom(normalizeStoredItems(moveInRow.items)) : cloneMasterZones();
+    const depositAmount = Number(lease.deposit_amount);
+
+    const [result] = await pool.query(
+      `INSERT INTO move_out_reports
+         (tenant_id, lease_id, conducted_at, items, status, deposit_amount, total_deductions, net_refund, conducted_by)
+       VALUES (:tenantId, :leaseId, :conductedAt, :items, 'draft', :depositAmount, 0, :depositAmount, :by)`,
+      {
+        tenantId: req.user.tenantId,
+        leaseId,
+        conductedAt: parsed.data.conductedAt || new Date().toISOString().slice(0, 10),
+        items: JSON.stringify({ zones }),
+        depositAmount,
+        by: req.user.id,
+      },
+    );
+
+    logger.info('État des lieux de sortie démarré (brouillon)', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    res.status(201).json({ report: toPublicMoveOutReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/leases/:leaseId/move-out-report — enregistre le brouillon (zones,
+// éléments, retenues par élément, autres retenues, notes).
+router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = updateMoveOutDraftSchema.safeParse(req.body);
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
   const data = parsed.data;
 
-  const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
-    if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    assertDraft(report, 'état des lieux de sortie');
 
-    const [existing] = await conn.query('SELECT id FROM move_out_reports WHERE lease_id = :leaseId LIMIT 1', {
-      leaseId,
-    });
-    if (existing[0]) throw new ApiError(409, 'Un état des lieux de sortie existe déjà pour ce bail');
-
-    const itemsDeductions = data.items.reduce((sum, it) => sum + it.deduction, 0);
+    const itemsDeductions = sumDeductions(data.zones);
     const totalDeductions = itemsDeductions + data.otherDeductionsAmount;
-    const depositAmount = Number(lease.deposit_amount);
-    const netRefund = Math.max(0, depositAmount - totalDeductions);
+    const netRefund = Math.max(0, Number(report.deposit_amount) - totalDeductions);
 
-    await conn.beginTransaction();
-
-    const [result] = await conn.query(
-      `INSERT INTO move_out_reports
-         (tenant_id, lease_id, conducted_at, items, general_notes,
-          other_deductions_amount, other_deductions_note,
-          deposit_amount, total_deductions, net_refund, conducted_by)
-       VALUES (:tenantId, :leaseId, :conductedAt, :items, :notes,
-               :otherAmount, :otherNote, :depositAmount, :totalDeductions, :netRefund, :by)`,
+    await pool.query(
+      `UPDATE move_out_reports
+       SET items = :items, general_notes = :notes,
+           other_deductions_amount = :otherAmount, other_deductions_note = :otherNote,
+           total_deductions = :totalDeductions, net_refund = :netRefund
+           ${data.conductedAt ? ', conducted_at = :conductedAt' : ''}
+       WHERE lease_id = :leaseId`,
       {
-        tenantId: req.user.tenantId,
-        leaseId,
-        conductedAt: data.conductedAt,
-        items: JSON.stringify(data.items),
+        items: JSON.stringify({ zones: data.zones }),
         notes: data.generalNotes,
         otherAmount: data.otherDeductionsAmount,
         otherNote: data.otherDeductionsNote,
-        depositAmount,
         totalDeductions,
         netRefund,
-        by: req.user.id,
+        conductedAt: data.conductedAt,
+        leaseId,
       },
     );
 
-    await conn.query(
-      "UPDATE leases SET status = 'ended', end_date = :endDate, deposit_status = 'returned' WHERE id = :id",
-      { endDate: data.conductedAt, id: leaseId },
-    );
-    await conn.query("UPDATE property_units SET status = 'libre' WHERE id = :id", { id: lease.unit_id });
-
-    await conn.commit();
-
-    logger.info('Sortie de locataire réalisée', {
-      tenantId: req.user.tenantId,
-      leaseId,
-      reportId: result.insertId,
-      totalDeductions,
-      netRefund,
-      by: req.user.id,
-    });
-    res.status(201).json({ reportId: result.insertId, totalDeductions, netRefund });
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    res.json({ report: toPublicMoveOutReport(row) });
   } catch (err) {
-    await conn.rollback().catch(() => {});
     next(err);
-  } finally {
-    conn.release();
   }
 });
+
+// POST/DELETE .../move-out-report/items/:zoneKey/:itemKey/photo — photo d'un élément.
+router.post(
+  '/:leaseId/move-out-report/items/:zoneKey/:itemKey/photo',
+  canEtatsDesLieux,
+  photoUpload.single('photo'),
+  async (req, res, next) => {
+    const leaseId = Number(req.params.leaseId);
+    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+    if (!req.file) return next(new ApiError(400, 'Photo requise'));
+
+    try {
+      const scopeAgentId = await resolvePropertyScope(req.user);
+      await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+      const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+      assertDraft(report, 'état des lieux de sortie');
+
+      const zones = normalizeStoredItems(report.items);
+      const found = findItem(zones, req.params.zoneKey, req.params.itemKey);
+      if (!found) throw new ApiError(404, 'Élément introuvable sur cette fiche');
+
+      const rel = await saveInspectionFile(req.user.tenantId, leaseId, req.file, 'photo', 'Photo');
+      const oldPath = found.item.photoUrl;
+      found.item.photoUrl = `/uploads/${rel}`;
+
+      await pool.query('UPDATE move_out_reports SET items = :items WHERE lease_id = :leaseId', {
+        items: JSON.stringify({ zones }),
+        leaseId,
+      });
+      if (oldPath) await deleteInspectionFile(oldPath.replace(/^\/uploads\//, ''));
+
+      const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+      res.json({ report: toPublicMoveOutReport(row) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete('/:leaseId/move-out-report/items/:zoneKey/:itemKey/photo', canEtatsDesLieux, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    assertDraft(report, 'état des lieux de sortie');
+
+    const zones = normalizeStoredItems(report.items);
+    const found = findItem(zones, req.params.zoneKey, req.params.itemKey);
+    if (!found) throw new ApiError(404, 'Élément introuvable sur cette fiche');
+
+    const oldPath = found.item.photoUrl;
+    found.item.photoUrl = null;
+    await pool.query('UPDATE move_out_reports SET items = :items WHERE lease_id = :leaseId', {
+      items: JSON.stringify({ zones }),
+      leaseId,
+    });
+    if (oldPath) await deleteInspectionFile(oldPath.replace(/^\/uploads\//, ''));
+
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    res.json({ report: toPublicMoveOutReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/move-out-report/finalize — verrouille la fiche
+// (exige tous les états renseignés + les deux signatures), recalcule le
+// décompte de caution à partir des données persistées, termine le bail et
+// libère l'unité — tout dans la même transaction.
+router.post(
+  '/:leaseId/move-out-report/finalize',
+  canEtatsDesLieux,
+  signaturesUpload.fields([
+    { name: 'tenantSignature', maxCount: 1 },
+    { name: 'agentSignature', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    const leaseId = Number(req.params.leaseId);
+    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+    const tenantSignatureFile = req.files?.tenantSignature?.[0];
+    const agentSignatureFile = req.files?.agentSignature?.[0];
+    if (!tenantSignatureFile || !agentSignatureFile) {
+      return next(new ApiError(400, 'Signature du locataire et de l’agent requises'));
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      const scopeAgentId = await resolvePropertyScope(req.user);
+      const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
+      const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
+      assertDraft(report, 'état des lieux de sortie');
+      if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
+
+      const zones = normalizeStoredItems(report.items);
+      const missing = getMissingConditionLabels(zones);
+      if (missing.length > 0) {
+        throw new ApiError(400, `État manquant pour : ${missing.join(', ')}`);
+      }
+
+      const itemsDeductions = sumDeductions(zones);
+      const totalDeductions = itemsDeductions + Number(report.other_deductions_amount);
+      const depositAmount = Number(report.deposit_amount);
+      const netRefund = Math.max(0, depositAmount - totalDeductions);
+
+      const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
+      const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
+
+      await conn.beginTransaction();
+
+      await conn.query(
+        `UPDATE move_out_reports
+         SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
+             tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
+             total_deductions = :totalDeductions, net_refund = :netRefund
+         WHERE lease_id = :leaseId`,
+        {
+          by: req.user.id,
+          tenantSig: tenantSignaturePath,
+          agentSig: agentSignaturePath,
+          totalDeductions,
+          netRefund,
+          leaseId,
+        },
+      );
+      await conn.query(
+        "UPDATE leases SET status = 'ended', end_date = :endDate, deposit_status = 'returned' WHERE id = :id",
+        { endDate: report.conducted_at, id: leaseId },
+      );
+      await conn.query("UPDATE property_units SET status = 'libre' WHERE id = :id", { id: lease.unit_id });
+
+      await conn.commit();
+
+      logger.info('Sortie de locataire finalisée', {
+        tenantId: req.user.tenantId,
+        leaseId,
+        totalDeductions,
+        netRefund,
+        by: req.user.id,
+      });
+      const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+      res.json({ report: toPublicMoveOutReport(row) });
+    } catch (err) {
+      await conn.rollback().catch(() => {});
+      next(err);
+    } finally {
+      conn.release();
+    }
+  },
+);
 
 // GET /api/leases/:leaseId/move-out-report.pdf — PV de sortie & décompte de caution.
 router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, next) => {
@@ -458,10 +847,11 @@ router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, n
     const scopeAgentId = await resolvePropertyScope(req.user);
     const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
 
-    const [reportRows] = await pool.query('SELECT * FROM move_out_reports WHERE lease_id = :leaseId LIMIT 1', {
-      leaseId,
-    });
-    if (!reportRows[0]) throw new ApiError(404, "Aucun état des lieux de sortie pour ce bail");
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    if (!row) throw new ApiError(404, "Aucun état des lieux de sortie pour ce bail");
+    if (row.status !== 'finalized') {
+      throw new ApiError(400, 'Cette fiche doit être finalisée (signée) avant de générer le PV.');
+    }
 
     const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: lease.renter_id });
     const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', {
@@ -473,7 +863,7 @@ router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, n
       renter: renterRows[0],
       property: lease,
       lease,
-      report: reportRows[0],
+      report: toPublicMoveOutReport(row),
     });
   } catch (err) {
     next(err);

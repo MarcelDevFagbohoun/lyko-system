@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import {
   listCharges,
   updateCharge,
-  payCharge,
+  recordChargePayment,
   deleteCharge,
   type UtilityCharge,
   type UtilityType,
@@ -19,7 +19,6 @@ import { UTILITY_TYPE_LABELS, CHARGE_STATUS_LABELS } from "@/lib/constants/charg
 import { ApiError } from "@/lib/api/client";
 import { formatFcfa, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
@@ -29,8 +28,15 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmo
 const TABS: { key: ChargeStatus | "all"; label: string }[] = [
   { key: "all", label: "Toutes" },
   { key: "impayee", label: "Impayées" },
+  { key: "partiellement_payee", label: "Partiellement payées" },
   { key: "payee", label: "Payées" },
 ];
+
+const STATUS_BADGE_VARIANT: Record<ChargeStatus, "success" | "warning" | "info"> = {
+  payee: "success",
+  partiellement_payee: "info",
+  impayee: "warning",
+};
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "especes", label: "Espèces" },
@@ -86,11 +92,12 @@ function ChargesContent() {
       });
   }, [accessToken]);
 
-  const totalUnpaid = (charges ?? []).filter((c) => c.status === "impayee").reduce((s, c) => s + c.amount, 0);
+  const totalUnpaid = (charges ?? [])
+    .filter((c) => c.status !== "payee")
+    .reduce((s, c) => s + c.remainingAmount, 0);
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>
@@ -113,7 +120,7 @@ function ChargesContent() {
           </div>
         </div>
 
-        {charges && charges.some((c) => c.status === "impayee") && (
+        {charges && charges.some((c) => c.status !== "payee") && (
           <Card>
             <CardContent className="flex items-center justify-between py-4">
               <span className="text-body-sm text-ink-soft">Total impayé (filtres actuels)</span>
@@ -226,6 +233,7 @@ function ChargeRow({
   const [deleteReason, setDeleteReason] = React.useState("");
   const [method, setMethod] = React.useState<PaymentMethod>("mobile_money");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().slice(0, 10));
+  const [payAmount, setPayAmount] = React.useState(String(charge.remainingAmount));
   const [readingStart, setReadingStart] = React.useState(String(charge.readingStart));
   const [readingEnd, setReadingEnd] = React.useState(String(charge.readingEnd));
   const [unitPrice, setUnitPrice] = React.useState(String(charge.unitPrice));
@@ -240,10 +248,14 @@ function ChargeRow({
 
   async function handlePay() {
     if (!accessToken) return;
+    const amount = Number(payAmount);
+    if (!amount || amount <= 0 || amount > charge.remainingAmount) {
+      return setError(`Montant invalide (solde restant : ${formatFcfa(charge.remainingAmount)}).`);
+    }
     setSubmitting(true);
     setError(null);
     try {
-      await payCharge(accessToken, charge.id, { paymentMethod: method, paidAt });
+      await recordChargePayment(accessToken, charge.id, { amount, paymentMethod: method, paidAt });
       setPaying(false);
       onChanged();
     } catch (err) {
@@ -320,10 +332,19 @@ function ChargeRow({
           <div className="flex flex-col gap-2 py-2">
             {error && <p className="text-body-sm text-danger-fg">{error}</p>}
             <p className="text-body-sm text-ink">
-              Confirmer le règlement de <span className="font-label-md">{formatFcfa(charge.amount)}</span> par{" "}
-              {charge.renter.firstName} {charge.renter.lastName} ?
+              Enregistrer un règlement pour {charge.renter.firstName} {charge.renter.lastName} — solde restant :{" "}
+              <span className="font-label-md">{formatFcfa(charge.remainingAmount)}</span>
+              {charge.paidAmount > 0 && <span className="text-ink-muted"> (déjà réglé : {formatFcfa(charge.paidAmount)})</span>}
             </p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <Field label="Montant réglé (FCFA)" htmlFor={`amount-${charge.id}`} required>
+                <Input
+                  id={`amount-${charge.id}`}
+                  inputMode="numeric"
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value.replace(/\D/g, ""))}
+                />
+              </Field>
               <Field label="Mode de règlement" htmlFor={`method-${charge.id}`}>
                 <select
                   id={`method-${charge.id}`}
@@ -340,6 +361,11 @@ function ChargeRow({
                 <Input id={`paidAt-${charge.id}`} type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
               </Field>
             </div>
+            {Number(payAmount) > 0 && Number(payAmount) < charge.remainingAmount && (
+              <p className="text-body-xs text-info-fg">
+                Règlement partiel — il restera {formatFcfa(charge.remainingAmount - Number(payAmount))} après ce paiement.
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <Button size="sm" onClick={handlePay} disabled={submitting}>
                 {submitting ? "…" : "Confirmer le règlement"}
@@ -410,9 +436,19 @@ function ChargeRow({
         </span>
       </TableCell>
       <TableCell className="text-ink-soft">{charge.periodStart} → {charge.periodEnd}</TableCell>
-      <TableAmount>{formatFcfa(charge.amount)}</TableAmount>
+      <TableAmount>
+        {formatFcfa(charge.amount)}
+        {charge.lossShareAmount > 0 && (
+          <div className="text-body-xs font-body text-ink-muted">
+            dont {formatFcfa(charge.lossShareAmount)} de part de pertes
+          </div>
+        )}
+        {charge.status === "partiellement_payee" && (
+          <div className="text-body-xs font-body text-info-fg">reste {formatFcfa(charge.remainingAmount)}</div>
+        )}
+      </TableAmount>
       <TableCell>
-        <Badge variant={charge.status === "payee" ? "success" : "warning"}>{CHARGE_STATUS_LABELS[charge.status]}</Badge>
+        <Badge variant={STATUS_BADGE_VARIANT[charge.status]}>{CHARGE_STATUS_LABELS[charge.status]}</Badge>
       </TableCell>
       <TableCell className="text-right">
         {locked ? (
@@ -421,15 +457,21 @@ function ChargeRow({
           </Badge>
         ) : (
           <div className="flex items-center justify-end gap-1">
-            {charge.status === "impayee" && (
-              <Button variant="success" size="sm" onClick={() => setPaying(true)}>
+            {charge.status !== "payee" && (
+              <Button
+                variant="success"
+                size="sm"
+                onClick={() => { setPayAmount(String(charge.remainingAmount)); setPaying(true); }}
+              >
                 <Check size={14} />
-                Marquer payée
+                {charge.status === "partiellement_payee" ? "Régler le solde" : "Marquer payée"}
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label="Modifier">
-              <Pencil size={14} />
-            </Button>
+            {charge.paidAmount === 0 && (
+              <Button variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label="Modifier">
+                <Pencil size={14} />
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)} aria-label="Supprimer">
               <Trash2 size={14} className="text-danger-fg" />
             </Button>

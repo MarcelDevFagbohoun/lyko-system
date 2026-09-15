@@ -70,7 +70,13 @@ export function StatCard({ label, value, unit, icon, trend, tone = "default", cl
   const trendColor = tone === "default" ? neutralTrendTone[trend?.direction ?? "flat"] : s.trend;
 
   return (
-    <Card className={cn("flex flex-col justify-between p-4 transition-colors sm:p-5", s.card, className)}>
+    <Card
+      className={cn(
+        "flex flex-col justify-between p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5",
+        s.card,
+        className,
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <span className={cn("font-label-sm uppercase tracking-wider", s.label)}>{label}</span>
         {icon && <span className={cn("rounded-md p-2", s.chip)}>{icon}</span>}

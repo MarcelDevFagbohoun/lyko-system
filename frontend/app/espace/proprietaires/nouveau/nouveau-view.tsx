@@ -9,12 +9,12 @@ import { ApiError } from "@/lib/api/client";
 import { createOwner } from "@/lib/api/owners";
 import { normalizeBeninPhone } from "@/lib/validation/auth";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { useToast } from "@/lib/toast/toast-context";
 
 type FormState = { name: string; phone: string; email: string; address: string };
 const INITIAL: FormState = { name: "", phone: "", email: "", address: "" };
@@ -31,6 +31,7 @@ function NouveauContent() {
   const { accessToken } = useAuth();
   const router = useRouter();
   const online = useOnlineStatus();
+  const toast = useToast();
   const [form, setForm] = React.useState<FormState>(INITIAL);
   const [touched, setTouched] = React.useState<Partial<Record<keyof FormState, boolean>>>({});
   const [submitting, setSubmitting] = React.useState(false);
@@ -64,6 +65,7 @@ function NouveauContent() {
         email: form.email.trim() || undefined,
         address: form.address.trim() || undefined,
       });
+      toast.success(`Propriétaire ${form.name.trim()} créé.`);
       router.push(`/espace/proprietaires/${res.ownerId}`);
     } catch (err) {
       setServerError(err instanceof ApiError ? err.message : "Une erreur est survenue. Réessayez.");
@@ -74,7 +76,6 @@ function NouveauContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <Link
           href="/espace/proprietaires"

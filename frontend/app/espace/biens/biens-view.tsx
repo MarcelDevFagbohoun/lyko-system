@@ -2,17 +2,22 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Building2, Plus, Search } from "lucide-react";
+import dynamic from "next/dynamic";
+import { Building2, List, MapPin, Plus, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { listProperties, type PropertyListItem } from "@/lib/api/properties";
 import { PROPERTY_TYPE_LABELS } from "@/lib/constants/properties";
 import { ApiError } from "@/lib/api/client";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+
+const PortfolioMap = dynamic(() => import("@/components/properties/portfolio-map"), {
+  ssr: false,
+  loading: () => <div className="flex h-[480px] items-center justify-center rounded-lg border border-border-strong bg-surface-muted text-body-sm text-ink-muted">Chargement de la carte…</div>,
+});
 
 export function BiensView() {
   return (
@@ -27,6 +32,7 @@ function BiensContent() {
   const [query, setQuery] = React.useState("");
   const [properties, setProperties] = React.useState<PropertyListItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [view, setView] = React.useState<"liste" | "carte">("liste");
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
@@ -42,7 +48,6 @@ function BiensContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>
@@ -57,14 +62,34 @@ function BiensContent() {
           </Link>
         </div>
 
-        <div className="relative max-w-md">
-          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher par propriétaire ou code (ex. BIEN-001)"
-            className="h-[38px] w-full rounded border border-border-strong bg-surface pl-9 pr-3 text-body-md text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          />
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div className="relative max-w-md flex-1">
+            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Rechercher par propriétaire ou code (ex. BIEN-001)"
+              className="h-[38px] w-full rounded border border-border-strong bg-surface pl-9 pr-3 text-body-md text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            />
+          </div>
+          <div className="inline-flex w-fit rounded-lg border border-border-strong bg-surface p-0.5">
+            <button
+              type="button"
+              onClick={() => setView("liste")}
+              className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-body-sm ${view === "liste" ? "bg-primary text-primary-fg" : "text-ink-soft"}`}
+            >
+              <List size={14} />
+              Liste
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("carte")}
+              className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-body-sm ${view === "carte" ? "bg-primary text-primary-fg" : "text-ink-soft"}`}
+            >
+              <MapPin size={14} />
+              Carte
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -73,7 +98,27 @@ function BiensContent() {
           </div>
         )}
 
-        {properties === null && !error ? (
+        {view === "carte" && (
+          properties === null && !error ? (
+            <p className="text-body-sm text-ink-muted">Chargement…</p>
+          ) : properties && properties.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              {(() => {
+                const withoutCoords = properties.filter((p) => p.latitude == null || p.longitude == null).length;
+                return withoutCoords > 0 ? (
+                  <p className="text-body-sm text-ink-muted">
+                    {withoutCoords} bien{withoutCoords > 1 ? "s" : ""} sans coordonnées GPS — non affiché{withoutCoords > 1 ? "s" : ""} sur la carte. Ouvrez la fiche d&apos;un bien pour placer son repère.
+                  </p>
+                ) : null;
+              })()}
+              <PortfolioMap properties={properties} />
+            </div>
+          ) : properties ? (
+            <p className="text-body-sm text-ink-muted">Aucun bien pour le moment.</p>
+          ) : null
+        )}
+
+        {view !== "liste" ? null : properties === null && !error ? (
           <p className="text-body-sm text-ink-muted">Chargement…</p>
         ) : properties && properties.length === 0 ? (
           <Card>

@@ -35,6 +35,27 @@ export function buildRentReminderMessage(params: {
   ].join(" ");
 }
 
+/**
+ * Message de relance PRÉDICTIVE (étape 13, idée n°4) — avant l'échéance, pas
+ * après : ton différent du rappel de retard ci-dessus (une échéance à venir,
+ * jamais « en retard »).
+ */
+export function buildPredictiveReminderMessage(params: {
+  renterFirstName: string;
+  unitLabel: string;
+  monthlyRent: number;
+  dueDate: string;
+  companyName?: string | null;
+}): string {
+  return [
+    `Bonjour ${params.renterFirstName},`,
+    `Nous vous rappelons que le loyer de ${params.unitLabel} (${formatFcfa(params.monthlyRent)}) `,
+    `arrive à échéance le ${params.dueDate}.`,
+    `Merci de bien vouloir procéder au règlement à temps.`,
+    params.companyName ? `Cordialement, ${params.companyName}` : "",
+  ].join(" ");
+}
+
 /** Mois suivant, format « AAAA-MM ». */
 export function addMonth(yearMonth: string): string {
   const [y, m] = yearMonth.split("-").map(Number);
@@ -80,6 +101,29 @@ export function formatDateLabel(isoDate: string): string {
   if (!y || !m || !day) return isoDate;
   const d = new Date(Date.UTC(y, m - 1, day));
   return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/** Comme `formatDateLabel`, avec le jour de la semaine — ex. « Mardi 23/01/2026 ». */
+export function formatDateHeading(isoDate: string): string {
+  const [y, m, day] = isoDate.split("-").map(Number);
+  if (!y || !m || !day) return isoDate;
+  const d = new Date(Date.UTC(y, m - 1, day));
+  const weekday = d.toLocaleDateString("fr-FR", { weekday: "long", timeZone: "UTC" });
+  const date = d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
+  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${date}`;
+}
+
+/**
+ * Heure d'un horodatage serveur (`created_at`) au format « HH:MM ». Le pool
+ * MySQL étiquette les horodatages en UTC alors qu'ils sont en heure locale
+ * (`timezone: 'Z'`) : on relit donc les chiffres en forçant `timeZone: "UTC"`
+ * plutôt que de laisser le navigateur les reconvertir, sous peine d'un
+ * décalage d'une heure à l'affichage.
+ */
+export function formatTimeOfDay(isoTimestamp: string): string {
+  const d = new Date(isoTimestamp);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
 }
 
 /**

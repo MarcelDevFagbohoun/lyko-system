@@ -59,6 +59,13 @@ const config = {
   jwt: {
     accessSecret: secret('JWT_ACCESS_SECRET'),
     refreshSecret: secret('JWT_REFRESH_SECRET'),
+    // Comptes Quick Immo (grand public, site externe séparé) : une clé
+    // DÉDIÉE, jamais celle des employés — un token de ce realm ne doit pas
+    // pouvoir être vérifié avec succès par `verifyAccessToken` (employé),
+    // même si son payload portait par erreur un `role` qui ressemble à un
+    // rôle employé. Séparation cryptographique, pas juste un indicateur
+    // applicatif qu'on pourrait oublier de vérifier partout.
+    marketplaceAccountSecret: secret('JWT_MARKETPLACE_ACCOUNT_SECRET'),
     accessTtl: process.env.JWT_ACCESS_TTL || '15m',
     refreshTtl: process.env.JWT_REFRESH_TTL || '7d',
     issuer: process.env.JWT_ISSUER || 'lyko-system',

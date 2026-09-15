@@ -122,7 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState({ user: null, tenant: null, accessToken: null, status: "unauthenticated" });
     // Poste potentiellement partagé entre employés : le cache hors-ligne
     // (étape 11) ne doit jamais rester consultable par la session suivante.
-    // L'appelant (EspaceHeader) est responsable d'avertir si des actions de
+    // L'appelant (EspaceSidebar) est responsable d'avertir si des actions de
     // la file d'attente ne sont pas encore synchronisées avant d'appeler ceci.
     const { clearOfflineData } = await import("@/lib/offline/db");
     await clearOfflineData();

@@ -2,15 +2,16 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, Trash2, Pencil, ShieldCheck, History, CalendarClock, HelpCircle, ChevronDown, ChevronUp, LockOpen } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, Trash2, Pencil, History, CalendarClock, HelpCircle, ChevronDown, ChevronUp, LockOpen } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { API_URL, ApiError } from "@/lib/api/client";
+import { API_URL, ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
   listExpenses,
   createExpense,
   updateExpense,
   deleteExpense,
   getDashboard,
+  accountingReportPdfPath,
   listRentPayments,
   listOwnerPayouts,
   listClosedPeriods,
@@ -30,15 +31,15 @@ import {
 import type { PaymentMethod } from "@/lib/api/renters";
 import { EXPENSE_CATEGORY_LABELS } from "@/lib/constants/expenses";
 import { UTILITY_TYPE_LABELS } from "@/lib/constants/charges";
-import { formatFcfa } from "@/lib/utils";
+import { formatFcfa, formatDateHeading, formatTimeOfDay } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { useToast } from "@/lib/toast/toast-context";
 
 const CATEGORIES = Object.entries(EXPENSE_CATEGORY_LABELS) as [ExpenseCategory, string][];
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
@@ -113,24 +114,51 @@ function ComptabiliteContent() {
 
   const isClosed = dashboard?.isClosed ?? false;
 
+  // Regroupe le journal par jour de SAISIE (préfixe de `createdAt`, pas
+  // `expenseDate`) : l'ordre reçu du back-end est déjà décroissant sur ce
+  // même champ, donc chaque groupe hérite naturellement du bon ordre interne.
+  const expenseGroups = React.useMemo(() => {
+    if (!expenses) return [];
+    const groups: { dateKey: string; items: Expense[]; total: number }[] = [];
+    for (const e of expenses) {
+      const dateKey = e.createdAt.slice(0, 10);
+      const last = groups[groups.length - 1];
+      if (last && last.dateKey === dateKey) {
+        last.items.push(e);
+        last.total += e.amount;
+      } else {
+        groups.push({ dateKey, items: [e], total: e.amount });
+      }
+    }
+    return groups;
+  }, [expenses]);
+
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>
             <h1 className="font-display text-headline-xl text-ink">Comptabilité</h1>
             <p className="text-body-md text-ink-soft">Recettes et dépenses du cabinet, classées par nature, mois par mois.</p>
           </div>
-          <Field label="Période" htmlFor="yearMonth">
-            <input
-              id="yearMonth"
-              type="month"
-              value={yearMonth}
-              onChange={(e) => setYearMonth(e.target.value)}
-              className="h-[38px] rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            />
-          </Field>
+          <div className="flex items-end gap-2">
+            <Field label="Période" htmlFor="yearMonth">
+              <input
+                id="yearMonth"
+                type="month"
+                value={yearMonth}
+                onChange={(e) => setYearMonth(e.target.value)}
+                className="h-[38px] rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              />
+            </Field>
+            <Button
+              variant="secondary"
+              onClick={() => accessToken && openAuthenticatedPdf(accountingReportPdfPath(from, to), accessToken)}
+            >
+              <FileDown size={16} />
+              Rapport mensuel
+            </Button>
+          </div>
         </div>
 
         {error && (
@@ -139,9 +167,12 @@ function ComptabiliteContent() {
           </div>
         )}
 
-        <HowMonthsWorkCard />
-
-        <StartDateCard accessToken={accessToken} isDg={isDg} />
+        {isDg && (
+          <>
+            <HowMonthsWorkCard />
+            <StartDateCard accessToken={accessToken} isDg={isDg} />
+          </>
+        )}
 
         {dashboard && (
           <ClotureBanner
@@ -305,24 +336,37 @@ function ComptabiliteContent() {
             ) : expenses.length === 0 ? (
               <p className="text-body-sm text-ink-muted">Aucune dépense enregistrée pour cette période.</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <tr>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Libellé</TableHead>
-                    <TableHead>Catégorie</TableHead>
-                    <TableHead className="text-right">Montant</TableHead>
-                    <TableHead>Mode</TableHead>
-                    <TableHead>Enregistré par</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </tr>
-                </TableHeader>
-                <TableBody>
-                  {expenses.map((e) => (
-                    <ExpenseRow key={e.id} expense={e} accessToken={accessToken} locked={isClosed} onChanged={load} />
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="flex flex-col gap-5">
+                {expenseGroups.map((group) => (
+                  <div key={group.dateKey}>
+                    <div className="mb-2 flex items-baseline justify-between gap-2 border-b border-border pb-1.5">
+                      <p className="font-label-md text-body-sm text-ink">{formatDateHeading(group.dateKey)}</p>
+                      <p className="text-body-xs text-ink-muted">
+                        {group.items.length} écriture{group.items.length > 1 ? "s" : ""} · {formatFcfa(group.total)}
+                      </p>
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <tr>
+                          <TableHead>Heure</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Libellé</TableHead>
+                          <TableHead>Catégorie</TableHead>
+                          <TableHead className="text-right">Montant</TableHead>
+                          <TableHead>Mode</TableHead>
+                          <TableHead>Enregistré par</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </tr>
+                      </TableHeader>
+                      <TableBody>
+                        {group.items.map((e) => (
+                          <ExpenseRow key={e.id} expense={e} accessToken={accessToken} locked={isClosed} onChanged={load} />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>
@@ -543,6 +587,8 @@ function StartDateCard({ accessToken, isDg }: { accessToken: string | null; isDg
 
   React.useEffect(() => load(), [load]);
 
+  const toast = useToast();
+
   async function handleSave() {
     if (!accessToken) return;
     setSubmitting(true);
@@ -551,6 +597,7 @@ function StartDateCard({ accessToken, isDg }: { accessToken: string | null; isDg
       await setAccountingStartDate(accessToken, value || null);
       setEditing(false);
       load();
+      toast.success(value ? "Date de démarrage enregistrée." : "Restriction de date retirée.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer cette date.");
     } finally {
@@ -630,6 +677,8 @@ function ClotureBanner({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  const toast = useToast();
+
   async function handleClose(force: boolean) {
     if (!accessToken) return;
     setSubmitting(true);
@@ -638,6 +687,7 @@ function ClotureBanner({
       await closePeriod(accessToken, yearMonth, force);
       setConfirming(null);
       onChanged();
+      toast.success(`Mois ${yearMonth} clôturé${force ? " (clôture anticipée)" : ""}.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de clôturer ce mois.");
     } finally {
@@ -673,19 +723,12 @@ function ClotureBanner({
   const closability = dashboard.closability;
   const isClosable = closability?.status === "closable";
 
+  // Tant que le mois est ouvert, cette bannière n'apporte rien à un
+  // comptable/agent (qui ne peut de toute façon pas clôturer) — retiré à
+  // la demande de l'utilisateur. Seul l'état « clôturé » ci-dessus (qui
+  // explique pourquoi une saisie est refusée) reste visible de tous.
   if (!isDg) {
-    return (
-      <Card>
-        <CardContent className="flex items-center gap-3 py-4">
-          <ShieldCheck size={18} className="text-ink-muted" />
-          <p className="text-body-sm text-ink-soft">
-            {isClosable
-              ? `Mois ${yearMonth} ouvert et clôturable. Seul l'Admin peut clôturer un mois.`
-              : `Mois ${yearMonth} ouvert, clôturable à partir du ${closability?.closableFrom ?? "?"} (dernière échéance de loyer connue). Seul l'Admin peut clôturer un mois.`}
-          </p>
-        </CardContent>
-      </Card>
-    );
+    return null;
   }
 
   if (isClosable) {
@@ -864,6 +907,7 @@ function ExpenseForm({
   const [receipt, setReceipt] = React.useState<File | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -886,6 +930,7 @@ function ExpenseForm({
       setNotes("");
       setReceipt(null);
       onCreated();
+      toast.success("Dépense enregistrée.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer cette dépense.");
     } finally {
@@ -985,6 +1030,7 @@ function ExpenseRow({
   const [category, setCategory] = React.useState<ExpenseCategory>(expense.category);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
 
   async function handleSave() {
     if (!accessToken) return;
@@ -998,6 +1044,7 @@ function ExpenseRow({
       });
       setEditing(false);
       onChanged();
+      toast.success("Dépense modifiée.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer.");
     } finally {
@@ -1011,6 +1058,7 @@ function ExpenseRow({
     try {
       await deleteExpense(accessToken, expense.id, deleteReason.trim());
       onChanged();
+      toast.info("Dépense supprimée.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de supprimer.");
       setSubmitting(false);
@@ -1021,7 +1069,7 @@ function ExpenseRow({
   if (editing) {
     return (
       <TableRow>
-        <TableCell colSpan={7}>
+        <TableCell colSpan={8}>
           <div className="flex flex-col gap-2 py-2">
             {error && <p className="text-body-sm text-danger-fg">{error}</p>}
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -1050,7 +1098,7 @@ function ExpenseRow({
   if (confirmDelete) {
     return (
       <TableRow>
-        <TableCell colSpan={7}>
+        <TableCell colSpan={8}>
           <div className="flex flex-col gap-2 py-2">
             {error && <p className="text-body-sm text-danger-fg">{error}</p>}
             <p className="text-body-sm text-ink">
@@ -1091,6 +1139,7 @@ function ExpenseRow({
 
   return (
     <TableRow>
+      <TableCell className="text-ink-soft">{formatTimeOfDay(expense.createdAt)}</TableCell>
       <TableCell className="text-ink-soft">{expense.expenseDate}</TableCell>
       <TableCell>
         <div className="flex items-center gap-1.5">

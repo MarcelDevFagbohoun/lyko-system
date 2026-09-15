@@ -23,6 +23,7 @@ export type UtilityConfigEntry = {
   unitPrice: number | null;
   mainMeterNumber: string | null;
   accountNumber: string | null;
+  lossAllocation: "proprietaire" | "prorata";
 };
 
 export type Property = {
@@ -32,7 +33,13 @@ export type Property = {
   // Agent responsable (étape 14) : gère uniquement les Biens qui lui sont
   // attribués une fois qu'il en a au moins un — voir la fiche employé.
   agent: PropertyAgent | null;
+  agentAssignedAt: string | null;
   address: string | null;
+  // Coordonnées GPS (étape 13, idée n°10 : carte du portefeuille) — `null`
+  // tant que personne n'a placé le repère sur la carte.
+  latitude: number | null;
+  longitude: number | null;
+  locationSetAt: string | null;
   type: PropertyTypeKey;
   levels: number | null;
   photoUrls: string[];
@@ -101,6 +108,8 @@ export function getPropertyRecette(accessToken: string, propertyId: number, mont
 export type CreatePropertyInput = {
   ownerId: number;
   address?: string;
+  latitude?: number;
+  longitude?: number;
   propertyType: PropertyTypeKey;
   levels?: number;
   photos?: File[];
@@ -110,6 +119,8 @@ function toPropertyFormData(input: Omit<CreatePropertyInput, "photos">, photos?:
   const fd = new FormData();
   fd.append("ownerId", String(input.ownerId));
   if (input.address) fd.append("address", input.address);
+  if (input.latitude !== undefined) fd.append("latitude", String(input.latitude));
+  if (input.longitude !== undefined) fd.append("longitude", String(input.longitude));
   fd.append("propertyType", input.propertyType);
   if (input.levels !== undefined) fd.append("levels", String(input.levels));
   photos?.forEach((f) => fd.append("photos", f));
@@ -132,6 +143,8 @@ export function updateProperty(accessToken: string, id: number, input: UpdatePro
   const fd = new FormData();
   if (rest.ownerId !== undefined) fd.append("ownerId", String(rest.ownerId));
   if (rest.address !== undefined) fd.append("address", rest.address ?? "");
+  if (rest.latitude !== undefined) fd.append("latitude", String(rest.latitude));
+  if (rest.longitude !== undefined) fd.append("longitude", String(rest.longitude));
   if (rest.propertyType !== undefined) fd.append("propertyType", rest.propertyType);
   if (rest.levels !== undefined) fd.append("levels", String(rest.levels));
   photos?.forEach((f) => fd.append("photos", f));

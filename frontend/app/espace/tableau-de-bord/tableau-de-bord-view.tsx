@@ -20,7 +20,6 @@ import { getDashboardOverview, type DashboardOverview } from "@/lib/api/dashboar
 import { getDashboard, type AccountingDashboard } from "@/lib/api/accounting";
 import { formatFcfa, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
@@ -76,7 +75,6 @@ function TableauDeBordContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
       <div className="content-shell flex flex-col gap-6 py-10">
         <div>
           <h1 className="font-display text-headline-xl text-ink">Tableau de bord</h1>

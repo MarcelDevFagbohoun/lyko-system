@@ -7,7 +7,6 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { listEmployees, type Employee } from "@/lib/api/employees";
 import { ApiError } from "@/lib/api/client";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { EspaceHeader } from "@/components/espace/espace-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,7 +44,6 @@ function EmployesContent() {
 
   return (
     <div className="min-h-screen bg-canvas">
-      <EspaceHeader />
 
       <div className="content-shell flex flex-col gap-6 py-10">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
@@ -107,6 +105,9 @@ function EmployesContent() {
                     <div className="text-body-xs text-ink-muted">
                       {emp.phone}
                       {emp.email ? ` · ${emp.email}` : ""}
+                    </div>
+                    <div className="text-body-xs text-ink-faint">
+                      Créé le {new Date(emp.createdAt).toLocaleDateString("fr-FR")}
                     </div>
                   </TableCell>
                   <TableCell>

@@ -121,6 +121,9 @@ function toPublicBatch(batch, rows) {
       unitPrice: Number(batch.unit_price),
       status: batch.status,
       validatedAt: batch.validated_at ? new Date(batch.validated_at).toISOString() : null,
+      // Répartition de l'écart configurée sur ce Bien pour ce fluide (étape
+      // 23) — informative ici, appliquée réellement à la validation.
+      lossAllocation: batch.loss_allocation,
       main: {
         readingStart: batch.main_reading_start,
         readingEnd: batch.main_reading_end,
@@ -150,8 +153,18 @@ function toPublicBatch(batch, rows) {
   };
 }
 
+/** Réglage de répartition de l'écart pour ce Bien/fluide (colonne dynamique — `utility_type` est un ENUM, jamais une entrée utilisateur libre). */
+async function loadLossAllocation(propertyId, utilityType) {
+  const [[row]] = await pool.query(
+    `SELECT ${utilityType}_loss_allocation AS loss_allocation FROM properties WHERE id = ?`,
+    [propertyId],
+  );
+  return row?.loss_allocation ?? 'proprietaire';
+}
+
 async function respondBatch(res, tenantId, batchId, scopeAgentId = null) {
   const batch = await loadBatch(tenantId, batchId, scopeAgentId);
+  batch.loss_allocation = await loadLossAllocation(batch.property_id, batch.utility_type);
   const rows = await loadRows(tenantId, batch);
   res.json(toPublicBatch(batch, rows));
 }
@@ -179,6 +192,8 @@ router.patch('/properties/:propertyId/utility-config', async (req, res, next) =>
       sbeeMainMeterNumber: 'sbee_main_meter_number',
       sonebAccountNumber: 'soneb_account_number',
       sbeeAccountNumber: 'sbee_account_number',
+      sonebLossAllocation: 'soneb_loss_allocation',
+      sbeeLossAllocation: 'sbee_loss_allocation',
     };
     const fields = [];
     const params = { id: propertyId };
@@ -211,12 +226,14 @@ router.patch('/properties/:propertyId/utility-config', async (req, res, next) =>
           unitPrice: num(p.soneb_unit_price),
           mainMeterNumber: p.soneb_main_meter_number,
           accountNumber: p.soneb_account_number,
+          lossAllocation: p.soneb_loss_allocation,
         },
         sbee: {
           submetered: !!p.sbee_submetered,
           unitPrice: num(p.sbee_unit_price),
           mainMeterNumber: p.sbee_main_meter_number,
           accountNumber: p.sbee_account_number,
+          lossAllocation: p.sbee_loss_allocation,
         },
       },
     });
@@ -454,14 +471,35 @@ router.post('/utility-batches/:id/validate', async (req, res, next) => {
       }
     }
 
+    // Répartition de l'écart (étape 23) : seulement si activée sur ce Bien
+    // pour ce fluide, et seulement un écart RÉEL et positif (jamais la
+    // « négative » — décompteurs > compteur principal — qui signale une
+    // anomalie de relevé, pas une perte). Répartie au prorata des seules
+    // unités effectivement facturables (bail actif) : une unité vacante ne
+    // peut recevoir aucune part, la sienne retombe donc sur les locataires
+    // en place, comme sa propre consommation mesurée mais non facturée.
+    const lossAllocation = await loadLossAllocation(batch.property_id, batch.utility_type);
+    const totals = computeTotals(batch, rows);
+    const billableRows = rows.filter((r) => r.active_lease_id && Number(r.amount) > 0);
+    const billableSubAmount = billableRows.reduce((s, r) => s + Number(r.amount), 0);
+    const applyLoss =
+      lossAllocation === 'prorata' &&
+      totals.differenceAmount != null &&
+      totals.differenceAmount > 0 &&
+      billableSubAmount > 0;
+
     await conn.beginTransaction();
     let generated = 0;
     for (const r of rows) {
       if (r.active_lease_id && Number(r.amount) > 0) {
+        const lossShare = applyLoss
+          ? Math.round(totals.differenceAmount * (Number(r.amount) / billableSubAmount))
+          : 0;
+        const amount = Number(r.amount) + lossShare;
         const [chRes] = await conn.query(
           `INSERT INTO utility_charges
-             (tenant_id, lease_id, utility_type, period_start, period_end, reading_start, reading_end, unit_price, amount, billed_at, status, recorded_by)
-           VALUES (:tenantId, :leaseId, :utilityType, :periodStart, :periodEnd, :readingStart, :readingEnd, :unitPrice, :amount, CURDATE(), 'impayee', :recordedBy)`,
+             (tenant_id, lease_id, utility_type, period_start, period_end, reading_start, reading_end, unit_price, amount, loss_share_amount, billed_at, status, recorded_by)
+           VALUES (:tenantId, :leaseId, :utilityType, :periodStart, :periodEnd, :readingStart, :readingEnd, :unitPrice, :amount, :lossShareAmount, CURDATE(), 'impayee', :recordedBy)`,
           {
             tenantId: req.user.tenantId,
             leaseId: r.active_lease_id,
@@ -471,7 +509,8 @@ router.post('/utility-batches/:id/validate', async (req, res, next) => {
             readingStart: r.reading_start,
             readingEnd: r.reading_end,
             unitPrice: Number(batch.unit_price),
-            amount: Number(r.amount),
+            amount,
+            lossShareAmount: lossShare,
             recordedBy: req.user.id,
           },
         );
@@ -490,7 +529,14 @@ router.post('/utility-batches/:id/validate', async (req, res, next) => {
     }
     await conn.query("UPDATE utility_reading_batches SET status = 'valide', validated_at = NOW() WHERE id = :id", { id });
     await conn.commit();
-    logger.info('Relevé de compteurs validé', { tenantId: req.user.tenantId, batchId: id, chargesGenerated: generated, by: req.user.id });
+    logger.info('Relevé de compteurs validé', {
+      tenantId: req.user.tenantId,
+      batchId: id,
+      chargesGenerated: generated,
+      lossAllocation,
+      lossDistributed: applyLoss ? totals.differenceAmount : 0,
+      by: req.user.id,
+    });
     await respondBatch(res, req.user.tenantId, id);
   } catch (err) {
     await conn.rollback().catch(() => {});
