@@ -163,6 +163,10 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
 
     const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: renterId });
     const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    // Cachet/signature de l'employé qui a réellement encaissé ce paiement.
+    const [issuerRows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', {
+      id: paymentRows[0].recorded_by,
+    });
 
     // Limite de 5 téléchargements + code de vérification (étape 29) — la
     // même quittance (ce paiement précis), pas le lien du portail : le
@@ -170,13 +174,19 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
     const issuance = await getOrCreateIssuance(tenantId, 'quittance', paymentId);
     await registerDownload(issuance);
 
+    // Même résolution du libellé de l'unité que /certificate.pdf ci-dessous
+    // (`lease` ne porte que `designation`/`designation_custom` bruts, pas de
+    // libellé déjà résolu — sans ça, la mention « au titre du loyer de » de
+    // la quittance affichait « undefined »).
+    const label = unitDesignationLabel(lease);
     streamReceiptPdf(res, {
       tenant: tenantRows[0],
       renter: renterRows[0],
-      property: lease,
+      property: { label, address: lease.property_address },
       lease,
       payment: paymentRows[0],
       receipt: receiptRows[0],
+      issuer: issuerRows[0] || null,
       verificationCode: issuance.verification_code,
     });
   } catch (err) {

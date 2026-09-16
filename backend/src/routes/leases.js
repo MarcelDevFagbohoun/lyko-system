@@ -334,6 +334,11 @@ router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req,
     const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', {
       id: req.user.tenantId,
     });
+    // Cachet/signature de l'employé qui a réellement encaissé ce paiement
+    // (pas forcément celui qui télécharge la quittance aujourd'hui).
+    const [issuerRows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', {
+      id: paymentRows[0].recorded_by,
+    });
 
     streamReceiptPdf(res, {
       tenant: tenantRows[0],
@@ -342,6 +347,7 @@ router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req,
       lease,
       payment: paymentRows[0],
       receipt: receiptRows[0],
+      issuer: issuerRows[0] || null,
     });
   } catch (err) {
     next(err);

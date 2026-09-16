@@ -13,6 +13,10 @@ export type AuthUser = {
   role: "dg" | "comptable" | "agent";
   mustChangePassword: boolean;
   permissions: string[];
+  // Cachet/signature personnels (apposés sur les quittances des paiements
+  // que cet employé encaisse lui-même) — voir /espace/mon-compte.
+  stampUrl: string | null;
+  signatureUrl: string | null;
 };
 
 export type AuthTenant = {
@@ -39,6 +43,7 @@ type AuthContextValue = AuthState & {
   register: (formData: FormData) => Promise<void>;
   logout: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string, confirmNewPassword: string) => Promise<void>;
+  updateMySignature: (input: { stamp?: File; signature?: File }) => Promise<void>;
   refreshUser: () => Promise<void>;
 };
 
@@ -148,9 +153,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [refreshUser],
   );
 
+  const updateMySignature = React.useCallback(
+    async (input: { stamp?: File; signature?: File }) => {
+      const fd = new FormData();
+      if (input.stamp) fd.append("stamp", input.stamp);
+      if (input.signature) fd.append("signature", input.signature);
+      await apiFetch("/api/auth/my-signature", {
+        method: "PATCH",
+        accessToken: accessTokenRef.current ?? undefined,
+        body: fd,
+      });
+      await refreshUser();
+    },
+    [refreshUser],
+  );
+
   const value = React.useMemo<AuthContextValue>(
-    () => ({ ...state, login, loginEmployee, register, logout, changePassword, refreshUser }),
-    [state, login, loginEmployee, register, logout, changePassword, refreshUser],
+    () => ({ ...state, login, loginEmployee, register, logout, changePassword, updateMySignature, refreshUser }),
+    [state, login, loginEmployee, register, logout, changePassword, updateMySignature, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

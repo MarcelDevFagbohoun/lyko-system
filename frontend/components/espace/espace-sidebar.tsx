@@ -16,6 +16,7 @@ import {
   History,
   Clock,
   Settings,
+  Stamp,
   LogOut,
   Menu,
   X,
@@ -197,6 +198,16 @@ export function EspaceSidebar() {
         <ConnectionIndicator />
       </div>
       <div className="mt-1 flex flex-col gap-0.5">
+        <Link
+          href="/espace/mon-compte"
+          className={cn(
+            "flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 font-label-md transition-colors",
+            isActive("/espace/mon-compte") ? "bg-primary-bg text-primary" : "text-ink-soft hover:bg-surface-muted hover:text-ink",
+          )}
+        >
+          <Stamp size={16} className="shrink-0" />
+          Mon compte
+        </Link>
         {isDg && (
           <Link
             href="/espace/parametres"

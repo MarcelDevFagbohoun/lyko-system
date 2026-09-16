@@ -90,6 +90,11 @@ function toPublicUser(user, { permissions = [], mustChangePassword } = {}) {
     role: user.role,
     mustChangePassword: !!(mustChangePassword ?? user.must_change_password),
     permissions,
+    // Cachet/signature personnels (apposés sur les quittances des paiements
+    // qu'il encaisse lui-même) — jamais ceux de l'entreprise, gérés à part
+    // dans Réglages (DG uniquement).
+    stampUrl: user.stamp_path ? `/uploads/${user.stamp_path}` : null,
+    signatureUrl: user.signature_path ? `/uploads/${user.signature_path}` : null,
   };
 }
 
@@ -380,5 +385,63 @@ router.post('/change-password', requireAuth, changePasswordLimiter, async (req, 
     next(err);
   }
 });
+
+// PATCH /api/auth/my-signature — cachet/signature personnels (n'importe quel
+// employé, pas seulement le DG : c'est celui qui encaisse un loyer qui doit
+// pouvoir y apposer les siens — voir services/pdf.js `streamReceiptPdf`).
+// À défaut, la quittance retombe sur le cachet/signature de l'entreprise.
+router.patch(
+  '/my-signature',
+  requireAuth,
+  upload.fields([
+    { name: 'stamp', maxCount: 1 },
+    { name: 'signature', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    try {
+      const stampFile = req.files?.stamp?.[0];
+      const signatureFile = req.files?.signature?.[0];
+      if (!stampFile && !signatureFile) {
+        throw new ApiError(400, 'Aucun fichier reçu');
+      }
+
+      const oldPaths = [];
+      const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}/employees/${req.user.id}`);
+      await fs.mkdir(dir, { recursive: true });
+      const [[current]] = await pool.query(
+        'SELECT stamp_path, signature_path FROM users WHERE id = :id LIMIT 1',
+        { id: req.user.id },
+      );
+
+      const fields = [];
+      const params = { id: req.user.id };
+      if (stampFile) {
+        if (current?.stamp_path) oldPaths.push(current.stamp_path);
+        const ext = assertUploadType(stampFile, { label: 'Cachet' });
+        const rel = `tenants/${req.user.tenantId}/employees/${req.user.id}/${randomFileName('stamp', ext)}`;
+        await fs.writeFile(path.join(UPLOADS_ROOT, rel), stampFile.buffer);
+        fields.push('stamp_path = :stampPath');
+        params.stampPath = rel;
+      }
+      if (signatureFile) {
+        if (current?.signature_path) oldPaths.push(current.signature_path);
+        const ext = assertUploadType(signatureFile, { label: 'Signature' });
+        const rel = `tenants/${req.user.tenantId}/employees/${req.user.id}/${randomFileName('signature', ext)}`;
+        await fs.writeFile(path.join(UPLOADS_ROOT, rel), signatureFile.buffer);
+        fields.push('signature_path = :signaturePath');
+        params.signaturePath = rel;
+      }
+
+      await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = :id`, params);
+      await Promise.all(oldPaths.map((rel) => fs.unlink(path.join(UPLOADS_ROOT, rel)).catch(() => {})));
+
+      const [rows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', { id: req.user.id });
+      logger.info('Cachet/signature personnels mis à jour', { tenantId: req.user.tenantId, userId: req.user.id });
+      res.json({ user: toPublicUser(rows[0]) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 module.exports = router;
