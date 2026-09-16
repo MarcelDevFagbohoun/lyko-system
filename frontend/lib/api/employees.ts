@@ -22,6 +22,8 @@ export type Employee = {
   status: "active" | "disabled";
   mustChangePassword: boolean;
   permissions: PermissionKey[];
+  // Nombre de Biens attribués (étape 14) — toujours 0 pour un comptable.
+  managedPropertiesCount: number;
   createdAt: string;
 };
 

@@ -20,6 +20,8 @@ const taskRoutes = require('./tasks');
 const historyRoutes = require('./history');
 const marketplaceRoutes = require('./marketplace');
 const marketplaceAccountRoutes = require('./marketplaceAccounts');
+const documentRoutes = require('./documents');
+const documentVerificationRoutes = require('./documentVerification');
 
 const router = Router();
 
@@ -54,6 +56,12 @@ router.use('/marketplace', marketplaceRoutes);
 // Comptes Quick Immo (grand public, site externe séparé) : entièrement
 // public/self-service, même piège, même raison.
 router.use('/marketplace-accounts', marketplaceAccountRoutes);
+// Compteurs de téléchargement / réinitialisation (espace employé, étape 29) :
+// même piège que ci-dessus, doit être monté avant `utilityReadingRoutes`.
+router.use('/documents', documentRoutes);
+// Vérification publique d'authenticité par code (étape 29) : PUBLIQUE, aucune
+// auth — même piège, doit être montée avant `utilityReadingRoutes`.
+router.use('/verify', documentVerificationRoutes);
 // Relevé de compteurs par immeuble (étape 9bis) : routes /properties/:id/utility-*
 // et /utility-batches/* — montées à la racine de /api (permission `charges`).
 router.use(utilityReadingRoutes);

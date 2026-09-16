@@ -28,6 +28,11 @@ function toPublicEmployee(row, permissions) {
     status: row.status,
     mustChangePassword: !!row.must_change_password,
     permissions,
+    // Nombre de Biens attribués (étape 14) — visible seulement pour un agent ;
+    // toujours 0 pour un comptable (aucune ligne `properties.agent_id` possible).
+    // Affiché sur la liste pour qu'une attribution reste vérifiable sans ouvrir
+    // la fiche de chaque agent un par un.
+    managedPropertiesCount: row.managed_properties_count != null ? Number(row.managed_properties_count) : 0,
     createdAt: row.created_at,
   };
 }
@@ -53,8 +58,15 @@ router.get('/permissions', (_req, res) => {
 router.get('/', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT * FROM users WHERE tenant_id = :tenantId AND role IN ('comptable','agent')
-       ORDER BY created_at DESC`,
+      `SELECT u.*, mp.managed_properties_count
+       FROM users u
+       LEFT JOIN (
+         SELECT agent_id, COUNT(*) AS managed_properties_count
+         FROM properties WHERE tenant_id = :tenantId AND agent_id IS NOT NULL
+         GROUP BY agent_id
+       ) mp ON mp.agent_id = u.id
+       WHERE u.tenant_id = :tenantId AND u.role IN ('comptable','agent')
+       ORDER BY u.created_at DESC`,
       { tenantId: req.user.tenantId },
     );
     const permsByUser = await getPermissionsBulk(rows.map((r) => r.id));
@@ -96,7 +108,10 @@ router.get('/:id', async (req, res, next) => {
     // Biens gérés : uniquement pertinent pour un agent (un comptable ne gère
     // pas de portefeuille de Biens) — toujours [] pour un comptable.
     const managedProperties = rows[0].role === 'agent' ? await loadManagedProperties(req.user.tenantId, id) : [];
-    res.json({ employee: toPublicEmployee(rows[0], permsByUser.get(id) || []), managedProperties });
+    res.json({
+      employee: toPublicEmployee({ ...rows[0], managed_properties_count: managedProperties.length }, permsByUser.get(id) || []),
+      managedProperties,
+    });
   } catch (err) {
     next(err);
   }

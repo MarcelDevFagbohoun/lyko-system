@@ -2,17 +2,26 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { MessageCircleWarning, Send, Radar } from "lucide-react";
+import { MessageCircleWarning, Send, Radar, Droplets, Zap } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import {
   listPortfolioArrears,
   listPredictiveAlerts,
+  listUtilityArrears,
   type PortfolioArrearsEntry,
   type PredictiveAlertEntry,
+  type UtilityArrearsEntry,
 } from "@/lib/api/accounting";
+import { UTILITY_TYPE_LABELS } from "@/lib/constants/charges";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
-import { formatFcfa, formatDateLabel, buildRentReminderMessage, buildPredictiveReminderMessage } from "@/lib/utils";
+import {
+  formatFcfa,
+  formatDateLabel,
+  buildRentReminderMessage,
+  buildPredictiveReminderMessage,
+  buildUtilityReminderMessage,
+} from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,7 +36,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmo
  */
 export function RelancesView() {
   return (
-    <RequireAuth permission={["locataires", "comptabilite"]}>
+    <RequireAuth permission={["locataires", "comptabilite", "charges"]}>
       <RelancesContent />
     </RequireAuth>
   );
@@ -38,6 +47,8 @@ function RelancesContent() {
   const [arrears, setArrears] = React.useState<PortfolioArrearsEntry[] | null>(null);
   const [total, setTotal] = React.useState(0);
   const [predictive, setPredictive] = React.useState<PredictiveAlertEntry[] | null>(null);
+  const [utilityArrears, setUtilityArrears] = React.useState<UtilityArrearsEntry[] | null>(null);
+  const [utilityTotal, setUtilityTotal] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -51,6 +62,12 @@ function RelancesContent() {
     listPredictiveAlerts(accessToken)
       .then((res) => setPredictive(res.alerts))
       .catch(() => setPredictive([]));
+    listUtilityArrears(accessToken)
+      .then((res) => {
+        setUtilityArrears(res.arrears);
+        setUtilityTotal(res.total);
+      })
+      .catch(() => setUtilityArrears([]));
   }, [accessToken]);
 
   return (
@@ -141,6 +158,83 @@ function RelancesContent() {
             </TableBody>
           </Table>
         ) : null}
+
+        {utilityArrears && utilityArrears.length > 0 && (
+          <div className="flex flex-col gap-3 border-t border-border pt-6">
+            <div>
+              <h2 className="inline-flex items-center gap-2 font-display text-headline-md text-ink">
+                <Droplets size={20} className="text-danger-fg" />
+                Charges SONEB/SBEE impayées
+              </h2>
+              <p className="text-body-sm text-ink-soft">
+                Factures d&apos;eau et d&apos;électricité en attente de règlement, sur l&apos;ensemble du portefeuille.
+              </p>
+            </div>
+            <Card>
+              <CardContent className="flex items-center justify-between py-4">
+                <span className="inline-flex items-center gap-2 text-body-sm text-ink-soft">
+                  <MessageCircleWarning size={16} className="text-danger-fg" />
+                  {utilityArrears.length} facture(s) en attente
+                </span>
+                <span className="tabular font-currency-table text-headline-sm text-danger-fg">{formatFcfa(utilityTotal)}</span>
+              </CardContent>
+            </Card>
+            <Table>
+              <TableHeader>
+                <tr>
+                  <TableHead>Locataire</TableHead>
+                  <TableHead>Bien / unité</TableHead>
+                  <TableHead>Fluide</TableHead>
+                  <TableHead className="text-right">Montant dû</TableHead>
+                  <TableHead>Retard</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </tr>
+              </TableHeader>
+              <TableBody>
+                {utilityArrears.map((a) => {
+                  const message = buildUtilityReminderMessage({
+                    renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
+                    unitLabel: a.unitCode,
+                    utilityTypeLabel: UTILITY_TYPE_LABELS[a.utilityType],
+                    amountOwed: a.amountOwed,
+                    daysLate: a.daysLate,
+                    billedAt: formatDateLabel(a.billedAt),
+                    companyName: tenant?.companyName,
+                  });
+                  return (
+                    <TableRow key={a.chargeId}>
+                      <TableCell>
+                        <Link href={`/espace/locataires/${a.renterId}`} className="text-primary hover:underline">
+                          {a.renterName}
+                        </Link>
+                        <div className="text-body-xs text-ink-muted">{a.phone}</div>
+                      </TableCell>
+                      <TableCell className="text-ink-soft">
+                        {a.propertyCode} · {a.unitCode}
+                      </TableCell>
+                      <TableCell className="text-ink-soft">
+                        <span className="inline-flex items-center gap-1.5">
+                          {a.utilityType === "soneb" ? <Droplets size={14} /> : <Zap size={14} />}
+                          {UTILITY_TYPE_LABELS[a.utilityType]}
+                        </span>
+                      </TableCell>
+                      <TableAmount>{formatFcfa(a.amountOwed)}</TableAmount>
+                      <TableCell className="text-danger-fg">{a.daysLate} j</TableCell>
+                      <TableCell className="text-right">
+                        <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex">
+                          <span className={buttonVariants({ variant: "whatsapp", size: "sm" })}>
+                            <Send size={14} />
+                            Relancer
+                          </span>
+                        </a>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
 
         {predictive && predictive.length > 0 && (
           <div className="flex flex-col gap-3 border-t border-border pt-6">

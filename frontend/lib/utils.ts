@@ -28,7 +28,7 @@ export function buildRentReminderMessage(params: {
 }): string {
   return [
     `Bonjour ${params.renterFirstName},`,
-    `Nous vous rappelons que le loyer de ${params.unitLabel} (${formatFcfa(params.monthlyRent)}) `,
+    `Nous vous rappelons que le loyer de ${params.unitLabel} (${formatFcfa(params.monthlyRent)})`,
     `est en retard de ${params.daysLate} jour(s) (échéance du ${params.dueDate}).`,
     `Merci de régulariser votre situation rapidement.`,
     params.companyName ? `Cordialement, ${params.companyName}` : "",
@@ -49,9 +49,33 @@ export function buildPredictiveReminderMessage(params: {
 }): string {
   return [
     `Bonjour ${params.renterFirstName},`,
-    `Nous vous rappelons que le loyer de ${params.unitLabel} (${formatFcfa(params.monthlyRent)}) `,
+    `Nous vous rappelons que le loyer de ${params.unitLabel} (${formatFcfa(params.monthlyRent)})`,
     `arrive à échéance le ${params.dueDate}.`,
     `Merci de bien vouloir procéder au règlement à temps.`,
+    params.companyName ? `Cordialement, ${params.companyName}` : "",
+  ].join(" ");
+}
+
+/**
+ * Message de relance pour une facture SONEB/SBEE impayée ou partiellement
+ * payée (étape 28) — même ton que le rappel de loyer, mais « facturée le »
+ * plutôt qu'une échéance (une facture ponctuelle n'a pas de jour d'échéance
+ * fixe, contrairement au loyer).
+ */
+export function buildUtilityReminderMessage(params: {
+  renterFirstName: string;
+  unitLabel: string;
+  utilityTypeLabel: string;
+  amountOwed: number;
+  daysLate: number;
+  billedAt: string;
+  companyName?: string | null;
+}): string {
+  return [
+    `Bonjour ${params.renterFirstName},`,
+    `Nous vous rappelons que votre facture ${params.utilityTypeLabel} de ${params.unitLabel} (${formatFcfa(params.amountOwed)})`,
+    `est en attente de règlement depuis ${params.daysLate} jour(s) (facturée le ${params.billedAt}).`,
+    `Merci de régulariser votre situation rapidement.`,
     params.companyName ? `Cordialement, ${params.companyName}` : "",
   ].join(" ");
 }

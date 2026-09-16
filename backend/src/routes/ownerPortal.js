@@ -20,6 +20,7 @@ const { requireOwnerPortalToken } = require('../middleware/portalAuth');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { getRecetteProprietaire } = require('../services/commission');
 const { streamOwnerStatementPdf } = require('../services/pdf');
+const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 
 const router = Router();
 
@@ -194,9 +195,16 @@ router.get('/:token/statement.pdf', async (req, res, next) => {
       { ownerId },
     );
 
+    // Un seul relevé « courant » par propriétaire (pas par mois — ce PDF
+    // couvre le patrimoine + les derniers versements, pas une période
+    // précise) — limite de 5 téléchargements + code de vérification (étape 29).
+    const issuance = await getOrCreateIssuance(tenantId, 'releve_proprietaire', ownerId);
+    await registerDownload(issuance);
+
     streamOwnerStatementPdf(res, {
       tenant: tenantRows[0],
       owner: ownerRows[0],
+      verificationCode: issuance.verification_code,
       units: unitRows.map((u) => ({
         propertyCode: u.property_code,
         address: u.address,

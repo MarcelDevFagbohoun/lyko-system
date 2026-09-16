@@ -185,7 +185,7 @@ export function EspaceSidebar() {
   );
 
   const footer = (
-    <div className="border-t border-border p-3">
+    <div className="border-t border-border p-3 pb-4">
       <div className="flex items-center gap-2.5 px-1 py-1.5">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-body-sm font-semibold text-white">
           {initials}
@@ -196,27 +196,26 @@ export function EspaceSidebar() {
         </div>
         <ConnectionIndicator />
       </div>
-      <div className="mt-1 flex items-center gap-1">
+      <div className="mt-1 flex flex-col gap-0.5">
         {isDg && (
           <Link
             href="/espace/parametres"
             className={cn(
-              "inline-flex min-w-0 flex-1 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 font-label-md transition-colors",
+              "flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 font-label-md transition-colors",
               isActive("/espace/parametres") ? "bg-primary-bg text-primary" : "text-ink-soft hover:bg-surface-muted hover:text-ink",
             )}
           >
             <Settings size={16} className="shrink-0" />
-            <span className="truncate">Réglages</span>
+            Réglages
           </Link>
         )}
         <button
           type="button"
           onClick={handleLogout}
-          title="Se déconnecter"
-          aria-label="Se déconnecter"
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-danger-bg hover:text-danger-fg"
+          className="flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 font-label-md text-ink-soft transition-colors hover:bg-danger-bg hover:text-danger-fg"
         >
-          <LogOut size={16} />
+          <LogOut size={16} className="shrink-0" />
+          Se déconnecter
         </button>
       </div>
     </div>

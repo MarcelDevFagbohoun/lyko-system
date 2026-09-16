@@ -3816,9 +3816,22 @@ correspond à rien d'utile : sur desktop (viewport large, `sm` toujours vrai) le
 « Se déconnecter » essayait de s'afficher à côté de « Réglages » dans une colonne trop
 étroite et retombait sur deux lignes, doublant la hauteur de la rangée. Repéré par une
 vérification du DOM en plus de la capture d'écran (hauteur de la rangée deux fois celle de
-« Réglages »). Corrigé : bouton de déconnexion en icône seule (`title`/`aria-label` pour
-l'accessibilité), `whitespace-nowrap` sur le lien Réglages — plus aucune ambiguïté de
-largeur disponible.
+« Réglages »). Corrigé une première fois : bouton de déconnexion en icône seule (`title`/
+`aria-label` pour l'accessibilité), `whitespace-nowrap` sur le lien Réglages — plus aucune
+ambiguïté de largeur disponible.
+
+**Correction ultérieure (retour direct de l'utilisateur : « il n'y a pas de manière de se
+déconnecter »)** : cette première correction est allée trop loin — un bouton icône seule de
+36×36px, sans aucun texte visible, tout en bas d'une colonne, n'était tout simplement pas
+repérable comme « le bouton pour se déconnecter ». Vérifié que le bouton fonctionnait
+techniquement (clic Selenium réel, redirection vers /connexion confirmée) — ce n'était donc
+pas un bug fonctionnel mais un vrai problème de repérabilité côté design. Corrigé
+définitivement : Réglages et Se déconnecter passent chacun en rangée pleine largeur
+(icône + libellé visible), empilées verticalement au lieu de se partager une seule rangée
+trop étroite — élimine le problème de largeur à la racine plutôt que de sacrifier le texte.
+Léger `pb-4` ajouté au pied de menu par précaution (ce coin bas-gauche est aussi où
+s'affiche le badge de développement Next.js — cosmétique, absent en production, mais autant
+laisser un peu d'air).
 
 ### Polish des composants partagés (bénéficie à toutes les pages sans les toucher une par une)
 
@@ -3853,3 +3866,291 @@ directement sur KIko Store, en lecture seule, DG connecté (Marcel Mahougnon) :
 - Bug du bouton de déconnexion trouvé ET corrigé avant validation finale (voir ci-dessus).
 - Bug-fix environnement (avant les tests) : `/tmp/geckodriver` et le lien symbolique
   `node_modules` du scratchpad avaient de nouveau disparu (voir Étape 22/23) — recréés.
+
+## Étape 25 — Pages 404 avec message et lien vers une URL valide
+
+Demande de l'utilisateur (juste après un nouvel épisode de « css ne s'applique pas », résolu
+comme d'habitude — deuxième `npm run dev` lancé depuis un autre terminal, arbres tués,
+`.next` reconstruit) : profiter du sujet des URLs invalides pour écrire un message qui
+permette à l'utilisateur de repartir vers une URL valide plutôt que de tomber sur le 404 brut
+et sans style de Next.js.
+
+Deux pages, pas une seule, pour une raison précise découverte pendant le test : `app/not-
+found.tsx` (nouveau) couvre tout le site public (marketing, connexion, portails) avec l'en-
+tête/pied de page du site, un message, et un bouton dont la destination s'adapte à la session
+(`useAuth()`) — « Retourner à l'accueil » si déconnecté, « Retourner à mon espace » si
+authentifié (jamais renvoyé vers /connexion, qui l'aurait de toute façon redirigé vers
+/espace). `app/espace/not-found.tsx` (nouveau) couvre les URLs invalides SOUS `/espace/**` en
+conservant le menu vertical (`EspaceSidebar`) — sans lui, un employé déjà connecté qui tape
+une URL erronée dans son espace se serait retrouvé sur le 404 public, menu disparu, en-tête
+marketing hors contexte affiché à sa place.
+
+**Piège Next.js découvert en testant** (comportement du framework, pas un bug applicatif) :
+un `not-found.tsx` imbriqué (`app/espace/not-found.tsx`) ne s'active PAS automatiquement pour
+une URL qui ne correspond à aucune route de ce segment — seul un appel explicite à
+`notFound()` (import `next/navigation`) depuis une page de ce même segment le déclenche.
+Sans rien de plus, `/espace/n-importe-quoi` remontait directement au 404 racine (vérifié :
+premier test, capture d'écran montrant l'en-tête public « Se connecter »/« Créer mon compte »
+à la place du menu). Corrigé avec le patron documenté de Next.js : une route générique
+`app/espace/[...catchAll]/page.tsx` qui ne fait qu'appeler `notFound()` — vivant dans le
+segment `/espace/`, Next.js remonte alors au `not-found.tsx` le plus proche de LÀ, donc celui
+de l'espace, tout en gardant `app/espace/layout.tsx` (donc le menu) monté autour.
+
+Testé (Firefox headless, aucune écriture de données) :
+- Déconnecté, URL racine invalide → 404 avec en-tête/pied de page publics, bouton
+  « Retourner à l'accueil » + lien « Se connecter ».
+- Connecté (DG), URL invalide sous `/espace/` → 404 avec le menu vertical intact (vérifié
+  par la présence de l'élément `<aside>`, pas seulement à l'œil), bouton unique
+  « Retourner à mon espace ».
+- Connecté, URL racine invalide (hors `/espace/`) → bouton adapté automatiquement
+  (« Retourner à mon espace », jamais « à l'accueil »).
+- Point de vigilance noté pendant le test, pas un bug : après une navigation complète du
+  navigateur (pas une transition SPA), `useAuth()` repart de `status:"loading"` le temps
+  d'un aller-retour vers `/api/auth/me` — un contrôle fait trop tôt après le chargement de la
+  page verrait donc encore l'état « déconnecté ». Comportement déjà présent partout ailleurs
+  dans l'appli (`RequireAuth` a son propre écran de chargement pour la même raison), pas une
+  régression de cette étape.
+- `tsc --noEmit`/`next lint` propres.
+
+## Étape 26 — Attribution d'un Bien à un agent introuvable (en réalité : invisible, pas cassée)
+
+Signalement de l'utilisateur : « la fonctionnalité d'assignation des biens aux agents ne
+marche pas on dirait ». Avant de toucher au moindre code, reproduction complète du
+mécanisme sur un tenant jetable créé via l'API réelle (jamais sur KIko Store) : création
+DG/propriétaire/2 Biens/1 agent, puis attribution réalisée EN PASSANT PAR LE NAVIGATEUR RÉEL
+(Selenium) exactement comme un DG le ferait — recherche du Bien sur la fiche de l'agent,
+sélection, clic « Attribuer ». Résultat : succès complet, à chaque étage vérifié
+séparément — le back-end enregistre bien `agent_id`, ET la restriction de portée s'applique
+immédiatement (connexion en tant que cet agent : ne voit plus que le Bien qui lui a été
+attribué, plus l'autre). Le mécanisme lui-même n'avait donc aucun bug.
+
+Le vrai problème, confirmé en lisant les deux pages où un DG chercherait naturellement cette
+fonctionnalité : **le seul contrôle existant vivait sur la fiche de l'employé** (`Biens
+gérés`, en bas de la page « Modifier l'employé ») — rien sur la fiche du Bien lui-même
+(juste un badge en lecture seule « Géré par X », aucun moyen d'agir), rien non plus sur la
+liste « Nos biens » ni sur la liste « Employés » pour confirmer visuellement qu'une
+attribution a eu lieu. Un DG pensant « je vais attribuer CE bien à un agent » et cherchant
+sur la fiche du Bien ne trouvait donc littéralement rien d'actionnable — exactement le même
+type de problème que le bouton de déconnexion invisible (étape 24) : le mécanisme
+fonctionnait, seule sa découvrabilité était en cause.
+
+Trois ajouts, tous purement additifs (aucun changement du mécanisme d'attribution
+lui-même, qui fonctionnait déjà) :
+1. **Carte « Agent responsable » sur la fiche du Bien** (`bien-view.tsx`, nouveau composant
+   `AgentAssignmentCard`, réservé au DG) : liste déroulante des agents actifs de
+   l'entreprise + bouton « Attribuer », ou bouton « Retirer » si déjà attribué — réutilise
+   les mêmes fonctions d'API que la fiche employé (`assignProperties`/`unassignProperty`),
+   aucun nouvel endpoint back-end nécessaire.
+2. **Colonne « Agent » sur la liste « Nos biens »** (`biens-view.tsx`, DG uniquement) —
+   « Tout agent » si non attribué, le nom de l'agent sinon.
+3. **Indicateur « N Bien(s) attribué(s) » sur la liste « Employés »** (`employes-view.tsx`)
+   — a nécessité un petit ajout côté back-end : `GET /api/employees` renvoie désormais
+   `managedPropertiesCount` par employé (sous-requête `COUNT(*) ... GROUP BY agent_id`,
+   toujours 0 pour un comptable). `GET /api/employees/:id` calcule la même valeur à partir
+   de `managedProperties.length` déjà chargé, pour rester cohérent sans requête
+   supplémentaire.
+
+Testé : le scénario complet ci-dessus rejoué après les trois ajouts (tenant jetable,
+navigateur réel) — attribution depuis la nouvelle carte de la fiche du Bien (toast + badge
+d'en-tête + carte mise à jour), colonne Agent visible sur « Nos biens », indicateur « 1 Bien
+attribué » visible sur « Employés », retrait depuis la même carte (repasse au sélecteur).
+Tenant jetable entièrement supprimé après coup ; KIko Store reconfirmé intact (14 baux, ses
+8 Biens réels toujours à `agent_id NULL`, comme avant — cette étape n'a rien écrit sur les
+données réelles, uniquement des ajouts de code testés sur un tenant jetable). `tsc --noEmit`
+et `next lint` propres.
+
+## Étape 27 — Export comptable (Excel) du registre
+
+Demande directe de l'utilisateur, après une question exploratoire sur ce qui manquait
+encore côté comptabilité/gestion d'entreprise — export choisi : le registre comptable en
+Excel, jusque-là seulement disponible sous forme de rapport PDF agrégé (totaux, pas de
+détail ligne à ligne) — aucun moyen de sortir les écritures individuelles pour un
+rapprochement par un comptable externe.
+
+Nouveau `GET /api/accounting/export.xlsx?from=&to=` (même permission `comptabilite`, même
+période que le tableau de bord écran). Plutôt qu'inventer un nouveau calcul, réunit dans UN
+classeur chronologique les 4 registres déjà exposés séparément à l'écran (paiements de
+loyer, versements propriétaires, dépenses, charges SONEB/SBEE réglées via
+`utility_payments`, étape 23), chacun avec une étiquette de type explicite plutôt que fondu
+dans un solde unique — en particulier les travaux facturés à un Bien restent visibles
+(étiquetés « charge propriétaire ») mais jamais mélangés avec les dépenses de
+fonctionnement du cabinet, cohérent avec la règle déjà appliquée par
+`computeAccountingDashboard` (jamais comptés dans le solde du cabinet). Colonnes Débit/
+Crédit séparées (pas un montant signé), lignes triées chronologiquement (le sens de lecture
+naturel d'un registre, à l'inverse des listes à l'écran qui affichent le plus récent en
+premier), ligne de total et solde net en bas de feuille. Aucun nouveau calcul de fond :
+uniquement des `SELECT` déjà connus (mêmes jointures que `/rent-payments`, `/owner-payouts`,
+`/expenses`), juste réunis et formatés.
+
+Format Excel réel (`.xlsx` via la nouvelle dépendance `exceljs`), pas un CSV : un CSV ouvert
+tel quel dépend du séparateur attendu par la configuration régionale d'Excel (point-virgule
+en France/Afrique francophone, virgule ailleurs) — un vrai classeur Excel élimine ce piège
+entièrement, en plus de permettre des colonnes numériques correctement formatées (séparateur
+de milliers) et des dates en cellules Date réelles (filtrables/triables dans Excel), pas du
+texte.
+
+Téléchargement authentifié géré par un nouveau `downloadAuthenticatedFile()`
+(`lib/api/client.ts`) plutôt que de réutiliser `openAuthenticatedPdf` (`window.open`) : un
+PDF s'affiche dans un onglet, un `.xlsx` non — `window.open` sur un blob Excel aurait donné
+un onglet vide ou une invite peu fiable selon le navigateur. Nouveau helper : un `<a
+download>` créé dynamiquement, cliqué par script, retiré — le mécanisme standard pour forcer
+un téléchargement authentifié.
+
+Testé : registre généré sur un tenant jetable (1 paiement de loyer, 1 versement
+propriétaire, 1 dépense cabinet, 1 charge SONEB réglée) puis RELU avec `exceljs` pour
+vérifier le contenu réel du fichier plutôt que seulement le code HTTP — chaque ligne, le tri
+chronologique, le total (débit 35 000 / crédit 54 000) et le solde net (19 000) exacts au
+franc. Bouton « Exporter (Excel) » testé en navigateur réel contre les vraies données KIko
+Store (lecture seule, aucune écriture) : requête et blob corrects (200, bon type MIME, bonne
+taille) vérifiés en exécutant exactement la même logique de téléchargement directement dans
+la page — seule l'étape finale « écriture réelle sur disque » n'a pas pu être confirmée en
+Firefox headless (limitation connue des tests automatisés sans affichage pour les
+téléchargements par URL `blob:`, pas un défaut de l'application : le motif `<a download>` +
+blob est la technique standard, qui fonctionne dans un navigateur normal). Tenant jetable
+supprimé après coup ; KIko Store reconfirmé intact (14 baux, aucune écriture faite sur ses
+données réelles — seule une requête `GET` en lecture y a été exercée). `node -c`/`tsc
+--noEmit`/`next lint` propres.
+
+Dépendance ajoutée : `exceljs` (backend). `npm audit` signale 2 vulnérabilités modérées
+transitives (`uuid`, bug de vérification de bornes sur un usage avec buffer explicite,
+jamais utilisé ici) — la correction proposée imposerait de revenir à `exceljs@3.4.0`
+(changement cassant) pour un risque non pertinent dans ce contexte ; non appliqué,
+à surveiller si `exceljs` publie un jour un correctif non cassant.
+
+## Étape 28 — Rappels WhatsApp pour les charges SONEB/SBEE impayées
+
+Deuxième idée de la liste « qu'est-ce qui manque encore » (après l'export Excel, étape 27) :
+le Centre de relance (`/espace/relances`, étape 10) ne connaissait que le loyer — les
+charges SONEB/SBEE impayées ou partiellement payées (statuts introduits à l'étape 23)
+n'avaient aucun mécanisme de rappel, malgré un bouton WhatsApp équivalent déjà bien établi
+pour le loyer.
+
+Nouveau `GET /api/accounting/utility-arrears` (permission `charges` OU `comptabilite`,
+même logique que `/arrears` avec `locataires`/`comptabilite`) — une ligne PAR FACTURE, pas
+par locataire : contrairement au loyer qui s'accumule mécaniquement mois après mois (donc
+agrégé par bail), une facture SONEB/SBEE est un événement plus ponctuel, et un locataire
+avec 2 factures impayées simultanées reste un cas rare — agréger aurait ajouté de la
+complexité de message pour peu de bénéfice. « En retard » = jours écoulés depuis
+`billed_at`, faute d'échéance propre à une facture ponctuelle (contrairement au loyer, qui a
+un `rent_due_day`) — inclut les factures `impayee` ET `partiellement_payee` (le montant dû
+utilisé est `amount - paid_total`, jamais le montant brut de la facture pour une facture
+partiellement réglée).
+
+Nouvelle section sur `/espace/relances`, entre le tableau des retards de loyer et les
+alertes prédictives : carte de synthèse (nombre de factures + montant total dû) puis un
+tableau (locataire, bien/unité, fluide avec icône, montant dû, retard, bouton WhatsApp).
+Nouveau message de relance dédié (`buildUtilityReminderMessage`, `lib/utils.ts`) — même ton
+que le rappel de loyer, mais « facturée le » plutôt qu'une échéance. Élargi la permission de
+page (`RequireAuth`) à `["locataires", "comptabilite", "charges"]` — sans ça, un comptable
+n'ayant que la permission `charges` (pas `locataires`) aurait été bloqué à l'entrée de la
+page alors que le back-end lui donnerait pourtant accès aux données.
+
+Testé sur un tenant jetable (jamais KIko Store) : 3 factures créées — une impayée facturée
+il y a 26 jours, une partiellement payée (2000/6000) facturée hier, une entièrement payée.
+Vérifié via l'API que seules les deux premières apparaissent (montants dus exacts : 4000 et
+4000, jours de retard exacts : 26 et 1) et que la facture payée est bien absente. Puis
+vérifié en navigateur réel : la section s'affiche avec les bons montants/icônes, et le lien
+WhatsApp du rappel décodé contient bien le message attendu (nom, fluide, montant, jours de
+retard, date de facturation). Tenant jetable supprimé après coup ; KIko Store reconfirmé
+intact (14 baux). `tsc --noEmit`/`next lint` propres.
+
+## Étape 29 — Limite de téléchargement (5 max) + code de vérification d'authenticité
+
+Demande directe de l'utilisateur : bloquer le téléchargement des documents remis aux
+locataires et propriétaires à 5 fois maximum par document, et ajouter un code de
+vérification sur les factures pour l'authentification. Trois questions de cadrage posées
+avant de coder (documents concernés, comportement après la limite, profondeur de la
+vérification) — recommandations retenues dans les trois cas : (1) quittance + attestation +
+relevé propriétaire, les 3 documents téléchargeables depuis un portail sans compte employé
+(le PV de sortie n'a aucun téléchargement portail aujourd'hui, uniquement côté employé) ;
+(2) le DG peut réinitialiser le compteur depuis la fiche du locataire/propriétaire ; (3) une
+page de vérification publique (`/verifier`) où n'importe qui entrant le code voit une
+confirmation minimale, jamais de montant ni de donnée personnelle.
+
+### Modèle et mécanique
+
+Nouvelle table `document_issuances` (migration `032_document_issuances.sql`) : une ligne
+par INSTANCE de document (la quittance du paiement #42, l'attestation du bail #7, le
+relevé du propriétaire #3) — jamais par lien de portail, pour que régénérer un lien (déjà
+possible depuis l'étape 12/13) ne remette jamais le compteur à zéro, ce qui viderait la
+limite de tout son sens. Colonnes clés : `download_count`/`max_downloads` (5), un
+`verification_code` unique (12 caractères, alphabet sans caractères ambigus 0/O/1/I/L —
+pensé pour être retranscrit à la main depuis un PDF, contrairement aux tokens de portail
+qui ne sont jamais tapés), et une traçabilité de réinitialisation
+(`reset_count`/`last_reset_by`/`last_reset_at`).
+
+Nouveau service `services/documentIssuance.js` : `getOrCreateIssuance` (première
+consultation = création, avec gestion de la course entre deux premiers téléchargements
+simultanés via le code d'erreur `ER_DUP_ENTRY`), `registerDownload` (incrémentation
+atomique via `WHERE download_count < max_downloads` — aucun verrou explicite nécessaire),
+`resetIssuance`, `findByVerificationCode` (jamais de montant ni de nom exposé, uniquement
+type de document + entreprise émettrice + date).
+
+Branché dans les 3 endpoints de portail concernés
+(`routes/portal.js` receipt.pdf + certificate.pdf, `routes/ownerPortal.js` statement.pdf) —
+JAMAIS dans leurs équivalents côté employé (`routes/leases.js`, `routes/renters.js`,
+`routes/owners.js`), qui restent illimités : un employé doit pouvoir régénérer un document
+pour ses propres besoins sans jamais buter sur une limite pensée pour l'abus d'un lien
+public. Le code de vérification est imprimé sur le document via une extension de
+`drawFooter()` (`services/pdf.js`) — une seconde ligne sous le pied de page existant,
+seulement quand un code est fourni (jamais sur le PV de sortie ni le rapport comptable
+interne, hors périmètre). Nouvelle variable d'environnement `FRONTEND_URL` (défaut
+`http://localhost:3000`) pour imprimer l'adresse complète de la page de vérification, pas
+seulement le code.
+
+### Consultation/réinitialisation (espace employé) et vérification publique
+
+Nouveau routeur `routes/documents.js` (`/api/documents`) : `GET
+/:documentType/:referenceId/status` (tout employé authentifié du même tenant — une simple
+donnée de suivi, pas sensible) et `POST /:documentType/:referenceId/reset` (DG uniquement,
+`requireRole('dg')`) — les deux vérifient explicitement que la référence (paiement/bail/
+propriétaire) appartient bien au tenant de l'appelant avant toute lecture/écriture, pour
+qu'un employé ne puisse pas consulter/réinitialiser le compteur d'un document d'une autre
+entreprise en devinant un identifiant.
+
+Nouveau routeur PUBLIC `routes/documentVerification.js` (`/api/verify/:code`, aucune
+authentification) avec son propre limiteur de débit (défense en profondeur, l'entropie du
+code — 12 caractères sur un alphabet de 32, ~60 bits — rendant déjà l'énumération
+impraticable, même raisonnement que `portalLimiter` à l'étape 12).
+
+Nouveau composant partagé `components/documents/document-download-status.tsx` — badge
+« N/5 téléchargements » (rouge si la limite est atteinte) + bouton de réinitialisation
+visible seulement pour le DG ; n'affiche rien tant qu'aucun téléchargement n'a eu lieu, pour
+ne pas alourdir les fiches où rien ne s'est encore passé. Intégré sur la fiche locataire
+(`locataire-view.tsx` : à côté du bouton Attestation, et à côté de chaque quittance du
+registre des paiements — a nécessité de faire remonter une nouvelle prop `isDg` à travers
+`LeaseCard` PUIS `PaymentRegister`, la ligne du tableau vivant dans ce second composant, pas
+le premier) et sur la fiche propriétaire (`proprietaire-view.tsx`, à côté de « Générer le
+relevé »).
+
+Nouvelle page publique `app/verifier/page.tsx` (+ `verifier-view.tsx`) — même en-tête/pied
+de page que le reste du site public, un champ de saisie du code (reformaté automatiquement
+en blocs de 4 avec tirets), un résultat clair (bouclier vert « Document authentique » avec
+type + entreprise + date, ou bouclier rouge « Code invalide » générique — jamais de
+distinction entre « inconnu » et « existe mais malformé » côté message affiché).
+
+### Tests
+
+Tout testé via l'API réelle sur un tenant jetable (jamais KIko Store pour les écritures) :
+- Téléchargement de la même quittance/attestation/relevé 6 fois via le portail : les 5
+  premiers 200, le 6ème 403 avec message explicite — vérifié séparément pour les 3 types de
+  document.
+- Vérification employé (`GET .../status`) : affiche bien 5/5 pour les 3 documents.
+- Réinitialisation (`POST .../reset`) : repasse à 0/5, un 6ème téléchargement (qui aurait dû
+  être refusé) redevient possible immédiatement après.
+- Téléchargement côté employé (`GET /api/leases/:id/payments/:id/receipt.pdf`, avec jeton
+  DG) : 7 téléchargements consécutifs tous à 200 — confirme que la limite ne s'applique
+  jamais à ce chemin.
+- PDF réellement générés relus avec `pdftotext -layout` : la ligne de vérification
+  s'affiche correctement sur les 3 types de document, sans chevaucher le numéro de page ni
+  déborder de la largeur de page, avec un code distinct à chaque fois.
+- Code extrait d'un vrai PDF vérifié avec succès sur `/api/verify/:code` (les 3 types,
+  réponse `valid:true` avec le bon type de document et la bonne entreprise) ; un code bien
+  formé mais inconnu renvoie `valid:false` ; un code mal formé renvoie 400.
+- Firefox headless : page `/verifier` publique testée avec un vrai code (bouclier vert,
+  bon message) et un code inventé (bouclier rouge) ; fiche locataire et fiche propriétaire
+  connectées en DG : badge « 5/5 TÉLÉCHARGEMENTS » et bouton de réinitialisation visibles et
+  correctement positionnés sur les deux pages.
+- Tenant jetable supprimé après coup, cascade FK vérifiée jusque `document_issuances` (0
+  ligne restante) ; KIko Store reconfirmé intact (14 baux).
+- `tsc --noEmit`/`next lint`/`node -c` propres sur tous les fichiers modifiés.

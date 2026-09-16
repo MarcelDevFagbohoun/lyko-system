@@ -1,5 +1,6 @@
 import { apiFetch, type Actor } from "./client";
 import type { PaymentMethod } from "./renters";
+import type { ChargeStatus } from "./charges";
 
 export type ExpenseCategory =
   | "loyer_bureau"
@@ -169,6 +170,11 @@ export function accountingReportPdfPath(from: string, to: string) {
   return `/api/accounting/dashboard.pdf?from=${from}&to=${to}`;
 }
 
+/** Registre comptable détaillé exportable en Excel (étape 27) — même période que le tableau de bord écran. */
+export function accountingExportXlsxPath(from: string, to: string) {
+  return `/api/accounting/export.xlsx?from=${from}&to=${to}`;
+}
+
 export type RentPaymentEntry = {
   id: number;
   renter: { id: number; firstName: string; lastName: string };
@@ -297,4 +303,25 @@ export type PredictiveAlertEntry = {
 
 export function listPredictiveAlerts(accessToken: string) {
   return apiFetch<{ alerts: PredictiveAlertEntry[] }>("/api/accounting/predictive-alerts", { accessToken });
+}
+
+// Charges SONEB/SBEE impayées ou partiellement payées (étape 28) — une ligne
+// par facture, pas par locataire (voir commentaire côté serveur).
+export type UtilityArrearsEntry = {
+  chargeId: number;
+  leaseId: number;
+  renterId: number;
+  renterName: string;
+  phone: string;
+  unitCode: string;
+  propertyCode: string;
+  utilityType: UtilityType;
+  status: ChargeStatus;
+  billedAt: string;
+  daysLate: number;
+  amountOwed: number;
+};
+
+export function listUtilityArrears(accessToken: string) {
+  return apiFetch<{ arrears: UtilityArrearsEntry[]; total: number }>("/api/accounting/utility-arrears", { accessToken });
 }

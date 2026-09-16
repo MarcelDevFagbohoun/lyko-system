@@ -99,3 +99,30 @@ export async function openAuthenticatedPdf(path: string, accessToken: string) {
   window.open(url, "_blank", "noopener,noreferrer");
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/**
+ * Télécharge un document binaire protégé par Bearer token (ex. export
+ * Excel) en forçant l'enregistrement plutôt que l'ouverture dans un onglet —
+ * contrairement à un PDF, un navigateur ne sait pas afficher un `.xlsx`
+ * inline, `window.open` afficherait donc souvent un onglet vide ou une
+ * invite de téléchargement peu fiable selon le navigateur.
+ */
+export async function downloadAuthenticatedFile(path: string, accessToken: string, filename: string) {
+  const res = await fetch(`${API_URL}${path}`, {
+    credentials: "include",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiError(res.status, body?.error || `Erreur ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

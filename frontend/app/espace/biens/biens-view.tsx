@@ -28,7 +28,8 @@ export function BiensView() {
 }
 
 function BiensContent() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const isDg = user?.role === "dg";
   const [query, setQuery] = React.useState("");
   const [properties, setProperties] = React.useState<PropertyListItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -141,6 +142,7 @@ function BiensContent() {
                 <TableHead>Bien</TableHead>
                 <TableHead>Propriétaire</TableHead>
                 <TableHead>Type</TableHead>
+                {isDg && <TableHead>Agent</TableHead>}
                 <TableHead className="text-center">Unités</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </tr>
@@ -157,6 +159,11 @@ function BiensContent() {
                     {p.owner.phone && <div className="text-body-xs text-ink-muted">{p.owner.phone}</div>}
                   </TableCell>
                   <TableCell className="text-ink-soft">{PROPERTY_TYPE_LABELS[p.type]}</TableCell>
+                  {isDg && (
+                    <TableCell className="text-ink-soft">
+                      {p.agent ? p.agent.name : <span className="text-ink-faint">Tout agent</span>}
+                    </TableCell>
+                  )}
                   <TableCell className="text-center">
                     <Badge variant={p.unitsFree > 0 ? "success" : "neutral"}>
                       {p.unitsFree}/{p.unitsCount} libre{p.unitsFree > 1 ? "s" : ""}

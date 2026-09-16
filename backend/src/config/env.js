@@ -46,6 +46,10 @@ const config = {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
+  // URL publique de l'application principale (pas Quick Immo) — utilisée
+  // pour imprimer l'adresse de la page de vérification de document (étape
+  // 29) sur les PDF ; jamais pour rediriger/appeler quoi que ce soit.
+  frontendUrl: (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, ''),
 
   db: {
     host: required('DB_HOST', '127.0.0.1'),

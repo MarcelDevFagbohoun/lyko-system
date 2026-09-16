@@ -4,6 +4,7 @@ const { Router } = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs/promises');
+const ExcelJS = require('exceljs');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requirePermission, requireAnyPermission, requireRole } = require('../middleware/auth');
@@ -489,6 +490,218 @@ router.get('/dashboard.pdf', canAccounting, async (req, res, next) => {
   }
 });
 
+// GET /api/accounting/export.xlsx?from=&to= — registre comptable détaillé,
+// une ligne par mouvement de trésorerie RÉELLEMENT enregistré (jamais un
+// montant recalculé/estimé, contrairement aux impayés du tableau de bord) —
+// pour un comptable externe qui doit rapprocher les comptes, distinct du
+// rapport mensuel (`dashboard.pdf`) qui ne donne que des totaux agrégés.
+// Réunit les 4 registres déjà exposés séparément à l'écran (loyers, versements,
+// dépenses, charges SONEB/SBEE réglées) en un seul classeur chronologique,
+// chacun étiqueté clairement plutôt que fondu dans un solde unique — en
+// particulier les travaux facturés à un Bien restent visibles (le cabinet les
+// paie physiquement) mais gardent une étiquette distincte d'une dépense de
+// fonctionnement, cohérent avec la règle déjà appliquée par
+// `computeAccountingDashboard` (jamais comptés dans le solde du cabinet).
+router.get('/export.xlsx', canAccounting, async (req, res, next) => {
+  const parsed = dashboardQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Période invalide', parsed.error.flatten().fieldErrors));
+  }
+  const { from, to } = parsed.data;
+  const tenantId = req.user.tenantId;
+  const params = { tenantId, from, to };
+
+  try {
+    const [tenantRows] = await pool.query('SELECT company_name FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    if (!tenantRows[0]) throw new ApiError(404, 'Entreprise introuvable');
+
+    const [rentRows] = await pool.query(
+      `SELECT rp.paid_at, rp.amount, rp.payment_method, rp.covers_month,
+              r.first_name AS renter_first_name, r.last_name AS renter_last_name,
+              u.code AS unit_code, p.code AS property_code,
+              ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
+       FROM rent_payments rp
+       JOIN leases l ON l.id = rp.lease_id
+       JOIN renters r ON r.id = l.renter_id
+       JOIN property_units u ON u.id = l.unit_id
+       JOIN properties p ON p.id = u.property_id
+       LEFT JOIN users ru ON ru.id = rp.recorded_by
+       WHERE rp.tenant_id = :tenantId AND rp.paid_at BETWEEN :from AND :to`,
+      params,
+    );
+
+    const [payoutRows] = await pool.query(
+      `SELECT op.paid_at, op.amount, op.payment_method, op.period_label,
+              o.name AS owner_name,
+              ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
+       FROM owner_payouts op
+       JOIN owners o ON o.id = op.owner_id
+       LEFT JOIN users ru ON ru.id = op.recorded_by
+       WHERE op.tenant_id = :tenantId AND op.paid_at BETWEEN :from AND :to`,
+      params,
+    );
+
+    const [expenseRows] = await pool.query(
+      `SELECT e.expense_date, e.amount, e.payment_method, e.category, e.label, e.property_id,
+              p.code AS property_code,
+              ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
+       FROM expenses e
+       LEFT JOIN properties p ON p.id = e.property_id
+       LEFT JOIN users ru ON ru.id = e.recorded_by
+       WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL
+         AND e.expense_date BETWEEN :from AND :to`,
+      params,
+    );
+
+    const [utilityRows] = await pool.query(
+      `SELECT up.paid_at, up.amount, up.payment_method, uc.utility_type,
+              r.first_name AS renter_first_name, r.last_name AS renter_last_name,
+              pu.code AS unit_code, pr.code AS property_code,
+              ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
+       FROM utility_payments up
+       JOIN utility_charges uc ON uc.id = up.charge_id
+       JOIN leases l ON l.id = uc.lease_id
+       JOIN renters r ON r.id = l.renter_id
+       JOIN property_units pu ON pu.id = l.unit_id
+       JOIN properties pr ON pr.id = pu.property_id
+       LEFT JOIN users ru ON ru.id = up.recorded_by
+       WHERE up.tenant_id = :tenantId AND up.paid_at BETWEEN :from AND :to`,
+      params,
+    );
+
+    const categoryLabels = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
+    const utilityLabels = { soneb: 'SONEB (Eau)', sbee: 'SBEE (Électricité)' };
+    const recorderName = (r) => (r.recorder_first_name ? `${r.recorder_first_name} ${r.recorder_last_name}` : '');
+
+    const rows = [];
+    for (const r of rentRows) {
+      rows.push({
+        date: isoDate(r.paid_at),
+        type: 'Loyer encaissé',
+        tiers: `${r.renter_first_name} ${r.renter_last_name}`,
+        bien: `${r.property_code} · ${r.unit_code}`,
+        categorie: `Loyer ${r.covers_month}`,
+        debit: null,
+        credit: Number(r.amount),
+        mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
+        enregistrePar: recorderName(r),
+      });
+    }
+    for (const r of payoutRows) {
+      rows.push({
+        date: isoDate(r.paid_at),
+        type: 'Versement propriétaire',
+        tiers: r.owner_name,
+        bien: '',
+        categorie: r.period_label,
+        debit: Number(r.amount),
+        credit: null,
+        mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
+        enregistrePar: recorderName(r),
+      });
+    }
+    for (const r of expenseRows) {
+      rows.push({
+        date: isoDate(r.expense_date),
+        type: r.property_id ? 'Travaux facturé au Bien (charge propriétaire)' : 'Dépense (cabinet)',
+        tiers: r.label,
+        bien: r.property_code || '',
+        categorie: categoryLabels[r.category] ?? r.category,
+        debit: Number(r.amount),
+        credit: null,
+        mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
+        enregistrePar: recorderName(r),
+      });
+    }
+    for (const r of utilityRows) {
+      rows.push({
+        date: isoDate(r.paid_at),
+        type: 'Charge SONEB/SBEE réglée',
+        tiers: `${r.renter_first_name} ${r.renter_last_name}`,
+        bien: `${r.property_code} · ${r.unit_code}`,
+        categorie: utilityLabels[r.utility_type] ?? r.utility_type,
+        debit: null,
+        credit: Number(r.amount),
+        mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
+        enregistrePar: recorderName(r),
+      });
+    }
+    rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Lyko System';
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet('Registre comptable');
+
+    const columns = [
+      { header: 'Date', width: 12 },
+      { header: 'Type', width: 30 },
+      { header: 'Tiers', width: 24 },
+      { header: 'Bien / Unité', width: 18 },
+      { header: 'Catégorie', width: 26 },
+      { header: 'Débit (FCFA)', width: 16 },
+      { header: 'Crédit (FCFA)', width: 16 },
+      { header: 'Mode de règlement', width: 18 },
+      { header: 'Enregistré par', width: 20 },
+    ];
+    columns.forEach((c, i) => { sheet.getColumn(i + 1).width = c.width; });
+
+    sheet.mergeCells(1, 1, 1, columns.length);
+    sheet.getCell(1, 1).value = `Registre comptable — ${tenantRows[0].company_name} — du ${from} au ${to}`;
+    sheet.getCell(1, 1).font = { bold: true, size: 13 };
+
+    const headerRowIndex = 3;
+    const headerRow = sheet.getRow(headerRowIndex);
+    headerRow.values = columns.map((c) => c.header);
+    headerRow.font = { bold: true };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+    sheet.views = [{ state: 'frozen', ySplit: headerRowIndex }];
+
+    rows.forEach((r, i) => {
+      const excelRow = sheet.getRow(headerRowIndex + 1 + i);
+      excelRow.values = [
+        new Date(`${r.date}T00:00:00Z`),
+        r.type,
+        r.tiers,
+        r.bien,
+        r.categorie,
+        r.debit,
+        r.credit,
+        r.mode,
+        r.enregistrePar,
+      ];
+      excelRow.getCell(1).numFmt = 'dd/mm/yyyy';
+      excelRow.getCell(6).numFmt = '#,##0';
+      excelRow.getCell(7).numFmt = '#,##0';
+    });
+
+    const totalDebit = rows.reduce((s, r) => s + (r.debit || 0), 0);
+    const totalCredit = rows.reduce((s, r) => s + (r.credit || 0), 0);
+    const totalRow = sheet.getRow(headerRowIndex + rows.length + 2);
+    totalRow.getCell(5).value = 'TOTAL';
+    totalRow.getCell(6).value = totalDebit;
+    totalRow.getCell(7).value = totalCredit;
+    totalRow.font = { bold: true };
+    totalRow.getCell(6).numFmt = '#,##0';
+    totalRow.getCell(7).numFmt = '#,##0';
+
+    const soldeRow = sheet.getRow(headerRowIndex + rows.length + 3);
+    soldeRow.getCell(5).value = 'Solde net (crédit − débit)';
+    soldeRow.getCell(7).value = totalCredit - totalDebit;
+    soldeRow.font = { bold: true };
+    soldeRow.getCell(7).numFmt = '#,##0';
+
+    logger.info('Export comptable Excel généré', { tenantId, from, to, rows: rows.length, by: req.user.id });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="registre-comptable-${from}-au-${to}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/accounting/arrears — centre de relance groupée (étape 10) : liste
 // complète des locataires en retard sur tout le portefeuille (téléphone,
 // bien/unité inclus pour construire les liens WhatsApp), tout le portefeuille
@@ -517,6 +730,73 @@ router.get('/predictive-alerts', requireAnyPermission('locataires', 'comptabilit
     const scopeAgentId = await resolvePropertyScope(req.user);
     const alerts = await listPredictiveLateAlerts(req.user.tenantId, scopeAgentId);
     res.json({ alerts });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/utility-arrears — centre de relance groupée, mais pour
+// les charges SONEB/SBEE impayées ou partiellement payées (étape 28) : le
+// même principe que `/arrears` (loyer), jamais construit jusqu'ici pour les
+// charges malgré le statut de règlement introduit à l'étape 23. Une ligne
+// par FACTURE (pas par locataire) — contrairement au loyer, qui accumule
+// mécaniquement mois après mois, une facture SONEB/SBEE est un événement
+// plus ponctuel ; regrouper aurait ajouté de la complexité de message pour
+// un cas rare (plusieurs factures impayées à la fois pour le même locataire).
+// « En retard » = jours écoulés depuis `billed_at`, faute d'échéance propre à
+// une facture ponctuelle (contrairement au loyer, qui a un `rent_due_day`) —
+// jamais un simple retard « recalculé », toujours basé sur une date déjà
+// enregistrée. Permission : `charges` (module propriétaire de la donnée) OU
+// `comptabilite`, même logique que `/arrears` avec `locataires`/`comptabilite`.
+router.get('/utility-arrears', requireAnyPermission('charges', 'comptabilite'), async (req, res, next) => {
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const params = { tenantId: req.user.tenantId };
+    let scopeClause = '';
+    if (scopeAgentId != null) {
+      scopeClause = ' AND p.agent_id = :scopeAgentId';
+      params.scopeAgentId = scopeAgentId;
+    }
+    const [rows] = await pool.query(
+      `SELECT uc.id AS charge_id, uc.amount, uc.utility_type, uc.billed_at, uc.status,
+              COALESCE(pt.paid_total, 0) AS paid_total,
+              l.id AS lease_id,
+              r.id AS renter_id, r.first_name, r.last_name, r.phone,
+              u.code AS unit_code, p.code AS property_code
+       FROM utility_charges uc
+       LEFT JOIN (SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id) pt
+         ON pt.charge_id = uc.id
+       JOIN leases l ON l.id = uc.lease_id
+       JOIN renters r ON r.id = l.renter_id
+       JOIN property_units u ON u.id = l.unit_id
+       JOIN properties p ON p.id = u.property_id
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.status <> 'payee' ${scopeClause}
+       ORDER BY uc.billed_at ASC`,
+      params,
+    );
+
+    const todayUtc = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+    const arrears = rows.map((r) => {
+      const billedAt = isoDate(r.billed_at);
+      const [y, m, d] = billedAt.split('-').map(Number);
+      const daysLate = Math.floor((todayUtc - Date.UTC(y, m - 1, d)) / 86_400_000);
+      return {
+        chargeId: r.charge_id,
+        leaseId: r.lease_id,
+        renterId: r.renter_id,
+        renterName: `${r.first_name} ${r.last_name}`,
+        phone: r.phone,
+        unitCode: r.unit_code,
+        propertyCode: r.property_code,
+        utilityType: r.utility_type,
+        status: r.status,
+        billedAt,
+        daysLate,
+        amountOwed: Number(r.amount) - Number(r.paid_total),
+      };
+    });
+
+    res.json({ arrears, total: arrears.reduce((sum, a) => sum + a.amountOwed, 0) });
   } catch (err) {
     next(err);
   }

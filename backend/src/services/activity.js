@@ -203,23 +203,23 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
       p,
     ),
     pool.query(
-      `SELECT mi.id, mi.created_at, r.first_name AS r_fn, r.last_name AS r_ln,
+      `SELECT mi.id, mi.finalized_at AS created_at, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM move_in_reports mi
        JOIN leases l ON l.id = mi.lease_id
        JOIN renters r ON r.id = l.renter_id
-       LEFT JOIN users u ON u.id = mi.conducted_by
-       WHERE mi.tenant_id = :tenantId ${f('mi.conducted_by')} ORDER BY mi.created_at DESC LIMIT :n`,
+       LEFT JOIN users u ON u.id = mi.finalized_by
+       WHERE mi.tenant_id = :tenantId AND mi.status = 'finalized' ${f('mi.finalized_by')} ORDER BY mi.finalized_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
-      `SELECT mo.id, mo.created_at, mo.net_refund, r.first_name AS r_fn, r.last_name AS r_ln,
+      `SELECT mo.id, mo.finalized_at AS created_at, mo.net_refund, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM move_out_reports mo
        JOIN leases l ON l.id = mo.lease_id
        JOIN renters r ON r.id = l.renter_id
-       LEFT JOIN users u ON u.id = mo.conducted_by
-       WHERE mo.tenant_id = :tenantId ${f('mo.conducted_by')} ORDER BY mo.created_at DESC LIMIT :n`,
+       LEFT JOIN users u ON u.id = mo.finalized_by
+       WHERE mo.tenant_id = :tenantId AND mo.status = 'finalized' ${f('mo.finalized_by')} ORDER BY mo.finalized_at DESC LIMIT :n`,
       p,
     ),
     pool.query(

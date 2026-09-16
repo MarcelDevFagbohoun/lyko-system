@@ -6,6 +6,7 @@ const PDFDocument = require('pdfkit');
 const { DEFAULT_CONTRACT_TEMPLATE, renderContractTemplateSegments } = require('../constants/contract');
 const { EXPENSE_CATEGORIES } = require('../constants/expenses');
 const { UTILITY_TYPES } = require('../constants/charges');
+const config = require('../config/env');
 
 const EXPENSE_CATEGORY_LABELS = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
 const UTILITY_TYPE_LABELS = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, t.label]));
@@ -196,7 +197,16 @@ function drawHeader(doc, tenant) {
  * à la demande, cette date est simplement celle du jour, la même sur
  * chaque page d'un même document.
  */
-function drawFooter(doc) {
+/**
+ * `verificationCode` (étape 29) : uniquement pour les documents remis à un
+ * locataire/propriétaire via son portail (quittance, attestation, relevé
+ * propriétaire) — jamais pour le PV de sortie ou le rapport comptable
+ * (aucune remise à un tiers, aucune raison de vérification publique).
+ * Ajoute une seconde ligne sous le pied de page existant plutôt que d'y
+ * insérer le code : la marge basse (75pt) a été dimensionnée avec de la
+ * marge, largement assez pour une ligne de plus sans chevaucher le contenu.
+ */
+function drawFooter(doc, { verificationCode } = {}) {
   const downloadDate = formatDateSlash(new Date().toISOString().slice(0, 10));
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i += 1) {
@@ -225,6 +235,14 @@ function drawFooter(doc) {
       .fillColor(FAINT)
       .font(FONT_MONO)
       .text(`${i - range.start + 1} / ${range.count}`, 445, 781, { width: 100, align: 'right' });
+    if (verificationCode) {
+      const verifyHost = config.frontendUrl.replace(/^https?:\/\//, '');
+      doc.fontSize(7.5);
+      doc.font(FONT_SANS).fillColor(MUTED).text("Vérifiez l'authenticité de ce document sur ", 50, 792, { continued: true });
+      doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(`${verifyHost}/verifier`, { continued: true });
+      doc.font(FONT_SANS).fillColor(MUTED).text(' avec le code ', { continued: true });
+      doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(verificationCode);
+    }
     doc.page.margins.bottom = realBottomMargin;
   }
 }
@@ -275,7 +293,7 @@ function drawPanelRow(doc, label, value, x, y, { labelWidth = 280, valueWidth = 
 }
 
 /** Quittance de loyer (un paiement = une quittance). */
-function streamReceiptPdf(res, { tenant, renter, property, lease, payment, receipt }) {
+function streamReceiptPdf(res, { tenant, renter, property, lease, payment, receipt, verificationCode }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${receipt.receipt_number}.pdf"`);
@@ -330,7 +348,7 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
       { width: 495 },
     );
 
-  drawFooter(doc);
+  drawFooter(doc, { verificationCode });
   doc.end();
 }
 
@@ -343,7 +361,7 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
  * Cachet et signature, si téléversés dans les Paramètres, sont apposés
  * automatiquement près du bloc de signature.
  */
-function streamCertificatePdf(res, { tenant, renter, property, lease, issuer }) {
+function streamCertificatePdf(res, { tenant, renter, property, lease, issuer, verificationCode }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader(
@@ -426,7 +444,7 @@ function streamCertificatePdf(res, { tenant, renter, property, lease, issuer }) 
     }
   }
 
-  drawFooter(doc);
+  drawFooter(doc, { verificationCode });
   doc.end();
 }
 
@@ -594,7 +612,7 @@ const UNIT_STATUS_LABELS = { libre: 'Libre', loue: 'Loué', reserve: 'Réservé'
  * en place) et historique des versements déjà effectués. Généré à la demande,
  * jamais stocké — comme l'attestation de loyer, la date est celle du jour.
  */
-function streamOwnerStatementPdf(res, { tenant, owner, units, payouts }) {
+function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, verificationCode }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="releve-${owner.name.replace(/\s+/g, '-')}.pdf"`);
@@ -660,7 +678,7 @@ function streamOwnerStatementPdf(res, { tenant, owner, units, payouts }) {
     }
   }
 
-  drawFooter(doc);
+  drawFooter(doc, { verificationCode });
   doc.end();
 }
 

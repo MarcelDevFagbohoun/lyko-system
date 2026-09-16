@@ -22,6 +22,7 @@ import {
 import { buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa, formatDateLabel, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { DocumentDownloadStatus } from "@/components/documents/document-download-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
@@ -174,14 +175,22 @@ function ProprietaireContent() {
             <Attribution actor={owner.createdBy} verb="Fiche créée par" at={owner.createdAt} className="mt-1 block" />
           </div>
           {canReadDocs && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => accessToken && openAuthenticatedPdf(statementPdfPath(owner.id), accessToken)}
-            >
-              <FileDown size={16} />
-              Générer le relevé
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => accessToken && openAuthenticatedPdf(statementPdfPath(owner.id), accessToken)}
+              >
+                <FileDown size={16} />
+                Générer le relevé
+              </Button>
+              <DocumentDownloadStatus
+                documentType="releve_proprietaire"
+                referenceId={owner.id}
+                accessToken={accessToken}
+                isDg={user?.role === "dg"}
+              />
+            </div>
           )}
         </div>
         )}

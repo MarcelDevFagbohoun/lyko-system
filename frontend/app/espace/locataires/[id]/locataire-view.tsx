@@ -29,6 +29,7 @@ import { formatFcfa, buildRentReminderMessage, previewRentAllocation, monthLabel
 import { PROPERTY_TYPE_LABELS } from "@/lib/constants/properties";
 import { useToast } from "@/lib/toast/toast-context";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { DocumentDownloadStatus } from "@/components/documents/document-download-status";
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
 import { Attribution } from "@/components/ui/attribution";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +53,7 @@ function LocataireContent() {
   // Le comptable peut retrouver un locataire et lui enregistrer un paiement
   // (section 5), mais ne gère pas la fiche/le bail/l'état des lieux : ça reste
   // le domaine de l'agent (ou du DG).
+  const isDg = user?.role === "dg";
   const canManage = user?.role === "dg" || (user?.permissions.includes("locataires") ?? false);
   // Documents financiers (attestation) : réservés à qui gère la relation
   // locataire ou à la comptabilité — la fiche elle-même est désormais
@@ -177,6 +179,14 @@ function LocataireContent() {
                   Attestation de loyer
                 </Button>
               )}
+              {canReadDocs && activeLease && (
+                <DocumentDownloadStatus
+                  documentType="attestation"
+                  referenceId={activeLease.id}
+                  accessToken={accessToken}
+                  isDg={isDg}
+                />
+              )}
             </div>
           )}
         </div>
@@ -185,7 +195,7 @@ function LocataireContent() {
         {canManage && <PortalLinkCard renter={renter} accessToken={accessToken} onGenerated={load} />}
 
         {activeLease ? (
-          <LeaseCard lease={activeLease} renterId={renter.id} accessToken={accessToken} canManage={canManage} canReadDocs={canReadDocs} onChanged={load} />
+          <LeaseCard lease={activeLease} renterId={renter.id} accessToken={accessToken} canManage={canManage} canReadDocs={canReadDocs} isDg={isDg} onChanged={load} />
         ) : canManage ? (
           <NewLeaseCard renterId={renter.id} accessToken={accessToken} onCreated={load} />
         ) : (
@@ -596,11 +606,13 @@ function LeaseCard({
   accessToken,
   canManage,
   canReadDocs,
+  isDg,
   onChanged,
 }: {
   lease: Lease;
   renterId: number;
   accessToken: string | null;
+  isDg: boolean;
   canManage: boolean;
   // Paiements/quittances : locataires OU comptabilite (plus large que
   // `canManage`, qui ne couvre que locataires).
@@ -705,7 +717,7 @@ function LeaseCard({
 
         <ChargesSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} />
 
-        <PaymentRegister lease={lease} accessToken={accessToken} canManage={canReadDocs} onRecorded={onChanged} />
+        <PaymentRegister lease={lease} accessToken={accessToken} canManage={canReadDocs} isDg={isDg} onRecorded={onChanged} />
       </CardContent>
       {canManage && (
         <CardFooter className="justify-end">
@@ -875,6 +887,7 @@ function PaymentRegister({
   lease,
   accessToken,
   canManage,
+  isDg,
   onRecorded,
 }: {
   lease: Lease;
@@ -883,6 +896,7 @@ function PaymentRegister({
   // locataires OU comptabilite côté serveur — la fiche est désormais
   // consultable par tout employé, mais pas ces actions financières.
   canManage: boolean;
+  isDg: boolean;
   onRecorded: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -1034,14 +1048,22 @@ function PaymentRegister({
                 </TableCell>
                 <TableCell className="text-right">
                   {p.receipt && canManage && (
-                    <button
-                      type="button"
-                      onClick={() => accessToken && openAuthenticatedPdf(receiptPdfPath(lease.id, p.id), accessToken)}
-                      className="inline-flex items-center gap-1 font-label-sm text-primary hover:underline"
-                    >
-                      <FileText size={14} />
-                      {p.receipt.number}
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => accessToken && openAuthenticatedPdf(receiptPdfPath(lease.id, p.id), accessToken)}
+                        className="inline-flex items-center gap-1 font-label-sm text-primary hover:underline"
+                      >
+                        <FileText size={14} />
+                        {p.receipt.number}
+                      </button>
+                      <DocumentDownloadStatus
+                        documentType="quittance"
+                        referenceId={p.id}
+                        accessToken={accessToken}
+                        isDg={isDg}
+                      />
+                    </div>
                   )}
                 </TableCell>
               </TableRow>

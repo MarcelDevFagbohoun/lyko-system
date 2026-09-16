@@ -15,6 +15,7 @@ const { portalComplaintSchema } = require('../validators/portal');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { computeArrears } = require('../services/rentTracking');
 const { streamReceiptPdf, streamCertificatePdf } = require('../services/pdf');
+const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -163,6 +164,12 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
     const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: renterId });
     const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
 
+    // Limite de 5 téléchargements + code de vérification (étape 29) — la
+    // même quittance (ce paiement précis), pas le lien du portail : le
+    // régénérer ne remet jamais ce compteur à zéro.
+    const issuance = await getOrCreateIssuance(tenantId, 'quittance', paymentId);
+    await registerDownload(issuance);
+
     streamReceiptPdf(res, {
       tenant: tenantRows[0],
       renter: renterRows[0],
@@ -170,6 +177,7 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
       lease,
       payment: paymentRows[0],
       receipt: receiptRows[0],
+      verificationCode: issuance.verification_code,
     });
   } catch (err) {
     next(err);
@@ -192,6 +200,11 @@ router.get('/:token/certificate.pdf', async (req, res, next) => {
     );
     const issuer = dgRows[0] || { first_name: tenantRows[0]?.company_name ?? 'Le cabinet', last_name: '' };
 
+    // Une attestation par BAIL (pas par génération — le contenu peut différer
+    // d'un jour à l'autre, seule compte la limite d'usage du document).
+    const issuance = await getOrCreateIssuance(tenantId, 'attestation', lease.id);
+    await registerDownload(issuance);
+
     const label = unitDesignationLabel(lease);
     streamCertificatePdf(res, {
       tenant: tenantRows[0],
@@ -199,6 +212,7 @@ router.get('/:token/certificate.pdf', async (req, res, next) => {
       property: { label, address: lease.property_address },
       lease,
       issuer,
+      verificationCode: issuance.verification_code,
     });
   } catch (err) {
     next(err);

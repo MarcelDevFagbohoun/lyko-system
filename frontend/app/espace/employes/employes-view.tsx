@@ -115,6 +115,13 @@ function EmployesContent() {
                   </TableCell>
                   <TableCell>
                     <Badge variant="neutral">{ROLE_LABELS[emp.role] ?? emp.role}</Badge>
+                    {emp.role === "agent" && (
+                      <div className="mt-1 text-body-xs text-ink-muted">
+                        {emp.managedPropertiesCount > 0
+                          ? `${emp.managedPropertiesCount} Bien${emp.managedPropertiesCount > 1 ? "s" : ""} attribué${emp.managedPropertiesCount > 1 ? "s" : ""}`
+                          : "Tout le portefeuille"}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">

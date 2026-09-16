@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, Trash2, Pencil, History, CalendarClock, HelpCircle, ChevronDown, ChevronUp, LockOpen } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, CalendarClock, HelpCircle, ChevronDown, ChevronUp, LockOpen } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { API_URL, ApiError, openAuthenticatedPdf } from "@/lib/api/client";
+import { API_URL, ApiError, openAuthenticatedPdf, downloadAuthenticatedFile } from "@/lib/api/client";
 import {
   listExpenses,
   createExpense,
@@ -12,6 +12,7 @@ import {
   deleteExpense,
   getDashboard,
   accountingReportPdfPath,
+  accountingExportXlsxPath,
   listRentPayments,
   listOwnerPayouts,
   listClosedPeriods,
@@ -89,6 +90,7 @@ function ComptabiliteContent() {
   const [ownerPayouts, setOwnerPayouts] = React.useState<OwnerPayoutEntry[] | null>(null);
   const [closedPeriods, setClosedPeriods] = React.useState<AccountingPeriod[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [exportingXlsx, setExportingXlsx] = React.useState(false);
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
@@ -141,7 +143,7 @@ function ComptabiliteContent() {
             <h1 className="font-display text-headline-xl text-ink">Comptabilité</h1>
             <p className="text-body-md text-ink-soft">Recettes et dépenses du cabinet, classées par nature, mois par mois.</p>
           </div>
-          <div className="flex items-end gap-2">
+          <div className="flex flex-wrap items-end gap-2">
             <Field label="Période" htmlFor="yearMonth">
               <input
                 id="yearMonth"
@@ -157,6 +159,29 @@ function ComptabiliteContent() {
             >
               <FileDown size={16} />
               Rapport mensuel
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={exportingXlsx}
+              onClick={async () => {
+                if (!accessToken) return;
+                setExportingXlsx(true);
+                setError(null);
+                try {
+                  await downloadAuthenticatedFile(
+                    accountingExportXlsxPath(from, to),
+                    accessToken,
+                    `registre-comptable-${from}-au-${to}.xlsx`,
+                  );
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : "Export impossible.");
+                } finally {
+                  setExportingXlsx(false);
+                }
+              }}
+            >
+              <FileSpreadsheet size={16} />
+              {exportingXlsx ? "Export…" : "Exporter (Excel)"}
             </Button>
           </div>
         </div>
