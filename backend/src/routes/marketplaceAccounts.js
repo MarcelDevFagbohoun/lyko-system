@@ -13,7 +13,7 @@ const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireMarketplaceAccount, requireAccountRole } = require('../middleware/marketplaceAccountAuth');
-const { hashPassword, verifyPassword } = require('../utils/password');
+const { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH } = require('../utils/password');
 const { signMarketplaceToken } = require('../utils/jwt');
 const {
   registerAccountSchema,
@@ -98,7 +98,10 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     );
     // Message générique volontairement identique dans les deux cas (compte
     // inconnu / mot de passe erroné) — jamais confirmer qu'un numéro existe.
-    if (!rows[0] || !(await verifyPassword(password, rows[0].password_hash))) {
+    // `bcrypt.compare` s'exécute toujours (hash factice sinon) pour que le
+    // temps de réponse ne le révèle pas non plus (audit sécurité).
+    const passwordOk = await verifyPassword(password, rows[0] ? rows[0].password_hash : DUMMY_PASSWORD_HASH);
+    if (!rows[0] || !passwordOk) {
       throw new ApiError(401, 'Numéro ou mot de passe incorrect');
     }
     res.json({ account: toPublicAccount(rows[0]), accessToken: issueToken(rows[0]) });

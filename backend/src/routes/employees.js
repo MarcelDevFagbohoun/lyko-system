@@ -216,9 +216,14 @@ router.post('/', async (req, res, next) => {
     if (existingPhone.length > 0) throw new ApiError(409, 'Ce numéro est déjà associé à un compte');
 
     if (data.email) {
-      const [existingEmail] = await conn.query('SELECT id FROM users WHERE email = :email LIMIT 1', {
-        email: data.email,
-      });
+      // Scopé à l'entreprise courante : l'email n'est jamais utilisé pour se
+      // connecter (seul le téléphone l'est, unique globalement ci-dessus) —
+      // une vérification globale laisserait un DG sonder si un email
+      // appartient à un employé d'une AUTRE entreprise cliente (audit sécurité).
+      const [existingEmail] = await conn.query(
+        'SELECT id FROM users WHERE email = :email AND tenant_id = :tenantId LIMIT 1',
+        { email: data.email, tenantId: req.user.tenantId },
+      );
       if (existingEmail.length > 0) throw new ApiError(409, 'Cet email est déjà associé à un compte');
     }
 
@@ -315,10 +320,11 @@ router.patch('/:id', async (req, res, next) => {
     if (!rows[0]) throw new ApiError(404, 'Employé introuvable');
 
     if (data.email) {
-      const [dupe] = await conn.query('SELECT id FROM users WHERE email = :email AND id != :id LIMIT 1', {
-        email: data.email,
-        id,
-      });
+      // Scopé à l'entreprise courante — même raison que la création ci-dessus.
+      const [dupe] = await conn.query(
+        'SELECT id FROM users WHERE email = :email AND tenant_id = :tenantId AND id != :id LIMIT 1',
+        { email: data.email, tenantId: req.user.tenantId, id },
+      );
       if (dupe.length > 0) throw new ApiError(409, 'Cet email est déjà associé à un compte');
     }
 

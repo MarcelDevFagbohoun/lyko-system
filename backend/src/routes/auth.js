@@ -10,7 +10,7 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth } = require('../middleware/auth');
 const { registerSchema, loginSchema, employeeLoginSchema, changePasswordSchema } = require('../validators/auth');
-const { hashPassword, verifyPassword } = require('../utils/password');
+const { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH } = require('../utils/password');
 const { issueSession, rotateRefreshToken, revokeRefreshToken } = require('../services/session');
 const { getPermissions } = require('../services/permissions');
 const { REFRESH_COOKIE_NAME, refreshCookieOptions } = require('../utils/cookies');
@@ -230,8 +230,12 @@ router.post('/login', loginLimiter, async (req, res, next) => {
       { phone },
     );
     const row = rows[0];
-    // Message générique volontaire : ne révèle pas si le numéro existe.
-    if (!row || !(await verifyPassword(password, row.password_hash))) {
+    // Message générique volontaire : ne révèle pas si le numéro existe. Le
+    // `bcrypt.compare` s'exécute TOUJOURS (contre un hash factice si `row`
+    // n'existe pas) pour que le temps de réponse ne le révèle pas non plus
+    // (audit sécurité — sans ça, un identifiant inconnu répondait plus vite).
+    const passwordOk = await verifyPassword(password, row ? row.password_hash : DUMMY_PASSWORD_HASH);
+    if (!row || !passwordOk) {
       recordFailure(throttleKey);
       throw new ApiError(401, 'Numéro ou mot de passe incorrect');
     }
@@ -269,8 +273,11 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
     );
     const row = rows[0];
     // Message générique volontaire : ne révèle pas si l'identifiant existe,
-    // ni si c'est le mot de passe ou le poste qui ne correspond pas.
-    if (!row || !(await verifyPassword(password, row.password_hash)) || row.role !== role) {
+    // ni si c'est le mot de passe ou le poste qui ne correspond pas. Même
+    // garde de temporisation que /login ci-dessus (hash factice si `row`
+    // n'existe pas).
+    const passwordOk = await verifyPassword(password, row ? row.password_hash : DUMMY_PASSWORD_HASH);
+    if (!row || !passwordOk || row.role !== role) {
       recordFailure(throttleKey);
       throw new ApiError(401, 'Identifiant, poste ou mot de passe incorrect');
     }
