@@ -1,8 +1,8 @@
-import { apiFetch, type Actor } from "./client";
+import { apiFetch, API_URL, type Actor } from "./client";
 import type { PropertyOwner, PropertyTypeKey, UnitDesignationKey } from "./properties";
 import type { InspectionCondition } from "@/lib/constants/inspection";
 
-export type PaymentMethod = "especes" | "mobile_money" | "virement" | "cheque";
+export type PaymentMethod = "especes" | "mobile_money" | "virement" | "cheque" | "kkiapay";
 
 /** Bien (bâtiment) tel qu'imbriqué dans un bail, avec son propriétaire. */
 export type LeaseProperty = {
@@ -32,6 +32,8 @@ export type Arrears = {
   nextDueMonth: string;
   dueDate: string;
   daysLate: number;
+  monthsLate: number;
+  remainderDaysLate: number;
   status: "current" | "late";
 };
 
@@ -55,6 +57,15 @@ export type Payment = {
  * personnalisé — utilisé pour retrouver le poste (photo) et pour la
  * comparaison automatique entrée/sortie.
  */
+/**
+ * Une ligne de facturation choisie sur un élément dégradé (état des lieux de
+ * sortie) : soit une entrée du catalogue (`catalogItemId` renseigné, prix
+ * copié depuis le référentiel), soit un élément non catalogué saisi à la
+ * main (`catalogItemId: null`). `quantity` couvre plusieurs dégâts
+ * identiques sur le même poste (ex. 2 vitres cassées).
+ */
+export type BillingLine = { catalogItemId: number | null; label: string; unitPrice: number; quantity: number };
+
 export type InspectionItem = {
   key: string;
   label: string;
@@ -62,7 +73,10 @@ export type InspectionItem = {
   condition: InspectionCondition | null;
   comment: string | null;
   photoUrl: string | null;
+  /** Recalculé côté serveur à partir de `billing.lines` dès qu'il y en a au moins une. */
   deduction: number;
+  /** `null` = pas de facturation détaillée (montant libre dans `deduction`, saisie historique). */
+  billing: { lines: BillingLine[] } | null;
 };
 export type InspectionZone = { key: string; label: string; custom: boolean; items: InspectionItem[] };
 export type InspectionReportStatus = "draft" | "finalized";
@@ -91,11 +105,36 @@ export type MoveOutReport = InspectionReport & {
   netRefund: number;
 };
 
+/** Règlement (total ou partiel) des impayés existants d'un bail à l'entrée. */
+export type OpeningDebtPayment = {
+  id: number;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  paymentMethodLabel: string;
+  paidAt: string;
+  notes: string | null;
+  recordedBy: Actor;
+};
+
 export type Lease = {
   id: number;
   monthlyRent: number;
   depositAmount: number;
   depositStatus: "held" | "returned";
+  /** Impayés déclarés à la création du bail (locataire déjà en place avant Lyko System), 0 si aucun. */
+  openingDebtAmount: number;
+  // Paid/remaining/payments : uniquement renvoyés par GET /api/renters/:id
+  // (fiche détaillée) — absents de la liste (GET /api/renters), qui n'en a
+  // pas besoin.
+  openingDebtPaid?: number;
+  openingDebtRemaining?: number;
+  openingDebtPayments?: OpeningDebtPayment[];
+  /** Déclaré à jour (aucun impayé) au moment de l'enregistrement — voir `computeArrears` (backend). */
+  upToDateAtOnboarding: boolean;
+  /** Frais d'agence pris directement au locataire à l'entrée — 100 % produit du cabinet, jamais compté dans la recette du propriétaire, 0 si aucun. */
+  entryFeeAmount: number;
+  entryFeeReceivedAt: string | null;
+  entryFeeReceivedMethod: PaymentMethod | null;
   rentDueDay: number;
   startDate: string;
   endDate: string | null;
@@ -145,8 +184,24 @@ export type CreateRenterInput = {
   // Loyer optionnel : reprend celui de l'unité si omis.
   monthlyRent?: number;
   depositAmount: number;
+  // Requis côté serveur seulement si depositAmount > 0 (voir routes/renters.js
+  // `recordDepositReceived`) — génère la contrepartie comptable de la caution.
+  depositPaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
+  // Défaut : startDate si omis (la caution est presque toujours encaissée le
+  // jour de la signature du bail).
+  depositPaidAt?: string;
+  /** Frais d'agence pris directement au locataire à l'entrée — 100 % produit du cabinet, jamais reversé au propriétaire. */
+  entryFeeAmount?: number;
+  // Requis côté serveur seulement si entryFeeAmount > 0 (voir routes/renters.js
+  // `recordEntryFeeReceived`) — génère la contrepartie comptable (706).
+  entryFeePaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
+  entryFeePaidAt?: string;
   rentDueDay: number;
   startDate: string;
+  /** Onboarding d'un locataire déjà en place : impayés déjà dus avant Lyko System, 0 si aucun. */
+  openingDebtAmount?: number;
+  /** Onboarding : locataire déjà en place mais SANS aucun impayé — évite un faux retard depuis une date d'entrée ancienne. */
+  upToDateAtOnboarding?: boolean;
 };
 
 export function createRenter(accessToken: string, input: CreateRenterInput) {
@@ -293,6 +348,69 @@ export function receiptPdfPath(leaseId: number, paymentId: number) {
   return `/api/leases/${leaseId}/payments/${paymentId}/receipt.pdf`;
 }
 
+export type LateFee = {
+  id: number;
+  amount: number;
+  appliedAt: string;
+  reason: string | null;
+  appliedBy: Actor;
+  createdAt: string;
+};
+
+export function listLateFees(accessToken: string, leaseId: number) {
+  return apiFetch<{ lateFees: LateFee[] }>(`/api/leases/${leaseId}/late-fees`, { accessToken });
+}
+
+/** Montant toujours saisi à la main — jamais un barème automatique. */
+export function applyLateFee(accessToken: string, leaseId: number, input: { amount: number; appliedAt: string; reason?: string }) {
+  return apiFetch<{ lateFeeId: number }>(`/api/leases/${leaseId}/late-fees`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Règle (total ou partiel) les impayés existants d'un bail — voir `Lease.openingDebtRemaining`. */
+export function payOpeningDebt(
+  accessToken: string,
+  leaseId: number,
+  input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string },
+) {
+  return apiFetch<{ paymentId: number; remaining: number }>(`/api/leases/${leaseId}/opening-debt/payments`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Historique des soldes figés à chaque clôture de mois (audit) pour un bail. */
+export type LeaseBalanceSnapshot = { period: string; amountDue: number; createdAt: string };
+
+export function getLeaseBalanceSnapshots(accessToken: string, leaseId: number) {
+  return apiFetch<{ snapshots: LeaseBalanceSnapshot[] }>(`/api/leases/${leaseId}/balance-snapshots`, { accessToken });
+}
+
+
+/**
+ * Lien de partage direct de cette quittance (envoi automatique par WhatsApp
+ * juste après le paiement — un lien `wa.me` ne peut préremplir qu'un texte,
+ * jamais joindre un fichier). Idempotent côté serveur : rappeler cette
+ * fonction pour la même quittance renvoie toujours le même token.
+ */
+export function generateReceiptShareLink(accessToken: string, leaseId: number, paymentId: number) {
+  return apiFetch<{ token: string }>(`/api/leases/${leaseId}/payments/${paymentId}/receipt-link`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/** URL publique (sans auth) qui sert directement le PDF — voir `generateReceiptShareLink`. */
+export function receiptShareUrl(token: string) {
+  return `${API_URL}/api/recu/${token}`;
+}
+
 export function certificatePdfPath(renterId: number) {
   return `/api/renters/${renterId}/certificate.pdf`;
 }
@@ -377,15 +495,30 @@ export function updateMoveOutReport(accessToken: string, leaseId: number, input:
   });
 }
 
-export function finalizeMoveOutReport(accessToken: string, leaseId: number, tenantSignature: Blob, agentSignature: Blob) {
+/**
+ * `refundPaymentMethod` : requis côté serveur seulement s'il reste
+ * effectivement quelque chose à reverser (`netRefund > 0`) — génère la
+ * contrepartie comptable de la restitution (voir routes/leases.js).
+ */
+export function finalizeMoveOutReport(
+  accessToken: string,
+  leaseId: number,
+  tenantSignature: Blob,
+  agentSignature: Blob,
+  refundPaymentMethod?: Exclude<PaymentMethod, "kkiapay">,
+) {
   const fd = new FormData();
   fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
   fd.append("agentSignature", agentSignature, "signature-agent.png");
-  return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/finalize`, {
-    method: "POST",
-    accessToken,
-    body: fd,
-  });
+  if (refundPaymentMethod) fd.append("refundPaymentMethod", refundPaymentMethod);
+  return apiFetch<{ report: MoveOutReport; depositAccountingNote: string | null }>(
+    `${inspectionReportPath("move-out", leaseId)}/finalize`,
+    {
+      method: "POST",
+      accessToken,
+      body: fd,
+    },
+  );
 }
 
 /** Photo d'un élément (entrée ou sortie) — remplace la précédente le cas échéant. */

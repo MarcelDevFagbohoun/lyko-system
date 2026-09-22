@@ -16,6 +16,8 @@ export type PortalArrears = {
   nextDueMonth: string;
   dueDate: string;
   daysLate: number;
+  monthsLate: number;
+  remainderDaysLate: number;
   status: "current" | "late";
 };
 
@@ -28,8 +30,25 @@ export type PortalPayment = {
   receipt: { id: number; number: string } | null;
 };
 
+export type PortalUnpaidCharge = {
+  id: number;
+  utilityType: "soneb" | "sbee";
+  periodStart: string;
+  periodEnd: string;
+  amount: number;
+  remaining: number;
+  status: "impayee" | "partiellement_payee";
+};
+
 export type PortalDashboard = {
-  tenant: { companyName: string | null; logoUrl: string | null };
+  tenant: {
+    id: number;
+    companyName: string | null;
+    logoUrl: string | null;
+    kkiapayEnabled: boolean;
+    kkiapaySandbox: boolean;
+    kkiapayPublicKey: string | null;
+  };
   renter: { firstName: string; lastName: string };
   activeLease: {
     id: number;
@@ -40,10 +59,29 @@ export type PortalDashboard = {
   } | null;
   arrears: PortalArrears | null;
   payments: PortalPayment[];
+  unpaidCharges: PortalUnpaidCharge[];
 };
 
 export function getPortalDashboard(token: string) {
   return apiFetch<PortalDashboard>(`/api/portal/${token}`);
+}
+
+export type KkiapayVerifyResult = { alreadyRecorded: boolean; amount?: number };
+
+export function verifyPortalRentPayment(token: string, transactionId: string) {
+  return apiFetch<KkiapayVerifyResult>(`/api/portal/${token}/payments/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transactionId }),
+  });
+}
+
+export function verifyPortalChargePayment(token: string, chargeId: number, transactionId: string) {
+  return apiFetch<KkiapayVerifyResult>(`/api/portal/${token}/charges/${chargeId}/payments/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transactionId }),
+  });
 }
 
 export function portalReceiptPdfUrl(token: string, paymentId: number) {

@@ -18,6 +18,13 @@ const PERMISSIONS = [
   { key: 'comptabilite', label: 'Comptabilité & finances' },
   { key: 'charges', label: 'Charges & redevances (SONEB/SBEE)' },
   { key: 'documents_juridiques', label: 'Actes & baux' },
+  // Module comptabilité SYSCOHADA (nouveau) : distincte de `comptabilite`
+  // (saisie simple, formulaires en langage courant — "Encaisser un loyer",
+  // "Enregistrer une dépense") — cette permission-ci donne accès à l'espace
+  // « Comptabilité avancée » (grand livre, balance, écritures, clôture
+  // d'exercice, extourne). Un profil « Secrétaire » a `comptabilite` sans
+  // `comptabilite_avancee` ; un profil « Comptable » a les deux.
+  { key: 'comptabilite_avancee', label: 'Comptabilité avancée (SYSCOHADA)' },
 ];
 
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
@@ -26,7 +33,7 @@ const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 // le DG peut les ajuster librement avant de valider.
 const DEFAULT_PERMISSIONS_BY_ROLE = {
   agent: ['locataires', 'plaintes', 'etats_des_lieux'],
-  comptable: ['comptabilite', 'charges'],
+  comptable: ['comptabilite', 'charges', 'comptabilite_avancee'],
 };
 
 module.exports = { PERMISSIONS, PERMISSION_KEYS, DEFAULT_PERMISSIONS_BY_ROLE };

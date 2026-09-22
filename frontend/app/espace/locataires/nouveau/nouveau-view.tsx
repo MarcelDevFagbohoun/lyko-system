@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Copy, Check, MessageCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
-import { createRenter } from "@/lib/api/renters";
+import { createRenter, type PaymentMethod } from "@/lib/api/renters";
 import type { Unit } from "@/lib/api/properties";
 import { normalizeBeninPhone, buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa } from "@/lib/utils";
@@ -26,8 +26,15 @@ type FormState = {
   profession: string;
   monthlyRent: string;
   depositAmount: string;
+  depositPaymentMethod: string;
+  depositPaidAt: string;
+  entryFeeAmount: string;
+  entryFeePaymentMethod: string;
+  entryFeePaidAt: string;
   rentDueDay: string;
   startDate: string;
+  openingDebtAmount: string;
+  upToDateAtOnboarding: boolean;
 };
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -40,9 +47,23 @@ const INITIAL: FormState = {
   profession: "",
   monthlyRent: "",
   depositAmount: "",
+  depositPaymentMethod: "",
+  depositPaidAt: todayIso(),
+  entryFeeAmount: "",
+  entryFeePaymentMethod: "",
+  entryFeePaidAt: todayIso(),
   rentDueDay: "5",
   startDate: todayIso(),
+  openingDebtAmount: "",
+  upToDateAtOnboarding: false,
 };
+
+const DEPOSIT_PAYMENT_METHODS: { value: string; label: string }[] = [
+  { value: "especes", label: "Espèces" },
+  { value: "mobile_money", label: "Mobile Money" },
+  { value: "virement", label: "Virement" },
+  { value: "cheque", label: "Chèque" },
+];
 
 export function NouveauView() {
   return (
@@ -78,6 +99,11 @@ function NouveauContent() {
     if (!form.monthlyRent) set("monthlyRent", String(unit.monthlyRent));
   }
 
+  // Date d'entrée antérieure au mois en cours : onboarding d'un locataire
+  // déjà en place, pas une vraie nouvelle entrée — la question "à jour ?"
+  // n'a de sens que dans ce cas (voir services/rentTracking.js `computeArrears`).
+  const isHistoricalStartDate = form.startDate.slice(0, 7) < todayIso().slice(0, 7);
+
   const errors = React.useMemo(() => {
     const e: Partial<Record<keyof FormState, string>> = {};
     if (!form.firstName.trim()) e.firstName = "Prénom requis";
@@ -89,9 +115,15 @@ function NouveauContent() {
     if (!form.monthlyRent || !Number.isFinite(rent) || rent <= 0) e.monthlyRent = "Loyer invalide";
     const deposit = Number(form.depositAmount || "0");
     if (!Number.isFinite(deposit) || deposit < 0) e.depositAmount = "Montant invalide";
+    if (deposit > 0 && !form.depositPaymentMethod) e.depositPaymentMethod = "Comment la caution a-t-elle été reçue ?";
+    const entryFee = Number(form.entryFeeAmount || "0");
+    if (!Number.isFinite(entryFee) || entryFee < 0) e.entryFeeAmount = "Montant invalide";
+    if (entryFee > 0 && !form.entryFeePaymentMethod) e.entryFeePaymentMethod = "Comment les frais d'agence ont-ils été reçus ?";
     const day = Number(form.rentDueDay);
     if (!Number.isInteger(day) || day < 1 || day > 28) e.rentDueDay = "Jour entre 1 et 28";
     if (!form.startDate) e.startDate = "Date requise";
+    const openingDebt = Number(form.openingDebtAmount || "0");
+    if (!Number.isFinite(openingDebt) || openingDebt < 0) e.openingDebtAmount = "Montant invalide";
     return e;
   }, [form]);
 
@@ -101,7 +133,8 @@ function NouveauContent() {
     e.preventDefault();
     setTouched({
       firstName: true, lastName: true, phone: true, email: true,
-      monthlyRent: true, depositAmount: true, rentDueDay: true, startDate: true,
+      monthlyRent: true, depositAmount: true, depositPaymentMethod: true, rentDueDay: true, startDate: true,
+      openingDebtAmount: true, entryFeeAmount: true, entryFeePaymentMethod: true,
     });
     if (!isValid || !accessToken || !selectedUnit) return;
 
@@ -117,8 +150,21 @@ function NouveauContent() {
         unitId: selectedUnit.id,
         monthlyRent: Number(form.monthlyRent),
         depositAmount: Number(form.depositAmount || "0"),
+        depositPaymentMethod:
+          Number(form.depositAmount || "0") > 0
+            ? (form.depositPaymentMethod as Exclude<PaymentMethod, "kkiapay">)
+            : undefined,
+        depositPaidAt: Number(form.depositAmount || "0") > 0 ? form.depositPaidAt : undefined,
+        entryFeeAmount: Number(form.entryFeeAmount || "0"),
+        entryFeePaymentMethod:
+          Number(form.entryFeeAmount || "0") > 0
+            ? (form.entryFeePaymentMethod as Exclude<PaymentMethod, "kkiapay">)
+            : undefined,
+        entryFeePaidAt: Number(form.entryFeeAmount || "0") > 0 ? form.entryFeePaidAt : undefined,
         rentDueDay: Number(form.rentDueDay),
         startDate: form.startDate,
+        openingDebtAmount: Number(form.openingDebtAmount || "0"),
+        upToDateAtOnboarding: isHistoricalStartDate ? form.upToDateAtOnboarding : undefined,
       });
       setResult({
         renterId: res.renterId,
@@ -209,6 +255,92 @@ function NouveauContent() {
                     <Input id="depositAmount" inputMode="numeric" value={form.depositAmount} onChange={(e) => set("depositAmount", e.target.value.replace(/\D/g, ""))} onBlur={() => setTouched((t) => ({ ...t, depositAmount: true }))} />
                   </Field>
                 </div>
+                {Number(form.depositAmount || "0") > 0 && (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Caution reçue par"
+                      htmlFor="depositPaymentMethod"
+                      required
+                      error={touched.depositPaymentMethod ? errors.depositPaymentMethod : undefined}
+                    >
+                      <select
+                        id="depositPaymentMethod"
+                        value={form.depositPaymentMethod}
+                        onChange={(e) => set("depositPaymentMethod", e.target.value)}
+                        onBlur={() => setTouched((t) => ({ ...t, depositPaymentMethod: true }))}
+                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        <option value="" disabled>
+                          Choisir…
+                        </option>
+                        {DEPOSIT_PAYMENT_METHODS.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Reçue le" htmlFor="depositPaidAt">
+                      <Input
+                        id="depositPaidAt"
+                        type="date"
+                        value={form.depositPaidAt}
+                        onChange={(e) => set("depositPaidAt", e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field
+                    label="Frais d'agence à l'entrée (FCFA)"
+                    htmlFor="entryFeeAmount"
+                    hint="Pris directement au locataire, jamais reversé au propriétaire — 0 si aucun"
+                    error={touched.entryFeeAmount ? errors.entryFeeAmount : undefined}
+                  >
+                    <Input
+                      id="entryFeeAmount"
+                      inputMode="numeric"
+                      value={form.entryFeeAmount}
+                      onChange={(e) => set("entryFeeAmount", e.target.value.replace(/\D/g, ""))}
+                      onBlur={() => setTouched((t) => ({ ...t, entryFeeAmount: true }))}
+                    />
+                  </Field>
+                </div>
+                {Number(form.entryFeeAmount || "0") > 0 && (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Frais d'agence reçus par"
+                      htmlFor="entryFeePaymentMethod"
+                      required
+                      error={touched.entryFeePaymentMethod ? errors.entryFeePaymentMethod : undefined}
+                    >
+                      <select
+                        id="entryFeePaymentMethod"
+                        value={form.entryFeePaymentMethod}
+                        onChange={(e) => set("entryFeePaymentMethod", e.target.value)}
+                        onBlur={() => setTouched((t) => ({ ...t, entryFeePaymentMethod: true }))}
+                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        <option value="" disabled>
+                          Choisir…
+                        </option>
+                        {DEPOSIT_PAYMENT_METHODS.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Reçus le" htmlFor="entryFeePaidAt">
+                      <Input
+                        id="entryFeePaidAt"
+                        type="date"
+                        value={form.entryFeePaidAt}
+                        onChange={(e) => set("entryFeePaidAt", e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <Field label="Jour d'échéance du loyer" htmlFor="rentDueDay" required hint="1 à 28" error={touched.rentDueDay ? errors.rentDueDay : undefined}>
                     <Input id="rentDueDay" inputMode="numeric" value={form.rentDueDay} onChange={(e) => set("rentDueDay", e.target.value.replace(/\D/g, ""))} onBlur={() => setTouched((t) => ({ ...t, rentDueDay: true }))} />
@@ -217,6 +349,39 @@ function NouveauContent() {
                     <Input id="startDate" type="date" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, startDate: true }))} />
                   </Field>
                 </div>
+                <Field
+                  label="Impayés existants à l'entrée (FCFA)"
+                  htmlFor="openingDebtAmount"
+                  hint="Locataire déjà en place avant Lyko System, avec un impayé connu — 0 si aucun"
+                  error={touched.openingDebtAmount ? errors.openingDebtAmount : undefined}
+                >
+                  <Input
+                    id="openingDebtAmount"
+                    inputMode="numeric"
+                    value={form.openingDebtAmount}
+                    onChange={(e) => set("openingDebtAmount", e.target.value.replace(/\D/g, ""))}
+                    onBlur={() => setTouched((t) => ({ ...t, openingDebtAmount: true }))}
+                  />
+                </Field>
+                {isHistoricalStartDate && (
+                  <label
+                    htmlFor="upToDateAtOnboarding"
+                    className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm text-ink"
+                  >
+                    <input
+                      id="upToDateAtOnboarding"
+                      type="checkbox"
+                      checked={form.upToDateAtOnboarding}
+                      onChange={(e) => set("upToDateAtOnboarding", e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Ce locataire est à jour sur son loyer, y compris le mois en cours — évite un faux retard si
+                      l&apos;échéance de ce mois est déjà passée. (Les mois antérieurs à aujourd&apos;hui ne sont de
+                      toute façon jamais comptés, même sans cocher cette case.)
+                    </span>
+                  </label>
+                )}
               </div>
 
               <Button type="submit" size="lg" disabled={submitting || !selectedUnit || !online}>

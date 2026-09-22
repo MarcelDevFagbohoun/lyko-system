@@ -58,7 +58,7 @@ type CreatedEmployee = {
 };
 
 function NouvelEmployeContent() {
-  const { accessToken } = useAuth();
+  const { accessToken, tenant } = useAuth();
   const online = useOnlineStatus();
   const [catalog, setCatalog] = React.useState<PermissionCatalogEntry[]>([]);
   const [defaults, setDefaults] = React.useState<Record<string, PermissionKey[]>>({});
@@ -234,7 +234,7 @@ function NouvelEmployeContent() {
                             : "border-border text-ink-soft hover:bg-surface-hover"
                         }`}
                       >
-                        {ROLE_LABELS[r]}
+                        {tenant?.roleTitles?.[r] ?? ROLE_LABELS[r]}
                       </button>
                     ))}
                   </div>
@@ -257,18 +257,19 @@ function NouvelEmployeContent() {
   );
 }
 
-function buildCredentialsMessage(employee: CreatedEmployee) {
+function buildCredentialsMessage(employee: CreatedEmployee, roleLabel: string) {
   return [
     `Bonjour ${employee.name},`,
     `Voici vos identifiants Lyko System :`,
     `Identifiant : ${employee.identifier}`,
     `Mot de passe temporaire : ${employee.temporaryPassword}`,
-    `Poste : ${ROLE_LABELS[employee.role]}`,
+    `Poste : ${roleLabel}`,
     `Connectez-vous sur l'onglet « Employé » puis changez votre mot de passe dès la première connexion.`,
   ].join("\n");
 }
 
 function SuccessPanel({ employee }: { employee: CreatedEmployee }) {
+  const { tenant } = useAuth();
   const [copied, setCopied] = React.useState(false);
 
   async function copy() {
@@ -282,7 +283,7 @@ function SuccessPanel({ employee }: { employee: CreatedEmployee }) {
     }
   }
 
-  const message = buildCredentialsMessage(employee);
+  const message = buildCredentialsMessage(employee, tenant?.roleTitles?.[employee.role] ?? ROLE_LABELS[employee.role]);
   const whatsappHref = `https://wa.me/${toE164Benin(employee.phone).replace("+", "")}?text=${encodeURIComponent(message)}`;
   const mailHref = employee.email
     ? `mailto:${employee.email}?subject=${encodeURIComponent("Vos identifiants Lyko System")}&body=${encodeURIComponent(message)}`

@@ -19,6 +19,8 @@ export type AuthUser = {
   signatureUrl: string | null;
 };
 
+export type RoleTitles = { dg: string; comptable: string; agent: string };
+
 export type AuthTenant = {
   id: number;
   companyName: string;
@@ -26,6 +28,13 @@ export type AuthTenant = {
   ifu: string;
   contactPhone: string;
   logoUrl: string | null;
+  // Nom des 3 postes chez cette entreprise (Réglages) — remplace les
+  // libellés fixes "Admin"/"Comptable"/"Agent" partout où un rôle est
+  // affiché, y compris le sélecteur de poste à la connexion employé.
+  roleTitles: RoleTitles;
+  // Sert uniquement à afficher/masquer le bouton « Générer un lien de
+  // paiement » — le personnel ne paie jamais lui-même, voir routes/auth.js.
+  kkiapayEnabled: boolean;
 };
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";

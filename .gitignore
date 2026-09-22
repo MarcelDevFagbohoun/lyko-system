@@ -25,3 +25,5 @@ coverage/
 
 # Sauvegardes de production (deploy/backup-db.sh)
 backups/
+# Sauvegardes locales ponctuelles (dumps ad hoc, données réelles)
+backups-local/

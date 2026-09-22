@@ -10,26 +10,70 @@ function addMonth(yearMonth) {
 }
 
 /**
+ * Décompose un nombre de jours de retard en mois pleins + jours restants,
+ * de façon exacte au calendrier (jamais une simple division par ~30) : le
+ * nombre de mois pleins écoulés entre `dueDate` et `todayUtc`, puis le
+ * reste en jours. Demande directe de l'utilisateur : au-delà d'un mois de
+ * retard, l'information doit d'abord se lire en mois + jours, pas
+ * seulement en jours bruts (peu lisible passé quelques dizaines de jours).
+ */
+function monthsAndDaysLate(dueDate, todayUtc) {
+  let months =
+    (todayUtc.getUTCFullYear() - dueDate.getUTCFullYear()) * 12 + (todayUtc.getUTCMonth() - dueDate.getUTCMonth());
+  if (todayUtc.getUTCDate() < dueDate.getUTCDate()) months -= 1;
+  months = Math.max(0, months);
+  const afterMonths = new Date(Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth() + months, dueDate.getUTCDate()));
+  const remainderDays = Math.max(0, Math.round((todayUtc - afterMonths) / 86_400_000));
+  return { months, remainderDays };
+}
+
+/** Date ISO 'AAAA-MM-JJ' à partir d'une chaîne ou d'un objet Date MySQL. */
+function toIsoDateString(d) {
+  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+}
+
+/**
  * Calcule le statut de paiement d'un bail : mois payés (à partir de la date
  * de début et des paiements enregistrés), prochaine échéance, retard éventuel.
  * `payments` : tableau de { coversMonth: 'YYYY-MM' }.
+ *
+ * `createdAt` (date d'enregistrement sur la plateforme) et
+ * `upToDateAtOnboarding` : corrigent un vrai biais — sans eux, un locataire
+ * entré dans les lieux il y a des mois/années mais enregistré aujourd'hui
+ * ressortirait comme devant tout ce temps, alors qu'il n'a peut-être jamais
+ * manqué un paiement (juste jamais suivi ici). Le suivi ne peut jamais
+ * démarrer avant `createdAt` : `startDate` reste le fait historique (contrat,
+ * état des lieux) mais seul, sans plafond, il ferait remonter le retard
+ * avant même que Lyko System n'existe pour ce bail. `upToDateAtOnboarding`
+ * (coché explicitement par l'agent à la création) couvre le dernier résidu :
+ * le mois de l'enregistrement lui-même, également considéré couvert.
+ * `createdAt` omis (compatibilité) : aucun plafond, comportement historique
+ * inchangé.
  */
-function computeArrears({ startDate, rentDueDay, payments }, today = new Date()) {
-  const startMonth = startDate.slice(0, 7);
+function computeArrears({ startDate, createdAt, upToDateAtOnboarding, rentDueDay, payments }, today = new Date()) {
+  const createdAtIso = createdAt ? toIsoDateString(createdAt) : null;
+  const baselineDate = createdAtIso && createdAtIso > startDate ? createdAtIso : startDate;
+  let baselineMonth = baselineDate.slice(0, 7);
+  if (upToDateAtOnboarding) baselineMonth = addMonth(baselineMonth);
+
   const paidThrough =
     payments.length > 0 ? payments.map((p) => p.coversMonth).sort().at(-1) : null;
-  const nextDueMonth = paidThrough && paidThrough >= startMonth ? addMonth(paidThrough) : startMonth;
+  const nextDueMonth = paidThrough && paidThrough >= baselineMonth ? addMonth(paidThrough) : baselineMonth;
 
   const [y, m] = nextDueMonth.split('-').map(Number);
   const dueDate = new Date(Date.UTC(y, m - 1, rentDueDay));
   const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   const daysLate = Math.floor((todayUtc - dueDate) / 86_400_000);
+  const { months: monthsLate, remainderDays: remainderDaysLate } =
+    daysLate > 0 ? monthsAndDaysLate(dueDate, todayUtc) : { months: 0, remainderDays: 0 };
 
   return {
     paidThroughMonth: paidThrough,
     nextDueMonth,
     dueDate: dueDate.toISOString().slice(0, 10),
     daysLate,
+    monthsLate,
+    remainderDaysLate,
     status: daysLate > 0 ? 'late' : 'current',
   };
 }
@@ -98,7 +142,8 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
     params.scopeAgentId = scopeAgentId;
   }
   const [activeLeases] = await pool.query(
-    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day,
+    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.opening_debt_amount,
+            l.created_at, l.up_to_date_at_onboarding,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
             un.code AS unit_code, p.code AS property_code
      FROM leases l
@@ -122,17 +167,30 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
     paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month });
   }
 
+  const [openingDebtPaid] = await pool.query(
+    `SELECT lease_id, SUM(amount) AS paid FROM lease_opening_debt_payments WHERE lease_id IN (${placeholders}) GROUP BY lease_id`,
+    leaseIds,
+  );
+  const openingDebtPaidByLease = new Map(openingDebtPaid.map((r) => [r.lease_id, Number(r.paid)]));
+
   const currentMonth = new Date().toISOString().slice(0, 7);
   const results = [];
   for (const lease of activeLeases) {
     const startDate = lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
     const arrears = computeArrears({
       startDate,
+      createdAt: lease.created_at,
+      upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
       payments: paymentsByLease.get(lease.id) || [],
     });
-    if (arrears.status === 'late') {
-      const unpaidMonths = Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth));
+    const openingDebtRemaining = Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0);
+    // Un bail peut devoir de l'argent pour DEUX raisons indépendantes : du
+    // loyer en retard (calculé au jour près) ET/OU un reliquat de dette
+    // initiale jamais soldé (onboarding) — l'un n'empêche jamais l'autre
+    // d'apparaître dans la liste de relance.
+    if (arrears.status === 'late' || openingDebtRemaining > 0) {
+      const unpaidMonths = arrears.status === 'late' ? Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth)) : 0;
       results.push({
         leaseId: lease.id,
         renterId: lease.renter_id,
@@ -144,11 +202,77 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
         dueDate: arrears.dueDate,
         daysLate: arrears.daysLate,
         unpaidMonths,
-        amountOwed: unpaidMonths * Number(lease.monthly_rent),
+        openingDebtRemaining,
+        amountOwed: unpaidMonths * Number(lease.monthly_rent) + openingDebtRemaining,
       });
     }
   }
   return results;
+}
+
+/**
+ * Fige, pour chaque bail actif pendant le mois `period` clôturé, le montant
+ * dû à cet instant (loyers en retard + reliquat de dette initiale non
+ * soldé) dans `lease_balance_snapshots` — décision explicite de
+ * l'utilisateur : un mois clôturé ne doit jamais changer de réponse à « que
+ * devait-il à cette date-là », même si `computeArrears` évolue plus tard.
+ * INSERT-only, appelé une seule fois par `POST /api/accounting/periods`
+ * juste après la clôture — la contrainte UNIQUE (tenant_id, period,
+ * lease_id) protège aussi contre un double appel accidentel.
+ *
+ * Portée des baux : même critère que `getPeriodClosability`
+ * (`accountingPeriods.js`) — chevauche la période, actif ou déjà terminé,
+ * jamais seulement `status = 'active'` (un bail terminé en cours de mois
+ * devait encore quelque chose au moment de la clôture).
+ */
+async function snapshotLeaseBalances(tenantId, period) {
+  const [y, m] = period.split('-').map(Number);
+  const first = `${period}-01`;
+  const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+
+  const [leases] = await pool.query(
+    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.opening_debt_amount,
+            l.created_at, l.up_to_date_at_onboarding
+     FROM leases l
+     WHERE l.tenant_id = :tenantId AND l.start_date <= :last AND (l.end_date IS NULL OR l.end_date >= :first)`,
+    { tenantId, first, last },
+  );
+  if (leases.length === 0) return;
+
+  const leaseIds = leases.map((l) => l.id);
+  const placeholders = leaseIds.map(() => '?').join(',');
+  const [payments] = await pool.query(
+    `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders})`,
+    leaseIds,
+  );
+  const paymentsByLease = new Map();
+  for (const p of payments) {
+    if (!paymentsByLease.has(p.lease_id)) paymentsByLease.set(p.lease_id, []);
+    paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month });
+  }
+  const [openingDebtPaid] = await pool.query(
+    `SELECT lease_id, SUM(amount) AS paid FROM lease_opening_debt_payments WHERE lease_id IN (${placeholders}) GROUP BY lease_id`,
+    leaseIds,
+  );
+  const openingDebtPaidByLease = new Map(openingDebtPaid.map((r) => [r.lease_id, Number(r.paid)]));
+
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const rows = leases.map((lease) => {
+    const startDate = lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
+    const arrears = computeArrears({
+      startDate,
+      createdAt: lease.created_at,
+      upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
+      rentDueDay: lease.rent_due_day,
+      payments: paymentsByLease.get(lease.id) || [],
+    });
+    const unpaidMonths = arrears.status === 'late' ? Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth)) : 0;
+    const openingDebtRemaining = Math.max(0, Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0));
+    const amountDue = unpaidMonths * Number(lease.monthly_rent) + openingDebtRemaining;
+    return [tenantId, period, lease.id, amountDue];
+  });
+
+  await pool.query('INSERT INTO lease_balance_snapshots (tenant_id, period, lease_id, amount_due) VALUES ?', [rows]);
 }
 
 /**
@@ -175,6 +299,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
   }
   const [activeLeases] = await pool.query(
     `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day,
+            l.created_at, l.up_to_date_at_onboarding,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
             un.code AS unit_code, p.code AS property_code
      FROM leases l
@@ -208,6 +333,8 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
     const leasePayments = paymentsByLease.get(lease.id) || [];
     const arrears = computeArrears({
       startDate,
+      createdAt: lease.created_at,
+      upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
       payments: leasePayments.map((p) => ({ coversMonth: p.covers_month })),
     });
@@ -252,4 +379,5 @@ module.exports = {
   monthsBetweenInclusive,
   listPortfolioArrears,
   listPredictiveLateAlerts,
+  snapshotLeaseBalances,
 };

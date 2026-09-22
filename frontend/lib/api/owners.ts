@@ -68,10 +68,21 @@ export type CommissionRate = {
   createdAt: string;
 };
 
+/**
+ * Compte séquestre par mandat (comptabilité simple) : recette nette
+ * cumulée depuis toujours (tous les Biens de ce propriétaire, commission
+ * déjà déduite) moins les versements déjà effectués — ce que le cabinet
+ * détient ACTUELLEMENT pour son compte.
+ */
+export type EscrowBalance = { totalCollected: number; totalPayouts: number; balance: number };
+
 export function getOwner(accessToken: string, id: number) {
   return apiFetch<{
     owner: Owner;
     properties: OwnerProperty[];
+    escrowBalance: EscrowBalance;
+    /** Impayés des locataires à l'entrée, non réglés (montant brut, jamais mélangé à `escrowBalance`). */
+    openingDebtUnpaid: number;
     payouts: OwnerPayout[];
     activeCommissionRate: CommissionRate | null;
     commissionRates: CommissionRate[];

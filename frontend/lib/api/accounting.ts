@@ -19,8 +19,13 @@ export type Expense = {
   label: string;
   amount: number;
   expenseDate: string;
-  paymentMethod: PaymentMethod;
-  paymentMethodLabel: string;
+  paymentStatus: "paid" | "unpaid";
+  // `null` uniquement pour une dépense "à crédit" pas encore réglée.
+  paymentMethod: PaymentMethod | null;
+  paymentMethodLabel: string | null;
+  paidAt: string | null;
+  supplierId: number | null;
+  supplierName: string | null;
   notes: string | null;
   receiptUrl: string | null;
   // Facultatif : dépense rattachée à un Bien (et une Unité précise en son
@@ -36,10 +41,13 @@ export type Expense = {
   createdAt: string;
 };
 
+export type FixedAssetCategory = "informatique" | "mobilier" | "transport";
+
 export function getAccountingMeta(accessToken: string) {
   return apiFetch<{
     categories: { key: ExpenseCategory; label: string }[];
     paymentMethods: PaymentMethod[];
+    fixedAssetCategories: { key: FixedAssetCategory; label: string }[];
   }>("/api/accounting/meta", { accessToken });
 }
 
@@ -61,7 +69,11 @@ export type CreateExpenseInput = {
   label: string;
   amount: number;
   expenseDate: string;
-  paymentMethod: PaymentMethod;
+  /** "paid" (défaut) : réglée immédiatement, comme avant — requiert `paymentMethod`. "unpaid" : à crédit — requiert `supplierName`, jamais `paymentMethod`. */
+  paymentStatus?: "paid" | "unpaid";
+  paymentMethod?: PaymentMethod;
+  /** Créé à la volée si nouveau (recherché par nom exact pour cette entreprise). */
+  supplierName?: string;
   notes?: string;
   receipt?: File;
   /** Rattache la dépense à un Bien (réduit sa recette nette) ; `unitId` doit appartenir à ce Bien. */
@@ -76,7 +88,9 @@ export function createExpense(accessToken: string, input: CreateExpenseInput) {
   fd.append("label", rest.label);
   fd.append("amount", String(rest.amount));
   fd.append("expenseDate", rest.expenseDate);
-  fd.append("paymentMethod", rest.paymentMethod);
+  fd.append("paymentStatus", rest.paymentStatus ?? "paid");
+  if (rest.paymentMethod) fd.append("paymentMethod", rest.paymentMethod);
+  if (rest.supplierName) fd.append("supplierName", rest.supplierName);
   if (rest.notes) fd.append("notes", rest.notes);
   if (rest.propertyId) fd.append("propertyId", String(rest.propertyId));
   if (rest.unitId) fd.append("unitId", String(rest.unitId));
@@ -86,6 +100,22 @@ export function createExpense(accessToken: string, input: CreateExpenseInput) {
     accessToken,
     body: fd,
   });
+}
+
+/** Solde une dépense "à crédit" — génère le règlement comptable (voir routes/accounting.js). */
+export function paySupplierExpense(accessToken: string, expenseId: number, input: { paymentMethod: PaymentMethod; paidAt: string }) {
+  return apiFetch<void>(`/api/accounting/expenses/${expenseId}/pay`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export type Supplier = { id: number; name: string; totalOwed: number };
+
+export function listSuppliers(accessToken: string) {
+  return apiFetch<{ suppliers: Supplier[] }>("/api/accounting/suppliers", { accessToken });
 }
 
 export type UpdateExpenseInput = Partial<Omit<CreateExpenseInput, "receipt">>;
@@ -115,6 +145,8 @@ export type TenantArrearsEntry = {
   renterName: string;
   daysLate: number;
   unpaidMonths: number;
+  /** Reliquat d'impayés à l'entrée (onboarding) — distinct du retard de loyer, voir `unpaidMonths`. */
+  openingDebtRemaining: number;
   amountOwed: number;
 };
 
@@ -151,11 +183,39 @@ export type AccountingDashboard = {
     unpaidChargesCount: number;
     tenantArrears: number;
     tenantArrearsCount: number;
+    // Frais d'agence pris directement au locataire à l'entrée — 100 % produit
+    // du cabinet, jamais compté dans la recette du propriétaire (à part de
+    // `rentCollected`, qui lui se répartit encore entre commission et
+    // propriétaire) ; déjà inclus dans `netCashFlow`.
+    entryFeesCollected: number;
+    entryFeesCollectedCount: number;
     netCashFlow: number;
   };
   expensesByCategory: { category: ExpenseCategory; total: number }[];
   unpaidChargesByType: { utilityType: UtilityType; total: number; count: number }[];
   tenantArrears: TenantArrearsEntry[];
+  /**
+   * Comptes séquestres par mandat : combien le cabinet détient ACTUELLEMENT
+   * pour chaque propriétaire (cumulé depuis toujours, pas borné à
+   * `period.from/to` comme `totals` ci-dessus).
+   */
+  escrow: { total: number; openingDebtUnpaidTotal: number; byOwner: EscrowByOwnerEntry[] };
+  /**
+   * Garde-fou (cas réel trouvé 2026-09-22) : propriétaires avec des loyers
+   * déjà encaissés mais AUCUN taux de commission jamais défini — 0 %
+   * appliqué en silence sinon. Jamais borné à la période affichée.
+   */
+  ownersWithoutCommissionRate: { ownerId: number; ownerName: string; totalCollected: number }[];
+};
+
+export type EscrowByOwnerEntry = {
+  ownerId: number;
+  ownerName: string;
+  totalCollected: number;
+  totalPayouts: number;
+  balance: number;
+  /** Impayés de locataire(s) à l'entrée, non réglés, pour ce propriétaire — montant brut, jamais mélangé à `balance`. */
+  openingDebtUnpaid: number;
 };
 
 export function getDashboard(accessToken: string, from: string, to: string) {
@@ -277,6 +337,8 @@ export type PortfolioArrearsEntry = {
   dueDate: string;
   daysLate: number;
   unpaidMonths: number;
+  /** Reliquat d'impayés à l'entrée (onboarding) — distinct du retard de loyer, voir `unpaidMonths`. */
+  openingDebtRemaining: number;
   amountOwed: number;
 };
 
@@ -324,4 +386,85 @@ export type UtilityArrearsEntry = {
 
 export function listUtilityArrears(accessToken: string) {
   return apiFetch<{ arrears: UtilityArrearsEntry[]; total: number }>("/api/accounting/utility-arrears", { accessToken });
+}
+
+// Immobilisations du cabinet (matériel propre à l'agence — jamais les Biens
+// gérés pour le compte des propriétaires). Même schéma "à crédit" que les
+// dépenses ; la valeur nette comptable reflète uniquement les mois
+// d'amortissement RÉELLEMENT saisis, jamais une estimation théorique.
+export type FixedAsset = {
+  id: number;
+  label: string;
+  category: FixedAssetCategory;
+  acquisitionDate: string;
+  acquisitionCost: number;
+  usefulLifeYears: number;
+  paymentStatus: "paid" | "unpaid";
+  paymentMethod: PaymentMethod | null;
+  paymentMethodLabel: string | null;
+  paidAt: string | null;
+  supplierId: number | null;
+  supplierName: string | null;
+  status: "active" | "disposed";
+  disposedAt: string | null;
+  accumulatedDepreciation: number;
+  bookValue: number;
+  createdAt: string;
+};
+
+export function listFixedAssets(accessToken: string) {
+  return apiFetch<{ fixedAssets: FixedAsset[] }>("/api/accounting/fixed-assets", { accessToken });
+}
+
+export type CreateFixedAssetInput = {
+  label: string;
+  category: FixedAssetCategory;
+  acquisitionDate: string;
+  acquisitionCost: number;
+  usefulLifeYears: number;
+  /** "paid" (défaut) : réglée immédiatement — requiert `paymentMethod`. "unpaid" : à crédit — requiert `supplierName`. */
+  paymentStatus?: "paid" | "unpaid";
+  paymentMethod?: PaymentMethod;
+  supplierName?: string;
+};
+
+export function createFixedAsset(accessToken: string, input: CreateFixedAssetInput) {
+  return apiFetch<{ fixedAssetId: number }>("/api/accounting/fixed-assets", {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export type FixedAssetDepreciationEntry = { period: string; amount: number; recordedBy: Actor; createdAt: string };
+
+export function getFixedAsset(accessToken: string, id: number) {
+  return apiFetch<{ fixedAsset: FixedAsset; depreciations: FixedAssetDepreciationEntry[] }>(
+    `/api/accounting/fixed-assets/${id}`,
+    { accessToken },
+  );
+}
+
+/** Solde une immobilisation "à crédit" — génère le règlement comptable (481). */
+export function payFixedAsset(accessToken: string, id: number, input: { paymentMethod: PaymentMethod; paidAt: string }) {
+  return apiFetch<void>(`/api/accounting/fixed-assets/${id}/pay`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Enregistre un mois d'amortissement (acte saisi, jamais automatique). */
+export function depreciateFixedAsset(accessToken: string, id: number, period: string) {
+  return apiFetch<{ depreciationId: number; amount: number; remainingBookValue: number }>(
+    `/api/accounting/fixed-assets/${id}/depreciate`,
+    {
+      method: "POST",
+      accessToken,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ period }),
+    },
+  );
 }

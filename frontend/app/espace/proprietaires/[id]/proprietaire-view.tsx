@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, FileDown, Wallet, Building2, ShieldCheck, Pencil, Percent, Link2, Copy, Check, MessageCircle } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, FileDown, Wallet, Building2, ShieldCheck, Pencil, Percent, Link2, Copy, Check, MessageCircle, Landmark } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
@@ -18,6 +18,7 @@ import {
   type OwnerPayout,
   type CreatePayoutInput,
   type CommissionRate,
+  type EscrowBalance,
 } from "@/lib/api/owners";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa, formatDateLabel, cn } from "@/lib/utils";
@@ -74,6 +75,8 @@ function ProprietaireContent() {
   const [owner, setOwner] = React.useState<Owner | null>(null);
   const [properties, setProperties] = React.useState<OwnerProperty[] | null>(null);
   const [payouts, setPayouts] = React.useState<OwnerPayout[] | null>(null);
+  const [escrowBalance, setEscrowBalance] = React.useState<EscrowBalance | null>(null);
+  const [openingDebtUnpaid, setOpeningDebtUnpaid] = React.useState(0);
   const [activeCommissionRate, setActiveCommissionRate] = React.useState<CommissionRate | null>(null);
   const [commissionRates, setCommissionRates] = React.useState<CommissionRate[]>([]);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -86,6 +89,8 @@ function ProprietaireContent() {
         setOwner(res.owner);
         setProperties(res.properties);
         setPayouts(res.payouts);
+        setEscrowBalance(res.escrowBalance);
+        setOpeningDebtUnpaid(res.openingDebtUnpaid);
         setActiveCommissionRate(res.activeCommissionRate);
         setCommissionRates(res.commissionRates);
       })
@@ -278,6 +283,8 @@ function ProprietaireContent() {
           />
         )}
 
+        <EscrowBalanceCard escrow={escrowBalance} openingDebtUnpaid={openingDebtUnpaid} />
+
         <Card>
           <CardHeader>
             <CardTitle>Versements</CardTitle>
@@ -320,6 +327,63 @@ function ProprietaireContent() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/**
+ * Compte séquestre par mandat (comptabilité simple) : ce que le cabinet
+ * détient ACTUELLEMENT pour ce propriétaire — recette nette cumulée depuis
+ * toujours (commission déjà déduite), moins les versements déjà effectués.
+ * Un solde négatif (versé plus que ce qui a été réellement collecté net)
+ * est signalé plutôt que masqué — situation anormale à vérifier.
+ */
+function EscrowBalanceCard({ escrow, openingDebtUnpaid }: { escrow: EscrowBalance | null; openingDebtUnpaid: number }) {
+  if (!escrow) return null;
+  const isNegative = escrow.balance < 0;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Landmark size={18} className="text-primary" />
+          Compte séquestre
+        </CardTitle>
+        <CardDescription>
+          Argent collecté pour le compte de ce propriétaire, pas encore reversé.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <p className="text-body-xs uppercase tracking-wider text-ink-muted">Recette nette cumulée</p>
+            <p className="tabular font-currency-table text-headline-sm text-ink">{formatFcfa(escrow.totalCollected)}</p>
+          </div>
+          <div>
+            <p className="text-body-xs uppercase tracking-wider text-ink-muted">Déjà reversé</p>
+            <p className="tabular font-currency-table text-headline-sm text-ink">{formatFcfa(escrow.totalPayouts)}</p>
+          </div>
+          <div>
+            <p className="text-body-xs uppercase tracking-wider text-ink-muted">Détenu actuellement</p>
+            <p className={cn("tabular font-currency-table text-headline-sm", isNegative ? "text-danger-fg" : "text-success-fg")}>
+              {formatFcfa(escrow.balance)}
+            </p>
+          </div>
+        </div>
+        {isNegative && (
+          <p className="mt-3 text-body-xs text-danger-fg">
+            Ce propriétaire a reçu plus que sa recette nette cumulée réellement collectée — à vérifier.
+          </p>
+        )}
+        {/* Ligne distincte, jamais mélangée aux chiffres ci-dessus (décision
+            explicite de l'utilisateur) : de l'argent pas encore réellement
+            collecté ne doit jamais se confondre avec le solde réel détenu. */}
+        {openingDebtUnpaid > 0 && (
+          <div className="mt-4 flex items-center justify-between rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5">
+            <span className="text-body-sm text-warning-fg">Impayés de locataire(s) à l&apos;entrée</span>
+            <span className="tabular font-currency-table text-warning-fg">{formatFcfa(openingDebtUnpaid)}</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -14,11 +14,13 @@ import {
   type ChargeStatus,
 } from "@/lib/api/charges";
 import { listClosedPeriods } from "@/lib/api/accounting";
+import { generateChargePaymentLink } from "@/lib/api/paymentLinks";
 import type { PaymentMethod } from "@/lib/api/renters";
 import { UTILITY_TYPE_LABELS, CHARGE_STATUS_LABELS } from "@/lib/constants/charges";
 import { ApiError } from "@/lib/api/client";
 import { formatFcfa, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { PaymentLinkCard } from "@/components/payments/payment-link-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
@@ -227,7 +229,9 @@ function ChargeRow({
   locked: boolean;
   onChanged: () => void;
 }) {
+  const { tenant } = useAuth();
   const [paying, setPaying] = React.useState(false);
+  const [showLink, setShowLink] = React.useState(false);
   const [editing, setEditing] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [deleteReason, setDeleteReason] = React.useState("");
@@ -370,8 +374,29 @@ function ChargeRow({
               <Button size="sm" onClick={handlePay} disabled={submitting}>
                 {submitting ? "…" : "Confirmer le règlement"}
               </Button>
+              {tenant?.kkiapayEnabled && !showLink && (
+                <Button size="sm" variant="secondary" onClick={() => setShowLink(true)}>
+                  Ou envoyer un lien de paiement
+                </Button>
+              )}
               <Button size="sm" variant="ghost" onClick={() => setPaying(false)} disabled={submitting}>Annuler</Button>
             </div>
+            {showLink && (
+              <PaymentLinkCard
+                title="Lien de paiement en ligne"
+                description={`Pour que ${charge.renter.firstName} règle cette facture par Mobile Money ou carte, sans portail actif.`}
+                phone={charge.renter.phone}
+                whatsappMessage={(url, amount) =>
+                  [
+                    `Bonjour ${charge.renter.firstName},`,
+                    `Voici un lien pour régler votre facture ${UTILITY_TYPE_LABELS[charge.utilityType]} (${formatFcfa(amount)}) en ligne, par Mobile Money ou carte :`,
+                    url,
+                    `Ce lien expire sous 48h.`,
+                  ].join("\n")
+                }
+                onGenerate={() => generateChargePaymentLink(accessToken!, charge.id)}
+              />
+            )}
           </div>
         </TableCell>
       </TableRow>

@@ -10,6 +10,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { updateSettingsSchema } = require('../validators/settings');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
 const { DEFAULT_CONTRACT_TEMPLATE, CONTRACT_PLACEHOLDERS } = require('../constants/contract');
+const { ROLE_TITLE_PRESETS, resolveRoleLabels } = require('../constants/roles');
+const { encryptSecret } = require('../utils/encryption');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -37,6 +39,20 @@ function toPublicSettings(tenant) {
     placeholders: CONTRACT_PLACEHOLDERS,
     stampUrl: tenant.stamp_path ? `/uploads/${tenant.stamp_path}` : null,
     signatureUrl: tenant.signature_path ? `/uploads/${tenant.signature_path}` : null,
+    // Nom des 3 postes chez cette entreprise (Réglages) — menu déroulant
+    // fermé, voir constants/roles.js. Affiché partout, y compris à la
+    // connexion employé (voir GET /api/auth/role-titles, public).
+    roleTitles: resolveRoleLabels(tenant),
+    roleTitlePresets: ROLE_TITLE_PRESETS,
+    // Paiement en ligne (KKiaPay) : la clé publique est sans risque (faite
+    // pour être embarquée côté client), mais les clés privée/secrète ne
+    // sont JAMAIS renvoyées, même à ce DG — `kkiapayConfigured` indique
+    // seulement si elles sont déjà enregistrées, pour affichage (ex. « clé
+    // déjà configurée, laissez vide pour la conserver »).
+    kkiapayEnabled: !!tenant.kkiapay_enabled,
+    kkiapaySandbox: !!tenant.kkiapay_sandbox,
+    kkiapayPublicKey: tenant.kkiapay_public_key,
+    kkiapayConfigured: !!(tenant.kkiapay_private_key_enc && tenant.kkiapay_secret_key_enc),
   };
 }
 
@@ -72,6 +88,56 @@ router.patch(
       if (data.contractTemplate !== undefined) {
         fields.push('contract_template = :contractTemplate');
         params.contractTemplate = data.contractTemplate;
+      }
+      if (data.dgTitle !== undefined) {
+        fields.push('dg_title = :dgTitle');
+        params.dgTitle = data.dgTitle;
+      }
+      if (data.comptableTitle !== undefined) {
+        fields.push('comptable_title = :comptableTitle');
+        params.comptableTitle = data.comptableTitle;
+      }
+      if (data.agentTitle !== undefined) {
+        fields.push('agent_title = :agentTitle');
+        params.agentTitle = data.agentTitle;
+      }
+      if (data.kkiapaySandbox !== undefined) {
+        fields.push('kkiapay_sandbox = :kkiapaySandbox');
+        params.kkiapaySandbox = data.kkiapaySandbox;
+      }
+      if (data.kkiapayPublicKey !== undefined) {
+        fields.push('kkiapay_public_key = :kkiapayPublicKey');
+        params.kkiapayPublicKey = data.kkiapayPublicKey;
+      }
+      // Écriture seule : un champ vide/absent laisse la clé déjà enregistrée
+      // intacte (sinon rouvrir Réglages sans rien taper l'effacerait à
+      // chaque sauvegarde, puisqu'elle n'est jamais renvoyée en clair).
+      if (data.kkiapayPrivateKey) {
+        fields.push('kkiapay_private_key_enc = :kkiapayPrivateKeyEnc');
+        params.kkiapayPrivateKeyEnc = encryptSecret(data.kkiapayPrivateKey);
+      }
+      if (data.kkiapaySecretKey) {
+        fields.push('kkiapay_secret_key_enc = :kkiapaySecretKeyEnc');
+        params.kkiapaySecretKeyEnc = encryptSecret(data.kkiapaySecretKey);
+      }
+      if (data.kkiapayEnabled !== undefined) {
+        if (data.kkiapayEnabled) {
+          // Activer n'a de sens que si les 3 clés existent (déjà en base ou
+          // fournies dans cette même requête) — sinon le bouton « Payer
+          // maintenant » apparaîtrait côté locataire sans rien derrière.
+          const [[current]] = await pool.query(
+            'SELECT kkiapay_public_key, kkiapay_private_key_enc, kkiapay_secret_key_enc FROM tenants WHERE id = :id LIMIT 1',
+            { id: req.user.tenantId },
+          );
+          const hasPublicKey = data.kkiapayPublicKey ?? current?.kkiapay_public_key;
+          const hasPrivateKey = data.kkiapayPrivateKey || current?.kkiapay_private_key_enc;
+          const hasSecretKey = data.kkiapaySecretKey || current?.kkiapay_secret_key_enc;
+          if (!hasPublicKey || !hasPrivateKey || !hasSecretKey) {
+            throw new ApiError(400, 'Renseignez les 3 clés KKiaPay (publique, privée, secrète) avant d\'activer le paiement en ligne.');
+          }
+        }
+        fields.push('kkiapay_enabled = :kkiapayEnabled');
+        params.kkiapayEnabled = data.kkiapayEnabled;
       }
 
       const stampFile = req.files?.stamp?.[0];

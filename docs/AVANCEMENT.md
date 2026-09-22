@@ -4154,3 +4154,208 @@ Tout testé via l'API réelle sur un tenant jetable (jamais KIko Store pour les 
 - Tenant jetable supprimé après coup, cascade FK vérifiée jusque `document_issuances` (0
   ligne restante) ; KIko Store reconfirmé intact (14 baux).
 - `tsc --noEmit`/`next lint`/`node -c` propres sur tous les fichiers modifiés.
+
+---
+
+## Étape 30 — Paiement en ligne optionnel (KKiaPay)
+
+Demande directe de l'utilisateur : chaque entreprise cliente peut désormais activer,
+si elle le souhaite, l'encaissement en ligne (Mobile Money/carte) via **KKiaPay**
+(agrégateur béninois), pour le loyer ET les charges SONEB/SBEE — sans jamais l'imposer.
+Une entreprise qui n'active rien continue de fonctionner exactement comme avant (paiements
+enregistrés manuellement). Deux points d'entrée : le portail locataire (libre-service) et un
+lien de paiement généré par le personnel (pour un locataire sans portail actif, envoyé à la
+main par WhatsApp).
+
+Modèle KKiaPay : chaque entreprise a son propre compte et ses 3 clés (publique/privée/
+secrète) — pas de sous-comptes côté agrégateur. Règle non négociable de leur documentation :
+ne jamais faire confiance au callback client, toute confirmation doit être revérifiée côté
+serveur (`verify()`) avant d'enregistrer quoi que ce soit.
+
+### Fichiers ajoutés/modifiés
+
+- **`backend/src/db/migrations/037_kkiapay.sql`**, **`038_kkiapay_charge_method.sql`** :
+  `tenants.kkiapay_enabled/kkiapay_sandbox/kkiapay_public_key/kkiapay_private_key_enc/
+  kkiapay_secret_key_enc` ; `rent_payments`/`utility_payments.kkiapay_transaction_id`
+  (UNIQUE — idempotence au niveau base) et `recorded_by` rendu NULLABLE (un paiement KKiaPay
+  n'a pas d'employé qui l'a saisi, même raisonnement que `complaints.created_by`) ; ajout de
+  `kkiapay` aux ENUM `payment_method` (`rent_payments`, `utility_payments`,
+  `utility_charges`) ; nouvelle table `payment_links` (liens générés par le personnel, même
+  schéma de token à sens unique que le portail).
+- **`backend/src/utils/encryption.js`** (nouveau) : AES-256-GCM — première capacité de
+  chiffrement RÉVERSIBLE du projet (tout le reste, mots de passe/tokens, est à sens unique).
+  Nouvelle variable d'environnement globale `SECRETS_ENCRYPTION_KEY`.
+- **`backend/src/services/kkiapay.js`** (nouveau) : client KKiaPay écrit à la main avec
+  `fetch` natif plutôt que le SDK officiel `@kkiapay-org/nodejs-sdk` — ce dernier embarque
+  axios^0.27.2, porteur d'une longue liste de CVE connues pour ne wrapper que deux appels
+  HTTP triviaux. `verifyTransaction()` (revérification serveur obligatoire) et
+  `verifyWebhookOrigin()` (comparaison à temps constant du secret webhook).
+- **`backend/src/services/paymentVerification.js`** (nouveau) : `verifyAndRecordKkiapay()`,
+  point d'entrée UNIQUE appelé par les 3 chemins (portail, lien de paiement, webhook) —
+  idempotence, revérification serveur, et recoupement de la référence interne (voir bug de
+  sécurité ci-dessous).
+- **`backend/src/routes/leases.js`**, **`charges.js`** : extraction de `recordRentPayment()`/
+  `recordUtilityPayment()`, désormais seuls points d'insertion dans `rent_payments`/
+  `utility_payments` (la route manuelle existante les appelle aussi, comportement inchangé) ;
+  nouvelles routes `POST /:leaseId/payment-links` et `POST /:id/payment-links` (staff,
+  mêmes permissions que l'enregistrement manuel).
+- **`backend/src/routes/portal.js`** : `GET /:token` expose désormais les charges SONEB/SBEE
+  impayées (nouveauté — absentes du portail jusqu'ici) et la config KKiaPay publique ;
+  nouvelles routes `POST /:token/payments/verify` et `.../charges/:chargeId/payments/verify`.
+- **`backend/src/routes/paymentLinks.js`**, **`kkiapayWebhook.js`** (nouveaux, montés en
+  public avant `utilityReadingRoutes` — même piège que les autres routes publiques) :
+  `GET/POST /api/pay/:token` (page publique) et `POST /api/webhooks/kkiapay` (défense en
+  profondeur, capte les paiements confirmés quand le client ne revient jamais sur `verify`).
+- **`backend/src/routes/settings.js`**, **`validators/settings.js`** : section Réglages
+  KKiaPay (DG uniquement) — activer exige les 3 clés déjà présentes ou fournies dans la même
+  requête ; clés privée/secrète en écriture seule, jamais relues en clair.
+- Frontend : `lib/kkiapay.ts` (chargement du widget CDN + `payWithKkiapay()`),
+  `components/payments/pay-now-button.tsx` et `payment-link-card.tsx` (partagés),
+  `app/payer/[token]/` (nouvelle page publique), portail locataire (bouton « Payer
+  maintenant » + bloc charges), fiche locataire et fiche charge (bouton « Générer un lien de
+  paiement », révélation unique + envoi WhatsApp, même schéma que le lien de portail).
+
+### Revue de sécurité demandée explicitement par l'utilisateur, point par point
+
+- **Faille réelle trouvée et corrigée** : sans protection supplémentaire, un tiers connaissant
+  le `transactionId` RÉEL d'un paiement appartenant à quelqu'un d'autre (même entreprise)
+  aurait pu le soumettre à son propre contexte — la revérification KKiaPay aurait confirmé
+  que la transaction existe et a réussi (vrai), mais sans recoupement, l'argent se serait
+  retrouvé crédité au mauvais bail/facture. Corrigé : `verifyAndRecordKkiapay` compare
+  désormais la référence que KKiaPay associe réellement à la transaction (`partnerId`/`data`
+  échoïsés dans sa réponse) avec celle attendue pour CE paiement précis, sur les 3 points
+  d'entrée.
+- Webhook sans quota dédié → ajouté (300/15min), même principe que les autres routes
+  publiques (chaque requête forgée coûte au moins une lecture base avant rejet).
+- Validation de type durcie sur les champs du corps du webhook (entrée externe non fiable).
+- Vérifié sain sans changement nécessaire : paramètres SQL nommés partout (y compris le nom
+  de table dynamique, dérivé d'un ternaire interne) ; comparaison du secret webhook déjà à
+  temps constant avec garde de longueur ; manipulation du montant côté widget sans
+  conséquence exploitable (le serveur n'utilise jamais un montant fourni par le client,
+  seulement celui confirmé par KKiaPay) ; portée agent respectée pour la génération de liens
+  de loyer ; 404 générique systématique sur un lien de paiement invalide/expiré/déjà payé.
+- Trouvé en cours de route (pas une faille, un oubli du plan initial) : le journal
+  d'activité affichait « Auteur inconnu » pour un paiement en ligne (`recorded_by` NULL par
+  design) — corrigé pour afficher « Paiement en ligne (KKiaPay) ».
+
+### Tests effectués
+
+Tout testé via l'API réelle sur un tenant jetable (jamais KIko Store pour les écritures),
+jetons d'accès mintés directement (pas de mot de passe connu pour ce tenant) :
+- Chiffrement : aller-retour clé privée/secrète + détection de falsification (authTag GCM)
+  vérifiés en isolation avant intégration.
+- `recordRentPayment`/`recordUtilityPayment` appelés directement : paiement manuel inchangé,
+  paiement KKiaPay multi-mois (`recorded_by` NULL sur les deux lignes, `kkiapay_transaction_id`
+  attaché uniquement à la première pour respecter la contrainte UNIQUE), règlement de charge
+  (statut basculé `payee`, `paid_recorded_by` NULL) — puis rejeu du même `transactionId` :
+  contrainte UNIQUE déclenchée comme attendu (`ER_DUP_ENTRY`).
+- Réglages : activation refusée sans les 3 clés, acceptée une fois fournies ; clés stockées
+  chiffrées en base (vérifié par déchiffrement direct) et absentes de toute réponse API.
+- Lien de paiement bout-en-bout réel : génération (`POST /api/leases/:id/payment-links`),
+  résolution publique (`GET /api/pay/:token`, bon montant/bonne clé publique), tentative de
+  vérification avec un `transactionId` inventé → rejetée proprement par l'appel réel à l'API
+  KKiaPay (HTTP 401 avec clés factices), serveur resté sain après, aucun paiement enregistré.
+- Page publique `/payer/:token` testée en navigateur (Firefox headless) : affichage correct,
+  clic sur « Payer maintenant » sans crash (échec attendu faute de vraies clés sandbox),
+  aucune erreur console.
+- `tsc --noEmit`/`next lint`/`node -c` propres sur tous les fichiers modifiés, y compris un
+  passage complet du projet (pas seulement les fichiers touchés).
+- **Non testé** (nécessite un vrai compte KKiaPay, hors de portée de cet environnement) : le
+  chemin de succès complet (paiement réel confirmé → enregistrement), et la forme exacte du
+  payload webhook — les noms de champs plausibles sont tentés défensivement, à confirmer lors
+  de la première activation réelle par l'utilisateur.
+
+---
+
+## Étape 31 — Repérage automatique des locataires en retard, relance en un clic
+
+Demande directe de l'utilisateur, reprenant une idée de la comparaison concurrentielle
+(« relances WhatsApp automatiques pour le loyer, pas seulement les charges »). Vérification
+d'abord : contrairement à ce que suggérait la comparaison, un bouton de relance WhatsApp
+existait déjà pour le loyer sur `/espace/relances`, ET le repérage automatique des locataires
+en retard existait DÉJÀ dans le widget « Mes tâches » (`listPortfolioArrears`, étape 18) —
+aucune API WhatsApp payante n'existe dans ce projet, donc aucune des deux relances (loyer ou
+charges) n'a jamais été réellement automatique au sens « envoi sans clic humain ». Question de
+cadrage posée avant de coder ; réponse retenue : repérage automatique + rappel visible déjà
+là, envoi manuel conservé (pas d'intégration WhatsApp Business API, chantier trop lourd pour
+la demande réelle).
+
+Le vrai manque : aucune action directe dans le widget « Mes tâches » lui-même — cliquer sur
+une ligne renvoyait vers `/espace/relances` avant de pouvoir envoyer quoi que ce soit.
+
+### Fichiers modifiés
+
+- **`frontend/components/espace/my-tasks-card.tsx`** : le composant `Row` accepte désormais un
+  slot `action` rendu HORS du lien de navigation de la ligne (jamais un élément cliquable
+  imbriqué dans un autre) ; bouton WhatsApp compact ajouté sur chaque ligne « Locataires en
+  retard », réutilisant `buildRentReminderMessage`/`buildWhatsAppHref` déjà en production sur
+  `/espace/relances` — même message, mêmes garanties, aucune donnée dupliquée côté backend
+  (`phone` était déjà renvoyé par `listPortfolioArrears`, simplement jamais exploité ici).
+
+### Tests effectués
+
+Données réelles de KIko Store lues via l'API (`GET /api/tasks` avec un jeton d'agent réel,
+lecture seule) pour confirmer la forme exacte des données. Puis bout-en-bout sur un tenant
+jetable avec un vrai agent connecté en navigateur (Firefox headless) : le lien `wa.me` généré
+contient le bon numéro, le bon nom, le bon montant et le bon nombre de jours de retard.
+Tenant jetable supprimé après coup, KIko Store reconfirmé intact (14 baux). `tsc --noEmit`/
+`next lint` propres.
+
+## Étape 32 — Envoi automatique de la quittance après un paiement
+
+Demande directe de l'utilisateur, même origine que l'étape 31. Contrainte technique posée
+avant de coder : un lien `wa.me` ne peut préremplir qu'un texte, jamais joindre un fichier —
+« envoyer la quittance » signifie donc envoyer un LIEN vers le PDF. Or le token du portail
+locataire n'est jamais récupérable après sa création (seule son empreinte est stockée) : impossible
+de le reconstruire après coup pour l'envoyer avec chaque nouvelle quittance, et tous les
+locataires n'ont pas de portail actif. Question de cadrage posée ; réponse retenue : un lien
+dédié à CETTE quittance précise, généré automatiquement, sur le même principe que les liens de
+paiement KKiaPay (étape 30).
+
+### Modèle et mécanique
+
+`document_issuances` (étape 29) étendue d'une colonne `share_token` (migration
+`039_receipt_share_link.sql`) — stockée **en clair**, à la différence des tokens de portail/
+paiement (à sens unique) : déviation délibérée, justifiée par un enjeu très inférieur (accès
+en lecture seule à UNE quittance, plafonné à 5 téléchargements par le mécanisme déjà existant
+de l'étape 29 — jamais un accès à l'ensemble du compte ni une action pouvant déplacer de
+l'argent). Le stockage en clair permet aussi de renvoyer plus tard exactement le même lien
+sans invalider un envoi précédent. Génération idempotente (`ensureShareToken`,
+`services/documentIssuance.js`).
+
+Nouvelle route publique `GET /api/recu/:token` (`routes/receiptShare.js`, montée à la racine —
+préfixe dédié `/recu` plutôt que `/documents/share`, pour ne jamais dépendre de l'ordre de
+montage par rapport à `documentRoutes`, authentifié) : sert directement le flux PDF, sans page
+Next.js intermédiaire (`Content-Type: application/pdf`, ouvrable tel quel dans un navigateur).
+Scope actuel : quittance uniquement (demande explicite) — attestation/relevé restent réservés
+au portail pour l'instant.
+
+Côté personnel : `POST /api/leases/:leaseId/payments/:paymentId/receipt-link` (nouveau,
+`routes/leases.js`) génère/récupère le lien. Le formulaire d'enregistrement de paiement
+(`PaymentRegister`, fiche locataire) l'appelle automatiquement dès qu'un paiement réussit —
+sans action supplémentaire du personnel — et affiche aussitôt un bandeau « Envoyer la
+quittance par WhatsApp » prêt à cliquer. Un bouton d'envoi discret a aussi été ajouté sur
+chaque ligne de l'historique des paiements, pour renvoyer une quittance plus ancienne.
+
+### Fichiers ajoutés/modifiés
+
+- `backend/src/db/migrations/039_receipt_share_link.sql`, `services/documentIssuance.js`
+  (`ensureShareToken`, `findByShareToken`), `routes/receiptShare.js` (nouveau), `routes/index.js`
+  (montage `/recu`, avant `utilityReadingRoutes`), `routes/leases.js` (nouvelle route
+  `receipt-link`).
+- `frontend/lib/api/renters.ts` (`generateReceiptShareLink`, `receiptShareUrl`),
+  `lib/utils.ts` (`buildReceiptMessage`), `app/espace/locataires/[id]/locataire-view.tsx`
+  (bandeau automatique + composant `ResendReceiptButton` pour l'historique).
+
+### Tests effectués
+
+Sur un vrai paiement de KIko Store (lecture/génération non destructive) : génération du lien
+(idempotente — rappel renvoie le même token), téléchargement public du PDF sans aucune
+authentification (200, `application/pdf`, contenu vérifié avec `pdftotext` — bonne quittance,
+bon numéro), token invalide → 404 générique, compteur de téléchargement bien incrémenté (1/5)
+puis remis à zéro via la fonctionnalité de réinitialisation déjà existante (aucune trace
+laissée). Puis bout-en-bout sur un tenant jetable, en navigateur réel : paiement enregistré
+via le vrai formulaire → bandeau vert apparu automatiquement avec le lien WhatsApp prêt
+(numéro, montant, mois et URL corrects) ; bouton de renvoi sur la ligne d'historique
+également visible. Tenant jetable supprimé après coup, KIko Store reconfirmé intact (14
+baux). `tsc --noEmit`/`next lint` propres.

@@ -622,7 +622,10 @@ function LocationCard({
         {!editing ? (
           property.latitude != null && property.longitude != null ? (
             <div>
-              <p className="text-body-sm text-ink-soft">
+              <p className="text-body-sm text-ink">
+                {property.address || "Adresse non renseignée"}
+              </p>
+              <p className="text-body-xs text-ink-muted">
                 {property.latitude.toFixed(5)}, {property.longitude.toFixed(5)}
               </p>
               {property.locationSetAt && (

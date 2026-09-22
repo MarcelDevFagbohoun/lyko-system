@@ -80,6 +80,28 @@ export function buildUtilityReminderMessage(params: {
   ].join(" ");
 }
 
+/**
+ * Message d'envoi de quittance par WhatsApp — un lien `wa.me` ne peut
+ * préremplir qu'un texte, jamais joindre un fichier : le message contient
+ * donc un lien direct vers le PDF (voir `generateReceiptShareLink`/
+ * `receiptShareUrl`, `lib/api/renters.ts`), pas la quittance elle-même.
+ */
+export function buildReceiptMessage(params: {
+  renterFirstName: string;
+  coversMonth: string;
+  amount: number;
+  url: string;
+  companyName?: string | null;
+}): string {
+  return [
+    `Bonjour ${params.renterFirstName},`,
+    `Nous confirmons la réception de votre paiement de ${formatFcfa(params.amount)} pour ${monthLabelFr(params.coversMonth)}.`,
+    `Votre quittance : ${params.url}`,
+    `Merci !`,
+    params.companyName ? `Cordialement, ${params.companyName}` : "",
+  ].join(" ");
+}
+
 /** Mois suivant, format « AAAA-MM ». */
 export function addMonth(yearMonth: string): string {
   const [y, m] = yearMonth.split("-").map(Number);
@@ -160,4 +182,40 @@ export function formatFcfa(amount: number, opts?: { withSuffix?: boolean }): str
   const n = Number.isFinite(amount) ? Math.round(amount) : 0;
   const grouped = n.toLocaleString("fr-FR").replace(/ |\s/g, " ");
   return withSuffix ? `${grouped} FCFA` : grouped;
+}
+
+/**
+ * Retard exprimé en mois + jours plutôt qu'en jours bruts (demande directe
+ * de l'utilisateur : au-delà d'un mois, "103 j" se lit mal — "3 mois et
+ * 13 j" est plus clair). Sous un mois, reste en jours seuls.
+ */
+export function formatLateDuration(monthsLate: number, remainderDaysLate: number, daysLate: number): string {
+  if (monthsLate <= 0) return `${daysLate} j`;
+  const monthLabel = monthsLate === 1 ? "1 mois" : `${monthsLate} mois`;
+  return remainderDaysLate > 0 ? `${monthLabel} et ${remainderDaysLate} j` : monthLabel;
+}
+
+/**
+ * Texte + urgence d'une tâche à délai (demande directe de l'utilisateur) :
+ * « à faire aujourd'hui », « reste N jour(s) », ou en retard passé la date
+ * limite si elle n'est pas encore marquée terminée.
+ */
+export function formatTaskDueLabel(
+  dueDate: string,
+  completedAt: string | null,
+): { text: string; urgency: "done" | "overdue" | "today" | "soon" | "later" } {
+  if (completedAt) return { text: "Terminée", urgency: "done" };
+
+  const [y, m, d] = dueDate.split("-").map(Number);
+  const due = Date.UTC(y, m - 1, d);
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const daysUntil = Math.round((due - today) / 86_400_000);
+
+  if (daysUntil < 0) {
+    const n = Math.abs(daysUntil);
+    return { text: `En retard de ${n} jour${n > 1 ? "s" : ""}`, urgency: "overdue" };
+  }
+  if (daysUntil === 0) return { text: "À faire aujourd'hui", urgency: "today" };
+  return { text: `Reste ${daysUntil} jour${daysUntil > 1 ? "s" : ""}`, urgency: daysUntil <= 2 ? "soon" : "later" };
 }

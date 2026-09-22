@@ -4,7 +4,7 @@ import Link from "next/link";
 import { SiteHeader } from "@/components/marketing/site-header";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { LoginTabs } from "@/components/auth/login-tabs";
+import { UnifiedLoginForm } from "@/components/auth/unified-login-form";
 
 export const metadata: Metadata = { title: "Se connecter" };
 
@@ -21,7 +21,7 @@ export default function ConnexionPage() {
             </CardHeader>
             <CardContent>
               <Suspense fallback={null}>
-                <LoginTabs />
+                <UnifiedLoginForm />
               </Suspense>
               <p className="mt-4 text-center text-body-sm text-ink-muted">
                 Pas encore de compte ?{" "}

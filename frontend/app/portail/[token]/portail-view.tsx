@@ -2,19 +2,22 @@
 
 import * as React from "react";
 import { useParams } from "next/navigation";
-import { FileCheck2, FileText, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { FileCheck2, FileText, AlertTriangle, CheckCircle2, Droplets } from "lucide-react";
 import { API_URL, ApiError } from "@/lib/api/client";
 import {
   getPortalDashboard,
   submitPortalComplaint,
   portalReceiptPdfUrl,
   portalCertificatePdfUrl,
+  verifyPortalRentPayment,
+  verifyPortalChargePayment,
   type PortalDashboard,
   type PortalComplaintInput,
 } from "@/lib/api/portal";
+import { PayNowButton } from "@/components/payments/pay-now-button";
 import type { ComplaintCategory } from "@/lib/api/complaints";
 import { COMPLAINT_CATEGORY_LABELS } from "@/lib/constants/complaints";
-import { formatFcfa, monthLabelFr } from "@/lib/utils";
+import { formatFcfa, monthLabelFr, formatLateDuration } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
@@ -26,7 +29,10 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   mobile_money: "Mobile Money",
   virement: "Virement",
   cheque: "Chèque",
+  kkiapay: "Paiement en ligne",
 };
+
+const UTILITY_TYPE_LABELS: Record<string, string> = { soneb: "SONEB (eau)", sbee: "SBEE (électricité)" };
 
 /**
  * Portail locataire (étape 12, idée n°2) : page publique, sans compte ni mot
@@ -75,7 +81,8 @@ export function PortailView() {
     );
   }
 
-  const { tenant, renter, activeLease, arrears, payments } = dashboard;
+  const { tenant, renter, activeLease, arrears, payments, unpaidCharges } = dashboard;
+  const canPayOnline = tenant.kkiapayEnabled && !!tenant.kkiapayPublicKey;
 
   return (
     <PortailShell tenant={tenant}>
@@ -103,7 +110,7 @@ export function PortailView() {
                   </CardTitle>
                   {arrears?.status === "late" ? (
                     <Badge variant="danger" dot>
-                      En retard {arrears.daysLate} j
+                      En retard {formatLateDuration(arrears.monthsLate, arrears.remainderDaysLate, arrears.daysLate)}
                     </Badge>
                   ) : (
                     <Badge variant="success" dot>
@@ -123,17 +130,66 @@ export function PortailView() {
                   <Metric label="Prochaine échéance" value={arrears?.dueDate ?? "—"} />
                 </div>
 
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="self-start"
-                  onClick={() => window.open(portalCertificatePdfUrl(token), "_blank", "noopener,noreferrer")}
-                >
-                  <FileCheck2 size={16} />
-                  Télécharger mon attestation de loyer
-                </Button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => window.open(portalCertificatePdfUrl(token), "_blank", "noopener,noreferrer")}
+                  >
+                    <FileCheck2 size={16} />
+                    Télécharger mon attestation de loyer
+                  </Button>
+                  {canPayOnline && (
+                    <PayNowButton
+                      amount={activeLease.monthlyRent}
+                      reference={`t${tenant.id}:rent:${activeLease.id}`}
+                      publicKey={tenant.kkiapayPublicKey!}
+                      sandbox={tenant.kkiapaySandbox}
+                      onVerify={(transactionId) => verifyPortalRentPayment(token, transactionId)}
+                      onPaid={load}
+                      label="Payer mon loyer en ligne"
+                    />
+                  )}
+                </div>
               </CardContent>
             </Card>
+
+            {unpaidCharges.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Droplets size={18} className="text-primary" />
+                    <CardTitle>Mes charges SONEB/SBEE</CardTitle>
+                  </div>
+                  <CardDescription>Factures d&apos;eau et d&apos;électricité non entièrement réglées.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3">
+                  {unpaidCharges.map((c) => (
+                    <div
+                      key={c.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-4 py-3"
+                    >
+                      <div>
+                        <p className="font-label-md text-ink">{UTILITY_TYPE_LABELS[c.utilityType] ?? c.utilityType}</p>
+                        <p className="text-body-xs text-ink-muted">
+                          {c.periodStart} — {c.periodEnd} · Reste dû : {formatFcfa(c.remaining)}
+                        </p>
+                      </div>
+                      {canPayOnline && (
+                        <PayNowButton
+                          amount={c.remaining}
+                          reference={`t${tenant.id}:charge:${c.id}`}
+                          publicKey={tenant.kkiapayPublicKey!}
+                          sandbox={tenant.kkiapaySandbox}
+                          onVerify={(transactionId) => verifyPortalChargePayment(token, c.id, transactionId)}
+                          onPaid={load}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
             <Card>
               <CardHeader>

@@ -15,17 +15,26 @@ import {
   receiptPdfPath,
   certificatePdfPath,
   moveOutReportPdfPath,
+  generateReceiptShareLink,
+  receiptShareUrl,
+  listLateFees,
+  payOpeningDebt,
+  getLeaseBalanceSnapshots,
   type Renter,
   type Lease,
   type PaymentMethod,
+  type LateFee,
+  type LeaseBalanceSnapshot,
 } from "@/lib/api/renters";
 import type { Unit } from "@/lib/api/properties";
 import { listComplaints, type Complaint } from "@/lib/api/complaints";
 import { COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
 import { listCharges, type UtilityCharge } from "@/lib/api/charges";
+import { generateLeasePaymentLink } from "@/lib/api/paymentLinks";
+import { PaymentLinkCard } from "@/components/payments/payment-link-card";
 import { UTILITY_TYPE_LABELS, CHARGE_STATUS_LABELS } from "@/lib/constants/charges";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
-import { formatFcfa, buildRentReminderMessage, previewRentAllocation, monthLabelFr } from "@/lib/utils";
+import { formatFcfa, buildRentReminderMessage, buildReceiptMessage, previewRentAllocation, monthLabelFr, formatLateDuration } from "@/lib/utils";
 import { PROPERTY_TYPE_LABELS } from "@/lib/constants/properties";
 import { useToast } from "@/lib/toast/toast-context";
 import { RequireAuth } from "@/components/auth/require-auth";
@@ -33,7 +42,7 @@ import { DocumentDownloadStatus } from "@/components/documents/document-download
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
 import { Attribution } from "@/components/ui/attribution";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
@@ -194,8 +203,25 @@ function LocataireContent() {
 
         {canManage && <PortalLinkCard renter={renter} accessToken={accessToken} onGenerated={load} />}
 
+        {canManage && tenant?.kkiapayEnabled && activeLease && accessToken && (
+          <PaymentLinkCard
+            title="Lien de paiement en ligne"
+            description={`Pour un règlement immédiat sans portail actif — ${renter.firstName} pourra payer par Mobile Money ou carte.`}
+            phone={renter.phone}
+            whatsappMessage={(url, amount) =>
+              [
+                `Bonjour ${renter.firstName},`,
+                `Voici un lien pour régler votre loyer (${formatFcfa(amount)}) en ligne, par Mobile Money ou carte :`,
+                url,
+                `Ce lien expire sous 48h.`,
+              ].join("\n")
+            }
+            onGenerate={() => generateLeasePaymentLink(accessToken, activeLease.id)}
+          />
+        )}
+
         {activeLease ? (
-          <LeaseCard lease={activeLease} renterId={renter.id} accessToken={accessToken} canManage={canManage} canReadDocs={canReadDocs} isDg={isDg} onChanged={load} />
+          <LeaseCard lease={activeLease} renterId={renter.id} renterFirstName={renter.firstName} renterPhone={renter.phone} accessToken={accessToken} canManage={canManage} canReadDocs={canReadDocs} isDg={isDg} onChanged={load} />
         ) : canManage ? (
           <NewLeaseCard renterId={renter.id} accessToken={accessToken} onCreated={load} />
         ) : (
@@ -495,6 +521,8 @@ function NewLeaseCard({
   const [selectedUnit, setSelectedUnit] = React.useState<Unit | null>(null);
   const [monthlyRent, setMonthlyRent] = React.useState("");
   const [depositAmount, setDepositAmount] = React.useState("");
+  const [depositPaymentMethod, setDepositPaymentMethod] = React.useState("");
+  const [depositPaidAt, setDepositPaidAt] = React.useState(new Date().toISOString().slice(0, 10));
   const [rentDueDay, setRentDueDay] = React.useState("5");
   const [startDate, setStartDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [submitting, setSubmitting] = React.useState(false);
@@ -514,6 +542,7 @@ function NewLeaseCard({
     const day = Number(rentDueDay);
     if (!Number.isFinite(rent) || rent <= 0) return setError("Loyer invalide.");
     if (!Number.isFinite(deposit) || deposit < 0) return setError("Caution invalide.");
+    if (deposit > 0 && !depositPaymentMethod) return setError("Indiquez comment la caution a été reçue.");
     if (!Number.isInteger(day) || day < 1 || day > 28) return setError("Jour d'échéance entre 1 et 28.");
     if (!startDate) return setError("Date d'entrée requise.");
 
@@ -524,6 +553,8 @@ function NewLeaseCard({
         unitId: selectedUnit.id,
         monthlyRent: rent,
         depositAmount: deposit,
+        depositPaymentMethod: deposit > 0 ? (depositPaymentMethod as Exclude<PaymentMethod, "kkiapay">) : undefined,
+        depositPaidAt: deposit > 0 ? depositPaidAt : undefined,
         rentDueDay: day,
         startDate,
       });
@@ -577,6 +608,30 @@ function NewLeaseCard({
               />
             </Field>
           </div>
+          {Number(depositAmount || "0") > 0 && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Caution reçue par" htmlFor="newLeaseDepositMethod" required>
+                <select
+                  id="newLeaseDepositMethod"
+                  value={depositPaymentMethod}
+                  onChange={(e) => setDepositPaymentMethod(e.target.value)}
+                  className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <option value="" disabled>
+                    Choisir…
+                  </option>
+                  {PAYMENT_METHODS.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Reçue le" htmlFor="newLeaseDepositPaidAt">
+                <Input id="newLeaseDepositPaidAt" type="date" value={depositPaidAt} onChange={(e) => setDepositPaidAt(e.target.value)} />
+              </Field>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Jour d'échéance du loyer" htmlFor="newLeaseDueDay" required hint="1 à 28">
               <Input
@@ -603,6 +658,8 @@ function NewLeaseCard({
 function LeaseCard({
   lease,
   renterId,
+  renterFirstName,
+  renterPhone,
   accessToken,
   canManage,
   canReadDocs,
@@ -611,6 +668,8 @@ function LeaseCard({
 }: {
   lease: Lease;
   renterId: number;
+  renterFirstName: string;
+  renterPhone: string;
   accessToken: string | null;
   isDg: boolean;
   canManage: boolean;
@@ -628,7 +687,7 @@ function LeaseCard({
           </CardTitle>
           {lease.arrears?.status === "late" ? (
             <Badge variant="danger" dot>
-              En retard {lease.arrears.daysLate} j
+              En retard {formatLateDuration(lease.arrears.monthsLate, lease.arrears.remainderDaysLate, lease.arrears.daysLate)}
             </Badge>
           ) : (
             <Badge variant="success" dot>
@@ -717,7 +776,21 @@ function LeaseCard({
 
         <ChargesSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} />
 
-        <PaymentRegister lease={lease} accessToken={accessToken} canManage={canReadDocs} isDg={isDg} onRecorded={onChanged} />
+        {canManage && <LateFeesSection leaseId={lease.id} accessToken={accessToken} />}
+
+        {canManage && <OpeningDebtSection lease={lease} accessToken={accessToken} onSettled={onChanged} />}
+
+        {canManage && <BalanceSnapshotsSection leaseId={lease.id} accessToken={accessToken} />}
+
+        <PaymentRegister
+          lease={lease}
+          renterFirstName={renterFirstName}
+          renterPhone={renterPhone}
+          accessToken={accessToken}
+          canManage={canReadDocs}
+          isDg={isDg}
+          onRecorded={onChanged}
+        />
       </CardContent>
       {canManage && (
         <CardFooter className="justify-end">
@@ -876,6 +949,48 @@ function ChargesSection({
   );
 }
 
+/**
+ * Pénalités de retard déjà appliquées — lecture seule ici (l'action
+ * « Appliquer une pénalité » vit dans le Centre de relance, à côté de la
+ * relance WhatsApp du même locataire). Sans ceci, une pénalité appliquée
+ * resterait invisible pour un agent/DG non-comptable une fois le centre de
+ * relance quitté — seule la comptabilité avancée (réservée) en garderait la trace.
+ */
+function LateFeesSection({ leaseId, accessToken }: { leaseId: number; accessToken: string | null }) {
+  const [lateFees, setLateFees] = React.useState<LateFee[] | null>(null);
+
+  React.useEffect(() => {
+    if (!accessToken) return;
+    listLateFees(accessToken, leaseId).then((res) => setLateFees(res.lateFees));
+  }, [accessToken, leaseId]);
+
+  if (lateFees !== null && lateFees.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-border pt-4">
+      <span className="font-label-sm uppercase tracking-wider text-ink-muted">Pénalités de retard appliquées</span>
+      {lateFees === null ? (
+        <p className="text-body-sm text-ink-muted">Chargement…</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {lateFees.map((f) => (
+            <div key={f.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+              <div>
+                <p className="font-label-sm text-ink">{f.reason || "Pénalité de retard"}</p>
+                <p className="text-body-xs text-ink-muted">
+                  Appliquée le {f.appliedAt}
+                  {f.appliedBy && ` par ${f.appliedBy.name} (${f.appliedBy.roleLabel})`}
+                </p>
+              </div>
+              <span className="tabular font-currency-table text-body-sm text-danger-fg">{formatFcfa(f.amount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "especes", label: "Espèces" },
   { value: "mobile_money", label: "Mobile Money" },
@@ -883,14 +998,187 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "cheque", label: "Chèque" },
 ];
 
+/**
+ * Impayés existants à l'entrée (onboarding d'un locataire déjà en place
+ * avant Lyko System, voir `leases.opening_debt_amount`) — n'affiche rien du
+ * tout pour l'immense majorité des baux (aucun impayé déclaré à la création).
+ * Se règle indépendamment du registre de loyer ci-dessous (aucun mois de
+ * loyer concerné, aucune quittance).
+ */
+function OpeningDebtSection({
+  lease,
+  accessToken,
+  onSettled,
+}: {
+  lease: Lease;
+  accessToken: string | null;
+  onSettled: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const remaining = lease.openingDebtRemaining ?? lease.openingDebtAmount;
+  const [amount, setAmount] = React.useState(String(remaining));
+  const [method, setMethod] = React.useState<PaymentMethod>("mobile_money");
+  const [paidAt, setPaidAt] = React.useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  if (lease.openingDebtAmount <= 0) return null;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await payOpeningDebt(accessToken, lease.id, {
+        amount: Number(amount),
+        paymentMethod: method,
+        paidAt,
+        notes: notes.trim() || undefined,
+      });
+      setOpen(false);
+      setNotes("");
+      toast.success("Impayés à l'entrée réglés (partiellement ou totalement).");
+      onSettled();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce règlement.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-border pt-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-label-sm uppercase tracking-wider text-ink-muted">Impayés existants à l&apos;entrée</span>
+        {remaining > 0 && (
+          <Button variant="warning" size="sm" onClick={() => setOpen((v) => !v)}>
+            {open ? "Fermer" : "Régler"}
+          </Button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2.5">
+        <span className="text-body-sm text-ink-soft">Déclarée à l&apos;entrée : {formatFcfa(lease.openingDebtAmount)}</span>
+        {remaining > 0 ? (
+          <Badge variant="warning">Reste dû : {formatFcfa(remaining)}</Badge>
+        ) : (
+          <Badge variant="success">Soldée</Badge>
+        )}
+      </div>
+
+      {open && remaining > 0 && (
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-4">
+          {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+          <Field label="Montant réglé (FCFA)" htmlFor="openingDebtPaymentAmount" required hint={`Reste dû : ${formatFcfa(remaining)}`}>
+            <Input
+              id="openingDebtPaymentAmount"
+              inputMode="numeric"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))}
+            />
+          </Field>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Mode de règlement" htmlFor="openingDebtPaymentMethod" required>
+              <select
+                id="openingDebtPaymentMethod"
+                value={method}
+                onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Date de règlement" htmlFor="openingDebtPaidAt" required>
+              <Input id="openingDebtPaidAt" type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
+            </Field>
+          </div>
+          <Field label="Note (optionnel)" htmlFor="openingDebtNotes">
+            <Input id="openingDebtNotes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </Field>
+          <Button type="submit" disabled={submitting} className="self-start">
+            {submitting ? "Enregistrement…" : "Enregistrer le règlement"}
+          </Button>
+        </form>
+      )}
+
+      {lease.openingDebtPayments && lease.openingDebtPayments.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {lease.openingDebtPayments.map((p) => (
+            <div key={p.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+              <div>
+                <p className="font-label-sm text-ink">{p.paymentMethodLabel}</p>
+                <p className="text-body-xs text-ink-muted">
+                  Réglé le {p.paidAt}
+                  {p.recordedBy && ` par ${p.recordedBy.name} (${p.recordedBy.roleLabel})`}
+                  {p.notes && ` · ${p.notes}`}
+                </p>
+              </div>
+              <span className="tabular font-currency-table text-body-sm text-success-fg">{formatFcfa(p.amount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Historique des soldes figés à chaque clôture de mois (audit) — voir
+ * `lease_balance_snapshots`. Purement informatif, jamais modifiable ; ne
+ * s'affiche qu'une fois qu'au moins un mois a été clôturé depuis que ce
+ * bail existe.
+ */
+function BalanceSnapshotsSection({ leaseId, accessToken }: { leaseId: number; accessToken: string | null }) {
+  const [snapshots, setSnapshots] = React.useState<LeaseBalanceSnapshot[] | null>(null);
+  const [open, setOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!accessToken) return;
+    getLeaseBalanceSnapshots(accessToken, leaseId).then((res) => setSnapshots(res.snapshots));
+  }, [accessToken, leaseId]);
+
+  if (!snapshots || snapshots.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-border pt-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center justify-between text-left font-label-sm uppercase tracking-wider text-ink-muted"
+      >
+        Historique des soldes en fin de mois
+        <span className="text-body-xs normal-case tracking-normal text-ink-muted">{open ? "Masquer" : "Afficher"}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-1.5">
+          {snapshots.map((s) => (
+            <div key={s.period} className="flex items-center justify-between text-body-sm">
+              <span className="text-ink-soft">{s.period}</span>
+              <span className="tabular font-currency-table text-ink">{formatFcfa(s.amountDue)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PaymentRegister({
   lease,
+  renterFirstName,
+  renterPhone,
   accessToken,
   canManage,
   isDg,
   onRecorded,
 }: {
   lease: Lease;
+  renterFirstName: string;
+  renterPhone: string;
   accessToken: string | null;
   // Enregistrer un paiement / télécharger une quittance : réservé à
   // locataires OU comptabilite côté serveur — la fiche est désormais
@@ -899,6 +1187,7 @@ function PaymentRegister({
   isDg: boolean;
   onRecorded: () => void;
 }) {
+  const { tenant } = useAuth();
   const [open, setOpen] = React.useState(false);
   const [amount, setAmount] = React.useState(String(lease.monthlyRent));
   const [method, setMethod] = React.useState<PaymentMethod>("mobile_money");
@@ -906,6 +1195,10 @@ function PaymentRegister({
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Quittance générée par le dernier paiement, prête à envoyer par WhatsApp —
+  // le lien de partage est demandé automatiquement dès l'enregistrement
+  // réussi, sans action supplémentaire du personnel.
+  const [justPaid, setJustPaid] = React.useState<{ paymentId: number; coversMonth: string; amount: number; shareUrl: string | null } | null>(null);
   const toast = useToast();
 
   // Mois de départ = prochain mois dû (le serveur enchaîne les mois suivants selon le montant).
@@ -930,10 +1223,25 @@ function PaymentRegister({
         toast.warning(
           "Paiement enregistré hors-ligne — sera synchronisé automatiquement dès le retour de la connexion.",
         );
-      } else if (result.monthsCovered && result.monthsCovered > 1) {
-        toast.success(`${result.monthsCovered} paiements enregistrés — ${result.monthsCovered} quittances générées.`);
       } else {
-        toast.success("Paiement enregistré — quittance générée.");
+        if (result.monthsCovered > 1) {
+          toast.success(`${result.monthsCovered} paiements enregistrés — ${result.monthsCovered} quittances générées.`);
+        } else {
+          toast.success("Paiement enregistré — quittance générée.");
+        }
+        // Quittance prête à envoyer immédiatement, sans que le personnel
+        // n'ait à aller la chercher dans l'historique — le lien de partage
+        // est demandé tout de suite (idempotent côté serveur).
+        const first = result.payments[0];
+        setJustPaid({ paymentId: first.paymentId, coversMonth: first.coversMonth, amount: Number(amount), shareUrl: null });
+        generateReceiptShareLink(accessToken, lease.id, first.paymentId)
+          .then((r) =>
+            setJustPaid((prev) => (prev?.paymentId === first.paymentId ? { ...prev, shareUrl: receiptShareUrl(r.token) } : prev)),
+          )
+          .catch(() => {
+            // Best-effort : le paiement est déjà enregistré avec succès, un
+            // échec ici ne doit jamais faire croire à un échec du paiement.
+          });
       }
       onRecorded();
     } catch (err) {
@@ -954,6 +1262,41 @@ function PaymentRegister({
           </Button>
         )}
       </div>
+
+      {justPaid && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-success-border bg-success-bg px-4 py-3">
+          <p className="text-body-sm text-success-fg">
+            Quittance générée — prête à envoyer à {renterFirstName}.
+          </p>
+          <div className="flex items-center gap-2">
+            {justPaid.shareUrl ? (
+              <a
+                href={buildWhatsAppHref(
+                  renterPhone,
+                  buildReceiptMessage({
+                    renterFirstName,
+                    coversMonth: justPaid.coversMonth,
+                    amount: justPaid.amount,
+                    url: justPaid.shareUrl,
+                    companyName: tenant?.companyName,
+                  }),
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={buttonVariants({ variant: "whatsapp", size: "sm" })}
+              >
+                <Send size={14} />
+                Envoyer la quittance par WhatsApp
+              </a>
+            ) : (
+              <span className="text-body-xs text-ink-muted">Préparation du lien…</span>
+            )}
+            <Button type="button" variant="ghost" size="sm" onClick={() => setJustPaid(null)}>
+              Fermer
+            </Button>
+          </div>
+        </div>
+      )}
 
       {open && canManage && (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-4">
@@ -1063,6 +1406,16 @@ function PaymentRegister({
                         accessToken={accessToken}
                         isDg={isDg}
                       />
+                      <ResendReceiptButton
+                        leaseId={lease.id}
+                        paymentId={p.id}
+                        coversMonth={p.coversMonth}
+                        amount={p.amount}
+                        renterFirstName={renterFirstName}
+                        renterPhone={renterPhone}
+                        companyName={tenant?.companyName}
+                        accessToken={accessToken}
+                      />
                     </div>
                   )}
                 </TableCell>
@@ -1072,5 +1425,60 @@ function PaymentRegister({
         </Table>
       )}
     </div>
+  );
+}
+
+/**
+ * Renvoyer une quittance ANCIENNE (pas seulement celle qui vient d'être
+ * générée) — même lien de partage (idempotent), généré à la demande plutôt
+ * que pour chaque ligne de l'historique au chargement.
+ */
+function ResendReceiptButton({
+  leaseId,
+  paymentId,
+  coversMonth,
+  amount,
+  renterFirstName,
+  renterPhone,
+  companyName,
+  accessToken,
+}: {
+  leaseId: number;
+  paymentId: number;
+  coversMonth: string;
+  amount: number;
+  renterFirstName: string;
+  renterPhone: string;
+  companyName?: string | null;
+  accessToken: string | null;
+}) {
+  const [loading, setLoading] = React.useState(false);
+
+  async function handleClick() {
+    if (!accessToken || loading) return;
+    setLoading(true);
+    try {
+      const { token } = await generateReceiptShareLink(accessToken, leaseId, paymentId);
+      const message = buildReceiptMessage({ renterFirstName, coversMonth, amount, url: receiptShareUrl(token), companyName });
+      window.open(buildWhatsAppHref(renterPhone, message), "_blank", "noopener,noreferrer");
+    } catch {
+      // Best-effort — la quittance reste consultable via le bouton de
+      // téléchargement juste à côté même si l'envoi échoue.
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={loading}
+      aria-label="Envoyer la quittance par WhatsApp"
+      title="Envoyer par WhatsApp"
+      className="inline-flex items-center gap-1 text-success-fg hover:underline disabled:opacity-50"
+    >
+      <Send size={14} />
+    </button>
   );
 }

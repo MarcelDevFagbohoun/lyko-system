@@ -23,15 +23,41 @@ const amountSchema = z.coerce
 // cabinet (loyer bureau, salaires...) n'en a pas, comme avant. Une dépense
 // rattachée à un Bien (réparation, facture) réduit sa recette nette pour le
 // calcul de commission — `unitId` en plus si elle vise une Unité précise.
-const createExpenseSchema = z.object({
-  category: z.enum(EXPENSE_CATEGORY_KEYS, { errorMap: () => ({ message: 'Catégorie invalide' }) }),
-  label: z.string().trim().min(2, 'Libellé requis').max(150, 'Trop long'),
-  amount: amountSchema,
-  expenseDate: dateSchema,
+//
+// `paymentStatus` ("payée" par défaut, comportement historique inchangé) :
+// "à crédit" exige un fournisseur (nom, créé à la volée si nouveau) et
+// REFUSE un mode de règlement (rien n'est encore payé) ; "payée" exige
+// l'inverse. Jamais les deux définis en même temps — cf. `superRefine`.
+const createExpenseSchema = z
+  .object({
+    category: z.enum(EXPENSE_CATEGORY_KEYS, { errorMap: () => ({ message: 'Catégorie invalide' }) }),
+    label: z.string().trim().min(2, 'Libellé requis').max(150, 'Trop long'),
+    amount: amountSchema,
+    expenseDate: dateSchema,
+    paymentStatus: z.enum(['paid', 'unpaid']).default('paid'),
+    paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
+    supplierName: z.string().trim().min(2, 'Nom du fournisseur requis').max(150, 'Trop long').optional(),
+    notes: optionalText(255),
+    propertyId: z.coerce.number().int().positive().optional(),
+    unitId: z.coerce.number().int().positive().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.paymentStatus === 'paid' && !data.paymentMethod) {
+      ctx.addIssue({ code: 'custom', path: ['paymentMethod'], message: 'Mode de règlement requis' });
+    }
+    if (data.paymentStatus === 'unpaid' && !data.supplierName) {
+      ctx.addIssue({ code: 'custom', path: ['supplierName'], message: 'Fournisseur requis pour une dépense à crédit' });
+    }
+    // Un salaire dû relève d'un compte de personnel (422), pas d'un compte
+    // fournisseur (401) — traitement distinct, hors périmètre de "à crédit".
+    if (data.paymentStatus === 'unpaid' && data.category === 'salaires') {
+      ctx.addIssue({ code: 'custom', path: ['category'], message: "Un salaire ne peut pas être enregistré à crédit" });
+    }
+  });
+
+const paySupplierExpenseSchema = z.object({
   paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
-  notes: optionalText(255),
-  propertyId: z.coerce.number().int().positive().optional(),
-  unitId: z.coerce.number().int().positive().optional(),
+  paidAt: dateSchema,
 });
 
 const updateExpenseSchema = z.object({
@@ -73,6 +99,7 @@ const deleteReasonSchema = z.object({
 module.exports = {
   createExpenseSchema,
   updateExpenseSchema,
+  paySupplierExpenseSchema,
   dashboardQuerySchema,
   closePeriodSchema,
   deleteReasonSchema,

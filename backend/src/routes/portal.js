@@ -16,6 +16,7 @@ const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { computeArrears } = require('../services/rentTracking');
 const { streamReceiptPdf, streamCertificatePdf } = require('../services/pdf');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
+const { verifyAndRecordKkiapay } = require('../services/paymentVerification');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -77,7 +78,7 @@ router.get('/:token', async (req, res, next) => {
     const { id: renterId, tenantId, firstName, lastName } = req.portalRenter;
 
     const [tenantRows] = await pool.query(
-      'SELECT company_name, logo_path FROM tenants WHERE id = :tenantId LIMIT 1',
+      'SELECT company_name, logo_path, kkiapay_enabled, kkiapay_sandbox, kkiapay_public_key FROM tenants WHERE id = :tenantId LIMIT 1',
       { tenantId },
     );
 
@@ -92,6 +93,7 @@ router.get('/:token', async (req, res, next) => {
 
     let payments = [];
     let arrears = null;
+    let unpaidCharges = [];
     if (activeLease) {
       const [payRows] = await pool.query(
         `SELECT rp.*, rc.id AS receipt_id, rc.receipt_number
@@ -113,15 +115,49 @@ router.get('/:token', async (req, res, next) => {
         activeLease.start_date instanceof Date ? activeLease.start_date.toISOString().slice(0, 10) : activeLease.start_date;
       arrears = computeArrears({
         startDate,
+        createdAt: activeLease.created_at,
+        upToDateAtOnboarding: !!activeLease.up_to_date_at_onboarding,
         rentDueDay: activeLease.rent_due_day,
         payments: payRows.map((p) => ({ coversMonth: p.covers_month })),
       });
+
+      // Charges SONEB/SBEE non entièrement réglées de ce bail — nouveauté :
+      // jusqu'ici absentes du portail, qui ne montrait que le loyer.
+      const [chargeRows] = await pool.query(
+        `SELECT uc.id, uc.utility_type, uc.period_start, uc.period_end, uc.amount,
+                uc.status, COALESCE(SUM(up.amount), 0) AS paid_total
+         FROM utility_charges uc
+         LEFT JOIN utility_payments up ON up.charge_id = uc.id
+         WHERE uc.lease_id = :leaseId AND uc.deleted_at IS NULL AND uc.status != 'payee'
+         GROUP BY uc.id
+         ORDER BY uc.period_start DESC`,
+        { leaseId: activeLease.id },
+      );
+      unpaidCharges = chargeRows.map((c) => ({
+        id: c.id,
+        utilityType: c.utility_type,
+        periodStart: isoDate(c.period_start),
+        periodEnd: isoDate(c.period_end),
+        amount: Number(c.amount),
+        remaining: Number(c.amount) - Number(c.paid_total),
+        status: c.status,
+      }));
     }
 
     res.json({
       tenant: {
+        // Sert uniquement à construire la référence interne posée dans le
+        // widget de paiement (`t<tenantId>:rent:<leaseId>`) — pas sensible,
+        // du même ordre que les autres identifiants numériques déjà exposés
+        // (bail, paiement...).
+        id: tenantId,
         companyName: tenantRows[0]?.company_name ?? null,
         logoUrl: tenantRows[0]?.logo_path ? `/uploads/${tenantRows[0].logo_path}` : null,
+        // Clé publique seule (sans risque, faite pour être embarquée côté
+        // client) : présente uniquement si le paiement en ligne est activé.
+        kkiapayEnabled: !!tenantRows[0]?.kkiapay_enabled,
+        kkiapaySandbox: !!tenantRows[0]?.kkiapay_sandbox,
+        kkiapayPublicKey: tenantRows[0]?.kkiapay_enabled ? tenantRows[0]?.kkiapay_public_key : null,
       },
       renter: { firstName, lastName },
       activeLease: activeLease
@@ -135,6 +171,7 @@ router.get('/:token', async (req, res, next) => {
         : null,
       arrears,
       payments,
+      unpaidCharges,
     });
   } catch (err) {
     next(err);
@@ -205,7 +242,7 @@ router.get('/:token/certificate.pdf', async (req, res, next) => {
     // Pas d'employé "signataire" particulier depuis le portail : le DG de
     // l'entreprise signe par défaut (toujours exactement un par tenant).
     const [dgRows] = await pool.query(
-      "SELECT first_name, last_name FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
+      "SELECT first_name, last_name, role, stamp_path, signature_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
       { tenantId },
     );
     const issuer = dgRows[0] || { first_name: tenantRows[0]?.company_name ?? 'Le cabinet', last_name: '' };
@@ -265,6 +302,69 @@ router.post('/:token/complaints', async (req, res, next) => {
       code,
     });
     res.status(201).json({ complaintId: result.insertId, code });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/portal/:token/payments/verify — confirme un paiement de loyer
+// payé via le widget KKiaPay depuis le portail. Ne fait JAMAIS confiance au
+// seul fait que le widget dise « succès » : `verifyAndRecordKkiapay` revérifie
+// côté serveur auprès de KKiaPay avant d'enregistrer quoi que ce soit.
+router.post('/:token/payments/verify', async (req, res, next) => {
+  const transactionId = typeof req.body?.transactionId === 'string' ? req.body.transactionId.trim() : '';
+  if (!transactionId) return next(new ApiError(400, 'transactionId requis'));
+
+  try {
+    const { id: renterId, tenantId } = req.portalRenter;
+    const lease = await loadActivePortalLease(tenantId, renterId);
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    if (!tenantRows[0]) throw new ApiError(404, 'Entreprise introuvable');
+
+    const result = await verifyAndRecordKkiapay({
+      tenant: tenantRows[0],
+      transactionId,
+      kind: 'rent',
+      leaseId: lease.id,
+      expectedReference: `t${tenantId}:rent:${lease.id}`,
+    });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/portal/:token/charges/:chargeId/payments/verify — même principe
+// pour le règlement d'une facture SONEB/SBEE.
+router.post('/:token/charges/:chargeId/payments/verify', async (req, res, next) => {
+  const chargeId = Number(req.params.chargeId);
+  const transactionId = typeof req.body?.transactionId === 'string' ? req.body.transactionId.trim() : '';
+  if (!Number.isInteger(chargeId)) return next(new ApiError(400, 'Identifiant invalide'));
+  if (!transactionId) return next(new ApiError(400, 'transactionId requis'));
+
+  try {
+    const { id: renterId, tenantId } = req.portalRenter;
+    const lease = await loadActivePortalLease(tenantId, renterId);
+    // La facture doit appartenir au bail actif de CE locataire — jamais une
+    // facture d'un autre bail/locataire (même principe de portée que le
+    // reste du portail).
+    const [chargeRows] = await pool.query(
+      'SELECT id FROM utility_charges WHERE id = :id AND lease_id = :leaseId AND deleted_at IS NULL LIMIT 1',
+      { id: chargeId, leaseId: lease.id },
+    );
+    if (!chargeRows[0]) throw new ApiError(404, 'Facture introuvable');
+
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    if (!tenantRows[0]) throw new ApiError(404, 'Entreprise introuvable');
+
+    const result = await verifyAndRecordKkiapay({
+      tenant: tenantRows[0],
+      transactionId,
+      kind: 'charge',
+      chargeId,
+      expectedReference: `t${tenantId}:charge:${chargeId}`,
+    });
+    res.json(result);
   } catch (err) {
     next(err);
   }

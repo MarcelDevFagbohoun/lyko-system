@@ -25,6 +25,34 @@ const { toActor } = require('../utils/actor');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
 const logger = require('../utils/logger');
 
+/**
+ * Un même numéro de compteur SONEB/SBEE ne doit jamais être attribué à deux
+ * Unités différentes de la même entreprise (compteur physique réel, un seul
+ * possesseur) — voir migration 059 pour la contrainte UNIQUE en base ;
+ * ce contrôle applicatif existe seulement pour renvoyer un message clair
+ * (409) plutôt que le `ER_DUP_ENTRY` brut de MySQL. `excludeUnitId` (édition)
+ * exclut l'unité elle-même de la recherche — resaisir sa propre valeur
+ * inchangée ne doit jamais se déclarer en conflit avec soi-même.
+ */
+async function assertMeterNumbersAvailable(conn, tenantId, { sonebMeterNumber, sbeeMeterNumber }, excludeUnitId) {
+  if (sonebMeterNumber) {
+    const [rows] = await conn.query(
+      `SELECT id FROM property_units WHERE tenant_id = :tenantId AND soneb_meter_number = :value
+       ${excludeUnitId ? 'AND id != :excludeUnitId' : ''} LIMIT 1`,
+      { tenantId, value: sonebMeterNumber, excludeUnitId },
+    );
+    if (rows[0]) throw new ApiError(409, 'Ce numéro de compteur SONEB est déjà utilisé par une autre unité');
+  }
+  if (sbeeMeterNumber) {
+    const [rows] = await conn.query(
+      `SELECT id FROM property_units WHERE tenant_id = :tenantId AND sbee_meter_number = :value
+       ${excludeUnitId ? 'AND id != :excludeUnitId' : ''} LIMIT 1`,
+      { tenantId, value: sbeeMeterNumber, excludeUnitId },
+    );
+    if (rows[0]) throw new ApiError(409, 'Ce numéro de compteur SBEE est déjà utilisé par une autre unité');
+  }
+}
+
 const router = Router();
 // Les Biens/Unités sont le patrimoine des propriétaires ET le logement des
 // locataires : gérables par qui a `locataires` (formulaire historique,
@@ -389,6 +417,7 @@ router.post('/:id/units', async (req, res, next) => {
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const property = await loadProperty(conn, req.user.tenantId, propertyId, scopeAgentId);
+    await assertMeterNumbersAvailable(conn, req.user.tenantId, data);
     const code = await nextUnitCode(conn, property.code, propertyId);
 
     const [result] = await conn.query(
@@ -442,6 +471,8 @@ router.patch('/:id/units/:unitId', async (req, res, next) => {
       { unitId, propertyId },
     );
     if (!unitRows[0]) throw new ApiError(404, 'Unité introuvable');
+
+    await assertMeterNumbersAvailable(pool, req.user.tenantId, data, unitId);
 
     if (data.status === 'loue') {
       const [activeLease] = await pool.query(

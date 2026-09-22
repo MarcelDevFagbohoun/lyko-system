@@ -20,6 +20,16 @@ export function InspectionReadOnly({ zones, showDeductions }: { zones: Inspectio
                 <div className="flex flex-1 flex-col gap-1">
                   <p className="font-label-md text-ink">{item.label}</p>
                   {item.comment && <p className="text-body-xs text-ink-muted">{item.comment}</p>}
+                  {item.billing?.lines && item.billing.lines.length > 0 && (
+                    <ul className="text-body-xs text-ink-muted">
+                      {item.billing.lines.map((l, idx) => (
+                        <li key={idx}>
+                          • {l.label}
+                          {l.quantity > 1 ? ` × ${l.quantity}` : ""} — {formatFcfa(l.unitPrice * l.quantity)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {item.photoUrl && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={`${API_URL}${item.photoUrl}`} alt={item.label} className="mt-1 h-20 w-20 rounded border border-border object-cover" />

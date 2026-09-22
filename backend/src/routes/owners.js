@@ -12,11 +12,31 @@ const {
 } = require('../validators/owners');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { streamOwnerStatementPdf } = require('../services/pdf');
+const { getEscrowBalances, getUnpaidOpeningDebtByOwner } = require('../services/commission');
 const { toActor } = require('../utils/actor');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
+const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { resolvePropertyScope } = require('../services/scope');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
+
+/**
+ * Un même numéro de téléphone ne doit jamais être utilisé par deux
+ * propriétaires différents de la même entreprise — voir migration 059 pour
+ * la contrainte UNIQUE en base ; ce contrôle applicatif renvoie un message
+ * clair (409) plutôt que le `ER_DUP_ENTRY` brut de MySQL. `excludeOwnerId`
+ * (édition) exclut la fiche elle-même — resaisir son propre numéro inchangé
+ * ne doit jamais se déclarer en conflit avec soi-même.
+ */
+async function assertOwnerPhoneAvailable(tenantId, phone, excludeOwnerId) {
+  if (!phone) return;
+  const [rows] = await pool.query(
+    `SELECT id FROM owners WHERE tenant_id = :tenantId AND phone = :phone
+     ${excludeOwnerId ? 'AND id != :excludeOwnerId' : ''} LIMIT 1`,
+    { tenantId, phone, excludeOwnerId },
+  );
+  if (rows[0]) throw new ApiError(409, 'Ce numéro de téléphone est déjà utilisé par un autre propriétaire');
+}
 
 const router = Router();
 router.use(requireAuth);
@@ -241,9 +261,25 @@ router.get('/:id', canRead, async (req, res, next) => {
       createdAt: r.created_at,
     }));
 
+    // Solde séquestre (comptes séquestres par mandat) : combien le cabinet
+    // détient actuellement pour ce propriétaire, tous ses Biens confondus —
+    // jamais scopé par agent (voir le commentaire de `getEscrowBalances`),
+    // comme les versements/taux de commission ci-dessous sur cette même page.
+    const escrowBalances = await getEscrowBalances(req.user.tenantId);
+    const escrow = escrowBalances.get(id) ?? { totalCollected: 0, totalPayouts: 0, balance: 0 };
+    const unpaidOpeningDebtByOwner = await getUnpaidOpeningDebtByOwner(req.user.tenantId);
+
     res.json({
       owner: toPublicOwner(owner),
       properties: [...propertiesById.values()],
+      escrowBalance: {
+        totalCollected: escrow.totalCollected,
+        totalPayouts: escrow.totalPayouts,
+        balance: escrow.balance,
+      },
+      // Dette initiale des locataires non encore réglée — volontairement à
+      // part du solde séquestre ci-dessus (voir `getUnpaidOpeningDebtByOwner`).
+      openingDebtUnpaid: unpaidOpeningDebtByOwner.get(id) ?? 0,
       payouts: payoutRows.map((p) => ({
         id: p.id,
         amount: Number(p.amount),
@@ -273,6 +309,7 @@ router.post('/', canManage, async (req, res, next) => {
   const data = parsed.data;
 
   try {
+    await assertOwnerPhoneAvailable(req.user.tenantId, data.phone);
     const [result] = await pool.query(
       `INSERT INTO owners (tenant_id, name, phone, email, address, notes, created_by)
        VALUES (:tenantId, :name, :phone, :email, :address, :notes, :createdBy)`,
@@ -299,6 +336,7 @@ router.patch('/:id', canManage, async (req, res, next) => {
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    await assertOwnerPhoneAvailable(req.user.tenantId, data.phone, id);
 
     const fields = [];
     const params = { id };
@@ -330,12 +368,15 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
   }
   const data = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
-    const [result] = await pool.query(
+    await conn.beginTransaction();
+
+    const [result] = await conn.query(
       `INSERT INTO owner_payouts (tenant_id, owner_id, amount, period_label, paid_at, payment_method, notes, recorded_by)
        VALUES (:tenantId, :ownerId, :amount, :periodLabel, :paidAt, :paymentMethod, :notes, :recordedBy)`,
       {
@@ -350,6 +391,29 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
       },
     );
 
+    // Module comptabilité SYSCOHADA (nouveau) — voir le commentaire identique
+    // dans routes/leases.js `recordRentPayment` : rien ne change pour une
+    // entreprise qui n'a pas activé le module. Cette route ne passait pas
+    // par une transaction explicite avant cette modification — nécessaire
+    // pour que versement et écriture comptable réussissent ou échouent
+    // ensemble (exigence explicite : « même transaction SQL »).
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType: 'reversement_proprietaire',
+        entryDate: data.paidAt,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        narrationVars: { proprietaire: owner.name },
+        sourceTable: 'owner_payouts',
+        sourceId: result.insertId,
+        createdBy: req.user.id,
+        context: { ownerId: id },
+      });
+    }
+
+    await conn.commit();
+
     logger.info('Versement propriétaire enregistré', {
       tenantId: req.user.tenantId,
       ownerId: id,
@@ -358,7 +422,10 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
     });
     res.status(201).json({ payoutId: result.insertId });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 

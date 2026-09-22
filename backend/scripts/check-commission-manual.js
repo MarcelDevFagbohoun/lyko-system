@@ -3,13 +3,13 @@
  * Tests unitaires du calcul de recette / commission (services/commission.js).
  * Appelle directement les fonctions du service (pas de passage par l'API) :
  * ce sont les tests unitaires demandés pour le calcul, séparés des tests
- * bout-en-bout de l'API (`pentest.js`, `test-releve.js`).
+ * bout-en-bout de l'API (`pentest.js`, `check-releve-manual.js`).
  *
  * Cabinet JETABLE uniquement (préfixe COMMISSION-TEST-<horodatage>), les
  * données de test sont créées et supprimées par ce script — jamais de
  * données réelles touchées.
  *
- *   cd backend && node scripts/test-commission.js
+ *   cd backend && node scripts/check-commission-manual.js
  */
 const path = require('path');
 const fs = require('fs');

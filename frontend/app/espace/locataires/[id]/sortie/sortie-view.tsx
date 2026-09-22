@@ -17,7 +17,9 @@ import {
   type Lease,
   type MoveOutReport,
   type InspectionZone,
+  type PaymentMethod,
 } from "@/lib/api/renters";
+import { listCatalogItems, type CatalogItem } from "@/lib/api/inspectionCatalog";
 import { compareInspectionReports, type ItemComparison } from "@/lib/inspection-comparison";
 import { CONDITION_LABELS } from "@/lib/constants/inspection";
 import { formatFcfa } from "@/lib/utils";
@@ -32,6 +34,13 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/lib/toast/toast-context";
+
+const REFUND_PAYMENT_METHODS: { value: string; label: string }[] = [
+  { value: "especes", label: "Espèces" },
+  { value: "mobile_money", label: "Mobile Money" },
+  { value: "virement", label: "Virement" },
+  { value: "cheque", label: "Chèque" },
+];
 
 export function SortieView() {
   return (
@@ -193,7 +202,26 @@ function DraftEditor({
   const [error, setError] = React.useState<string | null>(null);
   const [finalizing, setFinalizing] = React.useState(false);
   const [finalizeError, setFinalizeError] = React.useState<string | null>(null);
+  const [refundPaymentMethod, setRefundPaymentMethod] = React.useState("");
+  const [catalog, setCatalog] = React.useState<CatalogItem[]>([]);
   const toast = useToast();
+
+  React.useEffect(() => {
+    if (!accessToken) return;
+    listCatalogItems(accessToken).then((res) => setCatalog(res.items)).catch(() => {
+      // Le catalogue est un confort (prix suggérés) — son indisponibilité ne
+      // doit jamais bloquer la saisie de l'état des lieux.
+    });
+  }, [accessToken]);
+
+  // Postes dégradés par rapport à l'entrée ("zoneKey::itemKey") — utilisé
+  // pour mettre en évidence l'invite à facturer directement dans le
+  // formulaire, sans dépendre du dépliement de la section de comparaison.
+  const degradedKeys = React.useMemo(() => {
+    if (!lease.moveInReport) return undefined;
+    const results = compareInspectionReports(lease.moveInReport, { ...report, zones });
+    return new Set(results.filter((r) => r.status === "degraded").map((r) => `${r.zoneKey}::${r.itemKey}`));
+  }, [lease.moveInReport, report, zones]);
 
   const itemsTotal = zones.reduce((sum, z) => sum + z.items.reduce((s, it) => s + it.deduction, 0), 0);
   const otherTotal = Number(otherAmount) || 0;
@@ -253,15 +281,26 @@ function DraftEditor({
 
   async function handleFinalize(tenantSignature: Blob, agentSignature: Blob) {
     if (!accessToken) return;
+    if (netRefund > 0 && !refundPaymentMethod) {
+      setFinalizeError("Indiquez comment la caution sera restituée avant de finaliser.");
+      return;
+    }
     setFinalizing(true);
     setFinalizeError(null);
     try {
       // Comme pour l'entrée : on sauvegarde le brouillon avant de finaliser,
       // pour ne jamais figer une version en retard sur l'écran affiché.
       await persist();
-      const res = await finalizeMoveOutReport(accessToken, leaseId, tenantSignature, agentSignature);
+      const res = await finalizeMoveOutReport(
+        accessToken,
+        leaseId,
+        tenantSignature,
+        agentSignature,
+        netRefund > 0 ? (refundPaymentMethod as Exclude<PaymentMethod, "kkiapay">) : undefined,
+      );
       onReportChange(res.report);
       toast.success("Sortie finalisée — bail terminé, unité libérée.");
+      if (res.depositAccountingNote) toast.info(res.depositAccountingNote);
       onFinalized();
     } catch (err) {
       setFinalizeError(err instanceof ApiError ? err.message : "Impossible de finaliser la sortie.");
@@ -297,9 +336,13 @@ function DraftEditor({
           zones={zones}
           onChange={setZones}
           showDeductions
+          catalog={catalog}
+          degradedKeys={degradedKeys}
           onUploadPhoto={handleUploadPhoto}
           onDeletePhoto={handleDeletePhoto}
         />
+
+        <BillingReportSection zones={zones} />
 
         <div className="flex flex-col gap-3 border-t border-border pt-4">
           <span className="font-label-sm uppercase tracking-wider text-ink-muted">Autres retenues (optionnel)</span>
@@ -332,6 +375,26 @@ function DraftEditor({
           </div>
         </div>
 
+        {netRefund > 0 && (
+          <Field label="Caution restituée par" htmlFor="refundPaymentMethod" required hint="Comment ce montant sera remis au locataire">
+            <select
+              id="refundPaymentMethod"
+              value={refundPaymentMethod}
+              onChange={(e) => setRefundPaymentMethod(e.target.value)}
+              className="h-[38px] w-full max-w-xs rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <option value="" disabled>
+                Choisir…
+              </option>
+              {REFUND_PAYMENT_METHODS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+
         <div className="flex items-center gap-3">
           <Button type="button" variant="secondary" onClick={handleSave} disabled={saving}>
             {saving ? "Enregistrement…" : "Enregistrer le brouillon"}
@@ -360,6 +423,8 @@ function FinalizedView({ lease, report }: { lease: Lease; report: MoveOutReport 
         {lease.moveInReport && <ComparisonSection moveIn={lease.moveInReport} moveOut={report} />}
 
         <InspectionReadOnly zones={report.zones} showDeductions />
+
+        <BillingReportSection zones={report.zones} />
 
         {report.otherDeductionsAmount > 0 && (
           <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
@@ -435,6 +500,54 @@ function ComparisonSection({ moveIn, moveOut }: { moveIn: NonNullable<Lease["mov
           {others.map((d) => <ComparisonRow key={`${d.zoneKey}-${d.itemKey}`} item={d} />)}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Rapport de facturation : liste, en un seul endroit, tous les éléments
+ * pour lesquels une décision "à facturer" a été prise (au moins une ligne
+ * du catalogue ou personnalisée), avec le détail et le total — demande
+ * explicite de l'utilisateur ("un rapport des choses à facturer et le
+ * total"). Purement dérivé de `zones` : aucun appel réseau, aucune donnée
+ * qui ne soit pas déjà dans le brouillon/la fiche finalisée.
+ */
+function BillingReportSection({ zones }: { zones: InspectionZone[] }) {
+  const billedItems = zones.flatMap((zone) =>
+    zone.items
+      .filter((item) => item.billing && item.billing.lines.length > 0)
+      .map((item) => ({ zoneLabel: zone.label, item })),
+  );
+  if (billedItems.length === 0) return null;
+  const total = billedItems.reduce((sum, { item }) => sum + item.deduction, 0);
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-danger-border bg-danger-bg/40 p-4">
+      <h3 className="font-label-lg text-ink">Rapport de facturation</h3>
+      <div className="flex flex-col gap-2">
+        {billedItems.map(({ zoneLabel, item }) => (
+          <div key={item.key} className="rounded-lg border border-border bg-surface px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-label-sm text-ink">
+                {zoneLabel} — {item.label}
+              </span>
+              <span className="tabular font-label-sm text-danger-fg">{formatFcfa(item.deduction)}</span>
+            </div>
+            <ul className="mt-1 text-body-xs text-ink-muted">
+              {item.billing!.lines.map((l, idx) => (
+                <li key={idx}>
+                  • {l.label}
+                  {l.quantity > 1 ? ` × ${l.quantity}` : ""} — {formatFcfa(l.unitPrice * l.quantity)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between border-t border-danger-border pt-2">
+        <span className="font-label-md text-ink">Total facturé (éléments dégradés)</span>
+        <span className="tabular font-currency-table text-headline-sm text-danger-fg">{formatFcfa(total)}</span>
+      </div>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, CalendarClock, HelpCircle, ChevronDown, ChevronUp, LockOpen } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, CalendarClock, HelpCircle, ChevronDown, ChevronUp, LockOpen, Landmark, UserPlus, Percent } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { API_URL, ApiError, openAuthenticatedPdf, downloadAuthenticatedFile } from "@/lib/api/client";
 import {
@@ -10,6 +10,9 @@ import {
   createExpense,
   updateExpense,
   deleteExpense,
+  paySupplierExpense,
+  listSuppliers,
+  getAccountingMeta,
   getDashboard,
   accountingReportPdfPath,
   accountingExportXlsxPath,
@@ -20,19 +23,29 @@ import {
   listDeletedEntries,
   getAccountingStartDate,
   setAccountingStartDate,
+  listFixedAssets,
+  createFixedAsset,
+  payFixedAsset,
+  depreciateFixedAsset,
+  getFixedAsset,
   type Expense,
   type ExpenseCategory,
+  type Supplier,
   type AccountingDashboard,
   type RentPaymentEntry,
   type OwnerPayoutEntry,
   type AccountingPeriod,
   type DeletedEntry,
   type AccountingStartDate,
+  type FixedAsset,
+  type FixedAssetCategory,
+  type FixedAssetDepreciationEntry,
 } from "@/lib/api/accounting";
 import type { PaymentMethod } from "@/lib/api/renters";
 import { EXPENSE_CATEGORY_LABELS } from "@/lib/constants/expenses";
+import { FIXED_ASSET_CATEGORY_LABELS } from "@/lib/constants/fixedAssets";
 import { UTILITY_TYPE_LABELS } from "@/lib/constants/charges";
-import { formatFcfa, formatDateHeading, formatTimeOfDay } from "@/lib/utils";
+import { formatFcfa, formatDateHeading, formatTimeOfDay, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -230,9 +243,14 @@ function ComptabiliteContent() {
                 <div key={a.leaseId} className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
                   <div>
                     <p className="font-label-md text-ink">{a.renterName}</p>
-                    <p className="text-body-xs text-ink-muted">
-                      {a.daysLate} j de retard · {a.unpaidMonths} mois dû(s)
-                    </p>
+                    {a.unpaidMonths > 0 && (
+                      <p className="text-body-xs text-ink-muted">
+                        {a.daysLate} j de retard · {a.unpaidMonths} mois dû(s)
+                      </p>
+                    )}
+                    {a.openingDebtRemaining > 0 && (
+                      <p className="text-body-xs text-warning-fg">Impayés à l&apos;entrée : {formatFcfa(a.openingDebtRemaining)}</p>
+                    )}
                   </div>
                   <span className="tabular font-currency-table text-danger-fg">{formatFcfa(a.amountOwed)}</span>
                 </div>
@@ -243,6 +261,89 @@ function ComptabiliteContent() {
                   {formatFcfa(dashboard.totals.tenantArrears)}
                 </span>
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {dashboard && dashboard.ownersWithoutCommissionRate.length > 0 && (
+          <Card className="border-danger-border bg-danger/5">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-danger text-white">
+                  <Percent size={14} />
+                </span>
+                <CardTitle>Propriétaires sans taux de commission défini</CardTitle>
+              </div>
+              <CardDescription>
+                Ces propriétaires ont déjà des loyers encaissés, mais aucun taux n&apos;a jamais été défini pour
+                eux — 0 % de commission a été appliqué en silence. Ouvrez leur fiche pour en définir un.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              {dashboard.ownersWithoutCommissionRate.map((o) => (
+                <Link
+                  key={o.ownerId}
+                  href={`/espace/proprietaires/${o.ownerId}`}
+                  className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 transition-colors hover:bg-surface-muted"
+                >
+                  <p className="font-label-md text-ink">{o.ownerName}</p>
+                  <span className="tabular font-currency-table text-danger-fg">{formatFcfa(o.totalCollected)}</span>
+                </Link>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {dashboard && dashboard.escrow.byOwner.length > 0 && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Landmark size={14} />
+                </span>
+                <CardTitle>Comptes séquestres par mandat</CardTitle>
+              </div>
+              <CardDescription>
+                Ce que le cabinet détient actuellement pour chaque propriétaire (recette nette cumulée depuis
+                toujours, moins les versements déjà effectués) — pas borné à la période sélectionnée ci-dessus.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              {dashboard.escrow.byOwner.map((o) => (
+                <Link
+                  key={o.ownerId}
+                  href={`/espace/proprietaires/${o.ownerId}`}
+                  className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 transition-colors hover:bg-surface-muted"
+                >
+                  <p className="font-label-md text-ink">{o.ownerName}</p>
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className={cn("tabular font-currency-table", o.balance < 0 ? "text-danger-fg" : "text-ink")}>
+                      {formatFcfa(o.balance)}
+                    </span>
+                    {/* Jamais mélangé au solde ci-dessus (décision explicite) : de
+                        l'argent pas encore réellement collecté. */}
+                    {o.openingDebtUnpaid > 0 && (
+                      <span className="tabular text-body-xs text-warning-fg">
+                        + {formatFcfa(o.openingDebtUnpaid)} impayé
+                      </span>
+                    )}
+                  </div>
+                </Link>
+              ))}
+              <div className="mt-2 flex items-center justify-between border-t border-border pt-3">
+                <span className="font-label-md text-ink">Total détenu pour les propriétaires</span>
+                <span className="tabular font-currency-table text-headline-sm text-ink">
+                  {formatFcfa(dashboard.escrow.total)}
+                </span>
+              </div>
+              {dashboard.escrow.openingDebtUnpaidTotal > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-body-sm text-ink-soft">Dont impayés à l&apos;entrée (non compris ci-dessus)</span>
+                  <span className="tabular text-body-sm text-warning-fg">
+                    {formatFcfa(dashboard.escrow.openingDebtUnpaidTotal)}
+                  </span>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -395,6 +496,8 @@ function ComptabiliteContent() {
             )}
           </CardContent>
         </Card>
+
+        <FixedAssetsSection accessToken={accessToken} />
 
         {dashboard && dashboard.totals.unpaidChargesCount > 0 && (
           <Card className="border-warning-border bg-warning/5">
@@ -868,6 +971,13 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         trend={{ value: `${totals.rentCollectedCount} paiement(s)`, direction: "flat" }}
       />
       <StatCard
+        label="Frais d'agence à l'entrée"
+        icon={<UserPlus size={16} />}
+        value={formatFcfa(totals.entryFeesCollected)}
+        tone={totals.entryFeesCollected > 0 ? "success" : "default"}
+        trend={{ value: `${totals.entryFeesCollectedCount} locataire(s) — produit du cabinet, jamais reversé`, direction: "flat" }}
+      />
+      <StatCard
         label="Versé aux propriétaires"
         icon={<TrendingDown size={16} />}
         value={formatFcfa(totals.ownerPayouts)}
@@ -907,7 +1017,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         icon={<Scale size={16} />}
         value={formatFcfa(totals.netCashFlow)}
         tone={totals.netCashFlow >= 0 ? "success" : "danger"}
-        trend={{ value: "Encaissé, moins reversé et dépenses du cabinet", direction: totals.netCashFlow >= 0 ? "up" : "down" }}
+        trend={{ value: "Encaissé + frais d'agence, moins reversé et dépenses du cabinet", direction: totals.netCashFlow >= 0 ? "up" : "down" }}
       />
     </div>
   );
@@ -927,12 +1037,20 @@ function ExpenseForm({
   // Toujours ancrée sur aujourd'hui (mois actuellement ouvert), jamais sur
   // le mois historique éventuellement consulté via le sélecteur de période.
   const [expenseDate, setExpenseDate] = React.useState(todayIso());
+  const [paymentStatus, setPaymentStatus] = React.useState<"paid" | "unpaid">("paid");
   const [method, setMethod] = React.useState<PaymentMethod>("especes");
+  const [supplierName, setSupplierName] = React.useState("");
+  const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
   const [notes, setNotes] = React.useState("");
   const [receipt, setReceipt] = React.useState<File | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
+
+  React.useEffect(() => {
+    if (!accessToken || !open) return;
+    listSuppliers(accessToken).then((res) => setSuppliers(res.suppliers));
+  }, [accessToken, open]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -945,17 +1063,20 @@ function ExpenseForm({
         label: label.trim(),
         amount: Number(amount),
         expenseDate,
-        paymentMethod: method,
+        paymentStatus,
+        paymentMethod: paymentStatus === "paid" ? method : undefined,
+        supplierName: paymentStatus === "unpaid" ? supplierName.trim() : undefined,
         notes: notes.trim() || undefined,
         receipt: receipt ?? undefined,
       });
       setOpen(false);
       setLabel("");
       setAmount("");
+      setSupplierName("");
       setNotes("");
       setReceipt(null);
       onCreated();
-      toast.success("Dépense enregistrée.");
+      toast.success(paymentStatus === "unpaid" ? "Dépense à crédit enregistrée." : "Dépense enregistrée.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer cette dépense.");
     } finally {
@@ -1001,19 +1122,60 @@ function ExpenseForm({
               <Input id="expDate" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
             </Field>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Mode de règlement" htmlFor="expMethod" required>
-              <select
-                id="expMethod"
-                value={method}
-                onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          <div className="flex flex-col gap-1.5">
+            <span className="font-label-sm text-ink-soft">Règlement</span>
+            <div className="flex gap-1.5">
+              <Button
+                type="button"
+                variant={paymentStatus === "paid" ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setPaymentStatus("paid")}
               >
-                {PAYMENT_METHODS.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </select>
-            </Field>
+                Payée maintenant
+              </Button>
+              <Button
+                type="button"
+                variant={paymentStatus === "unpaid" ? "primary" : "secondary"}
+                size="sm"
+                disabled={category === "salaires"}
+                onClick={() => setPaymentStatus("unpaid")}
+              >
+                À crédit (fournisseur)
+              </Button>
+            </div>
+            {category === "salaires" && paymentStatus === "unpaid" && (
+              <p className="text-body-xs text-ink-muted">Un salaire ne peut pas être enregistré à crédit.</p>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {paymentStatus === "paid" ? (
+              <Field label="Mode de règlement" htmlFor="expMethod" required>
+                <select
+                  id="expMethod"
+                  value={method}
+                  onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+                  className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  {PAYMENT_METHODS.map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+              </Field>
+            ) : (
+              <Field label="Fournisseur" htmlFor="expSupplier" required hint="Nouveau ou déjà connu">
+                <Input
+                  id="expSupplier"
+                  list="expSupplierSuggestions"
+                  value={supplierName}
+                  onChange={(e) => setSupplierName(e.target.value)}
+                />
+                <datalist id="expSupplierSuggestions">
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.name} />
+                  ))}
+                </datalist>
+              </Field>
+            )}
             <Field label="Justificatif (optionnel)" htmlFor="expReceipt" hint="PNG, JPEG, WEBP ou PDF, 5 Mo max">
               <input
                 id="expReceipt"
@@ -1027,7 +1189,16 @@ function ExpenseForm({
           <Field label="Note (optionnel)" htmlFor="expNotes">
             <Input id="expNotes" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </Field>
-          <Button type="submit" disabled={submitting || !label.trim() || !amount} className="self-start">
+          <Button
+            type="submit"
+            disabled={
+              submitting ||
+              !label.trim() ||
+              !amount ||
+              (paymentStatus === "unpaid" && (!supplierName.trim() || category === "salaires"))
+            }
+            className="self-start"
+          >
             {submitting ? "Enregistrement…" : "Enregistrer la dépense"}
           </Button>
         </form>
@@ -1055,7 +1226,26 @@ function ExpenseRow({
   const [category, setCategory] = React.useState<ExpenseCategory>(expense.category);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [settling, setSettling] = React.useState(false);
+  const [settleMethod, setSettleMethod] = React.useState<PaymentMethod>("especes");
+  const [settlePaidAt, setSettlePaidAt] = React.useState(todayIso());
   const toast = useToast();
+
+  async function handleSettle() {
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await paySupplierExpense(accessToken, expense.id, { paymentMethod: settleMethod, paidAt: settlePaidAt });
+      setSettling(false);
+      onChanged();
+      toast.success(`« ${expense.label} » réglée.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce règlement.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handleSave() {
     if (!accessToken) return;
@@ -1162,6 +1352,41 @@ function ExpenseRow({
     );
   }
 
+  if (settling) {
+    return (
+      <TableRow>
+        <TableCell colSpan={8}>
+          <div className="flex flex-col gap-2 py-2">
+            {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+            <p className="text-body-sm text-ink">
+              Régler « {expense.label} » ({formatFcfa(expense.amount)}) dû à {expense.supplierName} ?
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <select
+                value={settleMethod}
+                onChange={(e) => setSettleMethod(e.target.value as PaymentMethod)}
+                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink"
+              >
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <Input type="date" value={settlePaidAt} onChange={(e) => setSettlePaidAt(e.target.value)} />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={handleSettle} disabled={submitting}>
+                {submitting ? "Enregistrement…" : "Confirmer le règlement"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSettling(false)} disabled={submitting}>
+                Annuler
+              </Button>
+            </div>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
   return (
     <TableRow>
       <TableCell className="text-ink-soft">{formatTimeOfDay(expense.createdAt)}</TableCell>
@@ -1179,7 +1404,16 @@ function ExpenseRow({
       </TableCell>
       <TableCell className="text-ink-soft">{EXPENSE_CATEGORY_LABELS[expense.category]}</TableCell>
       <TableAmount>{formatFcfa(expense.amount)}</TableAmount>
-      <TableCell className="text-ink-soft">{expense.paymentMethodLabel}</TableCell>
+      <TableCell className="text-ink-soft">
+        {expense.paymentStatus === "unpaid" ? (
+          <div className="flex items-center gap-1.5">
+            <Badge variant="warning">À crédit</Badge>
+            <span>{expense.supplierName}</span>
+          </div>
+        ) : (
+          expense.paymentMethodLabel
+        )}
+      </TableCell>
       <TableCell className="text-ink-soft">
         {expense.recordedBy ? `${expense.recordedBy.name} (${expense.recordedBy.roleLabel})` : "—"}
       </TableCell>
@@ -1190,6 +1424,11 @@ function ExpenseRow({
           </Badge>
         ) : (
           <div className="flex items-center justify-end gap-1">
+            {expense.paymentStatus === "unpaid" && (
+              <Button variant="warning" size="sm" onClick={() => setSettling(true)}>
+                Régler
+              </Button>
+            )}
             {expense.receiptUrl && (
               <a href={`${API_URL}${expense.receiptUrl}`} target="_blank" rel="noopener noreferrer" aria-label="Voir le justificatif">
                 <Button variant="ghost" size="sm"><FileDown size={14} /></Button>
@@ -1205,5 +1444,449 @@ function ExpenseRow({
         )}
       </TableCell>
     </TableRow>
+  );
+}
+
+// Registre des immobilisations du cabinet (matériel propre à l'agence — jamais
+// les Biens gérés pour le compte des propriétaires). Contrairement au journal
+// des dépenses, ce registre n'est PAS filtré par la période sélectionnée en
+// haut de page : une immobilisation vit sur plusieurs années, elle reste donc
+// toujours visible en entier, comme le journal des suppressions.
+function FixedAssetsSection({ accessToken }: { accessToken: string | null }) {
+  const [assets, setAssets] = React.useState<FixedAsset[] | null>(null);
+  const [categories, setCategories] = React.useState<{ key: FixedAssetCategory; label: string }[]>([]);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const load = React.useCallback(() => {
+    if (!accessToken) return;
+    Promise.all([listFixedAssets(accessToken), getAccountingMeta(accessToken)])
+      .then(([res, meta]) => {
+        setAssets(res.fixedAssets);
+        setCategories(meta.fixedAssetCategories);
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les immobilisations."));
+  }, [accessToken]);
+
+  React.useEffect(() => load(), [load]);
+
+  const totalBookValue = assets?.reduce((sum, a) => sum + a.bookValue, 0) ?? 0;
+
+  return (
+    <Card className="border-info-border bg-info/5">
+      <CardHeader>
+        <CardTitle>Immobilisations du cabinet</CardTitle>
+        <CardDescription>
+          Matériel propre à l&apos;agence (informatique, mobilier, véhicules) — jamais les Biens gérés pour le
+          compte des propriétaires. La valeur nette reflète uniquement les mois d&apos;amortissement déjà
+          enregistrés, jamais une estimation.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+        <FixedAssetForm accessToken={accessToken} categories={categories} onCreated={load} />
+
+        {assets === null ? (
+          <p className="text-body-sm text-ink-muted">Chargement…</p>
+        ) : assets.length === 0 ? (
+          <p className="text-body-sm text-ink-muted">Aucune immobilisation enregistrée.</p>
+        ) : (
+          <>
+            <Table>
+              <TableHeader>
+                <tr>
+                  <TableHead>Libellé</TableHead>
+                  <TableHead>Catégorie</TableHead>
+                  <TableHead>Acquisition</TableHead>
+                  <TableHead className="text-right">Coût</TableHead>
+                  <TableHead className="text-right">Valeur nette</TableHead>
+                  <TableHead>Règlement</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </tr>
+              </TableHeader>
+              <TableBody>
+                {assets.map((a) => (
+                  <FixedAssetRow key={a.id} asset={a} accessToken={accessToken} onChanged={load} />
+                ))}
+              </TableBody>
+            </Table>
+            <div className="flex items-center justify-between border-t border-border pt-3">
+              <span className="font-label-md text-ink">Valeur nette totale du parc</span>
+              <span className="tabular font-currency-table text-headline-sm text-ink">{formatFcfa(totalBookValue)}</span>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FixedAssetForm({
+  accessToken,
+  categories,
+  onCreated,
+}: {
+  accessToken: string | null;
+  categories: { key: FixedAssetCategory; label: string }[];
+  onCreated: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [label, setLabel] = React.useState("");
+  const [category, setCategory] = React.useState<FixedAssetCategory>("informatique");
+  const [acquisitionDate, setAcquisitionDate] = React.useState(todayIso());
+  const [acquisitionCost, setAcquisitionCost] = React.useState("");
+  const [usefulLifeYears, setUsefulLifeYears] = React.useState("3");
+  const [paymentStatus, setPaymentStatus] = React.useState<"paid" | "unpaid">("paid");
+  const [method, setMethod] = React.useState<PaymentMethod>("especes");
+  const [supplierName, setSupplierName] = React.useState("");
+  const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  React.useEffect(() => {
+    if (!accessToken || !open) return;
+    listSuppliers(accessToken).then((res) => setSuppliers(res.suppliers));
+  }, [accessToken, open]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await createFixedAsset(accessToken, {
+        label: label.trim(),
+        category,
+        acquisitionDate,
+        acquisitionCost: Number(acquisitionCost),
+        usefulLifeYears: Number(usefulLifeYears),
+        paymentStatus,
+        paymentMethod: paymentStatus === "paid" ? method : undefined,
+        supplierName: paymentStatus === "unpaid" ? supplierName.trim() : undefined,
+      });
+      setOpen(false);
+      setLabel("");
+      setAcquisitionCost("");
+      setSupplierName("");
+      onCreated();
+      toast.success(paymentStatus === "unpaid" ? "Immobilisation à crédit enregistrée." : "Immobilisation enregistrée.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer cette immobilisation.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <span className="font-label-sm uppercase tracking-wider text-ink-muted">Nouvelle immobilisation</span>
+        <Button variant="info" size="sm" onClick={() => setOpen((v) => !v)}>
+          <Plus size={14} />
+          {open ? "Fermer" : "Enregistrer une immobilisation"}
+        </Button>
+      </div>
+
+      {open && (
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-4">
+          {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Libellé" htmlFor="faLabel" required hint="Ex. 3 ordinateurs portables, véhicule de service...">
+              <Input id="faLabel" value={label} onChange={(e) => setLabel(e.target.value)} />
+            </Field>
+            <Field label="Catégorie" htmlFor="faCategory" required>
+              <select
+                id="faCategory"
+                value={category}
+                onChange={(e) => setCategory(e.target.value as FixedAssetCategory)}
+                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {categories.map((c) => (
+                  <option key={c.key} value={c.key}>{c.label}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="Date d'acquisition" htmlFor="faDate" required>
+              <Input id="faDate" type="date" value={acquisitionDate} onChange={(e) => setAcquisitionDate(e.target.value)} />
+            </Field>
+            <Field label="Coût d'acquisition (FCFA)" htmlFor="faCost" required>
+              <Input
+                id="faCost"
+                inputMode="numeric"
+                value={acquisitionCost}
+                onChange={(e) => setAcquisitionCost(e.target.value.replace(/\D/g, ""))}
+              />
+            </Field>
+            <Field label="Durée d'amortissement (années)" htmlFor="faLife" required hint="Ex. 3 pour de l'informatique">
+              <Input
+                id="faLife"
+                inputMode="numeric"
+                value={usefulLifeYears}
+                onChange={(e) => setUsefulLifeYears(e.target.value.replace(/\D/g, ""))}
+              />
+            </Field>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="font-label-sm text-ink-soft">Règlement</span>
+            <div className="flex gap-1.5">
+              <Button
+                type="button"
+                variant={paymentStatus === "paid" ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setPaymentStatus("paid")}
+              >
+                Payée maintenant
+              </Button>
+              <Button
+                type="button"
+                variant={paymentStatus === "unpaid" ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setPaymentStatus("unpaid")}
+              >
+                À crédit (fournisseur)
+              </Button>
+            </div>
+          </div>
+          {paymentStatus === "paid" ? (
+            <Field label="Mode de règlement" htmlFor="faMethod" required>
+              <select
+                id="faMethod"
+                value={method}
+                onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </Field>
+          ) : (
+            <Field label="Fournisseur" htmlFor="faSupplier" required hint="Nouveau ou déjà connu">
+              <Input id="faSupplier" list="faSupplierSuggestions" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} />
+              <datalist id="faSupplierSuggestions">
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.name} />
+                ))}
+              </datalist>
+            </Field>
+          )}
+          <Button
+            type="submit"
+            disabled={
+              submitting ||
+              !label.trim() ||
+              !acquisitionCost ||
+              !usefulLifeYears ||
+              (paymentStatus === "unpaid" && !supplierName.trim())
+            }
+            className="self-start"
+          >
+            {submitting ? "Enregistrement…" : "Enregistrer l'immobilisation"}
+          </Button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function FixedAssetRow({
+  asset,
+  accessToken,
+  onChanged,
+}: {
+  asset: FixedAsset;
+  accessToken: string | null;
+  onChanged: () => void;
+}) {
+  const [settling, setSettling] = React.useState(false);
+  const [settleMethod, setSettleMethod] = React.useState<PaymentMethod>("especes");
+  const [settlePaidAt, setSettlePaidAt] = React.useState(todayIso());
+  const [depreciating, setDepreciating] = React.useState(false);
+  const [period, setPeriod] = React.useState(currentYearMonth());
+  const [expanded, setExpanded] = React.useState(false);
+  const [depreciations, setDepreciations] = React.useState<FixedAssetDepreciationEntry[] | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  async function handleSettle() {
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await payFixedAsset(accessToken, asset.id, { paymentMethod: settleMethod, paidAt: settlePaidAt });
+      setSettling(false);
+      onChanged();
+      toast.success(`« ${asset.label} » réglée.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce règlement.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDepreciate() {
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await depreciateFixedAsset(accessToken, asset.id, period);
+      setDepreciating(false);
+      onChanged();
+      toast.success(`Amortissement de ${formatFcfa(res.amount)} enregistré pour ${period}.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer cet amortissement.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function toggleExpanded() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !depreciations && accessToken) {
+      const res = await getFixedAsset(accessToken, asset.id);
+      setDepreciations(res.depreciations);
+    }
+  }
+
+  const fullyDepreciated = asset.bookValue <= 0;
+
+  if (settling) {
+    return (
+      <TableRow>
+        <TableCell colSpan={7}>
+          <div className="flex flex-col gap-2 py-2">
+            {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+            <p className="text-body-sm text-ink">
+              Régler « {asset.label} » ({formatFcfa(asset.acquisitionCost)}) dû à {asset.supplierName} ?
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <select
+                value={settleMethod}
+                onChange={(e) => setSettleMethod(e.target.value as PaymentMethod)}
+                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink"
+              >
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <Input type="date" value={settlePaidAt} onChange={(e) => setSettlePaidAt(e.target.value)} />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={handleSettle} disabled={submitting}>
+                {submitting ? "Enregistrement…" : "Confirmer le règlement"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSettling(false)} disabled={submitting}>
+                Annuler
+              </Button>
+            </div>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  if (depreciating) {
+    return (
+      <TableRow>
+        <TableCell colSpan={7}>
+          <div className="flex flex-col gap-2 py-2">
+            {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+            <p className="text-body-sm text-ink">
+              Enregistrer un mois d&apos;amortissement pour « {asset.label} » (valeur nette actuelle :{" "}
+              {formatFcfa(asset.bookValue)}) ?
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="month"
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                className="h-[38px] rounded border border-border-strong bg-surface px-3 text-body-md text-ink"
+              />
+              <Button size="sm" onClick={handleDepreciate} disabled={submitting}>
+                {submitting ? "Enregistrement…" : "Confirmer l'amortissement"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setDepreciating(false)} disabled={submitting}>
+                Annuler
+              </Button>
+            </div>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          <button
+            type="button"
+            onClick={toggleExpanded}
+            className="inline-flex items-center gap-1.5 text-left text-ink hover:underline"
+          >
+            {expanded ? <ChevronUp size={14} className="text-ink-muted" /> : <ChevronDown size={14} className="text-ink-muted" />}
+            {asset.label}
+          </button>
+          {asset.status === "disposed" && <Badge variant="neutral" className="ml-1.5">Sortie</Badge>}
+        </TableCell>
+        <TableCell className="text-ink-soft">{FIXED_ASSET_CATEGORY_LABELS[asset.category]}</TableCell>
+        <TableCell className="text-ink-soft">{asset.acquisitionDate}</TableCell>
+        <TableAmount>{formatFcfa(asset.acquisitionCost)}</TableAmount>
+        <TableAmount>{formatFcfa(asset.bookValue)}</TableAmount>
+        <TableCell className="text-ink-soft">
+          {asset.paymentStatus === "unpaid" ? (
+            <div className="flex items-center gap-1.5">
+              <Badge variant="warning">À crédit</Badge>
+              <span>{asset.supplierName}</span>
+            </div>
+          ) : (
+            asset.paymentMethodLabel
+          )}
+        </TableCell>
+        <TableCell className="text-right">
+          <div className="flex items-center justify-end gap-1">
+            {asset.paymentStatus === "unpaid" && (
+              <Button variant="warning" size="sm" onClick={() => setSettling(true)}>
+                Régler
+              </Button>
+            )}
+            {!fullyDepreciated && (
+              <Button variant="secondary" size="sm" onClick={() => setDepreciating(true)}>
+                Amortir
+              </Button>
+            )}
+          </div>
+        </TableCell>
+      </TableRow>
+      {expanded && (
+        <TableRow>
+          <TableCell colSpan={7}>
+            <div className="flex flex-col gap-1.5 py-2">
+              {depreciations === null ? (
+                <p className="text-body-sm text-ink-muted">Chargement…</p>
+              ) : depreciations.length === 0 ? (
+                <p className="text-body-sm text-ink-muted">Aucun amortissement enregistré pour l&apos;instant.</p>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {depreciations.map((d) => (
+                    <li key={d.period} className="flex items-center justify-between gap-3 text-body-xs text-ink-soft">
+                      <span>{d.period}</span>
+                      <span className="tabular">{formatFcfa(d.amount)}</span>
+                      <span className="text-ink-muted">
+                        {d.recordedBy ? `${d.recordedBy.name} (${d.recordedBy.roleLabel})` : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }

@@ -30,7 +30,7 @@ export type UtilityCharge = {
   recordedBy: Actor;
   paidRecordedBy: Actor;
   lease: { id: number; status: "active" | "ended" };
-  renter: { id: number; firstName: string; lastName: string };
+  renter: { id: number; firstName: string; lastName: string; phone: string | null };
   unit: { id: number; code: string };
   property: { id: number; code: string };
   createdAt: string;

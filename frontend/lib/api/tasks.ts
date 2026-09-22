@@ -53,9 +53,19 @@ export type AccountantTasks = {
   currentMonthClosability: { period: string; isClosable: boolean } | null;
 };
 
+export type AssignedTaskSummary = {
+  id: number;
+  title: string;
+  description: string | null;
+  dueDate: string;
+};
+
 export type MyTasks = {
   agent: AgentTasks | null;
   accountant: AccountantTasks | null;
+  // Tâches à délai assignées par le DG (nouveau) — indépendant des
+  // permissions locataires/comptabilité, toujours présent.
+  assignedTasks: AssignedTaskSummary[];
 };
 
 export function getMyTasks(accessToken: string) {

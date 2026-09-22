@@ -11,16 +11,32 @@ const { requireAuth, requirePermission, requireAnyPermission, requireRole } = re
 const {
   createExpenseSchema,
   updateExpenseSchema,
+  paySupplierExpenseSchema,
   dashboardQuerySchema,
   closePeriodSchema,
   deleteReasonSchema,
   startDateSchema,
 } = require('../validators/expenses');
+const {
+  createFixedAssetSchema,
+  payFixedAssetSchema,
+  depreciateFixedAssetSchema,
+} = require('../validators/fixedAssets');
 const { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_KEYS, EXPENSE_PAYMENT_METHODS } = require('../constants/expenses');
+const { FIXED_ASSET_CATEGORIES } = require('../constants/fixedAssets');
 const { toActor } = require('../utils/actor');
+const {
+  EXPENSE_CATEGORY_TO_OPERATION_TYPE,
+  FIXED_ASSET_CATEGORY_TO_ACQUISITION_TYPE,
+  FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
+} = require('../constants/glOperationTypes');
+const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
+const { computeMonthlyDepreciation } = require('../services/gl/glDepreciationService');
+const { notifyDg } = require('../services/gl/glNotificationService');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
 const { assertPeriodOpen, isPeriodClosed, getPeriodClosability } = require('../services/accountingPeriods');
-const { listPortfolioArrears, listPredictiveLateAlerts } = require('../services/rentTracking');
+const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances } = require('../services/rentTracking');
+const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate } = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
 const { resolvePropertyScope } = require('../services/scope');
 const { streamAccountingReportPdf } = require('../services/pdf');
@@ -57,6 +73,7 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
+  kkiapay: 'Paiement en ligne (KKiaPay)',
 };
 
 function isoDate(d) {
@@ -71,8 +88,14 @@ function toPublicExpense(row) {
     label: row.label,
     amount: Number(row.amount),
     expenseDate: isoDate(row.expense_date),
+    paymentStatus: row.payment_status,
     paymentMethod: row.payment_method,
-    paymentMethodLabel: PAYMENT_METHOD_LABELS[row.payment_method] ?? row.payment_method,
+    paymentMethodLabel: row.payment_method ? PAYMENT_METHOD_LABELS[row.payment_method] ?? row.payment_method : null,
+    paidAt: isoDate(row.paid_at),
+    // Uniquement pour une dépense "à crédit" — `null` pour une dépense payée
+    // immédiatement (comportement historique, jamais de fournisseur alors).
+    supplierId: row.supplier_id ?? null,
+    supplierName: row.supplier_name ?? null,
     notes: row.notes,
     receiptUrl: row.receipt_path ? `/uploads/${row.receipt_path}` : null,
     // Facultatif : dépense rattachée à un Bien (et une Unité précise en son
@@ -99,9 +122,51 @@ async function loadExpense(conn, tenantId, id) {
   return rows[0];
 }
 
+// Valeur nette comptable = coût d'acquisition − amortissements déjà
+// ENREGISTRÉS (jamais une estimation théorique sur la durée totale — seuls
+// les mois réellement saisis via POST /:id/depreciate comptent, même
+// principe que le reste du module : rien n'est estimé, tout est tracé).
+function toPublicFixedAsset(row) {
+  const acquisitionCost = Number(row.acquisition_cost);
+  const accumulatedDepreciation = Number(row.accumulated_depreciation ?? 0);
+  return {
+    id: row.id,
+    label: row.label,
+    category: row.category,
+    acquisitionDate: isoDate(row.acquisition_date),
+    acquisitionCost,
+    usefulLifeYears: row.useful_life_years,
+    paymentStatus: row.payment_status,
+    paymentMethod: row.payment_method,
+    paymentMethodLabel: row.payment_method ? PAYMENT_METHOD_LABELS[row.payment_method] ?? row.payment_method : null,
+    paidAt: isoDate(row.paid_at),
+    supplierId: row.supplier_id ?? null,
+    supplierName: row.supplier_name ?? null,
+    status: row.status,
+    disposedAt: isoDate(row.disposed_at),
+    accumulatedDepreciation,
+    bookValue: acquisitionCost - accumulatedDepreciation,
+    createdAt: row.created_at,
+  };
+}
+
+/** Charge une immobilisation de l'entreprise courante, ou lève 404. */
+async function loadFixedAsset(conn, tenantId, id) {
+  const [rows] = await conn.query('SELECT * FROM fixed_assets WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
+    id,
+    tenantId,
+  });
+  if (!rows[0]) throw new ApiError(404, 'Immobilisation introuvable');
+  return rows[0];
+}
+
 // GET /api/accounting/meta — catalogues pour construire les formulaires.
 router.get('/meta', canAccounting, (_req, res) => {
-  res.json({ categories: EXPENSE_CATEGORIES, paymentMethods: EXPENSE_PAYMENT_METHODS });
+  res.json({
+    categories: EXPENSE_CATEGORIES,
+    paymentMethods: EXPENSE_PAYMENT_METHODS,
+    fixedAssetCategories: FIXED_ASSET_CATEGORIES,
+  });
 });
 
 // GET /api/accounting/expenses?from=&to=&category=&q= — journal des dépenses.
@@ -142,10 +207,11 @@ router.get('/expenses', canAccounting, async (req, res, next) => {
     // (donc à son propriétaire — voir `GET /dashboard` ci-dessus).
     const [rows] = await pool.query(
       `SELECT e.*, u.first_name AS recorded_by_first_name, u.last_name AS recorded_by_last_name, u.role AS recorded_by_role,
-              p.code AS property_code
+              p.code AS property_code, s.name AS supplier_name
        FROM expenses e
        JOIN users u ON u.id = e.recorded_by
        LEFT JOIN properties p ON p.id = e.property_id
+       LEFT JOIN suppliers s ON s.id = e.supplier_id
        WHERE ${where}
        ORDER BY e.created_at DESC, e.id DESC`,
       params,
@@ -189,16 +255,42 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
 
     await conn.beginTransaction();
 
+    // "À crédit" : récupère ou crée le fournisseur par nom (pas de module
+    // fournisseurs complet — juste assez pour un tiers identifiable et
+    // réutilisable, voir migration 048). Recherche insensible aux espaces
+    // superflus uniquement ; deux libellés légèrement différents pour le
+    // même fournisseur créent volontairement deux fiches distinctes plutôt
+    // que de deviner un rapprochement flou.
+    let supplierId = null;
+    if (data.paymentStatus === 'unpaid') {
+      const [existingSupplier] = await conn.query(
+        'SELECT id FROM suppliers WHERE tenant_id = :tenantId AND name = :name LIMIT 1',
+        { tenantId: req.user.tenantId, name: data.supplierName },
+      );
+      if (existingSupplier[0]) {
+        supplierId = existingSupplier[0].id;
+      } else {
+        const [supplierResult] = await conn.query(
+          'INSERT INTO suppliers (tenant_id, name, created_by) VALUES (:tenantId, :name, :by)',
+          { tenantId: req.user.tenantId, name: data.supplierName, by: req.user.id },
+        );
+        supplierId = supplierResult.insertId;
+      }
+    }
+
     const [result] = await conn.query(
-      `INSERT INTO expenses (tenant_id, category, label, amount, expense_date, payment_method, notes, property_id, unit_id, recorded_by)
-       VALUES (:tenantId, :category, :label, :amount, :expenseDate, :paymentMethod, :notes, :propertyId, :unitId, :by)`,
+      `INSERT INTO expenses (tenant_id, category, label, amount, expense_date, payment_method, payment_status, paid_at, supplier_id, notes, property_id, unit_id, recorded_by)
+       VALUES (:tenantId, :category, :label, :amount, :expenseDate, :paymentMethod, :paymentStatus, :paidAt, :supplierId, :notes, :propertyId, :unitId, :by)`,
       {
         tenantId: req.user.tenantId,
         category: data.category,
         label: data.label,
         amount: data.amount,
         expenseDate: data.expenseDate,
-        paymentMethod: data.paymentMethod,
+        paymentMethod: data.paymentStatus === 'paid' ? data.paymentMethod : null,
+        paymentStatus: data.paymentStatus,
+        paidAt: data.paymentStatus === 'paid' ? data.expenseDate : null,
+        supplierId,
         notes: data.notes,
         propertyId: data.propertyId ?? null,
         unitId: data.unitId ?? null,
@@ -214,6 +306,48 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
       const rel = `tenants/${req.user.tenantId}/expenses/${randomFileName(String(expenseId), ext)}`;
       await fs.writeFile(path.join(UPLOADS_ROOT, rel), req.file.buffer);
       await conn.query('UPDATE expenses SET receipt_path = :path WHERE id = :id', { path: rel, id: expenseId });
+    }
+
+    // Module comptabilité SYSCOHADA (nouveau) — voir le commentaire identique
+    // dans routes/leases.js `recordRentPayment` : rien ne change pour une
+    // entreprise qui n'a pas activé le module. `salaires` pointe vers la
+    // règle dédiée `salaire_paye` (décision validée), pas une règle de
+    // dépense générique.
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      const operationType = EXPENSE_CATEGORY_TO_OPERATION_TYPE[data.category];
+      if (!operationType) {
+        throw new Error(`Catégorie de dépense sans correspondance comptable : ${data.category}`);
+      }
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType,
+        entryDate: data.expenseDate,
+        amount: data.amount,
+        // "À crédit" : pas de mode de règlement (rien n'est payé) — la
+        // ligne dynamique `tresorerie_ou_fournisseur` retombe alors sur le
+        // fournisseur (401) via `context.supplierId`. Voir glAccountResolver.
+        paymentMethod: data.paymentStatus === 'paid' ? data.paymentMethod : undefined,
+        narrationVars: { libelle: data.label, mois: data.expenseDate.slice(0, 7), employe: data.label },
+        sourceTable: 'expenses',
+        sourceId: expenseId,
+        createdBy: req.user.id,
+        context: { supplierId },
+      });
+
+      // Notifie le DG si la dépense dépasse le seuil paramétré (décision
+      // validée) — jamais de notification si aucun seuil n'a été fixé.
+      const [[tenantRow]] = await conn.query('SELECT gl_expense_alert_threshold FROM tenants WHERE id = :id', {
+        id: req.user.tenantId,
+      });
+      if (tenantRow.gl_expense_alert_threshold != null && data.amount > Number(tenantRow.gl_expense_alert_threshold)) {
+        await notifyDg(conn, {
+          tenantId: req.user.tenantId,
+          type: 'expense_threshold',
+          message: `Dépense de ${data.amount} FCFA au-dessus du seuil (${data.label})`,
+          entityTable: 'expenses',
+          entityId: expenseId,
+        });
+      }
     }
 
     await conn.commit();
@@ -244,6 +378,12 @@ router.patch('/expenses/:id', canAccounting, async (req, res, next) => {
     if (data.expenseDate !== undefined) {
       await assertPeriodOpen(req.user.tenantId, data.expenseDate);
     }
+    // Une dépense "à crédit" ne peut pas se voir attribuer un mode de
+    // règlement par cette route générique — ça sauterait la génération de
+    // l'écriture de règlement (voir POST /expenses/:id/pay, dédiée à ça).
+    if (data.paymentMethod !== undefined && existing.payment_status === 'unpaid') {
+      throw new ApiError(409, 'Cette dépense est à crédit — utilisez "Régler" pour enregistrer son paiement.');
+    }
 
     const fields = [];
     const params = { id };
@@ -259,13 +399,379 @@ router.patch('/expenses/:id', canAccounting, async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT e.*, u.first_name AS recorded_by_first_name, u.last_name AS recorded_by_last_name, u.role AS recorded_by_role
-       FROM expenses e JOIN users u ON u.id = e.recorded_by WHERE e.id = :id`,
+      `SELECT e.*, u.first_name AS recorded_by_first_name, u.last_name AS recorded_by_last_name, u.role AS recorded_by_role,
+              s.name AS supplier_name
+       FROM expenses e JOIN users u ON u.id = e.recorded_by LEFT JOIN suppliers s ON s.id = e.supplier_id
+       WHERE e.id = :id`,
       { id },
     );
     res.json({ expense: toPublicExpense(rows[0]) });
   } catch (err) {
     next(err);
+  }
+});
+
+// POST /api/accounting/expenses/:id/pay — régler une dépense "à crédit".
+// Solde la dette envers le fournisseur (401) et sort la trésorerie —
+// jamais une nouvelle charge (déjà comptabilisée à l'engagement).
+router.post('/expenses/:id/pay', canAccounting, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = paySupplierExpenseSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const existing = await loadExpense(conn, req.user.tenantId, id);
+    if (existing.payment_status !== 'unpaid') throw new ApiError(409, 'Cette dépense est déjà réglée.');
+    await assertPeriodOpen(req.user.tenantId, data.paidAt);
+
+    const [supplierRows] = await conn.query('SELECT name FROM suppliers WHERE id = :id', { id: existing.supplier_id });
+    const supplierName = supplierRows[0]?.name ?? 'Fournisseur';
+
+    await conn.beginTransaction();
+
+    await conn.query(
+      'UPDATE expenses SET payment_status = :status, payment_method = :method, paid_at = :paidAt WHERE id = :id',
+      { status: 'paid', method: data.paymentMethod, paidAt: data.paidAt, id },
+    );
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType: 'reglement_fournisseur',
+        entryDate: data.paidAt,
+        amount: Number(existing.amount),
+        paymentMethod: data.paymentMethod,
+        narrationVars: { fournisseur: supplierName },
+        sourceTable: 'expenses',
+        sourceId: id,
+        createdBy: req.user.id,
+        context: { supplierId: existing.supplier_id },
+      });
+    }
+
+    await conn.commit();
+    logger.info('Dépense à crédit réglée', { tenantId: req.user.tenantId, expenseId: id, by: req.user.id });
+    res.status(204).send();
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// GET /api/accounting/suppliers — fournisseurs déjà utilisés (autocomplétion
+// + total dû), pas un module CRM fournisseurs complet.
+router.get('/suppliers', canAccounting, async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT s.id, s.name,
+              COALESCE(SUM(CASE WHEN e.payment_status = 'unpaid' THEN e.amount ELSE 0 END), 0) AS total_owed
+       FROM suppliers s
+       LEFT JOIN expenses e ON e.supplier_id = s.id AND e.deleted_at IS NULL
+       WHERE s.tenant_id = :tenantId
+       GROUP BY s.id, s.name
+       ORDER BY s.name ASC`,
+      { tenantId: req.user.tenantId },
+    );
+    res.json({ suppliers: rows.map((r) => ({ id: r.id, name: r.name, totalOwed: Number(r.total_owed) })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ACCUMULATED_DEPRECIATION_JOIN = `
+  LEFT JOIN (SELECT fixed_asset_id, SUM(amount) AS total FROM fixed_asset_depreciations GROUP BY fixed_asset_id) fad
+    ON fad.fixed_asset_id = fa.id`;
+
+// GET /api/accounting/fixed-assets — registre des immobilisations du cabinet
+// (matériel propre à l'agence — jamais les Biens gérés pour le compte des
+// propriétaires, qui n'appartiennent pas au cabinet).
+router.get('/fixed-assets', canAccounting, async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT fa.*, s.name AS supplier_name, COALESCE(fad.total, 0) AS accumulated_depreciation
+       FROM fixed_assets fa
+       LEFT JOIN suppliers s ON s.id = fa.supplier_id
+       ${ACCUMULATED_DEPRECIATION_JOIN}
+       WHERE fa.tenant_id = :tenantId
+       ORDER BY fa.acquisition_date DESC, fa.id DESC`,
+      { tenantId: req.user.tenantId },
+    );
+    res.json({ fixedAssets: rows.map(toPublicFixedAsset) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/accounting/fixed-assets — enregistrer une immobilisation. Même
+// schéma "à crédit" que POST /expenses (get-or-create fournisseur par nom
+// exact — voir le commentaire détaillé là-bas).
+router.post('/fixed-assets', canAccounting, async (req, res, next) => {
+  const parsed = createFixedAssetSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    await assertPeriodOpen(req.user.tenantId, data.acquisitionDate);
+    await conn.beginTransaction();
+
+    let supplierId = null;
+    if (data.paymentStatus === 'unpaid') {
+      const [existingSupplier] = await conn.query(
+        'SELECT id FROM suppliers WHERE tenant_id = :tenantId AND name = :name LIMIT 1',
+        { tenantId: req.user.tenantId, name: data.supplierName },
+      );
+      if (existingSupplier[0]) {
+        supplierId = existingSupplier[0].id;
+      } else {
+        const [supplierResult] = await conn.query(
+          'INSERT INTO suppliers (tenant_id, name, created_by) VALUES (:tenantId, :name, :by)',
+          { tenantId: req.user.tenantId, name: data.supplierName, by: req.user.id },
+        );
+        supplierId = supplierResult.insertId;
+      }
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO fixed_assets (tenant_id, label, category, acquisition_date, acquisition_cost, useful_life_years, payment_method, payment_status, paid_at, supplier_id, created_by)
+       VALUES (:tenantId, :label, :category, :acquisitionDate, :acquisitionCost, :usefulLifeYears, :paymentMethod, :paymentStatus, :paidAt, :supplierId, :by)`,
+      {
+        tenantId: req.user.tenantId,
+        label: data.label,
+        category: data.category,
+        acquisitionDate: data.acquisitionDate,
+        acquisitionCost: data.acquisitionCost,
+        usefulLifeYears: data.usefulLifeYears,
+        paymentMethod: data.paymentStatus === 'paid' ? data.paymentMethod : null,
+        paymentStatus: data.paymentStatus,
+        paidAt: data.paymentStatus === 'paid' ? data.acquisitionDate : null,
+        supplierId,
+        by: req.user.id,
+      },
+    );
+    const fixedAssetId = result.insertId;
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      const operationType = FIXED_ASSET_CATEGORY_TO_ACQUISITION_TYPE[data.category];
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType,
+        entryDate: data.acquisitionDate,
+        amount: data.acquisitionCost,
+        // "À crédit" : pas de mode de règlement (rien n'est payé) — la ligne
+        // dynamique `tresorerie_ou_fournisseur_investissement` retombe sur le
+        // fournisseur (481, JAMAIS 401) via `context.supplierId`.
+        paymentMethod: data.paymentStatus === 'paid' ? data.paymentMethod : undefined,
+        narrationVars: { libelle: data.label },
+        sourceTable: 'fixed_assets',
+        sourceId: fixedAssetId,
+        createdBy: req.user.id,
+        context: { supplierId },
+      });
+    }
+
+    await conn.commit();
+    logger.info('Immobilisation enregistrée', {
+      tenantId: req.user.tenantId,
+      fixedAssetId,
+      amount: data.acquisitionCost,
+      by: req.user.id,
+    });
+    res.status(201).json({ fixedAssetId });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// GET /api/accounting/fixed-assets/:id — détail d'une immobilisation, avec
+// l'historique des mois d'amortissement déjà enregistrés.
+router.get('/fixed-assets/:id', canAccounting, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT fa.*, s.name AS supplier_name, COALESCE(fad.total, 0) AS accumulated_depreciation
+       FROM fixed_assets fa
+       LEFT JOIN suppliers s ON s.id = fa.supplier_id
+       ${ACCUMULATED_DEPRECIATION_JOIN}
+       WHERE fa.id = :id AND fa.tenant_id = :tenantId LIMIT 1`,
+      { id, tenantId: req.user.tenantId },
+    );
+    if (!rows[0]) throw new ApiError(404, 'Immobilisation introuvable');
+
+    const [depreciations] = await pool.query(
+      `SELECT fad.period, fad.amount, fad.created_at, u.first_name, u.last_name, u.role
+       FROM fixed_asset_depreciations fad
+       LEFT JOIN users u ON u.id = fad.recorded_by
+       WHERE fad.fixed_asset_id = :id
+       ORDER BY fad.period ASC`,
+      { id },
+    );
+
+    res.json({
+      fixedAsset: toPublicFixedAsset(rows[0]),
+      depreciations: depreciations.map((d) => ({
+        period: d.period,
+        amount: Number(d.amount),
+        recordedBy: toActor(d.first_name, d.last_name, d.role),
+        createdAt: d.created_at,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/accounting/fixed-assets/:id/pay — régler une immobilisation "à
+// crédit". Solde la dette envers le fournisseur (481, jamais 401 — voir
+// `reglement_fournisseur_investissement`) et sort la trésorerie, jamais une
+// nouvelle charge (déjà comptabilisée à l'acquisition).
+router.post('/fixed-assets/:id/pay', canAccounting, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = payFixedAssetSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const existing = await loadFixedAsset(conn, req.user.tenantId, id);
+    if (existing.payment_status !== 'unpaid') throw new ApiError(409, 'Cette immobilisation est déjà réglée.');
+    await assertPeriodOpen(req.user.tenantId, data.paidAt);
+
+    const [supplierRows] = await conn.query('SELECT name FROM suppliers WHERE id = :id', { id: existing.supplier_id });
+    const supplierName = supplierRows[0]?.name ?? 'Fournisseur';
+
+    await conn.beginTransaction();
+
+    await conn.query(
+      'UPDATE fixed_assets SET payment_status = :status, payment_method = :method, paid_at = :paidAt WHERE id = :id',
+      { status: 'paid', method: data.paymentMethod, paidAt: data.paidAt, id },
+    );
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType: 'reglement_fournisseur_investissement',
+        entryDate: data.paidAt,
+        amount: Number(existing.acquisition_cost),
+        paymentMethod: data.paymentMethod,
+        narrationVars: { fournisseur: supplierName },
+        sourceTable: 'fixed_assets',
+        sourceId: id,
+        createdBy: req.user.id,
+        context: { supplierId: existing.supplier_id },
+      });
+    }
+
+    await conn.commit();
+    logger.info('Immobilisation à crédit réglée', { tenantId: req.user.tenantId, fixedAssetId: id, by: req.user.id });
+    res.status(204).send();
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// POST /api/accounting/fixed-assets/:id/depreciate — enregistrer un mois
+// d'amortissement (acte SAISI, jamais un cron automatique — voir le
+// commentaire de `fixed_asset_depreciations`, migration 049). Amortissement
+// LINÉAIRE simple (coût ÷ durée ÷ 12) ; le prorata temporis du mois
+// d'acquisition est configurable par entreprise (Comptabilité avancée →
+// Règles comptables), voir services/gl/glDepreciationService.js.
+router.post('/fixed-assets/:id/depreciate', canAccounting, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = depreciateFixedAssetSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const { period } = parsed.data;
+  const entryDate = `${period}-01`;
+
+  const conn = await pool.getConnection();
+  try {
+    const existing = await loadFixedAsset(conn, req.user.tenantId, id);
+    if (existing.status === 'disposed') throw new ApiError(409, 'Cette immobilisation a été sortie du patrimoine.');
+    await assertPeriodOpen(req.user.tenantId, entryDate);
+
+    const [[existingPeriod]] = await conn.query(
+      'SELECT id FROM fixed_asset_depreciations WHERE fixed_asset_id = :id AND period = :period LIMIT 1',
+      { id, period },
+    );
+    if (existingPeriod) {
+      throw new ApiError(409, `L'amortissement de ${period} a déjà été enregistré pour cette immobilisation.`);
+    }
+
+    const [[depRow]] = await conn.query(
+      'SELECT COALESCE(SUM(amount), 0) AS total FROM fixed_asset_depreciations WHERE fixed_asset_id = :id',
+      { id },
+    );
+    const remainingBookValue = Number(existing.acquisition_cost) - Number(depRow.total);
+    if (remainingBookValue <= 0) throw new ApiError(409, 'Cette immobilisation est déjà entièrement amortie.');
+
+    const [[tenantRow]] = await conn.query('SELECT gl_depreciation_prorata_temporis FROM tenants WHERE id = :id', {
+      id: req.user.tenantId,
+    });
+    const monthly = computeMonthlyDepreciation({
+      acquisitionCost: Number(existing.acquisition_cost),
+      usefulLifeYears: existing.useful_life_years,
+      acquisitionDate: isoDate(existing.acquisition_date),
+      period,
+      prorataTemporis: !!tenantRow.gl_depreciation_prorata_temporis,
+    });
+    const amount = Math.min(monthly, remainingBookValue);
+
+    await conn.beginTransaction();
+
+    const [result] = await conn.query(
+      'INSERT INTO fixed_asset_depreciations (tenant_id, fixed_asset_id, period, amount, recorded_by) VALUES (:tenantId, :id, :period, :amount, :by)',
+      { tenantId: req.user.tenantId, id, period, amount, by: req.user.id },
+    );
+    const depreciationId = result.insertId;
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      const operationType = FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE[existing.category];
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType,
+        entryDate,
+        amount,
+        narrationVars: { libelle: `${existing.label} — ${period}` },
+        sourceTable: 'fixed_asset_depreciations',
+        sourceId: depreciationId,
+        createdBy: req.user.id,
+      });
+    }
+
+    await conn.commit();
+    logger.info('Amortissement enregistré', { tenantId: req.user.tenantId, fixedAssetId: id, period, amount, by: req.user.id });
+    res.status(201).json({ depreciationId, amount, remainingBookValue: remainingBookValue - amount });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -323,6 +829,16 @@ async function computeAccountingDashboard(user, { from, to }) {
     const [[payoutRow]] = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
        FROM owner_payouts WHERE tenant_id = :tenantId AND paid_at BETWEEN :from AND :to`,
+      params,
+    );
+    // Frais d'agence pris directement au locataire à l'entrée — 100 % produit
+    // du cabinet, JAMAIS compté dans la recette du propriétaire (voir
+    // `routes/renters.js` `recordEntryFeeReceived`) : un total à part, jamais
+    // mélangé à `rentCollected` ci-dessus qui, lui, se répartit encore entre
+    // commission et propriétaire.
+    const [[entryFeeRow]] = await pool.query(
+      `SELECT COALESCE(SUM(entry_fee_amount), 0) AS total, COUNT(*) AS n
+       FROM leases WHERE tenant_id = :tenantId AND entry_fee_received_at BETWEEN :from AND :to`,
       params,
     );
     // Dépenses du CABINET uniquement (`property_id IS NULL`) : les travaux
@@ -386,14 +902,51 @@ async function computeAccountingDashboard(user, { from, to }) {
       renterName: a.renterName,
       daysLate: a.daysLate,
       unpaidMonths: a.unpaidMonths,
+      openingDebtRemaining: a.openingDebtRemaining,
       amountOwed: a.amountOwed,
     }));
     const tenantArrearsTotal = portfolioArrears.reduce((sum, a) => sum + a.amountOwed, 0);
+
+    // Comptes séquestres par mandat : combien le cabinet détient
+    // ACTUELLEMENT pour chaque propriétaire (cumulé depuis toujours, pas
+    // borné à la période affichée — voir `getEscrowBalances`). Volontairement
+    // pas scopé par agent, comme le reste des totaux ci-dessous : ce module
+    // exige déjà la permission `comptabilite`, pas une simple visibilité agent.
+    const escrowBalances = await getEscrowBalances(user.tenantId);
+    // Dette initiale non réglée — volontairement à part du solde séquestre
+    // réel ci-dessus (voir `getUnpaidOpeningDebtByOwner`), jamais mélangée.
+    const unpaidOpeningDebtByOwner = await getUnpaidOpeningDebtByOwner(user.tenantId);
+    // Garde-fou (cas réel trouvé le 22/09/2026, AKOAKOU Jean) : propriétaires
+    // avec des loyers déjà encaissés mais AUCUN taux jamais défini — 0 %
+    // appliqué en silence sinon. Jamais borné à la période affichée (comme
+    // escrowBalances ci-dessus) : un taux manquant reste un problème tant
+    // qu'il n'est pas réglé, peu importe le mois consulté.
+    const ownersWithoutCommissionRate = await getOwnersWithoutCommissionRate(user.tenantId);
+    const [ownerRows] = await pool.query('SELECT id, name FROM owners WHERE tenant_id = :tenantId', {
+      tenantId: user.tenantId,
+    });
+    const ownerNameById = new Map(ownerRows.map((o) => [o.id, o.name]));
+    const allOwnerIds = new Set([...escrowBalances.keys(), ...unpaidOpeningDebtByOwner.keys()]);
+    const escrowByOwner = [...allOwnerIds]
+      .map((ownerId) => {
+        const b = escrowBalances.get(ownerId) ?? { totalCollected: 0, totalPayouts: 0, balance: 0 };
+        return {
+          ownerId,
+          ownerName: ownerNameById.get(ownerId) ?? 'Propriétaire',
+          ...b,
+          openingDebtUnpaid: unpaidOpeningDebtByOwner.get(ownerId) ?? 0,
+        };
+      })
+      .filter((b) => b.balance !== 0 || b.openingDebtUnpaid > 0)
+      .sort((a, b) => b.balance - a.balance);
+    const escrowTotal = escrowByOwner.reduce((sum, b) => sum + b.balance, 0);
+    const openingDebtUnpaidTotal = escrowByOwner.reduce((sum, b) => sum + b.openingDebtUnpaid, 0);
 
     const rentCollected = Number(rentRow.total);
     const ownerPayouts = Number(payoutRow.total);
     const expensesTotal = Number(expenseRow.total);
     const propertyExpensesTotal = Number(propertyExpenseRow.total);
+    const entryFeesCollected = Number(entryFeeRow.total);
 
     const period = from.slice(0, 7);
     const closed = await isPeriodClosed(user.tenantId, from);
@@ -446,7 +999,12 @@ async function computeAccountingDashboard(user, { from, to }) {
         unpaidChargesCount: Number(unpaidChargesRow.n),
         tenantArrears: tenantArrearsTotal,
         tenantArrearsCount: tenantArrears.length,
-        netCashFlow: rentCollected - ownerPayouts - expensesTotal,
+        // 100 % produit du cabinet (jamais reversé) : s'ajoute au flux net,
+        // contrairement à `rentCollected` qui inclut la part à reverser aux
+        // propriétaires (déjà déduite via `ownerPayouts`).
+        entryFeesCollected,
+        entryFeesCollectedCount: Number(entryFeeRow.n),
+        netCashFlow: rentCollected - ownerPayouts - expensesTotal + entryFeesCollected,
       },
       expensesByCategory: byCategory.map((r) => ({ category: r.category, total: Number(r.total) })),
       unpaidChargesByType: unpaidByType.map((r) => ({
@@ -455,6 +1013,10 @@ async function computeAccountingDashboard(user, { from, to }) {
         count: Number(r.n),
       })),
       tenantArrears,
+      // Comptes séquestres par mandat : solde cumulé depuis toujours, pas
+      // borné à `period.from/to` (contrairement à `totals` ci-dessus).
+      escrow: { total: escrowTotal, openingDebtUnpaidTotal, byOwner: escrowByOwner },
+      ownersWithoutCommissionRate,
     };
 }
 
@@ -569,6 +1131,22 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
       params,
     );
 
+    // Frais d'agence à l'entrée — 100 % produit du cabinet (voir
+    // `recordEntryFeeReceived`, routes/renters.js), une ligne par bail.
+    const [entryFeeRows] = await pool.query(
+      `SELECT l.entry_fee_received_at AS paid_at, l.entry_fee_amount AS amount, l.entry_fee_received_method AS payment_method,
+              r.first_name AS renter_first_name, r.last_name AS renter_last_name,
+              u.code AS unit_code, p.code AS property_code,
+              lu.first_name AS recorder_first_name, lu.last_name AS recorder_last_name
+       FROM leases l
+       JOIN renters r ON r.id = l.renter_id
+       JOIN property_units u ON u.id = l.unit_id
+       JOIN properties p ON p.id = u.property_id
+       LEFT JOIN users lu ON lu.id = l.created_by
+       WHERE l.tenant_id = :tenantId AND l.entry_fee_received_at BETWEEN :from AND :to`,
+      params,
+    );
+
     const categoryLabels = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
     const utilityLabels = { soneb: 'SONEB (Eau)', sbee: 'SBEE (Électricité)' };
     const recorderName = (r) => (r.recorder_first_name ? `${r.recorder_first_name} ${r.recorder_last_name}` : '');
@@ -620,6 +1198,19 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
         tiers: `${r.renter_first_name} ${r.renter_last_name}`,
         bien: `${r.property_code} · ${r.unit_code}`,
         categorie: utilityLabels[r.utility_type] ?? r.utility_type,
+        debit: null,
+        credit: Number(r.amount),
+        mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
+        enregistrePar: recorderName(r),
+      });
+    }
+    for (const r of entryFeeRows) {
+      rows.push({
+        date: isoDate(r.paid_at),
+        type: "Frais d'agence à l'entrée (produit du cabinet)",
+        tiers: `${r.renter_first_name} ${r.renter_last_name}`,
+        bien: `${r.property_code} · ${r.unit_code}`,
+        categorie: 'Frais d’agence',
         debit: null,
         credit: Number(r.amount),
         mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
@@ -941,6 +1532,21 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
       'INSERT INTO accounting_periods (tenant_id, period, closed_by, forced) VALUES (:tenantId, :period, :by, :forced)',
       { tenantId: req.user.tenantId, period, by: req.user.id, forced: forced ? 1 : 0 },
     );
+
+    // Fige le solde de chaque bail concerné pour l'audit (voir
+    // `lease_balance_snapshots`) — après la clôture elle-même, et dans son
+    // propre try/catch : la clôture n'est pas transactionnelle avec ceci
+    // (déjà en base à ce stade), un échec ici ne doit jamais faire croire au
+    // DG que la clôture elle-même a échoué, seule la photo serait manquante.
+    try {
+      await snapshotLeaseBalances(req.user.tenantId, period);
+    } catch (snapshotErr) {
+      logger.error('Échec de la photo de solde à la clôture (mois tout de même clôturé)', {
+        tenantId: req.user.tenantId,
+        period,
+        error: snapshotErr.message,
+      });
+    }
 
     logger.info('Mois comptable clôturé', { tenantId: req.user.tenantId, period, by: req.user.id, forced });
     res.status(201).json({ period, forced });

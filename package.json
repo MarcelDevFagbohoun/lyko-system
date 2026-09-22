@@ -5,6 +5,7 @@
   "description": "Lyko System — plateforme multi-tenant de gestion de cabinets immobiliers & juridiques",
   "scripts": {
     "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install",
+    "predev": "node scripts/check-dev-not-running.js",
     "dev": "concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "npm --prefix backend run dev",
     "dev:web": "npm --prefix frontend run dev",

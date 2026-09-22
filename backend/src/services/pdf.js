@@ -6,7 +6,8 @@ const PDFDocument = require('pdfkit');
 const { DEFAULT_CONTRACT_TEMPLATE, renderContractTemplateSegments } = require('../constants/contract');
 const { EXPENSE_CATEGORIES } = require('../constants/expenses');
 const { UTILITY_TYPES } = require('../constants/charges');
-const { ROLE_LABELS } = require('../constants/roles');
+const { resolveRoleLabels } = require('../constants/roles');
+const { compareCondition } = require('./inspection');
 const config = require('../config/env');
 
 const EXPENSE_CATEGORY_LABELS = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
@@ -88,6 +89,14 @@ function normalizeLineBreaks(text) {
  * propre enchaînement avant de passer à la suivante, qui repart alors bien
  * de la marge de gauche.
  */
+// Une ligne « Article N — Titre » (convention déjà suivie par les modèles de
+// bail rédigés par les DG, ex. celui de KIko Store) : détectée pour lui
+// donner un traitement de titre de section au lieu de se fondre dans le
+// texte juridique courant. Une ligne qui ne suit pas cette convention (un
+// modèle personnalisé sans cette structure) n'est simplement jamais détectée
+// — aucun risque de mal interpréter un texte libre quelconque.
+const ARTICLE_HEADING_RE = /^article\s+\d+\b/i;
+
 function drawRichText(doc, segments, { width, lineGap = 0 } = {}) {
   const lines = [[]];
   for (const segment of segments) {
@@ -97,15 +106,37 @@ function drawRichText(doc, segments, { width, lineGap = 0 } = {}) {
     });
   }
 
+  // `x` explicite (marge gauche du bloc) sur le premier appel de chaque
+  // ligne : PDFKit ne lit `x`/`y` que comme arguments positionnels, jamais
+  // comme clé de l'objet options — sans ce positionnement explicite, la
+  // ligne démarre où le curseur du document a été laissé par l'appelant
+  // (ex. une valeur alignée à droite juste avant), le paragraphe se
+  // retrouve décalé et sort de la page avant sa fin. Déjà constaté : du
+  // texte du bail disparaissait en plein milieu d'une phrase alors qu'il
+  // était bien présent dans les données.
   lines.forEach((runs) => {
     if (runs.length === 0) {
-      doc.font(FONT_SANS).text('', { width, lineGap });
+      doc.font(FONT_SANS).text('', 50, doc.y, { width, lineGap });
+      return;
+    }
+    // Titre d'article : une ligne composée d'un seul segment de texte brut
+    // (aucun {{placeholder}} substitué dedans) commençant par « Article N ».
+    const isHeading = runs.length === 1 && !runs[0].bold && !runs[0].mono && ARTICLE_HEADING_RE.test(runs[0].text.trim());
+    if (isHeading) {
+      doc.moveDown(0.6);
+      doc.font(FONT_SANS_BOLD).fontSize(11.5).fillColor(PRIMARY).text(runs[0].text.trim(), 50, doc.y, { width, lineGap: 2 });
+      doc.moveDown(0.3);
       return;
     }
     runs.forEach((run, i) => {
       doc.font(run.mono ? FONT_MONO_BOLD : run.bold ? FONT_SANS_BOLD : FONT_SANS);
+      doc.fontSize(11).fillColor(INK);
       const continued = i < runs.length - 1;
-      doc.text(run.text, i === 0 ? { width, lineGap, continued } : { continued });
+      if (i === 0) {
+        doc.text(run.text, 50, doc.y, { width, lineGap, continued });
+      } else {
+        doc.text(run.text, { continued });
+      }
     });
   });
 }
@@ -449,7 +480,7 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
       .font(FONT_SANS)
       .fontSize(8)
       .fillColor(MUTED)
-      .text(ROLE_LABELS[issuer.role] ?? issuer.role, 50, signY + 68);
+      .text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 50, signY + 68);
   }
 
   drawFooter(doc, { verificationCode });
@@ -477,11 +508,26 @@ function streamCertificatePdf(res, { tenant, renter, property, lease, issuer, ve
   drawHeader(doc, tenant);
 
   doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('ATTESTATION DE LOYER', 50, doc.y);
-  doc.moveDown(2);
+  doc.moveDown(1.3);
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const startDateIso =
     lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
+
+  // --- Récapitulatif : les faits essentiels en un coup d'œil, avant les
+  // pages de texte juridique qui suivent (même principe que le bloc
+  // « Locataire / Bien loué / Durée du bail » du PV de sortie).
+  let y = doc.y;
+  y += drawRow(doc, 'Locataire', `${renter.first_name} ${renter.last_name}`, y);
+  y += drawRow(
+    doc,
+    'Bien loué',
+    `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`,
+    y,
+  );
+  y += drawRow(doc, 'Loyer mensuel', formatFcfa(lease.monthly_rent), y, { mono: true });
+  y += drawRow(doc, "Date d'entrée dans les lieux", formatDateFr(startDateIso), y, { mono: true });
+  doc.y = y + 15;
 
   const template = normalizeLineBreaks(tenant.contract_template) || DEFAULT_CONTRACT_TEMPLATE;
   const segments = renderContractTemplateSegments(template, {
@@ -520,32 +566,49 @@ function streamCertificatePdf(res, { tenant, renter, property, lease, issuer, ve
   doc.moveDown(2);
   doc.font(FONT_SANS_BOLD).fontSize(10).text('Pour le cabinet,');
 
+  // Cachet/signature du DG (signataire légal du bail) — repli sur ceux de
+  // l'entreprise s'il n'a pas téléversé les siens, même logique que la
+  // quittance (`/api/auth/my-signature`).
+  const signatureFile = issuer?.signature_path
+    ? path.join(UPLOADS_ROOT, issuer.signature_path)
+    : tenant.signature_path
+      ? path.join(UPLOADS_ROOT, tenant.signature_path)
+      : null;
+  const stampFile = issuer?.stamp_path
+    ? path.join(UPLOADS_ROOT, issuer.stamp_path)
+    : tenant.stamp_path
+      ? path.join(UPLOADS_ROOT, tenant.stamp_path)
+      : null;
+
   const signY = doc.y + 12;
   let signatureDrawn = false;
-  if (tenant.signature_path) {
-    const sigFile = path.join(UPLOADS_ROOT, tenant.signature_path);
-    if (fs.existsSync(sigFile)) {
-      try {
-        doc.image(sigFile, 50, signY, { fit: [130, 45] });
-        signatureDrawn = true;
-      } catch {
-        // Signature illisible : repli sur la ligne à signer ci-dessous.
-      }
+  if (signatureFile && fs.existsSync(signatureFile)) {
+    try {
+      doc.image(signatureFile, 50, signY, { fit: [130, 45] });
+      signatureDrawn = true;
+    } catch {
+      // Signature illisible : repli sur la ligne à signer ci-dessous.
     }
   }
   if (!signatureDrawn) {
     doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', 50, signY + 30);
   }
 
-  if (tenant.stamp_path) {
-    const stampFile = path.join(UPLOADS_ROOT, tenant.stamp_path);
-    if (fs.existsSync(stampFile)) {
-      try {
-        doc.opacity(0.9).image(stampFile, 200, signY - 15, { fit: [140, 140] }).opacity(1);
-      } catch {
-        // Cachet illisible : on continue sans (pas bloquant pour l'attestation).
-      }
+  if (stampFile && fs.existsSync(stampFile)) {
+    try {
+      doc.opacity(0.9).image(stampFile, 200, signY - 15, { fit: [140, 140] }).opacity(1);
+    } catch {
+      // Cachet illisible : on continue sans (pas bloquant pour l'attestation).
     }
+  }
+
+  if (issuer?.role) {
+    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(`${issuer.first_name} ${issuer.last_name}`, 50, signY + 55);
+    doc
+      .font(FONT_SANS)
+      .fontSize(8)
+      .fillColor(MUTED)
+      .text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 50, signY + 68);
   }
 
   drawFooter(doc, { verificationCode });
@@ -571,7 +634,15 @@ function uploadedFile(publicUrl) {
  * jamais la ligne SQL brute. Le rapport est figé à la finalisation (montants
  * stockés, jamais recalculés ici).
  */
-function streamMoveOutPdf(res, { tenant, renter, property, lease, report }) {
+function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveInZones = [] }) {
+  // zoneKey::itemKey -> condition à l'entrée, pour expliquer la transition
+  // d'état ("Bon état → Mauvais état") à côté de chaque élément facturé.
+  const moveInConditionByKey = new Map();
+  for (const zone of moveInZones) {
+    for (const item of zone.items) {
+      moveInConditionByKey.set(`${zone.key}::${item.key}`, item.condition);
+    }
+  }
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="pv-sortie-${renter.last_name}.pdf"`);
@@ -617,7 +688,17 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report }) {
         y = doc.page.margins.top;
       }
       const conditionLabel = item.condition ? CONDITION_LABELS[item.condition] : 'Non renseigné';
-      const line = `${item.label} — ${conditionLabel}`;
+      const moveInCondition = moveInConditionByKey.get(`${zone.key}::${item.key}`) ?? null;
+      const transition = compareCondition(moveInCondition, item.condition);
+      // "->" plutôt que le caractère "→" : hors de l'encodage standard des
+      // polices intégrées à PDFKit (Helvetica), qui l'affiche comme un
+      // glyphe cassé — même limite que documentée pour "Ð" (`\r` isolé)
+      // dans `normalizeLineBreaks`, ici propre au jeu de caractères de la police.
+      const conditionText =
+        transition === 'degraded'
+          ? `${CONDITION_LABELS[moveInCondition]} -> ${conditionLabel}`
+          : conditionLabel;
+      const line = `${item.label} — ${conditionText}`;
       const h1 = doc.font(FONT_SANS).fontSize(9.5).heightOfString(line, { width: 350 });
       doc.font(FONT_SANS).fontSize(9.5).fillColor(item.condition ? CONDITION_COLORS[item.condition] : MUTED).text(line, 50, y, { width: 350 });
       doc
@@ -631,6 +712,23 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report }) {
         const h2 = doc.font(FONT_SANS).fontSize(8.5).heightOfString(comment, { width: 350 });
         doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(comment, 50, y, { width: 350 });
         y += h2;
+      }
+      // Détail de facturation (catalogue) : une sous-ligne par élément
+      // choisi, pour que le décompte soit lisible ligne par ligne, pas
+      // seulement un total par poste.
+      if (item.billing?.lines?.length > 0) {
+        for (const l of item.billing.lines) {
+          const qtyText = l.quantity > 1 ? ` × ${l.quantity}` : '';
+          const billingLine = `• ${l.label}${qtyText}`;
+          const h3 = doc.font(FONT_SANS).fontSize(8.5).heightOfString(billingLine, { width: 300 });
+          doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(billingLine, 60, y, { width: 300 });
+          doc
+            .font(FONT_MONO)
+            .fontSize(8.5)
+            .fillColor(MUTED)
+            .text(formatFcfa(l.unitPrice * l.quantity), 400, y, { width: 145, align: 'right' });
+          y += h3;
+        }
       }
       y += 8;
     }
@@ -707,6 +805,7 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
+  kkiapay: 'Paiement en ligne (KKiaPay)',
 };
 
 const UNIT_STATUS_LABELS = { libre: 'Libre', loue: 'Loué', reserve: 'Réservé' };
@@ -716,6 +815,12 @@ const UNIT_STATUS_LABELS = { libre: 'Libre', loue: 'Loué', reserve: 'Réservé'
  * en place) et historique des versements déjà effectués. Généré à la demande,
  * jamais stocké — comme l'attestation de loyer, la date est celle du jour.
  */
+/**
+ * Relevé propriétaire — refonte demandée par l'utilisateur : même langage
+ * visuel que la quittance (`streamReceiptPdf`) : titre + bloc de méta-
+ * données en libellés à droite, bloc d'identité, tableaux avec ligne
+ * totale mise en évidence, plutôt que des paragraphes/listes libres.
+ */
 function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, verificationCode }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
@@ -724,60 +829,143 @@ function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, verificat
 
   drawHeader(doc, tenant);
 
-  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('RELEVÉ PROPRIÉTAIRE', 50, doc.y);
-  drawMetaLine(doc, [
-    { text: 'Généré le ' },
-    { text: formatDateFr(new Date().toISOString().slice(0, 10)), mono: true },
-  ]);
+  // --- Titre (gauche) + méta-données, en libellés (droite) ---
+  const topY = doc.y;
+  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('RELEVÉ', 50, topY, { width: 250 });
+  doc.font(FONT_SANS).fontSize(10).fillColor(MUTED).text('Propriétaire', 50, doc.y);
 
-  let y = doc.y + 20;
-  y += drawRow(doc, 'Propriétaire', owner.name, y);
-  if (owner.phone) y += drawRow(doc, 'Téléphone', owner.phone, y, { mono: true });
-  if (owner.address) y += drawRow(doc, 'Adresse', owner.address, y);
+  const metaX = 335;
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Généré le', metaX, topY + 3, { width: 210, align: 'right' });
+  doc
+    .font(FONT_MONO_BOLD)
+    .fontSize(10)
+    .fillColor(INK)
+    .text(formatDateFr(new Date().toISOString().slice(0, 10)), metaX, topY + 14, { width: 210, align: 'right' });
 
-  const occupiedRent = units.filter((u) => u.status === 'loue').reduce((sum, u) => sum + u.monthlyRent, 0);
-  y += drawRow(doc, 'Loyers mensuels en cours', formatFcfa(occupiedRent), y, { mono: true });
+  let y = Math.max(doc.y, topY + 14 + 17) + 15;
 
+  // --- Propriétaire ---
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('PROPRIÉTAIRE', 50, y, { characterSpacing: 0.6 });
+  y += 13;
+  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(INK).text(owner.name, 50, y);
   y += 15;
-  doc.font(FONT_SANS_BOLD).fontSize(12).fillColor(INK).text('Patrimoine géré', 50, y);
-  y = doc.y + 10;
+  if (owner.phone) {
+    doc.font(FONT_MONO).fontSize(9).fillColor(MUTED).text(owner.phone, 50, y);
+    y += 13;
+  }
+  if (owner.address) {
+    doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text(owner.address, 50, y, { width: 350 });
+    y = doc.y;
+  }
+  y += 13;
+
+  // --- Tableau : patrimoine géré ---
+  const colUnit = { x: 50, width: 210 };
+  const colStatus = { x: 265, width: 55 };
+  const colRenter = { x: 325, width: 130 };
+  const colRent = { x: 460, width: 85 };
+
+  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED);
+  doc.text('BIEN / UNITÉ', colUnit.x, y, { width: colUnit.width, characterSpacing: 0.3 });
+  doc.text('STATUT', colStatus.x, y, { width: colStatus.width, characterSpacing: 0.3 });
+  doc.text('LOCATAIRE', colRenter.x, y, { width: colRenter.width, characterSpacing: 0.3 });
+  doc.text('LOYER MENSUEL', colRent.x, y, { width: colRent.width, align: 'right', characterSpacing: 0.3 });
+  y += 14;
+  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
+  y += 10;
 
   if (units.length === 0) {
     doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text('Aucun bien enregistré.', 50, y);
     y = doc.y + 10;
   } else {
     for (const u of units) {
-      const line = `${u.propertyCode} · ${u.unitCode} — ${u.designationLabel}${u.address ? `, ${u.address}` : ''}`;
-      const detail = `${UNIT_STATUS_LABELS[u.status] ?? u.status} · ${formatFcfa(u.monthlyRent)}/mois${
-        u.currentRenter ? ` · Locataire : ${u.currentRenter}` : ''
-      }`;
-      const h1 = doc.font(FONT_SANS_BOLD).fontSize(9.5).heightOfString(line, { width: 495 });
-      doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text(line, 50, y, { width: 495 });
-      y += h1 + 2;
-      const h2 = doc.font(FONT_SANS).fontSize(9).heightOfString(detail, { width: 495 });
-      doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text(detail, 50, y, { width: 495 });
-      y += h2 + 10;
+      if (y > 700) {
+        doc.addPage();
+        y = 50;
+      }
+      const unitLine = `${u.propertyCode} · ${u.unitCode} — ${u.designationLabel}${u.address ? `, ${u.address}` : ''}`;
+      const rowHeight = Math.max(
+        doc.font(FONT_SANS_BOLD).fontSize(9).heightOfString(unitLine, { width: colUnit.width }),
+        14,
+      );
+      doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(unitLine, colUnit.x, y, { width: colUnit.width });
+      doc
+        .font(FONT_SANS)
+        .fontSize(9)
+        .fillColor(MUTED)
+        .text(UNIT_STATUS_LABELS[u.status] ?? u.status, colStatus.x, y, { width: colStatus.width });
+      doc
+        .font(FONT_SANS)
+        .fontSize(9)
+        .fillColor(MUTED)
+        .text(u.currentRenter ?? '—', colRenter.x, y, { width: colRenter.width });
+      doc
+        .font(FONT_MONO_BOLD)
+        .fontSize(9)
+        .fillColor(INK)
+        .text(formatFcfa(u.monthlyRent), colRent.x, y, { width: colRent.width, align: 'right' });
+      y += rowHeight + 12;
     }
   }
 
-  y += 10;
+  const occupiedRent = units.filter((u) => u.status === 'loue').reduce((sum, u) => sum + u.monthlyRent, 0);
+  const totalBoxHeight = 34;
+  drawPanel(doc, 275, y, 270, totalBoxHeight, { fill: PRIMARY_BG, stroke: PRIMARY_BORDER });
+  doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text('Loyers mensuels en cours', 290, y + 11, { width: 160 });
+  doc
+    .font(FONT_MONO_BOLD)
+    .fontSize(12)
+    .fillColor(PRIMARY)
+    .text(formatFcfa(occupiedRent), 275, y + 9, { width: 255, align: 'right' });
+  y += totalBoxHeight + 30;
+
+  // --- Tableau : historique des versements ---
+  if (y > 680) {
+    doc.addPage();
+    y = 50;
+  }
   doc.font(FONT_SANS_BOLD).fontSize(12).fillColor(INK).text('Historique des versements', 50, y);
-  y = doc.y + 10;
+  y = doc.y + 12;
 
   if (payouts.length === 0) {
     doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text('Aucun versement enregistré.', 50, y);
+    y = doc.y;
   } else {
+    const colDate = { x: 50, width: 90 };
+    const colPeriod = { x: 145, width: 180 };
+    const colMethod = { x: 330, width: 130 };
+    const colAmount = { x: 460, width: 85 };
+
+    doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED);
+    doc.text('DATE', colDate.x, y, { width: colDate.width, characterSpacing: 0.3 });
+    doc.text('PÉRIODE', colPeriod.x, y, { width: colPeriod.width, characterSpacing: 0.3 });
+    doc.text('MODE', colMethod.x, y, { width: colMethod.width, characterSpacing: 0.3 });
+    doc.text('MONTANT', colAmount.x, y, { width: colAmount.width, align: 'right', characterSpacing: 0.3 });
+    y += 14;
+    doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
+    y += 10;
+
     for (const p of payouts) {
       if (y > 720) {
         doc.addPage();
         y = 50;
       }
-      const line = `${formatDateFr(isoDateOnly(p.paidAt))} · ${p.periodLabel} · ${p.paymentMethodLabel}`;
-      doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(line, 50, y, { width: 350 });
-      doc.font(FONT_MONO_BOLD).fontSize(9.5).fillColor(INK).text(formatFcfa(p.amount), 400, y, {
-        width: 145,
-        align: 'right',
-      });
+      doc
+        .font(FONT_MONO)
+        .fontSize(9)
+        .fillColor(INK)
+        .text(formatDateSlash(isoDateOnly(p.paidAt)), colDate.x, y, { width: colDate.width });
+      doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(p.periodLabel, colPeriod.x, y, { width: colPeriod.width });
+      doc
+        .font(FONT_SANS)
+        .fontSize(9)
+        .fillColor(MUTED)
+        .text(p.paymentMethodLabel, colMethod.x, y, { width: colMethod.width });
+      doc
+        .font(FONT_MONO_BOLD)
+        .fontSize(9)
+        .fillColor(INK)
+        .text(formatFcfa(p.amount), colAmount.x, y, { width: colAmount.width, align: 'right' });
       y += 18;
     }
   }
@@ -830,7 +1018,7 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
 
   // Résumé financier : mêmes totaux que la carte du tableau de bord écran.
   const t = dashboard.totals;
-  const boxHeight = 130;
+  const boxHeight = 150;
   drawPanel(doc, 50, y, 495, boxHeight);
   const boxY = y + 14;
   drawPanelRow(doc, 'Loyers encaissés', `+ ${formatFcfa(t.rentCollected)}`, 65, boxY, {
@@ -838,23 +1026,28 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
     valueWidth: 180,
     valueColor: SUCCESS_FG,
   });
-  drawPanelRow(doc, 'Versements aux propriétaires', `- ${formatFcfa(t.ownerPayouts)}`, 65, boxY + 20, {
+  drawPanelRow(doc, "Frais d'agence à l'entrée (produit du cabinet)", `+ ${formatFcfa(t.entryFeesCollected)}`, 65, boxY + 20, {
+    labelWidth: 285,
+    valueWidth: 180,
+    valueColor: SUCCESS_FG,
+  });
+  drawPanelRow(doc, 'Versements aux propriétaires', `- ${formatFcfa(t.ownerPayouts)}`, 65, boxY + 40, {
     labelWidth: 285,
     valueWidth: 180,
     valueColor: DANGER_FG,
   });
-  drawPanelRow(doc, 'Dépenses du cabinet', `- ${formatFcfa(t.expenses)}`, 65, boxY + 40, {
+  drawPanelRow(doc, 'Dépenses du cabinet', `- ${formatFcfa(t.expenses)}`, 65, boxY + 60, {
     labelWidth: 285,
     valueWidth: 180,
     valueColor: DANGER_FG,
   });
-  doc.moveTo(65, boxY + 62).lineTo(530, boxY + 62).strokeColor(BORDER).lineWidth(1).stroke();
-  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(INK).text('Solde net', 65, boxY + 70);
+  doc.moveTo(65, boxY + 82).lineTo(530, boxY + 82).strokeColor(BORDER).lineWidth(1).stroke();
+  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(INK).text('Solde net', 65, boxY + 90);
   doc
     .font(FONT_MONO_BOLD)
     .fontSize(16)
     .fillColor(t.netCashFlow >= 0 ? PRIMARY : DANGER_FG)
-    .text(formatFcfa(t.netCashFlow), 300, boxY + 66, { width: 230, align: 'right' });
+    .text(formatFcfa(t.netCashFlow), 300, boxY + 86, { width: 230, align: 'right' });
   doc
     .font(FONT_SANS)
     .fontSize(8)
@@ -864,7 +1057,7 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
         `Charges impayées : ${formatFcfa(t.unpaidCharges)} (${t.unpaidChargesCount}) · ` +
         `Travaux facturés aux Biens (hors solde cabinet) : ${formatFcfa(t.propertyExpenses)}`,
       65,
-      boxY + 96,
+      boxY + 116,
       { width: 460 },
     );
   y += boxHeight + 20;
@@ -920,11 +1113,116 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
   doc.end();
 }
 
+/**
+ * États financiers SYSCOHADA (livrable 8, "au minimum le squelette") — bilan,
+ * compte de résultat et tableau des flux de trésorerie d'un même exercice,
+ * réunis dans UN seul document plutôt que 3 exports séparés (comme le
+ * ferait un cabinet comptable réel remettant "les états financiers" en un
+ * bloc). Calculs partagés avec l'écran (`glFinancialStatements.js`) — jamais
+ * recalculés ici, seulement mis en page.
+ */
+function streamFinancialStatementsPdf(res, { tenant, fiscalYear, incomeStatement, balanceSheet, cashFlow }) {
+  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="etats-financiers-${fiscalYear.label}.pdf"`);
+  doc.pipe(res);
+
+  drawHeader(doc, tenant);
+  doc.font(FONT_SANS_BOLD).fontSize(18).fillColor(PRIMARY).text('ÉTATS FINANCIERS', 50, doc.y);
+  drawMetaLine(doc, [{ text: `Exercice ${fiscalYear.label}`, mono: true }]);
+  doc
+    .font(FONT_SANS)
+    .fontSize(8)
+    .fillColor(MUTED)
+    .text(
+      'Situation provisoire établie depuis les écritures enregistrées — le résultat net est une ligne calculée, ' +
+        "pas une écriture d'affectation formelle. À faire valider par un expert-comptable avant toute utilisation officielle.",
+      50,
+      doc.y + 4,
+      { width: 495 },
+    );
+
+  let y = doc.y + 16;
+
+  function sectionTitle(text) {
+    if (y > doc.page.height - doc.page.margins.bottom - 60) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+    doc.font(FONT_SANS_BOLD).fontSize(12).fillColor(INK).text(text, 50, y);
+    y = doc.y + 8;
+  }
+
+  function line(label, value, { bold = false, valueColor = INK } = {}) {
+    if (y > doc.page.height - doc.page.margins.bottom - 20) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+    doc.font(bold ? FONT_SANS_BOLD : FONT_SANS).fontSize(9.5).fillColor(bold ? INK : INK_SOFT).text(label, 50, y, { width: 350 });
+    doc.font(bold ? FONT_MONO_BOLD : FONT_MONO).fontSize(9.5).fillColor(valueColor).text(formatFcfa(value), 400, y, { width: 145, align: 'right' });
+    y += bold ? 18 : 15;
+  }
+
+  // ── Compte de résultat ────────────────────────────────────────────────
+  sectionTitle('Compte de résultat');
+  if (incomeStatement.produits.length === 0 && incomeStatement.charges.length === 0) {
+    doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text('Aucune écriture sur cet exercice.', 50, y);
+    y = doc.y + 12;
+  } else {
+    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(MUTED).text('PRODUITS', 50, y);
+    y = doc.y + 4;
+    for (const p of incomeStatement.produits) line(`${p.code} — ${p.label}`, p.amount);
+    line('Total produits', incomeStatement.totalProduits, { bold: true });
+    y += 6;
+    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(MUTED).text('CHARGES', 50, y);
+    y = doc.y + 4;
+    for (const c of incomeStatement.charges) line(`${c.code} — ${c.label}`, c.amount);
+    line('Total charges', incomeStatement.totalCharges, { bold: true });
+    y += 10;
+    line('Résultat net', incomeStatement.resultatNet, {
+      bold: true,
+      valueColor: incomeStatement.resultatNet >= 0 ? SUCCESS_FG : DANGER_FG,
+    });
+  }
+  y += 16;
+
+  // ── Bilan ──────────────────────────────────────────────────────────────
+  sectionTitle('Bilan');
+  if (balanceSheet.actif.length === 0 && balanceSheet.passif.length === 0) {
+    doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text('Aucune écriture sur cet exercice.', 50, y);
+    y = doc.y + 12;
+  } else {
+    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(MUTED).text('ACTIF', 50, y);
+    y = doc.y + 4;
+    for (const a of balanceSheet.actif) line(`${a.code} — ${a.label}`, a.amount);
+    if (balanceSheet.resultatNet < 0) line('Perte de l\'exercice', -balanceSheet.resultatNet);
+    line('Total actif', balanceSheet.totalActif, { bold: true });
+    y += 6;
+    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(MUTED).text('PASSIF', 50, y);
+    y = doc.y + 4;
+    for (const p of balanceSheet.passif) line(`${p.code} — ${p.label}`, p.amount);
+    if (balanceSheet.resultatNet > 0) line("Bénéfice de l'exercice", balanceSheet.resultatNet);
+    line('Total passif', balanceSheet.totalPassif, { bold: true });
+  }
+  y += 16;
+
+  // ── Tableau des flux de trésorerie ──────────────────────────────────────
+  sectionTitle('Tableau des flux de trésorerie');
+  line('Trésorerie en début de période', cashFlow.openingBalance);
+  line('Encaissements', cashFlow.totalInflows, { valueColor: SUCCESS_FG });
+  line('Décaissements', -cashFlow.totalOutflows, { valueColor: DANGER_FG });
+  line('Trésorerie en fin de période', cashFlow.closingBalance, { bold: true });
+
+  drawFooter(doc);
+  doc.end();
+}
+
 module.exports = {
   streamReceiptPdf,
   streamCertificatePdf,
   streamOwnerStatementPdf,
   streamMoveOutPdf,
+  streamFinancialStatementsPdf,
   streamAccountingReportPdf,
   formatFcfa,
   formatMonthLabel,

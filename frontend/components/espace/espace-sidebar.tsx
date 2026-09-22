@@ -9,8 +9,10 @@ import {
   Landmark,
   Users,
   MessageSquareWarning,
+  ListTodo,
   Wallet,
   Receipt,
+  Calculator,
   BellRing,
   Briefcase,
   History,
@@ -71,6 +73,7 @@ export function EspaceSidebar() {
   const canProprietaires = isDg || user.permissions.includes("proprietaires");
   const canPlaintes = isDg || user.permissions.includes("plaintes");
   const canAccounting = isDg || user.permissions.includes("comptabilite");
+  const canAccountingAdvanced = isDg || user.permissions.includes("comptabilite_avancee");
   const canCharges = isDg || user.permissions.includes("charges");
 
   const groups: NavGroup[] = [
@@ -91,12 +94,14 @@ export function EspaceSidebar() {
       items: [
         canPlaintes && { href: "/espace/plaintes", label: "Plaintes", icon: MessageSquareWarning },
         (canLocataires || canAccounting) && { href: "/espace/relances", label: "Relances", icon: BellRing },
+        { href: "/espace/taches", label: "Tâches", icon: ListTodo },
       ],
     },
     {
       title: "Finances",
       items: [
         canAccounting && { href: "/espace/comptabilite", label: "Comptabilité", icon: Wallet },
+        canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité avancée", icon: Calculator },
         canCharges && { href: "/espace/charges", label: "Charges", icon: Receipt },
       ],
     },
@@ -193,7 +198,7 @@ export function EspaceSidebar() {
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate font-label-md text-ink">{user.firstName} {user.lastName}</p>
-          <Badge variant="primary" className="mt-0.5">{ROLE_LABELS[user.role] ?? user.role}</Badge>
+          <Badge variant="primary" className="mt-0.5">{tenant?.roleTitles?.[user.role] ?? ROLE_LABELS[user.role] ?? user.role}</Badge>
         </div>
         <ConnectionIndicator />
       </div>

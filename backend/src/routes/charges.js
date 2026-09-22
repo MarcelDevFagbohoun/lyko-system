@@ -8,9 +8,13 @@ const { createChargeSchema, updateChargeSchema, createUtilityPaymentSchema, dele
 const { UTILITY_TYPES, UTILITY_TYPE_KEYS, CHARGE_STATUSES } = require('../constants/charges');
 const { toActor } = require('../utils/actor');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
+const { generatePortalToken, hashToken } = require('../utils/tokens');
+const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const logger = require('../utils/logger');
 
 const router = Router();
+// Un lien de paiement expire par défaut sous 48h — même valeur que leases.js.
+const PAYMENT_LINK_TTL_HOURS = 48;
 // Catalogue de permissions dédié depuis l'étape 3 (`charges`, par défaut
 // comptable) — module financier propre aux fluides, distinct de locataires
 // ET de comptabilite.
@@ -21,6 +25,7 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
+  kkiapay: 'Paiement en ligne (KKiaPay)',
 };
 
 function isoDate(d) {
@@ -58,7 +63,7 @@ function toPublicCharge(row) {
     recordedBy: toActor(row.recorder_first_name, row.recorder_last_name, row.recorder_role),
     paidRecordedBy: toActor(row.payer_first_name, row.payer_last_name, row.payer_role),
     lease: { id: row.lease_id, status: row.lease_status },
-    renter: { id: row.renter_id, firstName: row.renter_first_name, lastName: row.renter_last_name },
+    renter: { id: row.renter_id, firstName: row.renter_first_name, lastName: row.renter_last_name, phone: row.renter_phone },
     unit: { id: row.unit_id, code: row.unit_code },
     property: { id: row.property_id, code: row.property_code },
     createdAt: row.created_at,
@@ -69,7 +74,7 @@ const CHARGE_SELECT = `
   uc.*,
   COALESCE(pt.paid_total, 0) AS paid_total,
   l.status AS lease_status,
-  r.id AS renter_id, r.first_name AS renter_first_name, r.last_name AS renter_last_name,
+  r.id AS renter_id, r.first_name AS renter_first_name, r.last_name AS renter_last_name, r.phone AS renter_phone,
   u.id AS unit_id, u.code AS unit_code,
   p.id AS property_id, p.code AS property_code,
   ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name, ru.role AS recorder_role,
@@ -329,6 +334,83 @@ router.get('/:id/payments', async (req, res, next) => {
   }
 });
 
+/**
+ * Cœur commun du règlement d'une facture SONEB/SBEE (total ou partiel) :
+ * vérifie le solde restant, insère `utility_payments`, met à jour le statut
+ * de `utility_charges`. Seul endroit qui insère dans `utility_payments` —
+ * utilisé par la route manuelle ci-dessous ET par les chemins KKiaPay
+ * (portail, lien de paiement, webhook). Appelant responsable du verrou
+ * (`SELECT ... FOR UPDATE` sur `utility_charges`) et de la transaction.
+ *
+ * `recordedBy` : `null` pour un règlement confirmé par KKiaPay.
+ */
+async function recordUtilityPayment(
+  conn,
+  { tenantId, charge, amount, paymentMethod, paidAt, notes, recordedBy, kkiapayTransactionId = null },
+) {
+  const [[{ paidTotal }]] = await conn.query(
+    'SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id',
+    { id: charge.id },
+  );
+  const remaining = Number(charge.amount) - Number(paidTotal);
+  if (amount > remaining) {
+    throw new ApiError(400, `Le montant dépasse le solde restant (${remaining} FCFA).`);
+  }
+
+  const [paymentResult] = await conn.query(
+    `INSERT INTO utility_payments (tenant_id, charge_id, amount, payment_method, paid_at, notes, recorded_by, kkiapay_transaction_id)
+     VALUES (:tenantId, :chargeId, :amount, :paymentMethod, :paidAt, :notes, :recordedBy, :kkiapayTransactionId)`,
+    {
+      tenantId,
+      chargeId: charge.id,
+      amount,
+      paymentMethod,
+      paidAt,
+      notes: notes ?? null,
+      recordedBy: recordedBy ?? null,
+      kkiapayTransactionId,
+    },
+  );
+
+  const newPaidTotal = Number(paidTotal) + amount;
+  const newStatus = newPaidTotal >= Number(charge.amount) ? 'payee' : 'partiellement_payee';
+  await conn.query(
+    `UPDATE utility_charges
+     SET status = :status, paid_at = :paidAt, payment_method = :paymentMethod, paid_recorded_by = :by
+     WHERE id = :id`,
+    { status: newStatus, paidAt, paymentMethod, by: recordedBy ?? null, id: charge.id },
+  );
+
+  // Module comptabilité SYSCOHADA (nouveau) — voir le commentaire identique
+  // dans routes/leases.js `recordRentPayment` : rien ne change pour une
+  // entreprise qui n'a pas activé le module.
+  if (await isModuleActive(conn, tenantId)) {
+    const [renterRows] = await conn.query(
+      `SELECT r.first_name, r.last_name FROM leases l JOIN renters r ON r.id = l.renter_id WHERE l.id = :leaseId LIMIT 1`,
+      { leaseId: charge.lease_id },
+    );
+    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
+    await genererEcriture(conn, {
+      tenantId,
+      operationType: 'charge_locative_encaissee',
+      entryDate: paidAt,
+      amount,
+      paymentMethod,
+      narrationVars: {
+        fluide: charge.utility_type === 'soneb' ? 'SONEB' : 'SBEE',
+        periode: `${isoDate(charge.period_start)} au ${isoDate(charge.period_end)}`,
+        locataire: renterName,
+      },
+      sourceTable: 'utility_payments',
+      sourceId: paymentResult.insertId,
+      createdBy: recordedBy,
+      context: { leaseId: charge.lease_id },
+    });
+  }
+
+  return { paymentId: paymentResult.insertId, newStatus, newPaidTotal };
+}
+
 // POST /api/charges/:id/payments — enregistrer un règlement (total ou partiel).
 router.post('/:id/payments', async (req, res, next) => {
   const id = Number(req.params.id);
@@ -351,15 +433,6 @@ router.post('/:id/payments', async (req, res, next) => {
     // principe que les paiements de loyer (routes/leases.js).
     await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id });
 
-    const [[{ paidTotal }]] = await conn.query(
-      'SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id',
-      { id },
-    );
-    const remaining = Number(charge.amount) - Number(paidTotal);
-    if (data.amount > remaining) {
-      throw new ApiError(400, `Le montant dépasse le solde restant (${remaining} FCFA).`);
-    }
-
     // Garde anti-doublon : un règlement identique tout juste enregistré
     // (< 2 min, même date/mode/montant) est très probablement un double-clic.
     const [recent] = await conn.query(
@@ -372,28 +445,15 @@ router.post('/:id/payments', async (req, res, next) => {
       throw new ApiError(409, 'Un règlement identique vient d\'être enregistré. Rechargez la page pour le voir.');
     }
 
-    await conn.query(
-      `INSERT INTO utility_payments (tenant_id, charge_id, amount, payment_method, paid_at, notes, recorded_by)
-       VALUES (:tenantId, :chargeId, :amount, :paymentMethod, :paidAt, :notes, :recordedBy)`,
-      {
-        tenantId: req.user.tenantId,
-        chargeId: id,
-        amount: data.amount,
-        paymentMethod: data.paymentMethod,
-        paidAt: data.paidAt,
-        notes: data.notes,
-        recordedBy: req.user.id,
-      },
-    );
-
-    const newPaidTotal = Number(paidTotal) + data.amount;
-    const newStatus = newPaidTotal >= Number(charge.amount) ? 'payee' : 'partiellement_payee';
-    await conn.query(
-      `UPDATE utility_charges
-       SET status = :status, paid_at = :paidAt, payment_method = :paymentMethod, paid_recorded_by = :by
-       WHERE id = :id`,
-      { status: newStatus, paidAt: data.paidAt, paymentMethod: data.paymentMethod, by: req.user.id, id },
-    );
+    const { newStatus } = await recordUtilityPayment(conn, {
+      tenantId: req.user.tenantId,
+      charge,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      paidAt: data.paidAt,
+      notes: data.notes,
+      recordedBy: req.user.id,
+    });
     await conn.commit();
 
     logger.info('Règlement facture SONEB/SBEE enregistré', {
@@ -446,4 +506,59 @@ router.delete('/:id', async (req, res, next) => {
   }
 });
 
+// POST /api/charges/:id/payment-links — génère un lien de paiement KKiaPay
+// pour cette facture, à envoyer à la main (WhatsApp) à un locataire sans
+// portail actif. Même schéma de révélation unique que les liens de portail.
+router.post('/:id/payment-links', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const charge = await loadCharge(pool, req.user.tenantId, id);
+    if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée.');
+
+    const [[tenant]] = await pool.query('SELECT kkiapay_enabled FROM tenants WHERE id = :id LIMIT 1', {
+      id: req.user.tenantId,
+    });
+    if (!tenant?.kkiapay_enabled) {
+      throw new ApiError(400, 'Le paiement en ligne (KKiaPay) n\'est pas activé pour votre entreprise (Réglages).');
+    }
+
+    const [[{ paidTotal }]] = await pool.query(
+      'SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id',
+      { id },
+    );
+    const remaining = Number(charge.amount) - Number(paidTotal);
+
+    const token = generatePortalToken();
+    const [result] = await pool.query(
+      `INSERT INTO payment_links (tenant_id, kind, charge_id, amount, token_hash, created_by, expires_at)
+       VALUES (:tenantId, 'charge', :chargeId, :amount, :hash, :by, DATE_ADD(NOW(), INTERVAL :ttl HOUR))`,
+      {
+        tenantId: req.user.tenantId,
+        chargeId: id,
+        amount: remaining,
+        hash: hashToken(token),
+        by: req.user.id,
+        ttl: PAYMENT_LINK_TTL_HOURS,
+      },
+    );
+
+    logger.info('Lien de paiement (charge) généré', {
+      tenantId: req.user.tenantId,
+      chargeId: id,
+      linkId: result.insertId,
+      amount: remaining,
+      by: req.user.id,
+    });
+    res.status(201).json({ token, path: `/payer/${token}`, amount: remaining });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
+// Réutilisés par portal.js et paymentLinks.js — voir le commentaire au-dessus
+// de `recordUtilityPayment`.
+module.exports.loadCharge = loadCharge;
+module.exports.recordUtilityPayment = recordUtilityPayment;

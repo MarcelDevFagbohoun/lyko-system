@@ -1,8 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Camera, Plus, Trash2, X } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Camera, Plus, Trash2, X, Search, Receipt } from "lucide-react";
+import { cn, formatFcfa } from "@/lib/utils";
 import { API_URL } from "@/lib/api/client";
 import {
   INSPECTION_CONDITIONS,
@@ -10,7 +10,8 @@ import {
   generateCustomKey,
   type InspectionCondition,
 } from "@/lib/constants/inspection";
-import type { InspectionZone, InspectionItem } from "@/lib/api/renters";
+import type { InspectionZone, InspectionItem, BillingLine } from "@/lib/api/renters";
+import type { CatalogItem } from "@/lib/api/inspectionCatalog";
 import { Button } from "@/components/ui/button";
 
 type InspectionFormProps = {
@@ -19,6 +20,10 @@ type InspectionFormProps = {
   showDeductions: boolean;
   onUploadPhoto: (zoneKey: string, itemKey: string, file: File) => void | Promise<void>;
   onDeletePhoto: (zoneKey: string, itemKey: string) => void | Promise<void>;
+  /** Référentiel de prix (uniquement utile quand `showDeductions`), pour proposer un prix plutôt que le saisir à l'aveugle. */
+  catalog?: CatalogItem[];
+  /** Postes dégradés par rapport à l'entrée ("zoneKey::itemKey") — mis en évidence avec une invite à facturer. */
+  degradedKeys?: Set<string>;
 }
 
 /**
@@ -27,7 +32,15 @@ type InspectionFormProps = {
  * ne parle jamais directement à l'API (sauf les photos, immédiates par
  * nature) — l'appelant décide quand persister `zones` (bouton Enregistrer).
  */
-export function InspectionForm({ zones, onChange, showDeductions, onUploadPhoto, onDeletePhoto }: InspectionFormProps) {
+export function InspectionForm({
+  zones,
+  onChange,
+  showDeductions,
+  onUploadPhoto,
+  onDeletePhoto,
+  catalog = [],
+  degradedKeys,
+}: InspectionFormProps) {
   function updateItem(zoneKey: string, itemKey: string, patch: Partial<InspectionItem>) {
     onChange(
       zones.map((zone) =>
@@ -50,7 +63,7 @@ export function InspectionForm({ zones, onChange, showDeductions, onUploadPhoto,
       zones.map((zone) =>
         zone.key !== zoneKey
           ? zone
-          : { ...zone, items: [...zone.items, { key, label, custom: true, condition: null, comment: null, photoUrl: null, deduction: 0 }] },
+          : { ...zone, items: [...zone.items, { key, label, custom: true, condition: null, comment: null, photoUrl: null, deduction: 0, billing: null }] },
       ),
     );
   }
@@ -64,7 +77,7 @@ export function InspectionForm({ zones, onChange, showDeductions, onUploadPhoto,
         key: zoneKey,
         label,
         custom: true,
-        items: [{ key: itemKey, label: firstItemLabel, custom: true, condition: null, comment: null, photoUrl: null, deduction: 0 }],
+        items: [{ key: itemKey, label: firstItemLabel, custom: true, condition: null, comment: null, photoUrl: null, deduction: 0, billing: null }],
       },
     ]);
   }
@@ -80,6 +93,8 @@ export function InspectionForm({ zones, onChange, showDeductions, onUploadPhoto,
           key={zone.key}
           zone={zone}
           showDeductions={showDeductions}
+          catalog={catalog}
+          degradedKeys={degradedKeys}
           onUpdateItem={(itemKey, patch) => updateItem(zone.key, itemKey, patch)}
           onRemoveItem={(itemKey) => removeItem(zone.key, itemKey)}
           onAddItem={(label) => addItem(zone.key, label)}
@@ -96,6 +111,8 @@ export function InspectionForm({ zones, onChange, showDeductions, onUploadPhoto,
 function ZoneSection({
   zone,
   showDeductions,
+  catalog,
+  degradedKeys,
   onUpdateItem,
   onRemoveItem,
   onAddItem,
@@ -105,6 +122,8 @@ function ZoneSection({
 }: {
   zone: InspectionZone;
   showDeductions: boolean;
+  catalog: CatalogItem[];
+  degradedKeys?: Set<string>;
   onUpdateItem: (itemKey: string, patch: Partial<InspectionItem>) => void;
   onRemoveItem: (itemKey: string) => void;
   onAddItem: (label: string) => void;
@@ -143,6 +162,8 @@ function ZoneSection({
             key={item.key}
             item={item}
             showDeductions={showDeductions}
+            catalog={catalog}
+            degraded={degradedKeys?.has(`${zone.key}::${item.key}`) ?? false}
             onUpdate={(patch) => onUpdateItem(item.key, patch)}
             onRemove={item.custom ? () => onRemoveItem(item.key) : undefined}
             onUploadPhoto={(file) => onUploadPhoto(item.key, file)}
@@ -179,6 +200,8 @@ function ZoneSection({
 function ItemRow({
   item,
   showDeductions,
+  catalog,
+  degraded,
   onUpdate,
   onRemove,
   onUploadPhoto,
@@ -186,6 +209,8 @@ function ItemRow({
 }: {
   item: InspectionItem;
   showDeductions: boolean;
+  catalog: CatalogItem[];
+  degraded: boolean;
   onUpdate: (patch: Partial<InspectionItem>) => void;
   onRemove?: () => void;
   onUploadPhoto: (file: File) => void | Promise<void>;
@@ -193,6 +218,8 @@ function ItemRow({
 }) {
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = React.useState(false);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const lines = item.billing?.lines ?? [];
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -206,8 +233,35 @@ function ItemRow({
     }
   }
 
+  // Miroir côté client de `computeItemDeduction` (backend) : le serveur fait
+  // foi à l'enregistrement, mais `item.deduction` doit refléter les lignes
+  // immédiatement à l'écran, sans attendre un aller-retour réseau.
+  function sumLines(ls: BillingLine[]) {
+    return ls.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
+  }
+
+  function addLine(line: BillingLine) {
+    const existingIdx = line.catalogItemId != null ? lines.findIndex((l) => l.catalogItemId === line.catalogItemId) : -1;
+    const newLines =
+      existingIdx >= 0
+        ? lines.map((l, i) => (i === existingIdx ? { ...l, quantity: l.quantity + 1 } : l))
+        : [...lines, line];
+    onUpdate({ billing: { lines: newLines }, deduction: sumLines(newLines) });
+    setPickerOpen(false);
+  }
+
+  function updateLineQuantity(idx: number, quantity: number) {
+    const newLines = lines.map((l, i) => (i === idx ? { ...l, quantity: Math.max(1, quantity) } : l));
+    onUpdate({ billing: { lines: newLines }, deduction: sumLines(newLines) });
+  }
+
+  function removeLine(idx: number) {
+    const remaining = lines.filter((_, i) => i !== idx);
+    onUpdate({ billing: remaining.length > 0 ? { lines: remaining } : null, deduction: sumLines(remaining) });
+  }
+
   return (
-    <div className="rounded-lg border border-border p-3">
+    <div className={cn("rounded-lg border p-3", degraded && lines.length === 0 ? "border-warning-border bg-warning-bg" : "border-border")}>
       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
         <span className="font-label-md text-ink">
           {item.label}
@@ -235,6 +289,9 @@ function ItemRow({
         </div>
       </div>
       {item.condition && <p className="mt-1 text-body-xs text-ink-muted">{CONDITION_LABELS[item.condition]}</p>}
+      {degraded && lines.length === 0 && (
+        <p className="mt-1 text-body-xs font-label-sm text-warning-fg">Dégradé depuis l&apos;entrée — facturer ce dommage ?</p>
+      )}
 
       <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-start">
         <input
@@ -244,7 +301,7 @@ function ItemRow({
           onChange={(e) => onUpdate({ comment: e.target.value || null })}
           className="h-8 flex-1 rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         />
-        {showDeductions && (
+        {showDeductions && lines.length === 0 && (
           <input
             type="text"
             inputMode="numeric"
@@ -255,6 +312,51 @@ function ItemRow({
           />
         )}
       </div>
+
+      {showDeductions && lines.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1.5 rounded border border-border-strong bg-surface p-2">
+          {lines.map((l, idx) => (
+            <div key={idx} className="flex items-center justify-between gap-2 text-body-xs">
+              <span className="text-ink">{l.label}</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={l.quantity}
+                  onChange={(e) => updateLineQuantity(idx, Number(e.target.value.replace(/\D/g, "")) || 1)}
+                  className="h-6 w-10 rounded border border-border-strong bg-surface text-center text-body-xs text-ink"
+                />
+                <span className="tabular text-ink-soft">{formatFcfa(l.unitPrice * l.quantity)}</span>
+                <button type="button" onClick={() => removeLine(idx)} className="text-ink-muted hover:text-danger-fg">
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center justify-between border-t border-border pt-1.5 text-body-xs">
+            <span className="font-label-sm text-ink">Total facturé</span>
+            <span className="tabular font-label-sm text-danger-fg">{formatFcfa(item.deduction)}</span>
+          </div>
+        </div>
+      )}
+
+      {showDeductions && (
+        <div className="mt-2">
+          {pickerOpen ? (
+            <BillingPicker catalog={catalog} onPick={addLine} onCancel={() => setPickerOpen(false)} />
+          ) : (
+            <Button
+              type="button"
+              variant={degraded && lines.length === 0 ? "warning" : "ghost"}
+              size="sm"
+              onClick={() => setPickerOpen(true)}
+            >
+              <Receipt size={14} />
+              {lines.length > 0 ? "Ajouter une ligne" : "Facturer ce dommage"}
+            </Button>
+          )}
+        </div>
+      )}
 
       <div className="mt-2 flex items-center gap-2">
         {item.photoUrl ? (
@@ -281,6 +383,100 @@ function ItemRow({
           </button>
         )}
         <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFileChange} className="hidden" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Choix d'une ligne à facturer : recherche dans le catalogue de
+ * l'entreprise (prix pré-rempli), ou saisie d'un élément non catalogué
+ * (libellé + prix libres) — les deux ajoutent une ligne de la même forme.
+ */
+function BillingPicker({
+  catalog,
+  onPick,
+  onCancel,
+}: {
+  catalog: CatalogItem[];
+  onPick: (line: BillingLine) => void;
+  onCancel: () => void;
+}) {
+  const [query, setQuery] = React.useState("");
+  const [customLabel, setCustomLabel] = React.useState("");
+  const [customPrice, setCustomPrice] = React.useState("");
+
+  const matches = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = q ? catalog.filter((c) => c.label.toLowerCase().includes(q)) : catalog;
+    return list.slice(0, 8);
+  }, [catalog, query]);
+
+  function confirmCustom() {
+    const price = Number(customPrice);
+    if (!customLabel.trim() || !Number.isFinite(price) || price <= 0) return;
+    onPick({ catalogItemId: null, label: customLabel.trim(), unitPrice: price, quantity: 1 });
+    setCustomLabel("");
+    setCustomPrice("");
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border-strong bg-surface-muted p-3">
+      <div className="flex items-center gap-2">
+        <Search size={14} className="text-ink-muted" />
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Chercher dans le catalogue (ex. Porte, Fenêtre…)"
+          className="h-8 flex-1 rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        />
+        <button type="button" onClick={onCancel} className="text-ink-muted hover:text-ink">
+          <X size={16} />
+        </button>
+      </div>
+
+      {matches.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          {matches.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onPick({ catalogItemId: c.id, label: c.label, unitPrice: c.price, quantity: 1 })}
+              className="flex items-center justify-between rounded px-2 py-1.5 text-body-sm text-ink hover:bg-surface-hover"
+            >
+              <span>{c.label}</span>
+              <span className="tabular text-ink-soft">{formatFcfa(c.price)}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="px-2 text-body-xs text-ink-muted">
+          {catalog.length === 0 ? "Le catalogue est vide pour l'instant." : "Aucun élément du catalogue ne correspond."}
+        </p>
+      )}
+
+      <div className="flex flex-col gap-1.5 border-t border-border pt-2">
+        <span className="text-body-xs text-ink-muted">Élément non catalogué</span>
+        <div className="flex items-center gap-2">
+          <input
+            value={customLabel}
+            onChange={(e) => setCustomLabel(e.target.value)}
+            placeholder="Libellé"
+            className="h-8 flex-1 rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+          <input
+            type="text"
+            inputMode="numeric"
+            value={customPrice}
+            onChange={(e) => setCustomPrice(e.target.value.replace(/\D/g, ""))}
+            placeholder="Prix FCFA"
+            className="h-8 w-28 rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+          <Button type="button" size="sm" onClick={confirmCustom}>
+            Ajouter
+          </Button>
+        </div>
       </div>
     </div>
   );

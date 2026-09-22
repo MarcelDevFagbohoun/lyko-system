@@ -6,6 +6,7 @@ const authRoutes = require('./auth');
 const employeeRoutes = require('./employees');
 const renterRoutes = require('./renters');
 const leaseRoutes = require('./leases');
+const inspectionCatalogRoutes = require('./inspectionCatalog');
 const settingsRoutes = require('./settings');
 const propertyRoutes = require('./properties');
 const ownerRoutes = require('./owners');
@@ -17,11 +18,26 @@ const dashboardRoutes = require('./dashboard');
 const portalRoutes = require('./portal');
 const ownerPortalRoutes = require('./ownerPortal');
 const taskRoutes = require('./tasks');
+const assignedTaskRoutes = require('./assignedTasks');
 const historyRoutes = require('./history');
 const marketplaceRoutes = require('./marketplace');
 const marketplaceAccountRoutes = require('./marketplaceAccounts');
 const documentRoutes = require('./documents');
 const documentVerificationRoutes = require('./documentVerification');
+const paymentLinkRoutes = require('./paymentLinks');
+const kkiapayWebhookRoutes = require('./kkiapayWebhook');
+const receiptShareRoutes = require('./receiptShare');
+const glAccountsRoutes = require('./gl/glAccounts');
+const glJournalsRoutes = require('./gl/glJournals');
+const glFiscalYearsRoutes = require('./gl/glFiscalYears');
+const glPostingRulesRoutes = require('./gl/glPostingRules');
+const glEntriesRoutes = require('./gl/glEntries');
+const glReportsRoutes = require('./gl/glReports');
+const glNotificationsRoutes = require('./gl/glNotifications');
+const glActivationRoutes = require('./gl/glActivation');
+const glBankReconciliationRoutes = require('./gl/glBankReconciliation');
+const glSettingsRoutes = require('./gl/glSettings');
+const glIrfRoutes = require('./gl/glIrf');
 
 const router = Router();
 
@@ -32,6 +48,7 @@ router.use('/properties', propertyRoutes);
 router.use('/owners', ownerRoutes);
 router.use('/renters', renterRoutes);
 router.use('/leases', leaseRoutes);
+router.use('/inspection-catalog', inspectionCatalogRoutes);
 router.use('/complaints', complaintRoutes);
 router.use('/accounting', accountingRoutes);
 router.use('/charges', chargeRoutes);
@@ -48,6 +65,8 @@ router.use('/owner-portal', ownerPortalRoutes);
 // Tableau de bord « Mes tâches » (comptable/agent, étape 18) : même piège
 // que ci-dessus, doit aussi être monté avant `utilityReadingRoutes`.
 router.use('/tasks', taskRoutes);
+// Tâches à délai assignées par le DG (nouveau) : même piège, même raison.
+router.use('/tasks/assigned', assignedTaskRoutes);
 // Historique personnel (comptable/agent, étape 18) : même piège, même raison.
 router.use('/history', historyRoutes);
 // Marketplace : sa route `/public/:tenantId` est PUBLIQUE (aucune auth) —
@@ -62,10 +81,32 @@ router.use('/documents', documentRoutes);
 // Vérification publique d'authenticité par code (étape 29) : PUBLIQUE, aucune
 // auth — même piège, doit être montée avant `utilityReadingRoutes`.
 router.use('/verify', documentVerificationRoutes);
+// Page publique de paiement (lien KKiaPay généré par le personnel) et
+// webhook KKiaPay : PUBLIQUES, aucune auth — même piège, mêmes raisons.
+router.use('/pay', paymentLinkRoutes);
+router.use('/webhooks', kkiapayWebhookRoutes);
+// Lien de partage direct d'une quittance (WhatsApp) : PUBLIQUE, aucune auth —
+// même piège que ci-dessus, doit être montée avant `utilityReadingRoutes`.
+// Préfixe dédié `/recu` (pas `/documents/share`) pour ne jamais dépendre de
+// l'ordre de montage par rapport à `documentRoutes` ci-dessus (authentifié).
+router.use('/recu', receiptShareRoutes);
 // Relevé de compteurs par immeuble (étape 9bis) : routes /properties/:id/utility-*
 // et /utility-batches/* — montées à la racine de /api (permission `charges`).
 router.use(utilityReadingRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/dashboard', dashboardRoutes);
+// Module comptabilité SYSCOHADA (espace Comptabilité avancée, livrable 6) —
+// authentifié, aucun piège de montage (pas de préfixe public en dessous).
+router.use('/gl/accounts', glAccountsRoutes);
+router.use('/gl/journals', glJournalsRoutes);
+router.use('/gl/fiscal-years', glFiscalYearsRoutes);
+router.use('/gl/posting-rules', glPostingRulesRoutes);
+router.use('/gl/entries', glEntriesRoutes);
+router.use('/gl/reports', glReportsRoutes);
+router.use('/gl/notifications', glNotificationsRoutes);
+router.use('/gl/activation', glActivationRoutes);
+router.use('/gl/bank-reconciliations', glBankReconciliationRoutes);
+router.use('/gl/settings', glSettingsRoutes);
+router.use('/gl/irf', glIrfRoutes);
 
 module.exports = router;

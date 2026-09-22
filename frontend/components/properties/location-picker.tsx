@@ -78,10 +78,60 @@ export default function LocationPicker({ latitude, longitude, onChange, height =
     }
   }, [latitude, longitude]);
 
+  // Saisie manuelle (copier-coller depuis Google Maps par exemple) — en plus
+  // du clic sur la carte, jamais à sa place : un DG qui connaît déjà les
+  // coordonnées exactes n'a pas à viser un point précis sur une petite carte
+  // centrée sur Cotonou, souvent imprécis au premier essai.
+  const [latText, setLatText] = React.useState(latitude != null ? String(latitude) : "");
+  const [lngText, setLngText] = React.useState(longitude != null ? String(longitude) : "");
+
+  React.useEffect(() => {
+    setLatText(latitude != null ? String(latitude) : "");
+    setLngText(longitude != null ? String(longitude) : "");
+  }, [latitude, longitude]);
+
+  function commitManualCoords(nextLatText: string, nextLngText: string) {
+    const lat = Number(nextLatText);
+    const lng = Number(nextLngText);
+    if (nextLatText.trim() === "" || nextLngText.trim() === "") return;
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) return;
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180) return;
+    onChangeRef.current(lat, lng);
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <div ref={containerRef} className="overflow-hidden rounded-lg border border-border-strong" style={{ height }} />
       <p className="text-body-xs text-ink-muted">Cliquez sur la carte à l&apos;emplacement du bien pour placer le repère.</p>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-body-xs text-ink-muted">Latitude</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={latText}
+            placeholder="ex. 6.36682"
+            onChange={(e) => setLatText(e.target.value)}
+            onBlur={() => commitManualCoords(latText, lngText)}
+            className="h-9 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-body-xs text-ink-muted">Longitude</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={lngText}
+            placeholder="ex. 2.39468"
+            onChange={(e) => setLngText(e.target.value)}
+            onBlur={() => commitManualCoords(latText, lngText)}
+            className="h-9 rounded border border-border-strong bg-surface px-2 text-body-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </label>
+      </div>
+      <p className="text-body-xs text-ink-muted">
+        Ou collez directement les coordonnées (par exemple copiées depuis Google Maps).
+      </p>
     </div>
   );
 }

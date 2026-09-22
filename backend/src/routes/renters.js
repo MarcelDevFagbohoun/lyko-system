@@ -18,12 +18,101 @@ const { toPublicInspectionReport, toPublicMoveOutReport } = require('../services
 const { toActor } = require('../utils/actor');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { resolvePropertyScope, assertRenterInScope } = require('../services/scope');
+const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const logger = require('../utils/logger');
 
 const router = Router();
 router.use(requireAuth);
 
 const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
+
+/**
+ * Un même numéro de téléphone ne doit jamais être utilisé par deux
+ * locataires différents de la même entreprise — un vrai doublon a été trouvé
+ * sur une entreprise réelle (deux locataires actifs, deux baux différents)
+ * en construisant ce contrôle : la contrainte UNIQUE en base n'a donc PAS pu
+ * être ajoutée (migration 059) tant que ce cas précis n'est pas corrigé —
+ * seul ce contrôle applicatif empêche tout NOUVEAU doublon en attendant.
+ * Le téléphone d'un locataire n'est jamais modifiable après création
+ * (aucune route ne l'expose), donc seule la création doit être vérifiée.
+ */
+async function assertRenterPhoneAvailable(conn, tenantId, phone) {
+  const [rows] = await conn.query('SELECT id FROM renters WHERE tenant_id = :tenantId AND phone = :phone LIMIT 1', {
+    tenantId,
+    phone,
+  });
+  if (rows[0]) throw new ApiError(409, 'Ce numéro de téléphone est déjà utilisé par un autre locataire');
+}
+
+/**
+ * Module comptabilité SYSCOHADA (nouveau) — la caution n'avait jusqu'ici
+ * aucun mouvement de trésorerie réel (`leases.deposit_amount` purement
+ * déclaratif). Enregistre sa RÉCEPTION réelle (date + mode) et, si le module
+ * est activé, génère sa contrepartie comptable (compte 165, tiers-locataire)
+ * dans LA MÊME transaction que la création du bail — mêmes principes que
+ * `recordRentPayment` (leases.js). Sans effet si `depositAmount` est 0 (bail
+ * sans caution) ou si le mode de règlement n'a pas été fourni.
+ */
+async function recordDepositReceived(conn, { tenantId, leaseId, amount, paymentMethod, paidAt, renterName, createdBy }) {
+  if (!amount || amount <= 0 || !paymentMethod) return;
+
+  await conn.query('UPDATE leases SET deposit_received_at = :paidAt, deposit_received_method = :method WHERE id = :id', {
+    paidAt,
+    method: paymentMethod,
+    id: leaseId,
+  });
+
+  if (await isModuleActive(conn, tenantId)) {
+    await genererEcriture(conn, {
+      tenantId,
+      operationType: 'caution_recue',
+      entryDate: paidAt,
+      amount,
+      paymentMethod,
+      narrationVars: { locataire: renterName },
+      sourceTable: 'leases',
+      sourceId: leaseId,
+      createdBy,
+      context: { leaseId },
+    });
+  }
+}
+
+/**
+ * Frais d'agence pris DIRECTEMENT au locataire à la signature du bail — 100 %
+ * produit du CABINET, jamais reversé au propriétaire (demande explicite de
+ * l'utilisateur : « ça devient directement celui de l'entreprise, jamais
+ * comptabilisé dans la recette du propriétaire »). Même principe que
+ * `recordDepositReceived` ci-dessus (trace réelle + contrepartie GL dans LA
+ * MÊME transaction), mais `sourceTable` volontairement DIFFÉRENT ('leases'
+ * est déjà pris par la caution sur ce même bail) : `glActivationService`
+ * dédoublonne son rattrapage par (source_table, source_id) SANS regarder le
+ * type d'opération — réutiliser 'leases' ferait ignorer silencieusement ces
+ * frais s'ils coexistent avec une caution sur le même bail.
+ */
+async function recordEntryFeeReceived(conn, { tenantId, leaseId, amount, paymentMethod, paidAt, renterName, createdBy }) {
+  if (!amount || amount <= 0 || !paymentMethod) return;
+
+  await conn.query(
+    'UPDATE leases SET entry_fee_received_at = :paidAt, entry_fee_received_method = :method WHERE id = :id',
+    { paidAt, method: paymentMethod, id: leaseId },
+  );
+
+  if (await isModuleActive(conn, tenantId)) {
+    await genererEcriture(conn, {
+      tenantId,
+      operationType: 'frais_agence_encaisse',
+      entryDate: paidAt,
+      amount,
+      paymentMethod,
+      narrationVars: { locataire: renterName },
+      sourceTable: 'lease_entry_fees',
+      sourceId: leaseId,
+      createdBy,
+      context: {},
+    });
+  }
+}
 
 /**
  * Marketplace : une Unité qui reçoit un nouveau bail n'est plus vacante —
@@ -99,6 +188,11 @@ function toPublicLease(row) {
     monthlyRent: Number(row.lease_monthly_rent ?? row.monthly_rent),
     depositAmount: Number(row.deposit_amount),
     depositStatus: row.deposit_status,
+    openingDebtAmount: Number(row.opening_debt_amount ?? 0),
+    upToDateAtOnboarding: !!row.up_to_date_at_onboarding,
+    entryFeeAmount: Number(row.entry_fee_amount ?? 0),
+    entryFeeReceivedAt: row.entry_fee_received_at ? isoDate(row.entry_fee_received_at) : null,
+    entryFeeReceivedMethod: row.entry_fee_received_method ?? null,
     rentDueDay: row.rent_due_day,
     startDate: isoDate(row.start_date),
     endDate: isoDate(row.end_date),
@@ -132,6 +226,7 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
+  kkiapay: 'Paiement en ligne (KKiaPay)',
 };
 
 // Colonnes communes bail + unité + bien + propriétaire, réutilisées par la
@@ -139,7 +234,9 @@ const PAYMENT_METHOD_LABELS = {
 // jointure sur owners plutôt que des colonnes texte sur properties).
 const LEASE_UNIT_PROPERTY_SELECT = `
   l.id AS lease_id, l.monthly_rent AS lease_monthly_rent, l.deposit_amount,
-  l.deposit_status, l.rent_due_day, l.start_date, l.end_date, l.status AS lease_status,
+  l.deposit_status, l.opening_debt_amount, l.up_to_date_at_onboarding,
+  l.entry_fee_amount, l.entry_fee_received_at, l.entry_fee_received_method,
+  l.rent_due_day, l.start_date, l.end_date, l.status AS lease_status,
   l.created_at AS lease_created_at,
   lu.first_name AS lease_creator_first_name, lu.last_name AS lease_creator_last_name, lu.role AS lease_creator_role,
   u.id AS unit_id, u.code AS unit_code, u.designation, u.designation_custom,
@@ -210,6 +307,8 @@ router.get('/', canRead, async (req, res, next) => {
       const lease = toPublicLease(row);
       const arrears = computeArrears({
         startDate: lease.startDate,
+        createdAt: lease.createdAt,
+        upToDateAtOnboarding: lease.upToDateAtOnboarding,
         rentDueDay: lease.rentDueDay,
         payments: paymentsByLease.get(row.lease_id) || [],
       });
@@ -256,9 +355,30 @@ router.get('/:id', canRead, async (req, res, next) => {
     let receiptsByPayment = new Map();
     let moveInByLease = new Map();
     let moveOutByLease = new Map();
+    let openingDebtPaymentsByLease = new Map();
 
     if (leaseIds.length > 0) {
       const placeholders = leaseIds.map(() => '?').join(',');
+
+      const [openingDebtPayments] = await pool.query(
+        `SELECT lodp.*, pu.first_name AS recorder_first_name, pu.last_name AS recorder_last_name, pu.role AS recorder_role
+         FROM lease_opening_debt_payments lodp JOIN users pu ON pu.id = lodp.recorded_by
+         WHERE lodp.lease_id IN (${placeholders}) ORDER BY lodp.paid_at DESC, lodp.id DESC`,
+        leaseIds,
+      );
+      for (const p of openingDebtPayments) {
+        if (!openingDebtPaymentsByLease.has(p.lease_id)) openingDebtPaymentsByLease.set(p.lease_id, []);
+        openingDebtPaymentsByLease.get(p.lease_id).push({
+          id: p.id,
+          amount: Number(p.amount),
+          paymentMethod: p.payment_method,
+          paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
+          paidAt: isoDate(p.paid_at),
+          notes: p.notes,
+          recordedBy: toActor(p.recorder_first_name, p.recorder_last_name, p.recorder_role),
+        });
+      }
+
       const [payments] = await pool.query(
         `SELECT rp.*, pu.first_name AS recorder_first_name, pu.last_name AS recorder_last_name, pu.role AS recorder_role
          FROM rent_payments rp JOIN users pu ON pu.id = rp.recorded_by
@@ -319,12 +439,23 @@ router.get('/:id', canRead, async (req, res, next) => {
       const lease = toPublicLease(row);
       const payments = paymentsByLease.get(row.id) || [];
       const isActive = row.status === 'active';
+      const openingDebtPayments = openingDebtPaymentsByLease.get(row.id) || [];
+      const openingDebtPaid = openingDebtPayments.reduce((sum, p) => sum + p.amount, 0);
       return {
         ...lease,
         payments,
         arrears: isActive
-          ? computeArrears({ startDate: lease.startDate, rentDueDay: lease.rentDueDay, payments })
+          ? computeArrears({
+              startDate: lease.startDate,
+              createdAt: lease.createdAt,
+              upToDateAtOnboarding: lease.upToDateAtOnboarding,
+              rentDueDay: lease.rentDueDay,
+              payments,
+            })
           : null,
+        openingDebtPaid,
+        openingDebtRemaining: lease.openingDebtAmount - openingDebtPaid,
+        openingDebtPayments,
         moveInReport: toPublicInspectionReport(moveInByLease.get(row.id)),
         moveOutReport: toPublicMoveOutReport(moveOutByLease.get(row.id)),
       };
@@ -374,6 +505,7 @@ router.post('/', canManage, async (req, res, next) => {
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const unit = await loadAvailableUnit(conn, req.user.tenantId, data.unitId, scopeAgentId);
+    await assertRenterPhoneAvailable(conn, req.user.tenantId, data.phone);
 
     await conn.beginTransaction();
 
@@ -395,8 +527,8 @@ router.post('/', canManage, async (req, res, next) => {
 
     const rent = data.monthlyRent ?? Number(unit.monthly_rent);
     const [leaseResult] = await conn.query(
-      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, start_date, created_by)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :startDate, :createdBy)`,
+      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount)`,
       {
         tenantId: req.user.tenantId,
         unitId: data.unitId,
@@ -406,9 +538,32 @@ router.post('/', canManage, async (req, res, next) => {
         dueDay: data.rentDueDay,
         startDate: data.startDate,
         createdBy: req.user.id,
+        openingDebtAmount: data.openingDebtAmount,
+        upToDate: data.upToDateAtOnboarding ? 1 : 0,
+        entryFeeAmount: data.entryFeeAmount,
       },
     );
     const leaseId = leaseResult.insertId;
+
+    await recordDepositReceived(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      amount: data.depositAmount,
+      paymentMethod: data.depositPaymentMethod,
+      paidAt: data.depositPaidAt || data.startDate,
+      renterName: `${data.firstName} ${data.lastName}`,
+      createdBy: req.user.id,
+    });
+
+    await recordEntryFeeReceived(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      amount: data.entryFeeAmount,
+      paymentMethod: data.entryFeePaymentMethod,
+      paidAt: data.entryFeePaidAt || data.startDate,
+      renterName: `${data.firstName} ${data.lastName}`,
+      createdBy: req.user.id,
+    });
 
     await conn.query("UPDATE property_units SET status = 'loue' WHERE id = :unitId", { unitId: data.unitId });
     const clearedMarketplacePhotos = await clearMarketplaceListing(conn, req.user.tenantId, data.unitId);
@@ -503,7 +658,7 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const [existing] = await conn.query(
-      'SELECT id FROM renters WHERE id = :id AND tenant_id = :tenantId LIMIT 1',
+      'SELECT id, first_name, last_name FROM renters WHERE id = :id AND tenant_id = :tenantId LIMIT 1',
       { id, tenantId: req.user.tenantId },
     );
     if (!existing[0]) throw new ApiError(404, 'Locataire introuvable');
@@ -515,8 +670,8 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
 
     const rent = data.monthlyRent ?? Number(unit.monthly_rent);
     const [leaseResult] = await conn.query(
-      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, start_date, created_by)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :startDate, :createdBy)`,
+      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount)`,
       {
         tenantId: req.user.tenantId,
         unitId: data.unitId,
@@ -526,9 +681,32 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
         dueDay: data.rentDueDay,
         startDate: data.startDate,
         createdBy: req.user.id,
+        openingDebtAmount: data.openingDebtAmount,
+        upToDate: data.upToDateAtOnboarding ? 1 : 0,
+        entryFeeAmount: data.entryFeeAmount,
       },
     );
     const leaseId = leaseResult.insertId;
+
+    await recordDepositReceived(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      amount: data.depositAmount,
+      paymentMethod: data.depositPaymentMethod,
+      paidAt: data.depositPaidAt || data.startDate,
+      renterName: `${existing[0].first_name} ${existing[0].last_name}`,
+      createdBy: req.user.id,
+    });
+
+    await recordEntryFeeReceived(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      amount: data.entryFeeAmount,
+      paymentMethod: data.entryFeePaymentMethod,
+      paidAt: data.entryFeePaidAt || data.startDate,
+      renterName: `${existing[0].first_name} ${existing[0].last_name}`,
+      createdBy: req.user.id,
+    });
 
     await conn.query("UPDATE property_units SET status = 'loue' WHERE id = :unitId", { unitId: data.unitId });
     const clearedMarketplacePhotos = await clearMarketplaceListing(conn, req.user.tenantId, data.unitId);
@@ -580,16 +758,21 @@ router.get('/:id/certificate.pdf', canReadDocs, async (req, res, next) => {
     const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', {
       id: req.user.tenantId,
     });
-    const [issuerRows] = await pool.query('SELECT first_name, last_name FROM users WHERE id = :id LIMIT 1', {
-      id: req.user.id,
-    });
+    // Le signataire légal du bail est toujours le DG (représentant de
+    // l'entreprise), jamais l'employé qui clique sur « Télécharger » — un
+    // comptable ou un agent peut générer ce document sans en devenir le
+    // signataire (même résolution que /api/portal/:token/certificate.pdf).
+    const [issuerRows] = await pool.query(
+      "SELECT first_name, last_name, role, stamp_path, signature_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
+      { tenantId: req.user.tenantId },
+    );
 
     streamCertificatePdf(res, {
       tenant: tenantRows[0],
       renter: renterRows[0],
       property: { label, address: unitRow.address },
       lease: leaseRows[0],
-      issuer: issuerRows[0],
+      issuer: issuerRows[0] || { first_name: tenantRows[0]?.company_name ?? 'Le cabinet', last_name: '' },
     });
   } catch (err) {
     next(err);

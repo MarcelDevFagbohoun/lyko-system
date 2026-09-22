@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { MessageCircleWarning, Send, Radar, Droplets, Zap } from "lucide-react";
+import { MessageCircleWarning, Send, Radar, Droplets, Zap, Coins, ChevronDown, ChevronUp } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import {
@@ -13,6 +13,7 @@ import {
   type PredictiveAlertEntry,
   type UtilityArrearsEntry,
 } from "@/lib/api/accounting";
+import { applyLateFee } from "@/lib/api/renters";
 import { UTILITY_TYPE_LABELS } from "@/lib/constants/charges";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
 import {
@@ -23,9 +24,11 @@ import {
   buildUtilityReminderMessage,
 } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Field, Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { useToast } from "@/lib/toast/toast-context";
 
 /**
  * Centre de relance groupée (étape 10) : tous les locataires en retard sur
@@ -45,6 +48,7 @@ export function RelancesView() {
 function RelancesContent() {
   const { accessToken, tenant } = useAuth();
   const [arrears, setArrears] = React.useState<PortfolioArrearsEntry[] | null>(null);
+  const [openPenaltyLeaseId, setOpenPenaltyLeaseId] = React.useState<number | null>(null);
   const [total, setTotal] = React.useState(0);
   const [predictive, setPredictive] = React.useState<PredictiveAlertEntry[] | null>(null);
   const [utilityArrears, setUtilityArrears] = React.useState<UtilityArrearsEntry[] | null>(null);
@@ -119,42 +123,16 @@ function RelancesContent() {
               </tr>
             </TableHeader>
             <TableBody>
-              {arrears.map((a) => {
-                const message = buildRentReminderMessage({
-                  renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
-                  unitLabel: a.unitCode,
-                  monthlyRent: a.monthlyRent,
-                  daysLate: a.daysLate,
-                  dueDate: a.dueDate,
-                  companyName: tenant?.companyName,
-                });
-                return (
-                  <TableRow key={a.leaseId}>
-                    <TableCell>
-                      <Link href={`/espace/locataires/${a.renterId}`} className="text-primary hover:underline">
-                        {a.renterName}
-                      </Link>
-                      <div className="text-body-xs text-ink-muted">{a.phone}</div>
-                    </TableCell>
-                    <TableCell className="text-ink-soft">
-                      {a.propertyCode} · {a.unitCode}
-                    </TableCell>
-                    <TableAmount>{formatFcfa(a.amountOwed)}</TableAmount>
-                    <TableCell className="text-danger-fg">
-                      {a.daysLate} j · {a.unpaidMonths} mois dû(s)
-                    </TableCell>
-                    <TableCell className="text-ink-soft">{formatDateLabel(a.dueDate)}</TableCell>
-                    <TableCell className="text-right">
-                      <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex">
-                        <span className={buttonVariants({ variant: "whatsapp", size: "sm" })}>
-                          <Send size={14} />
-                          Relancer
-                        </span>
-                      </a>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {arrears.map((a) => (
+                <ArrearsRow
+                  key={a.leaseId}
+                  arrears={a}
+                  companyName={tenant?.companyName}
+                  accessToken={accessToken}
+                  open={openPenaltyLeaseId === a.leaseId}
+                  onTogglePenalty={() => setOpenPenaltyLeaseId(openPenaltyLeaseId === a.leaseId ? null : a.leaseId)}
+                />
+              ))}
             </TableBody>
           </Table>
         ) : null}
@@ -302,5 +280,135 @@ function RelancesContent() {
         )}
       </div>
     </div>
+  );
+}
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+function ArrearsRow({
+  arrears: a,
+  companyName,
+  accessToken,
+  open,
+  onTogglePenalty,
+}: {
+  arrears: PortfolioArrearsEntry;
+  companyName: string | undefined;
+  accessToken: string | null;
+  open: boolean;
+  onTogglePenalty: () => void;
+}) {
+  const [amount, setAmount] = React.useState("");
+  const [appliedAt, setAppliedAt] = React.useState(todayIso());
+  const [reason, setReason] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  const message = buildRentReminderMessage({
+    renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
+    unitLabel: a.unitCode,
+    monthlyRent: a.monthlyRent,
+    daysLate: a.daysLate,
+    dueDate: a.dueDate,
+    companyName,
+  });
+
+  async function handleApplyPenalty(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken) return;
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value <= 0) {
+      setError("Montant invalide.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await applyLateFee(accessToken, a.leaseId, { amount: value, appliedAt, reason: reason.trim() || undefined });
+      toast.success(`Pénalité de ${formatFcfa(value)} appliquée à ${a.renterName}.`);
+      setAmount("");
+      setReason("");
+      onTogglePenalty();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'appliquer cette pénalité.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          <Link href={`/espace/locataires/${a.renterId}`} className="text-primary hover:underline">
+            {a.renterName}
+          </Link>
+          <div className="text-body-xs text-ink-muted">{a.phone}</div>
+        </TableCell>
+        <TableCell className="text-ink-soft">
+          {a.propertyCode} · {a.unitCode}
+        </TableCell>
+        <TableAmount>{formatFcfa(a.amountOwed)}</TableAmount>
+        <TableCell>
+          {a.unpaidMonths > 0 && (
+            <div className="text-danger-fg">
+              {a.daysLate} j · {a.unpaidMonths} mois dû(s)
+            </div>
+          )}
+          {a.openingDebtRemaining > 0 && (
+            <div className="text-warning-fg">Impayés à l&apos;entrée : {formatFcfa(a.openingDebtRemaining)}</div>
+          )}
+        </TableCell>
+        <TableCell className="text-ink-soft">{formatDateLabel(a.dueDate)}</TableCell>
+        <TableCell className="text-right">
+          <div className="flex items-center justify-end gap-1.5">
+            <Button type="button" variant="ghost" size="sm" onClick={onTogglePenalty}>
+              <Coins size={14} />
+              Pénalité
+              {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </Button>
+            <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex">
+              <span className={buttonVariants({ variant: "whatsapp", size: "sm" })}>
+                <Send size={14} />
+                Relancer
+              </span>
+            </a>
+          </div>
+        </TableCell>
+      </TableRow>
+      {open && (
+        <TableRow className="!bg-surface-muted">
+          <TableCell colSpan={6}>
+            <form onSubmit={handleApplyPenalty} className="flex flex-col gap-3 py-2">
+              <p className="text-body-xs text-ink-muted">
+                Montant à votre appréciation — aucun calcul automatique. Génère une dette séparée pour {a.renterName},
+                distincte du loyer dû.
+              </p>
+              {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Field label="Montant (FCFA)" htmlFor={`penaltyAmount-${a.leaseId}`} required>
+                  <Input
+                    id={`penaltyAmount-${a.leaseId}`}
+                    inputMode="numeric"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))}
+                  />
+                </Field>
+                <Field label="Date" htmlFor={`penaltyDate-${a.leaseId}`} required>
+                  <Input id={`penaltyDate-${a.leaseId}`} type="date" value={appliedAt} onChange={(e) => setAppliedAt(e.target.value)} />
+                </Field>
+                <Field label="Motif (optionnel)" htmlFor={`penaltyReason-${a.leaseId}`}>
+                  <Input id={`penaltyReason-${a.leaseId}`} value={reason} onChange={(e) => setReason(e.target.value)} />
+                </Field>
+              </div>
+              <Button type="submit" size="sm" disabled={submitting || !amount} className="self-start">
+                {submitting ? "Application…" : "Appliquer la pénalité"}
+              </Button>
+            </form>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }

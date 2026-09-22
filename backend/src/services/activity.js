@@ -12,10 +12,22 @@
 const { pool } = require('../config/db');
 const { toActor } = require('../utils/actor');
 const { EXPENSE_CATEGORIES } = require('../constants/expenses');
+const { resolveRoleLabels } = require('../constants/roles');
 
 function isoDate(d) {
   if (!d) return null;
   return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+}
+
+/** Libellés de rôles personnalisés de l'entreprise (Réglages) — un aller
+ * simple en base, réutilisé pour toutes les attributions `toActor` d'un
+ * même appel plutôt que redemandé à chaque ligne. */
+async function fetchRoleLabels(tenantId) {
+  const [[tenant]] = await pool.query(
+    'SELECT dg_title, comptable_title, agent_title FROM tenants WHERE id = :tenantId LIMIT 1',
+    { tenantId },
+  );
+  return resolveRoleLabels(tenant);
 }
 
 /**
@@ -26,7 +38,8 @@ function isoDate(d) {
  * `actorUserId` (étape 18, historique personnel) restreint aux suppressions
  * effectuées PAR cet utilisateur précis — sinon comportement inchangé.
  */
-async function listDeletedEntries(tenantId, actorUserId = null) {
+async function listDeletedEntries(tenantId, actorUserId = null, roleLabels = null) {
+  if (!roleLabels) roleLabels = await fetchRoleLabels(tenantId);
   const p = { tenantId, actorUserId };
   const actorFilter = actorUserId ? 'AND e.deleted_by = :actorUserId' : '';
   const actorFilterUc = actorUserId ? 'AND uc.deleted_by = :actorUserId' : '';
@@ -66,8 +79,8 @@ async function listDeletedEntries(tenantId, actorUserId = null) {
       label: `${EXPENSE_CATEGORIES.find((c) => c.key === r.category)?.label ?? r.category} — ${r.label}`,
       amount: Number(r.amount),
       date: isoDate(r.expense_date),
-      createdBy: toActor(r.created_first_name, r.created_last_name, r.created_role),
-      deletedBy: toActor(r.deleted_first_name, r.deleted_last_name, r.deleted_role),
+      createdBy: toActor(r.created_first_name, r.created_last_name, r.created_role, roleLabels),
+      deletedBy: toActor(r.deleted_first_name, r.deleted_last_name, r.deleted_role, roleLabels),
       deletedAt: r.deleted_at,
       reason: r.deleted_reason,
     })),
@@ -77,8 +90,8 @@ async function listDeletedEntries(tenantId, actorUserId = null) {
       label: `${r.utility_type === 'soneb' ? 'SONEB' : 'SBEE'} — ${r.renter_first_name} ${r.renter_last_name} (${r.unit_code})`,
       amount: Number(r.amount),
       date: isoDate(r.billed_at),
-      createdBy: toActor(r.created_first_name, r.created_last_name, r.created_role),
-      deletedBy: toActor(r.deleted_first_name, r.deleted_last_name, r.deleted_role),
+      createdBy: toActor(r.created_first_name, r.created_last_name, r.created_role, roleLabels),
+      deletedBy: toActor(r.deleted_first_name, r.deleted_last_name, r.deleted_role, roleLabels),
       deletedAt: r.deleted_at,
       reason: r.deleted_reason,
     })),
@@ -100,6 +113,7 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
   const limitPerType = Math.min(limit, 30);
   const p = { tenantId, n: limitPerType, actorUserId };
   const f = (col) => (actorUserId ? `AND ${col} = :actorUserId` : '');
+  const roleLabels = await fetchRoleLabels(tenantId);
 
   const [
     renters,
@@ -154,7 +168,7 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
       p,
     ),
     pool.query(
-      `SELECT rp.id, rp.amount, rp.covers_month, rp.created_at, r.first_name AS r_fn, r.last_name AS r_ln,
+      `SELECT rp.id, rp.amount, rp.covers_month, rp.created_at, rp.payment_method, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM rent_payments rp
        JOIN leases l ON l.id = rp.lease_id
@@ -237,62 +251,69 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
        WHERE cr.tenant_id = :tenantId ${f('cr.set_by')} ORDER BY cr.created_at DESC LIMIT :n`,
       p,
     ),
-    listDeletedEntries(tenantId, actorUserId),
+    listDeletedEntries(tenantId, actorUserId, roleLabels),
   ]);
 
   const entries = [
     ...renters[0].map((r) => ({
       type: 'renter_created',
       label: `Locataire créé : ${r.first_name} ${r.last_name}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...owners[0].map((r) => ({
       type: 'owner_created',
       label: `Propriétaire créé : ${r.name}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...properties[0].map((r) => ({
       type: 'property_created',
       label: `Bien créé : ${r.code}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...units[0].map((r) => ({
       type: 'unit_created',
       label: `Unité créée : ${r.code}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...leases[0].map((r) => ({
       type: 'lease_created',
       label: `Bail signé : ${r.r_fn} ${r.r_ln} — ${r.unit_code}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...rentPayments[0].map((r) => ({
       type: 'rent_payment_recorded',
       label: `Paiement loyer : ${r.r_fn} ${r.r_ln} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA (${r.covers_month})`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      // `recorded_by` est NULL pour un paiement confirmé par KKiaPay (aucun
+      // employé ne l'a saisi) — un intitulé explicite plutôt que le
+      // « Auteur inconnu » générique de `toActor(null, ...)`, qui suggérerait
+      // à tort un problème de données.
+      actor:
+        r.payment_method === 'kkiapay'
+          ? { name: 'Paiement en ligne', role: 'kkiapay', roleLabel: 'KKiaPay' }
+          : toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...ownerPayouts[0].map((r) => ({
       type: 'owner_payout_recorded',
       label: `Versement propriétaire : ${r.owner_name} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...expenses[0].map((r) => ({
       type: 'expense_recorded',
       label: `Dépense enregistrée : ${r.label} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...charges[0].map((r) => ({
       type: 'charge_recorded',
       label: `Charge ${r.utility_type === 'soneb' ? 'SONEB' : 'SBEE'} : ${r.r_fn} ${r.r_ln} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...complaintsReported[0].map((r) => ({
@@ -300,37 +321,37 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
       label: r.reported_via_portal
         ? `Plainte signalée par le locataire (portail) : ${r.code} — ${r.title}`
         : `Plainte signalée : ${r.code} — ${r.title}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...complaintsResolved[0].map((r) => ({
       type: 'complaint_resolved',
       label: `Plainte résolue : ${r.code} — ${r.title}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.updated_at,
     })),
     ...moveIns[0].map((r) => ({
       type: 'move_in_conducted',
       label: `État des lieux d'entrée : ${r.r_fn} ${r.r_ln}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...moveOuts[0].map((r) => ({
       type: 'move_out_conducted',
       label: `Sortie de locataire : ${r.r_fn} ${r.r_ln} — solde restitué ${Number(r.net_refund).toLocaleString('fr-FR')} FCFA`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...periodsClosed[0].map((r) => ({
       type: 'period_closed',
       label: `Mois clôturé : ${r.period}`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.closed_at,
     })),
     ...commissionRates[0].map((r) => ({
       type: 'commission_rate_changed',
       label: `Taux de commission modifié : ${r.owner_name} — ${Number(r.rate)} % (à partir du ${isoDate(r.starts_on)})`,
-      actor: toActor(r.a_fn, r.a_ln, r.a_role),
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),
     ...deleted.map((d) => ({

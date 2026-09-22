@@ -134,6 +134,29 @@ async function listExpensesWithoutReceipt(tenantId) {
   return rows.map((r) => ({ id: r.id, label: r.label, amount: Number(r.amount), expenseDate: isoDate(r.expense_date) }));
 }
 
+/**
+ * Tâches à délai assignées à CET utilisateur par le DG (nouveau — voir
+ * routes/assignedTasks.js), non terminées, triées par échéance la plus
+ * proche. Indépendant des permissions locataires/comptabilité : une tâche
+ * libre peut porter sur n'importe quoi.
+ */
+async function listAssignedTasksFor(tenantId, userId) {
+  const [rows] = await pool.query(
+    `SELECT id, title, description, due_date
+     FROM tasks_assigned
+     WHERE tenant_id = :tenantId AND assigned_to = :userId AND completed_at IS NULL
+     ORDER BY due_date ASC
+     LIMIT 20`,
+    { tenantId, userId },
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    dueDate: isoDate(r.due_date),
+  }));
+}
+
 // GET /api/tasks — jamais pour le DG (son propre tableau de bord existe déjà) ;
 // chaque section se remplit selon les permissions réelles de l'utilisateur.
 router.get('/', async (req, res, next) => {
@@ -172,7 +195,9 @@ router.get('/', async (req, res, next) => {
       accountant = { pendingBatches, expensesWithoutReceipt, currentMonthClosability };
     }
 
-    res.json({ agent, accountant });
+    const assignedTasks = await listAssignedTasksFor(tenantId, req.user.id);
+
+    res.json({ agent, accountant, assignedTasks });
   } catch (err) {
     next(err);
   }

@@ -16,6 +16,7 @@ const { getPermissions } = require('../services/permissions');
 const { REFRESH_COOKIE_NAME, refreshCookieOptions } = require('../utils/cookies');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
 const { assertNotLocked, recordFailure, recordSuccess } = require('../middleware/loginThrottle');
+const { resolveRoleLabels } = require('../constants/roles');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -106,6 +107,15 @@ function toPublicTenant(tenant) {
     ifu: tenant.ifu,
     contactPhone: tenant.contact_phone,
     logoUrl: tenant.logo_path ? `/uploads/${tenant.logo_path}` : null,
+    // Nom des 3 postes chez cette entreprise (Réglages, DG uniquement) —
+    // affiché partout (badge, journal, documents), voir constants/roles.js.
+    roleTitles: resolveRoleLabels(tenant),
+    // Juste le booléen, jamais la clé publique ici : le personnel ne paie
+    // jamais lui-même (il génère des liens, voir routes/paymentLinks.js) —
+    // seul sert à afficher/masquer le bouton « Générer un lien de paiement ».
+    // La clé publique n'est exposée que là où le widget s'ouvre réellement
+    // (portail locataire, page publique de paiement).
+    kkiapayEnabled: !!tenant.kkiapay_enabled,
   };
 }
 
@@ -124,6 +134,9 @@ async function respondWithSession(res, row) {
       ifu: row.ifu,
       contact_phone: row.contact_phone,
       logo_path: row.logo_path,
+      dg_title: row.dg_title,
+      comptable_title: row.comptable_title,
+      agent_title: row.agent_title,
     }),
     accessToken,
   });
@@ -229,7 +242,8 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     assertNotLocked(throttleKey);
 
     const [rows] = await pool.query(
-      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path
+      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.phone = :phone LIMIT 1`,
       { phone },
@@ -271,7 +285,8 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
     assertNotLocked(throttleKey);
 
     const [rows] = await pool.query(
-      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path
+      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.identifier = :identifier LIMIT 1`,
       { identifier },
@@ -292,6 +307,42 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
 
     recordSuccess(throttleKey);
     await respondWithSession(res, row);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/auth/role-titles?identifier=XXXX  (employé)  ou  ?phone=XXXX  (DG)
+// — libellés des 3 postes personnalisés (Réglages) de l'entreprise
+// correspondante, pour le menu déroulant unique « Poste » À LA CONNEXION —
+// l'utilisateur n'a encore donné que son identifiant/numéro à ce stade,
+// jamais authentifié. Toujours une réponse (jamais 404) : les libellés par
+// défaut si rien ne correspond ou si aucun des deux paramètres n'est
+// fourni, pour ne jamais permettre de deviner si un identifiant/numéro
+// existe (même principe que le message de connexion générique ci-dessus).
+router.get('/role-titles', async (req, res, next) => {
+  try {
+    const identifier = typeof req.query.identifier === 'string' ? req.query.identifier.trim() : '';
+    const phone = typeof req.query.phone === 'string' ? req.query.phone.trim() : '';
+    let tenant = null;
+    if (identifier) {
+      const [rows] = await pool.query(
+        `SELECT t.dg_title, t.comptable_title, t.agent_title
+         FROM users u JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.identifier = :identifier LIMIT 1`,
+        { identifier },
+      );
+      tenant = rows[0] || null;
+    } else if (phone) {
+      const [rows] = await pool.query(
+        `SELECT t.dg_title, t.comptable_title, t.agent_title
+         FROM users u JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.phone = :phone LIMIT 1`,
+        { phone },
+      );
+      tenant = rows[0] || null;
+    }
+    res.json(resolveRoleLabels(tenant));
   } catch (err) {
     next(err);
   }
@@ -331,7 +382,8 @@ router.post('/logout', async (req, res, next) => {
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path
+      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = :id LIMIT 1`,
       { id: req.user.id },
@@ -348,6 +400,9 @@ router.get('/me', requireAuth, async (req, res, next) => {
         ifu: row.ifu,
         contact_phone: row.contact_phone,
         logo_path: row.logo_path,
+        dg_title: row.dg_title,
+        comptable_title: row.comptable_title,
+        agent_title: row.agent_title,
       }),
     });
   } catch (err) {

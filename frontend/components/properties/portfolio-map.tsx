@@ -68,12 +68,10 @@ export default function PortfolioMap({ properties }: { properties: PropertyListI
       ownerEl.textContent = p.owner.name;
       popup.appendChild(ownerEl);
 
-      if (p.address) {
-        const addrEl = document.createElement("span");
-        addrEl.className = "text-ink-muted";
-        addrEl.textContent = p.address;
-        popup.appendChild(addrEl);
-      }
+      const addrEl = document.createElement("span");
+      addrEl.className = "text-ink-muted";
+      addrEl.textContent = p.address || "Adresse non renseignée";
+      popup.appendChild(addrEl);
 
       const link = document.createElement("a");
       link.href = `/espace/biens/${p.id}`;

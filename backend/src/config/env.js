@@ -76,6 +76,14 @@ const config = {
   },
 
   bcryptRounds: int('BCRYPT_ROUNDS', 12),
+
+  // Chiffrement réversible (AES-256-GCM, voir utils/encryption.js) — sert à
+  // stocker les clés privée/secrète KKiaPay de chaque entreprise de façon
+  // récupérable (contrairement aux mots de passe/tokens, hashés à sens
+  // unique partout ailleurs dans ce projet). Une seule clé globale : c'est
+  // le serveur qui protège la base, pas une entreprise qui protège les
+  // autres.
+  secretsEncryptionKey: secret('SECRETS_ENCRYPTION_KEY'),
 };
 
 module.exports = config;

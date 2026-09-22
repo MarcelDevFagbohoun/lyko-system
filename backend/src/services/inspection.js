@@ -104,6 +104,48 @@ function sumDeductions(zones) {
   return total;
 }
 
+/**
+ * Montant de retenue d'un élément à partir de ses lignes de facturation
+ * (catalogue) si l'agent en a choisi au moins une — prix unitaire × quantité,
+ * sommés. Sans ligne de facturation, le montant libre déjà saisi fait foi
+ * (compatibilité avec la saisie manuelle historique, avant le catalogue).
+ * Ne fait jamais confiance à un `item.deduction` envoyé par le client EN
+ * MÊME TEMPS que des lignes : les lignes sont alors la seule source de vérité,
+ * pour ne jamais désynchroniser le détail affiché et le total retenu.
+ */
+function computeItemDeduction(item) {
+  if (item.billing && Array.isArray(item.billing.lines) && item.billing.lines.length > 0) {
+    return item.billing.lines.reduce((sum, l) => sum + Number(l.unitPrice) * Number(l.quantity), 0);
+  }
+  return Number(item.deduction || 0);
+}
+
+/** Applique `computeItemDeduction` à chaque élément, EN PLACE (mute `item.deduction`). */
+function recomputeItemDeductions(zones) {
+  for (const zone of zones) {
+    for (const item of zone.items) {
+      item.deduction = computeItemDeduction(item);
+    }
+  }
+}
+
+/**
+ * Compare l'état d'un même poste entre l'entrée et la sortie — même échelle
+ * ordonnée que la comparaison déjà faite côté frontend
+ * (`frontend/lib/inspection-comparison.ts`), dupliquée ici volontairement
+ * (pas de paquet partagé entre l'API et le frontend dans ce projet) pour que
+ * le PV de sortie (PDF, généré uniquement côté serveur) puisse expliquer
+ * pourquoi un poste a été facturé, même sans passer par le frontend.
+ */
+function compareCondition(moveInCondition, moveOutCondition) {
+  if (!moveInCondition || !moveOutCondition) return 'unrated';
+  const a = INSPECTION_CONDITION_RANK[moveInCondition];
+  const b = INSPECTION_CONDITION_RANK[moveOutCondition];
+  if (b < a) return 'degraded';
+  if (b > a) return 'improved';
+  return 'same';
+}
+
 function isoDate(d) {
   if (!d) return null;
   return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
@@ -157,6 +199,9 @@ module.exports = {
   findItem,
   getMissingConditionLabels,
   sumDeductions,
+  computeItemDeduction,
+  recomputeItemDeductions,
+  compareCondition,
   toPublicInspectionReport,
   toPublicMoveOutReport,
   isoDate,

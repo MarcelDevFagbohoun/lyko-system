@@ -4,6 +4,7 @@ const { createApp } = require('./app');
 const config = require('./config/env');
 const logger = require('./utils/logger');
 const { pingDatabase, closePool } = require('./config/db');
+const { startScheduler } = require('./jobs/scheduler');
 
 const app = createApp();
 
@@ -16,6 +17,7 @@ const server = app.listen(config.port, async () => {
       serverVersion: diag.serverVersion,
       latencyMs: diag.latencyMs,
     });
+    startScheduler();
   } catch (err) {
     logger.warn('Connexion MySQL indisponible au démarrage', { error: err.message, code: err.code });
     logger.warn('→ Vérifiez backend/.env puis lancez `npm run db:check`. L\'API reste en ligne.');

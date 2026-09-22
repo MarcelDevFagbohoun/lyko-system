@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { generateVerificationCode } = require('../utils/tokens');
@@ -113,4 +114,37 @@ async function findByVerificationCode(code) {
   return rows[0] || null;
 }
 
-module.exports = { getOrCreateIssuance, registerDownload, resetIssuance, getIssuanceStatus, findByVerificationCode };
+/**
+ * Lien de partage direct (WhatsApp) vers CETTE quittance précise — voir
+ * migration 039 pour l'explication du choix de stocker le token en clair
+ * (contrairement aux tokens de portail/paiement, à sens unique). Idempotent :
+ * un appel ultérieur renvoie le même lien plutôt que d'en générer un nouveau,
+ * pour pouvoir renvoyer plus tard la même quittance sans rien invalider.
+ */
+async function ensureShareToken(issuance) {
+  if (issuance.share_token) return issuance.share_token;
+  const token = crypto.randomBytes(24).toString('base64url');
+  await pool.query('UPDATE document_issuances SET share_token = :token WHERE id = :id', {
+    token,
+    id: issuance.id,
+  });
+  return token;
+}
+
+/** Résout un lien de partage — utilisé par la route publique de téléchargement. */
+async function findByShareToken(token) {
+  const [rows] = await pool.query('SELECT * FROM document_issuances WHERE share_token = :token LIMIT 1', {
+    token,
+  });
+  return rows[0] || null;
+}
+
+module.exports = {
+  getOrCreateIssuance,
+  registerDownload,
+  resetIssuance,
+  getIssuanceStatus,
+  findByVerificationCode,
+  ensureShareToken,
+  findByShareToken,
+};

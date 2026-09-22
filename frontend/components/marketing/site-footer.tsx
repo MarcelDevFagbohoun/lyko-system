@@ -36,6 +36,12 @@ export function SiteFooter() {
               Créer mon compte
             </Link>
           </div>
+          <div className="flex flex-col gap-2">
+            <span className="font-label-sm uppercase tracking-wider text-ink-muted">Confiance</span>
+            <Link href="/verifier" className="text-body-sm text-ink-soft hover:text-ink">
+              Vérifier un document
+            </Link>
+          </div>
         </div>
       </div>
 

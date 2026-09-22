@@ -2,7 +2,7 @@
 /**
  * Test bout-en-bout du relevé de compteurs par immeuble (étape 9bis).
  * Cabinets JETABLES uniquement (préfixe RELEVE-), supprimés à la fin.
- *   cd backend && node scripts/test-releve.js
+ *   cd backend && node scripts/check-releve-manual.js
  */
 const path = require('path');
 const fs = require('fs');

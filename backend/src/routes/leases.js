@@ -7,7 +7,12 @@ const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requirePermission, requireAnyPermission } = require('../middleware/auth');
-const { createPaymentSchema, endLeaseSchema } = require('../validators/renters');
+const {
+  createPaymentSchema,
+  endLeaseSchema,
+  createLateFeeSchema,
+  createOpeningDebtPaymentSchema,
+} = require('../validators/renters');
 const {
   startInspectionReportSchema,
   updateInspectionDraftSchema,
@@ -18,6 +23,9 @@ const { computeArrears, allocateRentPayment } = require('../services/rentTrackin
 const { streamReceiptPdf, streamMoveOutPdf } = require('../services/pdf');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
+const { getOrCreateIssuance, ensureShareToken } = require('../services/documentIssuance');
+const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
+const { toActor } = require('../utils/actor');
 const {
   cloneMasterZones,
   cloneZonesFrom,
@@ -25,11 +33,17 @@ const {
   findItem,
   getMissingConditionLabels,
   sumDeductions,
+  recomputeItemDeductions,
   toPublicInspectionReport,
   toPublicMoveOutReport,
 } = require('../services/inspection');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
+const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
+
+// Un lien de paiement expire par défaut sous 48h — assez pour laisser le
+// temps au locataire de le recevoir et payer, sans rester valide indéfiniment.
+const PAYMENT_LINK_TTL_HOURS = 48;
 
 const router = Router();
 router.use(requireAuth);
@@ -130,6 +144,111 @@ async function nextReceiptNumber(conn, tenantId) {
   return `QT-${year}-${String(seq).padStart(4, '0')}`;
 }
 
+/**
+ * Cœur commun de l'enregistrement d'un paiement de loyer : verrouille le
+ * bail, calcule l'allocation multi-mois, insère les lignes `rent_payments` +
+ * `receipts`. Seul endroit qui insère dans `rent_payments` — utilisé par la
+ * route manuelle (staff) ci-dessous ET par les chemins KKiaPay (portail,
+ * lien de paiement, webhook), jamais dupliqué.
+ *
+ * `recordedBy` : `null` pour un paiement confirmé par KKiaPay (aucun employé
+ * ne l'a saisi). `kkiapayTransactionId`, s'il est fourni, n'est attaché qu'à
+ * la PREMIÈRE ligne créée (la colonne est UNIQUE — un paiement qui se
+ * répartit sur plusieurs mois ne doit pas tenter d'insérer la même
+ * référence KKiaPay deux fois) ; il suffit à identifier la transaction pour
+ * l'idempotence, vérifiée en amont par l'appelant avant même d'arriver ici.
+ * Appelant responsable du verrou de transaction (`conn.beginTransaction()`)
+ * et du `SELECT ... FOR UPDATE` sur le bail avant d'appeler cette fonction.
+ */
+async function recordRentPayment(
+  conn,
+  { tenantId, lease, coversMonth, amount, paymentMethod, paidAt, notes, recordedBy, kkiapayTransactionId = null },
+) {
+  // Nom du locataire pour le libellé de l'écriture comptable uniquement —
+  // `lease` (chargé par `loadLease`) ne porte pas cette jointure.
+  const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id LIMIT 1', {
+    id: lease.renter_id,
+  });
+  const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
+
+  const [payRows] = await conn.query('SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId', {
+    leaseId: lease.id,
+  });
+  const startDate =
+    lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
+  const arrears = computeArrears({
+    startDate,
+    createdAt: lease.created_at,
+    upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
+    rentDueDay: lease.rent_due_day,
+    payments: payRows.map((r) => ({ coversMonth: r.covers_month })),
+  });
+  const startMonth = coversMonth && coversMonth >= arrears.nextDueMonth ? coversMonth : arrears.nextDueMonth;
+
+  const { fullMonths, partialAmount, monthsCovered, allocations } = allocateRentPayment({
+    nextDueMonth: startMonth,
+    monthlyRent: lease.monthly_rent,
+    amount,
+  });
+
+  const created = [];
+  for (const [i, alloc] of allocations.entries()) {
+    const [paymentResult] = await conn.query(
+      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, notes, recorded_by, kkiapay_transaction_id)
+       VALUES (:tenantId, :leaseId, :coversMonth, :amount, :method, :paidAt, :notes, :recordedBy, :kkiapayTransactionId)`,
+      {
+        tenantId,
+        leaseId: lease.id,
+        coversMonth: alloc.coversMonth,
+        amount: alloc.amount,
+        method: paymentMethod,
+        paidAt,
+        notes: notes ?? null,
+        recordedBy: recordedBy ?? null,
+        kkiapayTransactionId: i === 0 ? kkiapayTransactionId : null,
+      },
+    );
+    const paymentId = paymentResult.insertId;
+    const receiptNumber = await nextReceiptNumber(conn, tenantId);
+    const [receiptResult] = await conn.query(
+      `INSERT INTO receipts (tenant_id, payment_id, receipt_number) VALUES (:tenantId, :paymentId, :number)`,
+      { tenantId, paymentId, number: receiptNumber },
+    );
+
+    // Module comptabilité SYSCOHADA (nouveau) — génère la contrepartie en
+    // partie double dans LA MÊME transaction, SEULEMENT si l'entreprise a
+    // activé le module (`isModuleActive`) : une entreprise qui ne l'a jamais
+    // configuré continue de fonctionner exactement comme avant, jamais
+    // bloquée par une comptabilité qu'elle n'a pas mise en place. Une fois
+    // activé, une écriture qui échoue (exercice clôturé...) fait échouer le
+    // paiement aussi, jamais l'inverse.
+    if (await isModuleActive(conn, tenantId)) {
+      await genererEcriture(conn, {
+        tenantId,
+        operationType: 'loyer_encaisse',
+        entryDate: paidAt,
+        amount: alloc.amount,
+        paymentMethod,
+        narrationVars: { mois: alloc.coversMonth, locataire: renterName },
+        sourceTable: 'rent_payments',
+        sourceId: paymentId,
+        createdBy: recordedBy,
+        context: { leaseId: lease.id },
+      });
+    }
+
+    created.push({
+      paymentId,
+      coversMonth: alloc.coversMonth,
+      amount: alloc.amount,
+      isPartial: alloc.isPartial,
+      receipt: { id: receiptResult.insertId, number: receiptNumber },
+    });
+  }
+
+  return { startMonth, fullMonths, partialAmount, monthsCovered, payments: created };
+}
+
 // PATCH /api/leases/:leaseId — mettre fin à un bail (libère l'unité).
 router.patch('/:leaseId', canLocataires, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
@@ -209,72 +328,51 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
     // deux requêtes simultanées ne pourront pas insérer chacune sans voir l'autre.
     await conn.query('SELECT id FROM leases WHERE id = :leaseId FOR UPDATE', { leaseId });
 
-    // Mois de départ : le prochain mois dû (calculé à partir des paiements déjà
-    // enregistrés), ou l'éventuel `coversMonth` fourni s'il est postérieur.
-    const [payRows] = await conn.query(
-      'SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId',
-      { leaseId },
-    );
-    const startDate =
+    // Garde anti-doublon : un paiement pour CE MÊME MOIS (calculé comme le
+    // ferait `recordRentPayment`), même date et même mode, enregistré il y a
+    // moins de 2 minutes sur ce bail → très probablement un double-clic sur
+    // le même versement (le verrou FOR UPDATE ci-dessus empêche déjà un
+    // doublon strictement simultané, cette garde couvre une resoumission un
+    // peu plus tardive). Un mois différent reste permis : rattraper
+    // plusieurs mois de retard à la suite, y compris avec le même mode de
+    // règlement répété, est un usage normal.
+    const [payRowsForGuard] = await conn.query('SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId', {
+      leaseId,
+    });
+    const startDateForGuard =
       lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
-    const arrears = computeArrears({
-      startDate,
+    const arrearsForGuard = computeArrears({
+      startDate: startDateForGuard,
+      createdAt: lease.created_at,
+      upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
-      payments: payRows.map((r) => ({ coversMonth: r.covers_month })),
+      payments: payRowsForGuard.map((r) => ({ coversMonth: r.covers_month })),
     });
-    const startMonth =
-      data.coversMonth && data.coversMonth >= arrears.nextDueMonth ? data.coversMonth : arrears.nextDueMonth;
-
-    const { fullMonths, partialAmount, monthsCovered, allocations } = allocateRentPayment({
-      nextDueMonth: startMonth,
-      monthlyRent: lease.monthly_rent,
-      amount: data.amount,
-    });
-
-    // Garde anti-doublon : un enregistrement récent (< 2 min) sur ce bail, même
-    // date de paiement et même mode, cumulant EXACTEMENT le montant soumis → très
-    // probablement un double-clic sur le même versement. Un montant différent
-    // (autre versement le même jour) reste permis.
+    const startMonthForGuard =
+      data.coversMonth && data.coversMonth >= arrearsForGuard.nextDueMonth
+        ? data.coversMonth
+        : arrearsForGuard.nextDueMonth;
     const [recent] = await conn.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total FROM rent_payments
-       WHERE lease_id = :leaseId AND paid_at = :paidAt AND payment_method = :method
-         AND created_at > (NOW() - INTERVAL 2 MINUTE)`,
-      { leaseId, paidAt: data.paidAt, method: data.paymentMethod },
+      `SELECT id FROM rent_payments
+       WHERE lease_id = :leaseId AND covers_month = :startMonth AND paid_at = :paidAt AND payment_method = :method
+         AND created_at > (NOW() - INTERVAL 2 MINUTE)
+       LIMIT 1`,
+      { leaseId, startMonth: startMonthForGuard, paidAt: data.paidAt, method: data.paymentMethod },
     );
-    if (Number(recent[0].total) === data.amount) {
+    if (recent.length > 0) {
       throw new ApiError(409, 'Un paiement identique vient d\'être enregistré. Rechargez la page pour le voir.');
     }
 
-    const created = [];
-    for (const alloc of allocations) {
-      const [paymentResult] = await conn.query(
-        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, notes, recorded_by)
-         VALUES (:tenantId, :leaseId, :coversMonth, :amount, :method, :paidAt, :notes, :recordedBy)`,
-        {
-          tenantId: req.user.tenantId,
-          leaseId,
-          coversMonth: alloc.coversMonth,
-          amount: alloc.amount,
-          method: data.paymentMethod,
-          paidAt: data.paidAt,
-          notes: data.notes,
-          recordedBy: req.user.id,
-        },
-      );
-      const paymentId = paymentResult.insertId;
-      const receiptNumber = await nextReceiptNumber(conn, req.user.tenantId);
-      const [receiptResult] = await conn.query(
-        `INSERT INTO receipts (tenant_id, payment_id, receipt_number) VALUES (:tenantId, :paymentId, :number)`,
-        { tenantId: req.user.tenantId, paymentId, number: receiptNumber },
-      );
-      created.push({
-        paymentId,
-        coversMonth: alloc.coversMonth,
-        amount: alloc.amount,
-        isPartial: alloc.isPartial,
-        receipt: { id: receiptResult.insertId, number: receiptNumber },
-      });
-    }
+    const { fullMonths, partialAmount, monthsCovered, payments: created } = await recordRentPayment(conn, {
+      tenantId: req.user.tenantId,
+      lease,
+      coversMonth: data.coversMonth,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      paidAt: data.paidAt,
+      notes: data.notes,
+      recordedBy: req.user.id,
+    });
 
     await conn.commit();
 
@@ -297,6 +395,219 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
       partialAmount,
       payments: created,
     });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// GET /api/leases/:leaseId/late-fees — pénalités déjà appliquées sur ce bail.
+router.get('/:leaseId/late-fees', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const [rows] = await pool.query(
+      `SELECT lf.*, u.first_name, u.last_name, u.role
+       FROM late_fees lf LEFT JOIN users u ON u.id = lf.applied_by
+       WHERE lf.lease_id = :leaseId ORDER BY lf.applied_at DESC, lf.id DESC`,
+      { leaseId },
+    );
+    res.json({
+      lateFees: rows.map((r) => ({
+        id: r.id,
+        amount: Number(r.amount),
+        appliedAt: r.applied_at instanceof Date ? r.applied_at.toISOString().slice(0, 10) : String(r.applied_at).slice(0, 10),
+        reason: r.reason,
+        appliedBy: toActor(r.first_name, r.last_name, r.role),
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/late-fees — appliquer une pénalité de retard.
+// Montant TOUJOURS saisi à la main (voir validators/renters.js) : jamais de
+// barème automatique inventé. N'affecte jamais le montant du loyer dû
+// (`computeArrears`, inchangé) — c'est une dette SÉPARÉE, réglée par le
+// locataire quand il le souhaite (aucun suivi de règlement dédié en V1 :
+// visible dans Comptabilité avancée, compte 411, comme toute créance).
+router.post('/:leaseId/late-fees', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = createLateFeeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
+    if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé, impossible d\'appliquer une pénalité');
+
+    const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id', {
+      id: lease.renter_id,
+    });
+    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
+
+    await conn.beginTransaction();
+
+    const [result] = await conn.query(
+      `INSERT INTO late_fees (tenant_id, lease_id, amount, applied_at, reason, applied_by)
+       VALUES (:tenantId, :leaseId, :amount, :appliedAt, :reason, :by)`,
+      {
+        tenantId: req.user.tenantId,
+        leaseId,
+        amount: data.amount,
+        appliedAt: data.appliedAt,
+        reason: data.reason,
+        by: req.user.id,
+      },
+    );
+    const lateFeeId = result.insertId;
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType: 'penalite_retard',
+        entryDate: data.appliedAt,
+        amount: data.amount,
+        narrationVars: { locataire: renterName },
+        sourceTable: 'late_fees',
+        sourceId: lateFeeId,
+        createdBy: req.user.id,
+        context: { leaseId },
+      });
+    }
+
+    await conn.commit();
+    logger.info('Pénalité de retard appliquée', { tenantId: req.user.tenantId, leaseId, lateFeeId, amount: data.amount, by: req.user.id });
+    res.status(201).json({ lateFeeId });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// GET /api/leases/:leaseId/balance-snapshots — historique des soldes figés
+// à chaque clôture de mois (audit, voir `lease_balance_snapshots`).
+router.get('/:leaseId/balance-snapshots', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const [rows] = await pool.query(
+      'SELECT period, amount_due, created_at FROM lease_balance_snapshots WHERE lease_id = :leaseId ORDER BY period DESC',
+      { leaseId },
+    );
+    res.json({
+      snapshots: rows.map((r) => ({ period: r.period, amountDue: Number(r.amount_due), createdAt: r.created_at })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Solde restant de la dette initiale d'un bail (montant déclaré − paiements déjà enregistrés). */
+async function getOpeningDebtRemaining(conn, tenantId, lease) {
+  const [rows] = await conn.query(
+    'SELECT COALESCE(SUM(amount), 0) AS paid FROM lease_opening_debt_payments WHERE lease_id = :leaseId AND tenant_id = :tenantId',
+    { leaseId: lease.id, tenantId },
+  );
+  return Number(lease.opening_debt_amount) - Number(rows[0].paid);
+}
+
+// POST /api/leases/:leaseId/opening-debt/payments — régler (totalement ou
+// partiellement) la dette initiale déclarée à la création du bail. Table
+// dédiée plutôt qu'un ajout à `rent_payments` : cette dette n'est rattachée
+// à aucun mois de loyer précis, jamais de quittance mensuelle à générer.
+// Si le module comptabilité avancée est actif, génère la MÊME répartition
+// qu'un encaissement de loyer normal (commission cabinet + reste au
+// propriétaire, `dette_initiale_encaissee` dans le seed) — décision
+// explicite de l'utilisateur : cette dette est traitée comme un loyer en
+// retard finalement collecté, pas une opération à part.
+router.post('/:leaseId/opening-debt/payments', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = createOpeningDebtPaymentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
+    await assertPeriodOpen(req.user.tenantId, data.paidAt);
+
+    const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id', {
+      id: lease.renter_id,
+    });
+    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
+
+    await conn.beginTransaction();
+
+    // Verrouille le bail : deux règlements simultanés ne doivent jamais
+    // pouvoir dépasser ensemble le solde restant (même principe que le
+    // verrou sur le paiement de loyer ci-dessus).
+    await conn.query('SELECT id FROM leases WHERE id = :leaseId FOR UPDATE', { leaseId });
+
+    const remaining = await getOpeningDebtRemaining(conn, req.user.tenantId, lease);
+    if (remaining <= 0) {
+      throw new ApiError(409, 'Aucun impayé restant à l\'entrée pour ce bail');
+    }
+    if (data.amount > remaining) {
+      throw new ApiError(400, `Le montant dépasse le solde restant (${remaining} FCFA)`);
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO lease_opening_debt_payments (tenant_id, lease_id, amount, payment_method, paid_at, notes, recorded_by)
+       VALUES (:tenantId, :leaseId, :amount, :method, :paidAt, :notes, :recordedBy)`,
+      {
+        tenantId: req.user.tenantId,
+        leaseId,
+        amount: data.amount,
+        method: data.paymentMethod,
+        paidAt: data.paidAt,
+        notes: data.notes,
+        recordedBy: req.user.id,
+      },
+    );
+    const paymentId = result.insertId;
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType: 'dette_initiale_encaissee',
+        entryDate: data.paidAt,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        narrationVars: { locataire: renterName },
+        sourceTable: 'lease_opening_debt_payments',
+        sourceId: paymentId,
+        createdBy: req.user.id,
+        context: { leaseId },
+      });
+    }
+
+    await conn.commit();
+    logger.info('Dette initiale réglée', { tenantId: req.user.tenantId, leaseId, paymentId, amount: data.amount, by: req.user.id });
+    res.status(201).json({ paymentId, remaining: remaining - data.amount });
   } catch (err) {
     await conn.rollback().catch(() => {});
     next(err);
@@ -349,6 +660,38 @@ router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req,
       receipt: receiptRows[0],
       issuer: issuerRows[0] || null,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/payments/:paymentId/receipt-link — lien de
+// partage direct de CETTE quittance (envoi automatique par WhatsApp juste
+// après le paiement, voir frontend PaymentRegister). Idempotent : rappeler
+// cette route pour la même quittance renvoie toujours le même lien.
+router.post('/:leaseId/payments/:paymentId/receipt-link', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  const paymentId = Number(req.params.paymentId);
+  if (!Number.isInteger(leaseId) || !Number.isInteger(paymentId)) {
+    return next(new ApiError(400, 'Identifiant invalide'));
+  }
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+
+    const [paymentRows] = await pool.query(
+      'SELECT id FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId LIMIT 1',
+      { paymentId, leaseId },
+    );
+    if (!paymentRows[0]) throw new ApiError(404, 'Paiement introuvable');
+
+    const issuance = await getOrCreateIssuance(req.user.tenantId, 'quittance', paymentId);
+    const token = await ensureShareToken(issuance);
+    // Pas un chemin de page frontend (contrairement aux liens de portail/de
+    // paiement) : ce token pointe directement sur le flux PDF du backend
+    // (`GET /api/recu/:token`), sans page Next.js intermédiaire.
+    res.json({ token });
   } catch (err) {
     next(err);
   }
@@ -583,6 +926,8 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
       );
       arrears = computeArrears({
         startDate: lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date,
+        createdAt: lease.created_at,
+        upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
         rentDueDay: lease.rent_due_day,
         payments: payments.map((p) => ({ coversMonth: p.covers_month })),
       });
@@ -661,6 +1006,10 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
     const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
     assertDraft(report, 'état des lieux de sortie');
 
+    // Un élément avec des lignes de facturation (catalogue) voit son montant
+    // de retenue RECALCULÉ à partir de ces lignes, jamais celui envoyé tel
+    // quel par le client (voir `computeItemDeduction`).
+    recomputeItemDeductions(data.zones);
     const itemsDeductions = sumDeductions(data.zones);
     const totalDeductions = itemsDeductions + data.otherDeductionsAmount;
     const netRefund = Math.max(0, Number(report.deposit_amount) - totalDeductions);
@@ -798,6 +1147,17 @@ router.post(
       const depositAmount = Number(report.deposit_amount);
       const netRefund = Math.max(0, depositAmount - totalDeductions);
 
+      // Module comptabilité SYSCOHADA (nouveau) : mode de règlement requis
+      // seulement s'il reste réellement quelque chose à reverser (une
+      // caution intégralement absorbée par des retenues n'implique aucun
+      // mouvement de trésorerie). Voir routes/renters.js `recordDepositReceived`
+      // pour la réception — même principe, symétrique.
+      const refundPaymentMethod = typeof req.body?.refundPaymentMethod === 'string' ? req.body.refundPaymentMethod : '';
+      const REFUND_METHODS = ['especes', 'mobile_money', 'virement', 'cheque'];
+      if (netRefund > 0 && !REFUND_METHODS.includes(refundPaymentMethod)) {
+        throw new ApiError(400, 'Mode de règlement requis pour la restitution de la caution');
+      }
+
       const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
       const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
 
@@ -807,7 +1167,7 @@ router.post(
         `UPDATE move_out_reports
          SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
              tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
-             total_deductions = :totalDeductions, net_refund = :netRefund
+             total_deductions = :totalDeductions, net_refund = :netRefund, refund_payment_method = :refundMethod
          WHERE lease_id = :leaseId`,
         {
           by: req.user.id,
@@ -815,6 +1175,7 @@ router.post(
           agentSig: agentSignaturePath,
           totalDeductions,
           netRefund,
+          refundMethod: netRefund > 0 ? refundPaymentMethod : null,
           leaseId,
         },
       );
@@ -823,6 +1184,38 @@ router.post(
         { endDate: report.conducted_at, id: leaseId },
       );
       await conn.query("UPDATE property_units SET status = 'libre' WHERE id = :id", { id: lease.unit_id });
+
+      // Module comptabilité SYSCOHADA (nouveau) — restitution SIMPLE
+      // uniquement (aucune retenue) : le sort comptable d'une retenue sur
+      // caution (produit du cabinet ? compensation pour le propriétaire ?)
+      // est un choix de jugement comptable non tranché (voir seed, règle
+      // `caution_restituee`) — jamais inventé ici. Avec retenue, la
+      // caution reste "à régulariser manuellement" (signalé dans la réponse).
+      let depositAccountingNote = null;
+      if (await isModuleActive(conn, req.user.tenantId)) {
+        if (totalDeductions === 0 && netRefund > 0) {
+          const [renterRows] = await conn.query(
+            'SELECT r.first_name, r.last_name FROM leases l JOIN renters r ON r.id = l.renter_id WHERE l.id = :leaseId LIMIT 1',
+            { leaseId },
+          );
+          const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
+          await genererEcriture(conn, {
+            tenantId: req.user.tenantId,
+            operationType: 'caution_restituee',
+            entryDate: report.conducted_at,
+            amount: netRefund,
+            paymentMethod: refundPaymentMethod,
+            narrationVars: { locataire: renterName },
+            sourceTable: 'move_out_reports',
+            sourceId: report.id,
+            createdBy: req.user.id,
+            context: { leaseId },
+          });
+        } else if (depositAmount > 0) {
+          depositAccountingNote =
+            'Caution avec retenue : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d\'une retenue sur caution n\'est pas encore automatisé).';
+        }
+      }
 
       await conn.commit();
 
@@ -834,7 +1227,7 @@ router.post(
         by: req.user.id,
       });
       const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
-      res.json({ report: toPublicMoveOutReport(row) });
+      res.json({ report: toPublicMoveOutReport(row), depositAccountingNote });
     } catch (err) {
       await conn.rollback().catch(() => {});
       next(err);
@@ -864,16 +1257,78 @@ router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, n
       id: req.user.tenantId,
     });
 
+    // Fiche d'entrée : pour expliquer, à côté de chaque élément facturé, la
+    // transition d'état qui a motivé la facturation ("Bon état → Mauvais
+    // état"). Sans fiche d'entrée (rare — bail créé avant l'état des lieux
+    // par zones), le PV affiche simplement l'état de sortie, sans comparaison.
+    const moveInRow = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    const moveInZones = moveInRow ? normalizeStoredItems(moveInRow.items) : [];
+
     streamMoveOutPdf(res, {
       tenant: tenantRows[0],
       renter: renterRows[0],
       property: lease,
       lease,
       report: toPublicMoveOutReport(row),
+      moveInZones,
     });
   } catch (err) {
     next(err);
   }
 });
 
+// POST /api/leases/:leaseId/payment-links — génère un lien de paiement KKiaPay
+// à envoyer à la main (WhatsApp) à un locataire sans portail actif. Même
+// schéma de révélation unique que POST /:id/portal-link (renters.js) : seule
+// l'empreinte du token est conservée, le lien en clair n'est renvoyé qu'ici.
+router.post('/:leaseId/payment-links', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé');
+
+    const [[tenant]] = await pool.query('SELECT kkiapay_enabled FROM tenants WHERE id = :id LIMIT 1', {
+      id: req.user.tenantId,
+    });
+    if (!tenant?.kkiapay_enabled) {
+      throw new ApiError(400, 'Le paiement en ligne (KKiaPay) n\'est pas activé pour votre entreprise (Réglages).');
+    }
+
+    // Montant : celui fourni, sinon un mois de loyer (le cas d'usage courant
+    // — envoyer un lien pour l'échéance du mois, pas nécessairement tout le
+    // retard accumulé, que le personnel ajuste au besoin).
+    let amount = Number(req.body?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      amount = Number(lease.monthly_rent);
+    }
+
+    const token = generatePortalToken();
+    const [result] = await pool.query(
+      `INSERT INTO payment_links (tenant_id, kind, lease_id, amount, token_hash, created_by, expires_at)
+       VALUES (:tenantId, 'loyer', :leaseId, :amount, :hash, :by, DATE_ADD(NOW(), INTERVAL :ttl HOUR))`,
+      { tenantId: req.user.tenantId, leaseId, amount, hash: hashToken(token), by: req.user.id, ttl: PAYMENT_LINK_TTL_HOURS },
+    );
+
+    logger.info('Lien de paiement (loyer) généré', {
+      tenantId: req.user.tenantId,
+      leaseId,
+      linkId: result.insertId,
+      amount,
+      by: req.user.id,
+    });
+    res.status(201).json({ token, path: `/payer/${token}`, amount });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
+// Réutilisés par portal.js (paiement KKiaPay depuis le portail locataire) et
+// paymentLinks.js (lien de paiement généré par le personnel) — voir le
+// commentaire au-dessus de `recordRentPayment` : seul point d'insertion
+// dans `rent_payments`, jamais dupliqué.
+module.exports.loadLease = loadLease;
+module.exports.recordRentPayment = recordRentPayment;
