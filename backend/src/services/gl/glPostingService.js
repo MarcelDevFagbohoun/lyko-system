@@ -18,6 +18,7 @@ const { GL_OPERATION_TYPES } = require('../../constants/glOperationTypes');
 const { GL_ACCOUNT_ROLES } = require('../../constants/glAccountRoles');
 const { resolveLineAccount, resolveLineAmount } = require('./glAccountResolver');
 const { nextEntryNumber } = require('./glNumbering');
+const { ApiError } = require('../../middleware/error');
 
 /**
  * Le module comptabilité SYSCOHADA est-il ACTUELLEMENT actif pour cette
@@ -46,10 +47,10 @@ async function resolveOpenFiscalYear(conn, tenantId, entryDate) {
     { tenantId, entryDate },
   );
   if (!rows[0]) {
-    throw new Error(`Aucun exercice comptable ne couvre la date ${entryDate} — créez-le depuis Comptabilité avancée.`);
+    throw new ApiError(404, `Aucun exercice comptable ne couvre la date ${entryDate} — créez-le depuis Comptabilité avancée.`);
   }
   if (rows[0].status !== 'ouvert') {
-    throw new Error(`L'exercice comptable couvrant ${entryDate} est clôturé — aucune écriture n'y est plus possible.`);
+    throw new ApiError(409, `L'exercice comptable couvrant ${entryDate} est clôturé — aucune écriture n'y est plus possible.`);
   }
   return rows[0].id;
 }
@@ -75,7 +76,8 @@ async function genererEcriture(
     { tenantId, operationType },
   );
   if (!ruleRows[0]) {
-    throw new Error(
+    throw new ApiError(
+      404,
       `Aucune règle comptable active pour l'opération "${operationType}" — vérifiez la configuration dans Comptabilité avancée.`,
     );
   }

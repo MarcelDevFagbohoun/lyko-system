@@ -12,6 +12,7 @@
 
 const { nextEntryNumber } = require('./glNumbering');
 const { resolveOpenFiscalYear } = require('./glPostingService');
+const { ApiError } = require('../../middleware/error');
 
 async function extourneEcriture(conn, { tenantId, entryId, entryDate, userId, reason }) {
   const [entryRows] = await conn.query('SELECT * FROM gl_entries WHERE id = :entryId AND tenant_id = :tenantId LIMIT 1', {
@@ -19,14 +20,14 @@ async function extourneEcriture(conn, { tenantId, entryId, entryDate, userId, re
     tenantId,
   });
   const original = entryRows[0];
-  if (!original) throw new Error('Écriture introuvable.');
-  if (original.status === 'extournee') throw new Error('Cette écriture a déjà été extournée.');
-  if (original.status === 'brouillon') throw new Error('Une écriture en brouillon se supprime, elle ne s\'extourne pas.');
+  if (!original) throw new ApiError(404, 'Écriture introuvable.');
+  if (original.status === 'extournee') throw new ApiError(409, 'Cette écriture a déjà été extournée.');
+  if (original.status === 'brouillon') throw new ApiError(400, 'Une écriture en brouillon se supprime, elle ne s\'extourne pas.');
 
   const [lines] = await conn.query('SELECT * FROM gl_entry_lines WHERE entry_id = :entryId ORDER BY line_order ASC', {
     entryId,
   });
-  if (lines.length === 0) throw new Error('Écriture sans lignes — impossible à extourner.');
+  if (lines.length === 0) throw new ApiError(409, 'Écriture sans lignes — impossible à extourner.');
 
   const fiscalYearId = await resolveOpenFiscalYear(conn, tenantId, entryDate);
   const entryNumber = await nextEntryNumber(conn, tenantId);

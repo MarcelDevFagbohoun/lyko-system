@@ -1,5 +1,7 @@
 'use strict';
 
+const { ApiError } = require('../../middleware/error');
+
 /**
  * Clôture d'exercice — verrouille DÉFINITIVEMENT la période (pas de
  * réouverture, cohérent avec la clôture mensuelle existante,
@@ -28,8 +30,8 @@ async function cloturerExercice(conn, { tenantId, fiscalYearId, userId }) {
     tenantId,
   });
   const fiscalYear = rows[0];
-  if (!fiscalYear) throw new Error('Exercice comptable introuvable.');
-  if (fiscalYear.status === 'cloture') throw new Error('Cet exercice est déjà clôturé.');
+  if (!fiscalYear) throw new ApiError(404, 'Exercice comptable introuvable.');
+  if (fiscalYear.status === 'cloture') throw new ApiError(409, 'Cet exercice est déjà clôturé.');
 
   // Garde-fou avant clôture définitive : la balance de CET exercice doit être
   // équilibrée (elle DEVRAIT toujours l'être, chaque écriture individuelle

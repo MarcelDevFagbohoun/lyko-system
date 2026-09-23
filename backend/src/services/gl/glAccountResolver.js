@@ -3,6 +3,7 @@
 const { GL_ACCOUNT_ROLES } = require('../../constants/glAccountRoles');
 const { getOrCreateThirdParty } = require('./glThirdPartyService');
 const { TREASURY_BY_PAYMENT_METHOD } = require('../../db/seedGeneralLedger');
+const { ApiError } = require('../../middleware/error');
 
 /** Bail → locataire (pour `TIERS_LOCATAIRE`). */
 async function resolveRenterFromLease(conn, tenantId, leaseId) {
@@ -12,7 +13,7 @@ async function resolveRenterFromLease(conn, tenantId, leaseId) {
      WHERE l.id = :leaseId AND l.tenant_id = :tenantId LIMIT 1`,
     { leaseId, tenantId },
   );
-  if (!rows[0]) throw new Error(`Bail introuvable pour la résolution comptable (id ${leaseId})`);
+  if (!rows[0]) throw new ApiError(404, `Bail introuvable pour la résolution comptable (id ${leaseId})`);
   return rows[0];
 }
 
@@ -27,7 +28,7 @@ async function resolveOwnerFromLease(conn, tenantId, leaseId) {
      WHERE l.id = :leaseId AND l.tenant_id = :tenantId LIMIT 1`,
     { leaseId, tenantId },
   );
-  if (!rows[0]) throw new Error(`Propriétaire introuvable pour la résolution comptable (bail ${leaseId})`);
+  if (!rows[0]) throw new ApiError(404, `Propriétaire introuvable pour la résolution comptable (bail ${leaseId})`);
   return rows[0];
 }
 
@@ -43,7 +44,7 @@ async function resolveSupplierThirdParty(conn, tenantId, supplierId, controlAcco
     id: supplierId,
     tenantId,
   });
-  if (!rows[0]) throw new Error(`Fournisseur introuvable (id ${supplierId})`);
+  if (!rows[0]) throw new ApiError(404, `Fournisseur introuvable (id ${supplierId})`);
 
   let controlAccountId;
   if (controlAccountCode) {
@@ -51,7 +52,7 @@ async function resolveSupplierThirdParty(conn, tenantId, supplierId, controlAcco
       tenantId,
       code: controlAccountCode,
     });
-    if (!accountRows[0]) throw new Error(`Compte ${controlAccountCode} introuvable — plan comptable initialisé ?`);
+    if (!accountRows[0]) throw new ApiError(404, `Compte ${controlAccountCode} introuvable — plan comptable initialisé ?`);
     controlAccountId = accountRows[0].id;
   }
 
@@ -68,12 +69,12 @@ async function resolveSupplierThirdParty(conn, tenantId, supplierId, controlAcco
 /** Compte de trésorerie réel pour un mode de paiement donné (pour `TRESORERIE_MODE_PAIEMENT`). */
 async function resolveTreasuryAccountId(conn, tenantId, paymentMethod) {
   const mapping = TREASURY_BY_PAYMENT_METHOD[paymentMethod];
-  if (!mapping) throw new Error(`Mode de paiement non pris en charge par le plan comptable : ${paymentMethod}`);
+  if (!mapping) throw new ApiError(400, `Mode de paiement non pris en charge par le plan comptable : ${paymentMethod}`);
   const [rows] = await conn.query('SELECT id FROM gl_accounts WHERE tenant_id = :tenantId AND code = :code LIMIT 1', {
     tenantId,
     code: mapping.account,
   });
-  if (!rows[0]) throw new Error(`Compte de trésorerie ${mapping.account} introuvable — plan comptable initialisé ?`);
+  if (!rows[0]) throw new ApiError(404, `Compte de trésorerie ${mapping.account} introuvable — plan comptable initialisé ?`);
   return rows[0].id;
 }
 
@@ -233,7 +234,7 @@ async function resolveLineAccount(conn, { tenantId, line, context }) {
         id: ownerId,
         tenantId,
       });
-      if (!ownerRows[0]) throw new Error(`Propriétaire introuvable (id ${ownerId})`);
+      if (!ownerRows[0]) throw new ApiError(404, `Propriétaire introuvable (id ${ownerId})`);
       const thirdParty = await getOrCreateThirdParty(conn, {
         tenantId,
         partyType: 'owner',

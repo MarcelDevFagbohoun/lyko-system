@@ -1,5 +1,7 @@
 'use strict';
 
+const { ApiError } = require('../../middleware/error');
+
 /**
  * Comptes auxiliaires (tiers) — créés PARESSEUSEMENT à la première opération
  * qui concerne un locataire/propriétaire donné, jamais en masse à l'avance.
@@ -52,7 +54,8 @@ async function getOrCreateThirdParty(conn, { tenantId, partyType, sourceTable, s
           code: lookup.code,
         });
   if (!accountRows[0]) {
-    throw new Error(
+    throw new ApiError(
+      404,
       `Compte collectif introuvable pour cette entreprise — le plan comptable a-t-il été initialisé (seedGeneralLedger) ?`,
     );
   }
