@@ -292,12 +292,12 @@ router.get('/', canRead, async (req, res, next) => {
     if (leaseIds.length > 0) {
       const placeholders = leaseIds.map(() => '?').join(',');
       const [payments] = await pool.query(
-        `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
+        `SELECT lease_id, covers_month, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
         leaseIds,
       );
       for (const p of payments) {
         if (!paymentsByLease.has(p.lease_id)) paymentsByLease.set(p.lease_id, []);
-        paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month });
+        paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month, amount: Number(p.amount) });
       }
     }
 
@@ -310,6 +310,7 @@ router.get('/', canRead, async (req, res, next) => {
         createdAt: lease.createdAt,
         upToDateAtOnboarding: lease.upToDateAtOnboarding,
         rentDueDay: lease.rentDueDay,
+        monthlyRent: lease.monthlyRent,
         payments: paymentsByLease.get(row.lease_id) || [],
       });
       return { ...renter, activeLease: lease, arrears };
@@ -450,6 +451,7 @@ router.get('/:id', canRead, async (req, res, next) => {
               createdAt: lease.createdAt,
               upToDateAtOnboarding: lease.upToDateAtOnboarding,
               rentDueDay: lease.rentDueDay,
+              monthlyRent: lease.monthlyRent,
               payments,
             })
           : null,

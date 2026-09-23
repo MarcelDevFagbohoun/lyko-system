@@ -35,7 +35,9 @@ function toIsoDateString(d) {
 /**
  * Calcule le statut de paiement d'un bail : mois payés (à partir de la date
  * de début et des paiements enregistrés), prochaine échéance, retard éventuel.
- * `payments` : tableau de { coversMonth: 'YYYY-MM' }.
+ * `payments` : tableau de { coversMonth: 'YYYY-MM', amount }. `amount` est
+ * OPTIONNEL (voir `monthlyRent` ci-dessous) pour ne jamais casser un appelant
+ * qui ne le fournirait pas encore.
  *
  * `createdAt` (date d'enregistrement sur la plateforme) et
  * `upToDateAtOnboarding` : corrigent un vrai biais — sans eux, un locataire
@@ -49,16 +51,50 @@ function toIsoDateString(d) {
  * le mois de l'enregistrement lui-même, également considéré couvert.
  * `createdAt` omis (compatibilité) : aucun plafond, comportement historique
  * inchangé.
+ *
+ * `monthlyRent` (audit comptable du 23/09/2026, anomalie A1) : SANS lui, un
+ * mois est considéré réglé dès qu'AU MOINS UNE ligne `rent_payments` existe
+ * pour ce mois, quel que soit son montant — un paiement PARTIEL (40000 sur
+ * un loyer de 100000) faisait alors avancer `nextDueMonth` exactement comme
+ * un paiement complet, effaçant silencieusement pour toujours les 60000
+ * restants des calculs d'arriérés. AVEC `monthlyRent` fourni, `nextDueMonth`
+ * n'avance que lorsque le CUMUL des paiements d'un mois atteint réellement
+ * le loyer dû. `monthlyRent` omis (compatibilité, appelant non encore mis à
+ * jour) : comportement historique (buggé) inchangé — ne JAMAIS omettre pour
+ * un nouvel appel.
  */
-function computeArrears({ startDate, createdAt, upToDateAtOnboarding, rentDueDay, payments }, today = new Date()) {
+function computeArrears({ startDate, createdAt, upToDateAtOnboarding, rentDueDay, monthlyRent, payments }, today = new Date()) {
   const createdAtIso = createdAt ? toIsoDateString(createdAt) : null;
   const baselineDate = createdAtIso && createdAtIso > startDate ? createdAtIso : startDate;
   let baselineMonth = baselineDate.slice(0, 7);
   if (upToDateAtOnboarding) baselineMonth = addMonth(baselineMonth);
 
-  const paidThrough =
-    payments.length > 0 ? payments.map((p) => p.coversMonth).sort().at(-1) : null;
-  const nextDueMonth = paidThrough && paidThrough >= baselineMonth ? addMonth(paidThrough) : baselineMonth;
+  const paidThrough = payments.length > 0 ? payments.map((p) => p.coversMonth).sort().at(-1) : null;
+
+  const rent = monthlyRent != null ? Number(monthlyRent) : null;
+  let nextDueMonth;
+  let paidForNextDueMonth = 0;
+  if (rent != null && rent > 0) {
+    const paidByMonth = new Map();
+    for (const p of payments) {
+      paidByMonth.set(p.coversMonth, (paidByMonth.get(p.coversMonth) ?? 0) + Number(p.amount ?? 0));
+    }
+    // Avance mois par mois tant que le cumul payé pour CE mois atteint (ou
+    // dépasse) le loyer dû — termine forcément vite : au-delà du dernier
+    // mois cumulé dans `paidByMonth`, le cumul vaut 0 < rent, la boucle
+    // s'arrête donc au plus tard un mois après le dernier paiement connu.
+    let month = baselineMonth;
+    while ((paidByMonth.get(month) ?? 0) >= rent) {
+      month = addMonth(month);
+    }
+    nextDueMonth = month;
+    paidForNextDueMonth = paidByMonth.get(nextDueMonth) ?? 0;
+  } else {
+    // Comportement historique (compatibilité, `monthlyRent` omis) : présence
+    // d'AU MOINS UNE ligne pour un mois = mois considéré réglé, quel que
+    // soit son montant réel.
+    nextDueMonth = paidThrough && paidThrough >= baselineMonth ? addMonth(paidThrough) : baselineMonth;
+  }
 
   const [y, m] = nextDueMonth.split('-').map(Number);
   const dueDate = new Date(Date.UTC(y, m - 1, rentDueDay));
@@ -70,6 +106,10 @@ function computeArrears({ startDate, createdAt, upToDateAtOnboarding, rentDueDay
   return {
     paidThroughMonth: paidThrough,
     nextDueMonth,
+    // Combien est déjà réglé pour `nextDueMonth` (0 si rien) — permet à
+    // `allocateRentPayment` de COMPLÉTER un mois déjà partiellement payé au
+    // lieu de repartir de zéro sur ce même mois.
+    paidForNextDueMonth,
     dueDate: dueDate.toISOString().slice(0, 10),
     daysLate,
     monthsLate,
@@ -80,19 +120,41 @@ function computeArrears({ startDate, createdAt, upToDateAtOnboarding, rentDueDay
 
 /**
  * Répartit un montant total sur des mois de loyer consécutifs à partir de
- * `nextDueMonth` : autant de mois complets que le montant le permet, puis le
- * reste éventuel en paiement partiel sur le mois suivant (décision produit :
- * « mois entiers + reste en partiel »). Renvoie la liste des écritures à créer,
- * une par mois (chacune donnera lieu à sa propre quittance).
+ * `nextDueMonth` : d'abord le reliquat d'un mois déjà partiellement payé
+ * (`alreadyPaidForNextDueMonth`, audit comptable A1 — sans ça, un paiement
+ * de complément créerait à tort un NOUVEAU mois plutôt que de compléter
+ * celui en cours), puis autant de mois complets que le montant restant le
+ * permet, puis le reste éventuel en paiement partiel sur le mois suivant
+ * (décision produit : « mois entiers + reste en partiel »). Renvoie la
+ * liste des écritures à créer, une par mois (chacune donnera lieu à sa
+ * propre quittance) — plusieurs lignes peuvent désormais partager le même
+ * `coversMonth` (le complément d'un mois déjà partiel), sciemment : c'est
+ * leur SOMME que `computeArrears` compare au loyer, jamais une ligne isolée.
  */
-function allocateRentPayment({ nextDueMonth, monthlyRent, amount }) {
+function allocateRentPayment({ nextDueMonth, monthlyRent, alreadyPaidForNextDueMonth = 0, amount }) {
   const rent = Number(monthlyRent);
-  const total = Number(amount);
-  const fullMonths = rent > 0 ? Math.floor(total / rent) : 0;
-  const partialAmount = rent > 0 ? total % rent : total;
-
+  let remaining = Number(amount);
   const allocations = [];
   let month = nextDueMonth;
+
+  if (rent > 0) {
+    const shortfall = Math.max(0, rent - Number(alreadyPaidForNextDueMonth));
+    if (shortfall > 0) {
+      const toApply = Math.min(remaining, shortfall);
+      if (toApply > 0) {
+        allocations.push({ coversMonth: month, amount: toApply, isPartial: toApply < shortfall });
+        remaining -= toApply;
+      }
+      if (toApply < shortfall) {
+        // Montant épuisé avant d'avoir complété même ce premier mois.
+        return { fullMonths: 0, partialAmount: 0, monthsCovered: allocations.length, allocations };
+      }
+      month = addMonth(month);
+    }
+  }
+
+  const fullMonths = rent > 0 ? Math.floor(remaining / rent) : 0;
+  const partialAmount = rent > 0 ? remaining % rent : remaining;
   for (let i = 0; i < fullMonths; i += 1) {
     allocations.push({ coversMonth: month, amount: rent, isPartial: false });
     month = addMonth(month);
@@ -158,13 +220,13 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   const leaseIds = activeLeases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
+    `SELECT lease_id, covers_month, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
     leaseIds,
   );
   const paymentsByLease = new Map();
   for (const p of payments) {
     if (!paymentsByLease.has(p.lease_id)) paymentsByLease.set(p.lease_id, []);
-    paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month });
+    paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month, amount: Number(p.amount) });
   }
 
   const [openingDebtPaid] = await pool.query(
@@ -182,6 +244,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
+      monthlyRent: lease.monthly_rent,
       payments: paymentsByLease.get(lease.id) || [],
     });
     const openingDebtRemaining = Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0);
@@ -191,6 +254,11 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
     // d'apparaître dans la liste de relance.
     if (arrears.status === 'late' || openingDebtRemaining > 0) {
       const unpaidMonths = arrears.status === 'late' ? Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth)) : 0;
+      // Audit comptable, anomalie A1 : le mois en cours (`nextDueMonth`)
+      // peut déjà être partiellement réglé (`paidForNextDueMonth`) — ne
+      // JAMAIS compter le loyer plein de ce mois sans en déduire ce qui est
+      // déjà payé, sous peine de facturer deux fois le même reliquat.
+      const rentOwed = Math.max(0, unpaidMonths * Number(lease.monthly_rent) - arrears.paidForNextDueMonth);
       results.push({
         leaseId: lease.id,
         renterId: lease.renter_id,
@@ -203,7 +271,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
         daysLate: arrears.daysLate,
         unpaidMonths,
         openingDebtRemaining,
-        amountOwed: unpaidMonths * Number(lease.monthly_rent) + openingDebtRemaining,
+        amountOwed: rentOwed + openingDebtRemaining,
       });
     }
   }
@@ -242,13 +310,13 @@ async function snapshotLeaseBalances(tenantId, period) {
   const leaseIds = leases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
+    `SELECT lease_id, covers_month, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
     leaseIds,
   );
   const paymentsByLease = new Map();
   for (const p of payments) {
     if (!paymentsByLease.has(p.lease_id)) paymentsByLease.set(p.lease_id, []);
-    paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month });
+    paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month, amount: Number(p.amount) });
   }
   const [openingDebtPaid] = await pool.query(
     `SELECT lease_id, SUM(amount) AS paid FROM lease_opening_debt_payments WHERE lease_id IN (${placeholders}) GROUP BY lease_id`,
@@ -264,11 +332,13 @@ async function snapshotLeaseBalances(tenantId, period) {
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
+      monthlyRent: lease.monthly_rent,
       payments: paymentsByLease.get(lease.id) || [],
     });
     const unpaidMonths = arrears.status === 'late' ? Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth)) : 0;
     const openingDebtRemaining = Math.max(0, Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0));
-    const amountDue = unpaidMonths * Number(lease.monthly_rent) + openingDebtRemaining;
+    const rentDue = Math.max(0, unpaidMonths * Number(lease.monthly_rent) - arrears.paidForNextDueMonth);
+    const amountDue = rentDue + openingDebtRemaining;
     return [tenantId, period, lease.id, amountDue];
   });
 
@@ -314,7 +384,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
   const leaseIds = activeLeases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month, paid_at FROM rent_payments
+    `SELECT lease_id, covers_month, amount, paid_at FROM rent_payments
      WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY covers_month DESC`,
     leaseIds,
   );
@@ -336,7 +406,8 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
-      payments: leasePayments.map((p) => ({ coversMonth: p.covers_month })),
+      monthlyRent: lease.monthly_rent,
+      payments: leasePayments.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
     });
 
     // Déjà couvert par `listPortfolioArrears` : une alerte prédictive n'a de

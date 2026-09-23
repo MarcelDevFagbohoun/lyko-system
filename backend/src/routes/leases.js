@@ -173,9 +173,10 @@ async function recordRentPayment(
   });
   const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
 
-  const [payRows] = await conn.query('SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL', {
-    leaseId: lease.id,
-  });
+  const [payRows] = await conn.query(
+    'SELECT covers_month, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
+    { leaseId: lease.id },
+  );
   const startDate =
     lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
   const arrears = computeArrears({
@@ -183,13 +184,19 @@ async function recordRentPayment(
     createdAt: lease.created_at,
     upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
     rentDueDay: lease.rent_due_day,
-    payments: payRows.map((r) => ({ coversMonth: r.covers_month })),
+    monthlyRent: lease.monthly_rent,
+    payments: payRows.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
   });
   const startMonth = coversMonth && coversMonth >= arrears.nextDueMonth ? coversMonth : arrears.nextDueMonth;
+  // Le reliquat déjà réglé ne s'applique que si `startMonth` EST le mois en
+  // retard identifié (`arrears.nextDueMonth`) — un `coversMonth` explicite
+  // plus tardif (paiement d'avance en avance) démarre sur un mois neuf.
+  const alreadyPaidForStartMonth = startMonth === arrears.nextDueMonth ? arrears.paidForNextDueMonth : 0;
 
   const { fullMonths, partialAmount, monthsCovered, allocations } = allocateRentPayment({
     nextDueMonth: startMonth,
     monthlyRent: lease.monthly_rent,
+    alreadyPaidForNextDueMonth: alreadyPaidForStartMonth,
     amount,
   });
 
@@ -404,9 +411,10 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
     // peu plus tardive). Un mois différent reste permis : rattraper
     // plusieurs mois de retard à la suite, y compris avec le même mode de
     // règlement répété, est un usage normal.
-    const [payRowsForGuard] = await conn.query('SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL', {
-      leaseId,
-    });
+    const [payRowsForGuard] = await conn.query(
+      'SELECT covers_month, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
+      { leaseId },
+    );
     const startDateForGuard =
       lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
     const arrearsForGuard = computeArrears({
@@ -414,7 +422,8 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
-      payments: payRowsForGuard.map((r) => ({ coversMonth: r.covers_month })),
+      monthlyRent: lease.monthly_rent,
+      payments: payRowsForGuard.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
     });
     const startMonthForGuard =
       data.coversMonth && data.coversMonth >= arrearsForGuard.nextDueMonth
@@ -989,7 +998,7 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
     let arrears = null;
     if (lease.status === 'active') {
       const [payments] = await pool.query(
-        'SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
+        'SELECT covers_month, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
         { leaseId },
       );
       arrears = computeArrears({
@@ -997,7 +1006,8 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
         createdAt: lease.created_at,
         upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
         rentDueDay: lease.rent_due_day,
-        payments: payments.map((p) => ({ coversMonth: p.covers_month })),
+        monthlyRent: lease.monthly_rent,
+        payments: payments.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
       });
     }
 
