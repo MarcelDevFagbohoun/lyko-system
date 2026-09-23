@@ -12,7 +12,7 @@ const {
 } = require('../validators/owners');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { streamOwnerStatementPdf } = require('../services/pdf');
-const { getEscrowBalances, getUnpaidOpeningDebtByOwner } = require('../services/commission');
+const { getEscrowBalances, getUnpaidOpeningDebtByOwner, pickRateValidAt } = require('../services/commission');
 const { toActor } = require('../utils/actor');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
@@ -260,6 +260,7 @@ router.get('/:id', canRead, async (req, res, next) => {
       setBy: toActor(r.set_by_first_name, r.set_by_last_name, r.set_by_role),
       createdAt: r.created_at,
     }));
+    const todayIso = isoDate(new Date());
 
     // Solde séquestre (comptes séquestres par mandat) : combien le cabinet
     // détient actuellement pour ce propriétaire, tous ses Biens confondus —
@@ -290,9 +291,9 @@ router.get('/:id', canRead, async (req, res, next) => {
         notes: p.notes,
         recordedBy: toActor(p.recorded_by_first_name, p.recorded_by_last_name, p.recorded_by_role),
       })),
-      // Taux de commission (nouveau) : le premier élément (ends_on IS NULL)
-      // est le taux actif, le reste l'historique — jamais écrasé.
-      activeCommissionRate: commissionRates.find((r) => !r.endsOn) ?? null,
+      // Taux de commission actif AUJOURD'HUI — voir `pickRateValidAt`
+      // (services/commission.js) pour le vrai bug que ça corrige (23/09/2026).
+      activeCommissionRate: pickRateValidAt(commissionRates, todayIso),
       commissionRates,
     });
   } catch (err) {

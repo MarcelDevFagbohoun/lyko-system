@@ -941,7 +941,17 @@ function CommissionCard({
                     <TableCell>{r.rate} %</TableCell>
                     <TableCell className="text-ink-soft">{r.startsOn}</TableCell>
                     <TableCell className="text-ink-soft">
-                      {r.endsOn ?? <Badge variant="success">Actif</Badge>}
+                      {r.endsOn ? (
+                        r.endsOn
+                      ) : r.id === activeRate?.id ? (
+                        <Badge variant="success">Actif</Badge>
+                      ) : (
+                        // Sans date de fin MAIS pas (encore) le taux actif : un taux
+                        // programmé pour plus tard (`startsOn` dans le futur) — jamais
+                        // "Actif" avant sa date de début (bug réel trouvé 23/09/2026,
+                        // voir CommissionCard/routes/owners.js `pickRateValidAt`).
+                        <Badge variant="info">Programmé</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-ink-soft">
                       {r.setBy ? `${r.setBy.name} (${r.setBy.roleLabel})` : "—"}

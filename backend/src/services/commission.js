@@ -35,6 +35,27 @@ function lastDayOfMonth(yearMonth) {
 }
 
 /**
+ * Fonction PURE (aucun accès base) : parmi une liste de taux déjà chargée
+ * (`{startsOn, endsOn, ...}`, `endsOn` string ISO ou `null`), celui dont
+ * l'intervalle [startsOn, endsOn] contient `atDate` (`endsOn` inclusif,
+ * `null` = sans fin). `null` si aucun ne couvre cette date.
+ *
+ * Existe pour éviter EXACTEMENT le bug trouvé le 23/09/2026 sur la fiche
+ * propriétaire (`routes/owners.js`) : le code y prenait "le taux sans
+ * `endsOn`" comme raccourci pour "le taux actif", ce qui affiche un taux
+ * déjà PROGRAMMÉ pour plus tard (ex. GBAGUIDI Rodrigue : 15 % à partir du
+ * 01/10, sans `endsOn`) comme actif AUJOURD'HUI, alors que l'ancien taux
+ * (10 %, avec un `endsOn` au 30/09) était encore réellement en vigueur — la
+ * fiche affichait un taux différent de celui réellement appliqué aux
+ * calculs de recette. Ne trie jamais en interne : suppose l'appelant déjà
+ * en ordre, ou peu importe l'ordre (au plus UN taux peut valider la
+ * condition à une date donnée, les intervalles ne se chevauchant jamais).
+ */
+function pickRateValidAt(rates, atDate) {
+  return rates.find((r) => r.startsOn <= atDate && (!r.endsOn || r.endsOn >= atDate)) ?? null;
+}
+
+/**
  * Taux de commission d'un propriétaire VALIDE à une date précise (pas
  * forcément le taux actuel) : celui dont l'intervalle [starts_on, ends_on]
  * contient cette date (`ends_on IS NULL` = taux actif depuis `starts_on`,
@@ -303,6 +324,7 @@ async function getOwnersWithoutCommissionRate(tenantId) {
 
 module.exports = {
   lastDayOfMonth,
+  pickRateValidAt,
   getActiveCommissionRate,
   getTauxCommissionActif,
   getRecetteNetteMaison,

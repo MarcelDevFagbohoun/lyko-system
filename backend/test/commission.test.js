@@ -13,7 +13,12 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { pool, closePool } = require('../src/config/db');
-const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate } = require('../src/services/commission');
+const {
+  getEscrowBalances,
+  getUnpaidOpeningDebtByOwner,
+  getOwnersWithoutCommissionRate,
+  pickRateValidAt,
+} = require('../src/services/commission');
 const { createBareFixture, setCommissionRate } = require('./gl/fixtures');
 
 let fx;
@@ -125,6 +130,25 @@ test('getUnpaidOpeningDebtByOwner — montant brut restant, jamais mélangé au 
   await pool.query('UPDATE leases SET opening_debt_amount = 0 WHERE id = :id', { id: fx.leaseId });
 });
 
+test("pickRateValidAt — un taux futur programmé (sans endsOn) n'est jamais pris pour actif avant sa date de début", () => {
+  // Cas réel GBAGUIDI Rodrigue (KIko Store, 23/09/2026) : 10% du 01/07 au
+  // 30/09, puis 15% à partir du 01/10 (sans endsOn, car le plus récent).
+  const rates = [
+    { rate: 15, startsOn: '2026-10-01', endsOn: null },
+    { rate: 10, startsOn: '2026-07-01', endsOn: '2026-09-30' },
+  ];
+  assert.equal(pickRateValidAt(rates, '2026-09-23')?.rate, 10, "aujourd'hui (avant le 01/10) : encore l'ancien taux");
+  assert.equal(pickRateValidAt(rates, '2026-09-30')?.rate, 10, 'dernier jour couvert par endsOn : encore inclus');
+  assert.equal(pickRateValidAt(rates, '2026-10-01')?.rate, 15, 'à partir de sa date de début : le nouveau taux');
+  assert.equal(pickRateValidAt(rates, '2026-06-30'), null, "avant le premier taux jamais défini : aucun");
+});
+
+test('pickRateValidAt — un taux sans endsOn déjà commencé reste actif indéfiniment', () => {
+  const rates = [{ rate: 10, startsOn: '2026-09-16', endsOn: null }];
+  assert.equal(pickRateValidAt(rates, '2026-09-16')?.rate, 10);
+  assert.equal(pickRateValidAt(rates, '2027-01-01')?.rate, 10);
+});
+
 test('getOwnersWithoutCommissionRate — signale un propriétaire avec des loyers encaissés mais aucun taux jamais défini', async () => {
   // Cas réel trouvé le 22/09/2026 (AKOAKOU Jean, KIko Store) : un propriétaire
   // sans AUCUNE ligne dans owner_commission_rates dont un Bien a pourtant
@@ -175,3 +199,4 @@ test('getOwnersWithoutCommissionRate — signale un propriétaire avec des loyer
   await pool.query('DELETE FROM properties WHERE id = :p', { p: property.insertId });
   await pool.query('DELETE FROM owners WHERE id = :o', { o: ownerId });
 });
+
