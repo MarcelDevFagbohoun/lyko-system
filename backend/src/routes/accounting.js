@@ -823,7 +823,7 @@ async function computeAccountingDashboard(user, { from, to }) {
 
     const [[rentRow]] = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
-       FROM rent_payments WHERE tenant_id = :tenantId AND paid_at BETWEEN :from AND :to`,
+       FROM rent_payments WHERE tenant_id = :tenantId AND paid_at BETWEEN :from AND :to AND deleted_at IS NULL`,
       params,
     );
     const [[payoutRow]] = await pool.query(
@@ -1088,7 +1088,7 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
        JOIN property_units u ON u.id = l.unit_id
        JOIN properties p ON p.id = u.property_id
        LEFT JOIN users ru ON ru.id = rp.recorded_by
-       WHERE rp.tenant_id = :tenantId AND rp.paid_at BETWEEN :from AND :to`,
+       WHERE rp.tenant_id = :tenantId AND rp.paid_at BETWEEN :from AND :to AND rp.deleted_at IS NULL`,
       params,
     );
 
@@ -1409,7 +1409,7 @@ router.get('/rent-payments', canAccounting, async (req, res, next) => {
        JOIN renters r ON r.id = l.renter_id
        JOIN property_units u ON u.id = l.unit_id
        LEFT JOIN users ru ON ru.id = rp.recorded_by
-       WHERE rp.tenant_id = :tenantId AND rp.paid_at BETWEEN :from AND :to
+       WHERE rp.tenant_id = :tenantId AND rp.paid_at BETWEEN :from AND :to AND rp.deleted_at IS NULL
        ORDER BY rp.paid_at DESC, rp.id DESC`,
       { tenantId: req.user.tenantId, from, to },
     );

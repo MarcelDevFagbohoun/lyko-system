@@ -29,7 +29,7 @@ async function assertReferenceBelongsToTenant(tenantId, documentType, referenceI
   if (documentType === 'quittance') {
     [rows] = await pool.query(
       `SELECT rp.id FROM rent_payments rp JOIN leases l ON l.id = rp.lease_id
-       WHERE rp.id = :referenceId AND l.tenant_id = :tenantId LIMIT 1`,
+       WHERE rp.id = :referenceId AND l.tenant_id = :tenantId AND rp.deleted_at IS NULL LIMIT 1`,
       { referenceId, tenantId },
     );
   } else if (documentType === 'attestation') {

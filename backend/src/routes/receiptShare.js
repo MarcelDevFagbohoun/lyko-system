@@ -47,7 +47,7 @@ router.get('/:token', async (req, res, next) => {
 
     const paymentId = issuance.reference_id;
     const [paymentRows] = await pool.query(
-      'SELECT * FROM rent_payments WHERE id = :id AND tenant_id = :tenantId LIMIT 1',
+      'SELECT * FROM rent_payments WHERE id = :id AND tenant_id = :tenantId AND deleted_at IS NULL LIMIT 1',
       { id: paymentId, tenantId: issuance.tenant_id },
     );
     if (!paymentRows[0]) throw new ApiError(404, 'Lien invalide ou expiré');

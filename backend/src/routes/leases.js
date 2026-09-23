@@ -9,6 +9,7 @@ const { ApiError } = require('../middleware/error');
 const { requireAuth, requirePermission, requireAnyPermission } = require('../middleware/auth');
 const {
   createPaymentSchema,
+  deletePaymentReasonSchema,
   endLeaseSchema,
   createLateFeeSchema,
   createOpeningDebtPaymentSchema,
@@ -25,6 +26,7 @@ const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
 const { getOrCreateIssuance, ensureShareToken } = require('../services/documentIssuance');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
+const { extourneEcriture } = require('../services/gl/glReversalService');
 const { toActor } = require('../utils/actor');
 const {
   cloneMasterZones,
@@ -171,7 +173,7 @@ async function recordRentPayment(
   });
   const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
 
-  const [payRows] = await conn.query('SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId', {
+  const [payRows] = await conn.query('SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL', {
     leaseId: lease.id,
   });
   const startDate =
@@ -295,12 +297,78 @@ router.get('/:leaseId/payments', canPayments, async (req, res, next) => {
     const scopeAgentId = await resolvePropertyScope(req.user);
     await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
     const [payments] = await pool.query(
-      'SELECT * FROM rent_payments WHERE lease_id = :leaseId ORDER BY paid_at DESC, id DESC',
+      'SELECT * FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL ORDER BY paid_at DESC, id DESC',
       { leaseId },
     );
     res.json({ payments });
   } catch (err) {
     next(err);
+  }
+});
+
+// DELETE /api/leases/:leaseId/payments/:paymentId — annuler un paiement de
+// loyer mal saisi (audit comptable, anomalie A3 : aucune voie de correction
+// n'existait avant). Suppression LOGIQUE, jamais physique (justification
+// obligatoire, comme les dépenses/charges depuis la migration 016) — le
+// paiement reste consultable, mais disparaît des arriérés/recette/tableau
+// de bord. Si une écriture GL existe déjà, génère son extourne dans LA
+// MÊME transaction (jamais de simple suppression de l'écriture).
+router.delete('/:leaseId/payments/:paymentId', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  const paymentId = Number(req.params.paymentId);
+  if (!Number.isInteger(leaseId) || !Number.isInteger(paymentId)) {
+    return next(new ApiError(400, 'Identifiant invalide'));
+  }
+
+  const parsed = deletePaymentReasonSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Justification requise', parsed.error.flatten().fieldErrors));
+  }
+  const { reason } = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
+
+    const [paymentRows] = await conn.query(
+      'SELECT * FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId AND tenant_id = :tenantId LIMIT 1',
+      { paymentId, leaseId, tenantId: req.user.tenantId },
+    );
+    if (!paymentRows[0]) throw new ApiError(404, 'Paiement introuvable');
+    if (paymentRows[0].deleted_at) throw new ApiError(409, 'Ce paiement est déjà annulé');
+
+    await assertPeriodOpen(req.user.tenantId, paymentRows[0].paid_at);
+
+    await conn.beginTransaction();
+
+    await conn.query(
+      'UPDATE rent_payments SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason WHERE id = :id',
+      { by: req.user.id, reason, id: paymentId },
+    );
+
+    const [glEntryRows] = await conn.query(
+      "SELECT id, status FROM gl_entries WHERE tenant_id = :tenantId AND source_table = 'rent_payments' AND source_id = :paymentId LIMIT 1",
+      { tenantId: req.user.tenantId, paymentId },
+    );
+    if (glEntryRows[0] && glEntryRows[0].status === 'validee') {
+      await extourneEcriture(conn, {
+        tenantId: req.user.tenantId,
+        entryId: glEntryRows[0].id,
+        entryDate: new Date().toISOString().slice(0, 10),
+        userId: req.user.id,
+        reason: `Paiement annulé — ${reason}`,
+      });
+    }
+
+    await conn.commit();
+    logger.info('Paiement de loyer annulé', { tenantId: req.user.tenantId, leaseId, paymentId, by: req.user.id, reason });
+    res.status(204).send();
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -336,7 +404,7 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
     // peu plus tardive). Un mois différent reste permis : rattraper
     // plusieurs mois de retard à la suite, y compris avec le même mode de
     // règlement répété, est un usage normal.
-    const [payRowsForGuard] = await conn.query('SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId', {
+    const [payRowsForGuard] = await conn.query('SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL', {
       leaseId,
     });
     const startDateForGuard =
@@ -355,7 +423,7 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
     const [recent] = await conn.query(
       `SELECT id FROM rent_payments
        WHERE lease_id = :leaseId AND covers_month = :startMonth AND paid_at = :paidAt AND payment_method = :method
-         AND created_at > (NOW() - INTERVAL 2 MINUTE)
+         AND created_at > (NOW() - INTERVAL 2 MINUTE) AND deleted_at IS NULL
        LIMIT 1`,
       { leaseId, startMonth: startMonthForGuard, paidAt: data.paidAt, method: data.paymentMethod },
     );
@@ -629,7 +697,7 @@ router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req,
     const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
 
     const [paymentRows] = await pool.query(
-      'SELECT * FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId LIMIT 1',
+      'SELECT * FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId AND deleted_at IS NULL LIMIT 1',
       { paymentId, leaseId },
     );
     if (!paymentRows[0]) throw new ApiError(404, 'Paiement introuvable');
@@ -681,7 +749,7 @@ router.post('/:leaseId/payments/:paymentId/receipt-link', canPayments, async (re
     await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
 
     const [paymentRows] = await pool.query(
-      'SELECT id FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId LIMIT 1',
+      'SELECT id FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId AND deleted_at IS NULL LIMIT 1',
       { paymentId, leaseId },
     );
     if (!paymentRows[0]) throw new ApiError(404, 'Paiement introuvable');
@@ -921,7 +989,7 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
     let arrears = null;
     if (lease.status === 'active') {
       const [payments] = await pool.query(
-        'SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId',
+        'SELECT covers_month FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
         { leaseId },
       );
       arrears = computeArrears({

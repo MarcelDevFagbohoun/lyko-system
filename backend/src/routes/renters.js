@@ -292,7 +292,7 @@ router.get('/', canRead, async (req, res, next) => {
     if (leaseIds.length > 0) {
       const placeholders = leaseIds.map(() => '?').join(',');
       const [payments] = await pool.query(
-        `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders})`,
+        `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
         leaseIds,
       );
       for (const p of payments) {
@@ -382,7 +382,7 @@ router.get('/:id', canRead, async (req, res, next) => {
       const [payments] = await pool.query(
         `SELECT rp.*, pu.first_name AS recorder_first_name, pu.last_name AS recorder_last_name, pu.role AS recorder_role
          FROM rent_payments rp JOIN users pu ON pu.id = rp.recorded_by
-         WHERE rp.lease_id IN (${placeholders}) ORDER BY rp.paid_at DESC, rp.id DESC`,
+         WHERE rp.lease_id IN (${placeholders}) AND rp.deleted_at IS NULL ORDER BY rp.paid_at DESC, rp.id DESC`,
         leaseIds,
       );
       const paymentIds = payments.map((p) => p.id);

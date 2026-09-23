@@ -147,6 +147,13 @@ const createPaymentSchema = z.object({
   notes: optionalText(255),
 });
 
+// Annulation d'un paiement de loyer (audit comptable, anomalie A3) — même
+// principe que la suppression logique des dépenses/charges (validators/expenses.js) :
+// justification obligatoire, jamais un DELETE physique.
+const deletePaymentReasonSchema = z.object({
+  reason: z.string().trim().min(5, 'Justification requise (5 caractères minimum)').max(255, 'Trop long'),
+});
+
 // Pénalité de retard (montant TOUJOURS saisi à la main — jamais un barème
 // automatique, choix de politique commerciale plutôt qu'une règle comptable).
 const createLateFeeSchema = z.object({
@@ -170,6 +177,7 @@ module.exports = {
   createLeaseSchema,
   endLeaseSchema,
   createPaymentSchema,
+  deletePaymentReasonSchema,
   createLateFeeSchema,
   createOpeningDebtPaymentSchema,
   PAYMENT_METHODS,

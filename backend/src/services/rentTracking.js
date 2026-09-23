@@ -158,7 +158,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   const leaseIds = activeLeases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders})`,
+    `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
     leaseIds,
   );
   const paymentsByLease = new Map();
@@ -242,7 +242,7 @@ async function snapshotLeaseBalances(tenantId, period) {
   const leaseIds = leases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders})`,
+    `SELECT lease_id, covers_month FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
     leaseIds,
   );
   const paymentsByLease = new Map();
@@ -315,7 +315,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
     `SELECT lease_id, covers_month, paid_at FROM rent_payments
-     WHERE lease_id IN (${placeholders}) ORDER BY covers_month DESC`,
+     WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY covers_month DESC`,
     leaseIds,
   );
   const paymentsByLease = new Map();

@@ -102,7 +102,8 @@ async function getRecetteNetteMaison(tenantId, propertyId, yearMonth) {
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
      JOIN property_units u ON u.id = l.unit_id
-     WHERE rp.tenant_id = :tenantId AND u.property_id = :propertyId AND rp.covers_month = :yearMonth`,
+     WHERE rp.tenant_id = :tenantId AND u.property_id = :propertyId AND rp.covers_month = :yearMonth
+       AND rp.deleted_at IS NULL`,
     { tenantId, propertyId, yearMonth },
   );
   const [expenseRows] = await pool.query(
@@ -192,7 +193,7 @@ async function getEscrowBalances(tenantId) {
      JOIN leases l ON l.id = rp.lease_id
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
-     WHERE rp.tenant_id = :tenantId
+     WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL
      GROUP BY p.owner_id, rp.covers_month`,
     { tenantId },
   );
@@ -312,7 +313,7 @@ async function getOwnersWithoutCommissionRate(tenantId) {
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
      JOIN owners o ON o.id = p.owner_id
-     WHERE rp.tenant_id = :tenantId
+     WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL
        AND NOT EXISTS (
          SELECT 1 FROM owner_commission_rates r WHERE r.tenant_id = :tenantId AND r.owner_id = p.owner_id
        )

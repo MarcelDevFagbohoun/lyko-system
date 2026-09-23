@@ -174,7 +174,7 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
        JOIN leases l ON l.id = rp.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = rp.recorded_by
-       WHERE rp.tenant_id = :tenantId ${f('rp.recorded_by')} ORDER BY rp.created_at DESC LIMIT :n`,
+       WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL ${f('rp.recorded_by')} ORDER BY rp.created_at DESC LIMIT :n`,
       p,
     ),
     pool.query(

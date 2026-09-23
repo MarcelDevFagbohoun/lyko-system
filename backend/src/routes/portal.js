@@ -99,7 +99,7 @@ router.get('/:token', async (req, res, next) => {
         `SELECT rp.*, rc.id AS receipt_id, rc.receipt_number
          FROM rent_payments rp
          LEFT JOIN receipts rc ON rc.payment_id = rp.id
-         WHERE rp.lease_id = :leaseId
+         WHERE rp.lease_id = :leaseId AND rp.deleted_at IS NULL
          ORDER BY rp.paid_at DESC, rp.id DESC`,
         { leaseId: activeLease.id },
       );
@@ -188,7 +188,7 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
     const lease = await loadActivePortalLease(tenantId, renterId);
 
     const [paymentRows] = await pool.query(
-      'SELECT * FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId LIMIT 1',
+      'SELECT * FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId AND deleted_at IS NULL LIMIT 1',
       { paymentId, leaseId: lease.id },
     );
     if (!paymentRows[0]) throw new ApiError(404, 'Paiement introuvable');

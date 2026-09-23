@@ -44,7 +44,7 @@ async function isInitialized(conn, tenantId) {
 async function findEarliestOperationDate(conn, tenantId) {
   const [[row]] = await conn.query(
     `SELECT MIN(d) AS earliest FROM (
-       SELECT MIN(paid_at) AS d FROM rent_payments WHERE tenant_id = :tenantId
+       SELECT MIN(paid_at) AS d FROM rent_payments WHERE tenant_id = :tenantId AND deleted_at IS NULL
        UNION ALL SELECT MIN(paid_at) FROM utility_payments WHERE tenant_id = :tenantId
        UNION ALL SELECT MIN(expense_date) FROM expenses WHERE tenant_id = :tenantId AND deleted_at IS NULL
        UNION ALL SELECT MIN(paid_at) FROM owner_payouts WHERE tenant_id = :tenantId
@@ -133,7 +133,7 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
      JOIN renters r ON r.id = l.renter_id
-     WHERE rp.tenant_id = :tenantId AND rp.paid_at >= :fromDate`,
+     WHERE rp.tenant_id = :tenantId AND rp.paid_at >= :fromDate AND rp.deleted_at IS NULL`,
     { tenantId, fromDate },
   );
   for (const p of rentPayments) {
