@@ -22,6 +22,7 @@
 //      calculé une fois clos, avec le taux en vigueur à cette date-là).
 
 const { pool } = require('../config/db');
+const { ApiError } = require('../middleware/error');
 
 function isoDate(d) {
   if (!d) return null;
@@ -322,9 +323,28 @@ async function getOwnersWithoutCommissionRate(tenantId) {
   return rows.map((r) => ({ ownerId: r.owner_id, ownerName: r.owner_name, totalCollected: Number(r.total_collected) }));
 }
 
+/**
+ * Un reversement ne peut jamais dépasser ce que le cabinet détient
+ * RÉELLEMENT pour ce propriétaire (`getEscrowBalances`) — audit comptable
+ * du 23/09/2026, anomalie A2 : sans ce contrôle, un montant absurde était
+ * accepté sans la moindre erreur (constaté : 5 000 000 FCFA reversés à un
+ * propriétaire dont le solde réel était nul, rendant son solde négatif en
+ * silence). Décision explicite de l'utilisateur : blocage total (400),
+ * jamais un simple avertissement contournable — voir routes/owners.js
+ * `POST /:id/payouts`.
+ */
+async function assertPayoutWithinBalance(tenantId, ownerId, amount) {
+  const balances = await getEscrowBalances(tenantId);
+  const balance = balances.get(ownerId)?.balance ?? 0;
+  if (amount > balance) {
+    throw new ApiError(400, `Le montant dépasse le solde séquestre réellement détenu pour ce propriétaire (${balance} FCFA)`);
+  }
+}
+
 module.exports = {
   lastDayOfMonth,
   pickRateValidAt,
+  assertPayoutWithinBalance,
   getActiveCommissionRate,
   getTauxCommissionActif,
   getRecetteNetteMaison,

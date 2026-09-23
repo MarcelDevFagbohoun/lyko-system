@@ -12,7 +12,7 @@ const {
 } = require('../validators/owners');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { streamOwnerStatementPdf } = require('../services/pdf');
-const { getEscrowBalances, getUnpaidOpeningDebtByOwner, pickRateValidAt } = require('../services/commission');
+const { getEscrowBalances, getUnpaidOpeningDebtByOwner, pickRateValidAt, assertPayoutWithinBalance } = require('../services/commission');
 const { toActor } = require('../utils/actor');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
@@ -374,6 +374,10 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
+
+    // Garde-fou (audit comptable, anomalie A2) — voir services/commission.js
+    // `assertPayoutWithinBalance` pour le détail du cas réel trouvé.
+    await assertPayoutWithinBalance(req.user.tenantId, id, data.amount);
 
     await conn.beginTransaction();
 

@@ -18,7 +18,9 @@ const {
   getUnpaidOpeningDebtByOwner,
   getOwnersWithoutCommissionRate,
   pickRateValidAt,
+  assertPayoutWithinBalance,
 } = require('../src/services/commission');
+const { ApiError } = require('../src/middleware/error');
 const { createBareFixture, setCommissionRate } = require('./gl/fixtures');
 
 let fx;
@@ -191,6 +193,59 @@ test('getOwnersWithoutCommissionRate — signale un propriétaire avec des loyer
   // Le propriétaire de la fixture (taux 10% défini dans before()) ne doit
   // JAMAIS apparaître dans cette liste.
   assert.equal(flagged.some((o) => o.ownerId === fx.ownerId), false);
+
+  await pool.query('DELETE FROM rent_payments WHERE lease_id = :l', { l: lease.insertId });
+  await pool.query('DELETE FROM leases WHERE id = :l', { l: lease.insertId });
+  await pool.query('DELETE FROM renters WHERE id = :r', { r: renter.insertId });
+  await pool.query('DELETE FROM property_units WHERE id = :u', { u: unit.insertId });
+  await pool.query('DELETE FROM properties WHERE id = :p', { p: property.insertId });
+  await pool.query('DELETE FROM owners WHERE id = :o', { o: ownerId });
+});
+
+test('assertPayoutWithinBalance — rejette un reversement qui dépasse le solde séquestre réel (audit comptable, anomalie A2)', async () => {
+  // Cas réel reproduit lors de l'audit du 23/09/2026 : un reversement de
+  // 5 000 000 FCFA avait été accepté sans erreur pour un propriétaire dont
+  // le solde réel était nul, rendant son solde séquestre négatif en silence.
+  const [owner] = await pool.query('INSERT INTO owners (tenant_id, name, created_by) VALUES (:t, :n, :by)', {
+    t: fx.tenantId,
+    n: 'Propriétaire Test A2',
+    by: fx.dgId,
+  });
+  const ownerId = owner.insertId;
+  const [property] = await pool.query(
+    'INSERT INTO properties (tenant_id, code, owner_id, created_by) VALUES (:t, :code, :o, :by)',
+    { t: fx.tenantId, code: 'A2-001', o: ownerId, by: fx.dgId },
+  );
+  const [unit] = await pool.query(
+    "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'A2-U1', 'studio', 'loue', 50000, :by)",
+    { t: fx.tenantId, p: property.insertId, by: fx.dgId },
+  );
+  const [renter] = await pool.query(
+    "INSERT INTO renters (tenant_id, first_name, last_name, phone, created_by) VALUES (:t, 'A2', 'Test', :phone, :by)",
+    { t: fx.tenantId, phone: `08${Math.floor(Math.random() * 100000000)}`, by: fx.dgId },
+  );
+  const [lease] = await pool.query(
+    "INSERT INTO leases (tenant_id, renter_id, unit_id, start_date, monthly_rent, rent_due_day, deposit_amount, status, created_by) VALUES (:t, :r, :u, '2026-05-01', 50000, 5, 0, 'active', :by)",
+    { t: fx.tenantId, r: renter.insertId, u: unit.insertId, by: fx.dgId },
+  );
+  await pool.query(
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-05', 50000, 'especes', '2026-05-05', :by)`,
+    { t: fx.tenantId, l: lease.insertId, by: fx.dgId },
+  );
+  // Solde réel détenu pour ce propriétaire : 50000 (aucun taux -> 0% de commission, aucun versement déjà fait).
+
+  await assertPayoutWithinBalance(fx.tenantId, ownerId, 50000); // exactement le solde : accepté, ne doit jamais lever.
+  await assert.rejects(
+    () => assertPayoutWithinBalance(fx.tenantId, ownerId, 50001),
+    (err) => err instanceof ApiError && err.status === 400,
+    'un seul FCFA de plus que le solde réel doit être rejeté (400)',
+  );
+  await assert.rejects(
+    () => assertPayoutWithinBalance(fx.tenantId, ownerId, 5000000),
+    (err) => err instanceof ApiError && err.status === 400,
+    'le cas réel de l\'audit (5 000 000 FCFA pour un solde de 50000) doit être rejeté',
+  );
 
   await pool.query('DELETE FROM rent_payments WHERE lease_id = :l', { l: lease.insertId });
   await pool.query('DELETE FROM leases WHERE id = :l', { l: lease.insertId });
