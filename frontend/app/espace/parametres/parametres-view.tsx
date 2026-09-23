@@ -779,9 +779,18 @@ function ActivationCard({
             {result.fiscalYearsCreated.length} exercice(s) ouvert(s) · {result.entriesGenerated} écriture(s) générée(s)
             {result.entriesSkipped > 0 && ` · ${result.entriesSkipped} déjà à jour`}
             {result.errors.length > 0 && (
-              <p className="mt-1 text-danger-fg">
-                {result.errors.length} opération(s) n&apos;ont pas pu être reprises — contactez le support technique.
-              </p>
+              <div className="mt-1 text-danger-fg">
+                <p>
+                  {result.errors.length} opération(s) n&apos;ont pas pu être reprises — souvent parce que l&apos;exercice
+                  comptable correspondant est déjà clôturé. Rouvrir cet exercice (ou en créer un couvrant la bonne
+                  période) puis resynchroniser permet en général de les rattraper.
+                </p>
+                <ul className="mt-1 list-disc pl-5 text-body-xs">
+                  {result.errors.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         )}
@@ -804,6 +813,14 @@ function ReactivateButton({ accessToken, onChanged }: { accessToken: string | nu
           ? `Comptabilité avancée réactivée — ${res.entriesGenerated} écriture(s) de rattrapage générée(s).`
           : "Comptabilité avancée réactivée.",
       );
+      // Audit comptable, anomalie B4 : un rattrapage partiellement échoué (le
+      // plus souvent parce que l'exercice concerné est déjà clôturé) ne doit
+      // jamais passer inaperçu derrière le seul toast de succès ci-dessus.
+      if (res.errors.length > 0) {
+        toast.warning(
+          `${res.errors.length} opération(s) n'ont pas pu être reprises, souvent parce que l'exercice comptable correspondant est déjà clôturé. Rouvrez-le (ou créez l'exercice manquant) puis réactivez à nouveau.`,
+        );
+      }
       onChanged();
     } catch (err) {
       toast.info(err instanceof ApiError ? err.message : "Impossible de réactiver la comptabilité avancée.");
