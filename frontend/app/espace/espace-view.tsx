@@ -5,6 +5,7 @@ import { UserPlus, Building2, ArrowRight, Receipt } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { MyTasksCard } from "@/components/espace/my-tasks-card";
+import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
@@ -26,6 +27,7 @@ function EspaceContent() {
   const isDg = user?.role === "dg";
   const canLocataires = isDg || (user?.permissions.includes("locataires") ?? false);
   const canPayments = canLocataires || (user?.permissions.includes("comptabilite") ?? false);
+  const canCharges = isDg || (user?.permissions.includes("charges") ?? false);
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -39,6 +41,8 @@ function EspaceContent() {
         </div>
 
         {!isDg && <MyTasksCard />}
+
+        {canCharges && <UtilityAlertsCard hideWhenEmpty />}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {isDg && (

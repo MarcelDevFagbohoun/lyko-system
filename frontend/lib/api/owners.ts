@@ -1,6 +1,7 @@
 import { apiFetch, type Actor } from "./client";
 import type { PaymentMethod } from "./renters";
 import type { PropertyTypeKey } from "./properties";
+import type { ChargeAccount, MainPaymentMethod } from "./charges";
 
 export type Owner = {
   id: number;
@@ -53,6 +54,19 @@ export type OwnerPayout = {
   recordedBy: Actor;
 };
 
+/** Reversement au propriétaire de charges SONEB/SBEE déjà encaissées chez ses locataires (étape 31). */
+export type OwnerChargeRemittance = {
+  id: number;
+  amount: number;
+  periodLabel: string | null;
+  paidAt: string;
+  paymentMethod: MainPaymentMethod;
+  paymentMethodLabel: string;
+  notes: string | null;
+  recordedBy: Actor;
+  createdAt: string;
+};
+
 export function listOwners(accessToken: string, q?: string) {
   const qs = q ? `?q=${encodeURIComponent(q)}` : "";
   return apiFetch<{ owners: OwnerListItem[] }>(`/api/owners${qs}`, { accessToken });
@@ -84,6 +98,9 @@ export function getOwner(accessToken: string, id: number) {
     /** Impayés des locataires à l'entrée, non réglés (montant brut, jamais mélangé à `escrowBalance`). */
     openingDebtUnpaid: number;
     payouts: OwnerPayout[];
+    /** Charges SONEB/SBEE encaissées / déjà reversées / à reverser — séparé du séquestre des loyers. */
+    chargesAccount: ChargeAccount;
+    chargeRemittances: OwnerChargeRemittance[];
     activeCommissionRate: CommissionRate | null;
     commissionRates: CommissionRate[];
   }>(`/api/owners/${id}`, { accessToken });
@@ -131,6 +148,33 @@ export function createPayout(accessToken: string, ownerId: number, input: Create
     accessToken,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+}
+
+export type CreateChargeRemittanceInput = {
+  amount: number;
+  paidAt: string;
+  paymentMethod: MainPaymentMethod;
+  periodLabel?: string;
+  notes?: string;
+};
+
+export function createChargeRemittance(accessToken: string, ownerId: number, input: CreateChargeRemittanceInput) {
+  return apiFetch<{ remittanceId: number; accountingNote: string | null }>(`/api/owners/${ownerId}/charge-remittances`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Annulation logique : la trace reste, le montant redevient « à reverser ». Justification obligatoire. */
+export function cancelChargeRemittance(accessToken: string, ownerId: number, remittanceId: number, reason: string) {
+  return apiFetch<void>(`/api/owners/${ownerId}/charge-remittances/${remittanceId}`, {
+    method: "DELETE",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
   });
 }
 

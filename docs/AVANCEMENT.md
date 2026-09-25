@@ -4359,3 +4359,103 @@ via le vrai formulaire → bandeau vert apparu automatiquement avec le lien What
 (numéro, montant, mois et URL corrects) ; bouton de renvoi sur la ligne d'historique
 également visible. Tenant jetable supprimé après coup, KIko Store reconfirmé intact (14
 baux). `tsc --noEmit`/`next lint` propres.
+
+## Étape 30 — Le point des charges SONEB/SBEE (facture mère payée vs encaissé)
+
+🟢 Validé (2026-09-25).
+
+**Besoin** : le propriétaire règle lui-même la facture mère à la SONEB/SBEE ; le cabinet encaisse
+les charges chez les locataires, puis fait le point pour que le propriétaire ne soit pas perdant.
+Jusque-là, rien n'enregistrait si la facture mère avait été payée, et la fiche/portail/relevé PDF
+du propriétaire ne montraient aucune charge.
+
+**Ce qui a été ajouté**
+- **Paiement de la facture mère** : sur chaque relevé, montant réellement payé + date + mode
+  (facultatif) + note. Corrigeable / annulable. Simple mémo : aucun mouvement de caisse du
+  cabinet, donc ni écriture comptable ni verrou de période. Migration `062`
+  (`utility_reading_batches.main_paid_*`). Routes `PUT/DELETE /api/utility-batches/:id/main-payment`.
+- **Le point** (`services/utilityPoint.js`, `GET /api/utility-point`) : par relevé validé,
+  facture mère payée (A) vs facturé aux locataires (B) vs encaissé (C). Reste au propriétaire =
+  A − C = consommation non refacturée (A − B) + impayés des locataires (B − C). Statuts par
+  ordre de priorité : paiement à déclarer > à recouvrer > à charge du propriétaire > soldé.
+  Factures supprimées logiquement exclues ; périmètre agent respecté.
+- **Interface** : carte « Facture mère payée » + mini-point sur le relevé ; page
+  `/espace/charges/point` (tous les propriétaires, plage de mois) ; « Carnet des charges » sur la
+  fiche propriétaire ; indicateur « facture mère payée / à déclarer » dans la liste des relevés.
+
+**Bug corrigé au passage** : `POST /utility-batches/:id/reopen` ne refusait que les factures
+`payee` — une facture `partiellement_payee` était supprimée avec ses règlements (cascade). Tout
+règlement, même partiel, bloque désormais la réouverture.
+
+**Suite** : export PDF du carnet, portail propriétaire, relevé PDF, alertes et reversement des
+charges encaissées ont été construits à l'étape 31 ci-dessous.
+
+**Tests** : 3 tests de service (`test/utilityPoint.test.js`, suite 135/135) ; scénario API bout
+en bout sur tenant jetable (validation → règlements partiels → déclaration → point → réouverture
+refusée → annulation) ; parcours navigateur réel (déclarer/annuler/corriger, page du point,
+fiche propriétaire). `tsc`/`eslint` propres.
+
+## Étape 31 — Carnet des charges, portail propriétaire, alertes et reversement
+
+🟢 Validé (2026-09-25).
+
+**Besoin** (suite de l'étape 30) : le propriétaire paie la facture mère ; le cabinet encaisse chez
+les locataires puis lui reverse — **le cabinet ne garde rien sur les charges** (hypothèse
+explicite de l'utilisateur, aucun pourcentage retenu). Il fallait donc : un carnet des entrées par
+propriétaire (et son PDF), l'affichage côté propriétaire, des alertes, et le reversement.
+
+**Ce qui a été ajouté**
+- **Reversement des charges** (`services/utilityRemittance.js`, migration `063`, table
+  `owner_charge_remittances`) : à reverser = Σ règlements encaissés sur les factures de ses Biens
+  (factures supprimées exclues) − Σ reversements non annulés. **Table séparée des versements de
+  loyer** : ceux-ci portent commission/IRF côté comptabilité avancée, faux pour un remboursement
+  de charges, et le séquestre des loyers ne se mélange jamais à ce solde. Garde de solde évaluée
+  DANS la transaction, sous verrou de la fiche propriétaire (deux reversements simultanés ne
+  peuvent pas dépasser l'encaissé — testé : un 201, un 400). Annulation logique avec
+  justification (5 caractères min.), verrou de période comme les versements. Routes
+  `POST/DELETE /api/owners/:id/charge-remittances` (`proprietaires`/`comptabilite`).
+- **Carnet des entrées** (`getUtilityEntries`, `getOwnerCarnet`) : chaque règlement reçu d'un
+  locataire (date, locataire, unité, fluide, période, mode, montant), rattaché au mois de la
+  facture ; les factures individuelles hors relevé sont signalées et comptées à part.
+- **PDF du carnet** (`streamUtilityCarnetPdf`, charte des autres PDF) : synthèse du point, point par
+  relevé, entrées, reversements, compte à reverser. `GET /api/owners/:id/carnet-charges.pdf`
+  (employé : illimité, sans code) ; côté portail : 5 téléchargements max + code de vérification
+  (nouveau type de document `carnet_charges`, réinitialisable par le DG sur la fiche).
+- **Portail propriétaire** : section « Charges SONEB / SBEE » en langage simple (payé à la
+  SONEB/SBEE, encaissé chez ses locataires, reste à sa charge, reste à lui reverser, reversements
+  reçus) + téléchargement du carnet. **Relevé propriétaire PDF** (employé et portail) : nouvelle
+  section « Charges SONEB / SBEE ».
+- **Alertes** (`services/utilityAlerts.js`, `GET /api/utility-alerts`, calcul à la volée) : relevé
+  du mois précédent manquant (à partir du 5, danger si 2 mois ou plus), relevé en brouillon
+  depuis 7 jours, facture mère non déclarée payée (7 jours, danger à 30), écart compteur
+  principal/décompteurs anormal (fenêtre de 90 jours), charges encaissées à reverser depuis
+  7 jours (ancienneté calculée dans l'ordre chronologique des encaissements). Un agent restreint
+  ne voit que ses Biens et jamais l'alerte de reversement. Affichées sur l'accueil (DG et
+  permission `charges`), la page Charges et « Le point des charges » ; tâche planifiée
+  quotidienne (07h20) qui notifie le DG au plus une fois par jour.
+- Journal d'activité : reversement enregistré/annulé et facture mère déclarée payée. Export Excel :
+  ligne « Reversement de charges (propriétaire) » en débit.
+
+**Points à valider / limites connues**
+- **Comptabilité avancée : aucune écriture automatique** pour un reversement de charges. La règle
+  `charge_locative_encaissee` crédite le 411 du locataire (déjà signalé : point B2 de
+  `AUDIT_COMPTABLE.md`, à valider par l'expert-comptable) ; le compte à débiter au reversement
+  dépend de cette réponse. L'API renvoie `accountingNote` et l'écran affiche un avertissement quand
+  le module est actif. Le flux net du tableau de bord simple ignore les charges à l'entrée, il les
+  ignore donc aussi à la sortie.
+- **Bug corrigé au passage** : l'export Excel comptait les règlements de factures supprimées.
+- **Défaut d'interface préexistant, NON corrigé (hors périmètre)** : `tailwind-merge` (via `cn()`)
+  ne connaît pas les tailles de police personnalisées (`text-body-sm`…) et les prend pour des
+  couleurs : tout bouton `size="sm"` perd sa couleur de texte (texte sombre sur fond marine pour un
+  bouton plein, ex. « Confirmer le versement »). Contourné dans les nouveaux écrans (taille
+  standard). Correction possible en une ligne (`extendTailwindMerge` avec les tailles du
+  `tailwind.config.ts`), mais elle modifierait l'aspect de nombreux écrans existants.
+- Non couvert : reversement de charges par lot sur plusieurs propriétaires.
+
+**Tests** : `test/utilityRemittance.test.js` (12 tests : solde, ordre chronologique, garde de
+solde, carnet, alertes, tâche planifiée, PDF sur 80 lignes/14 relevés, section du relevé) — suite
+**148/148** ; scénario API bout en bout sur cabinet jetable (validation, concurrence, annulation,
+PDF employé et portail, plafond de 5 téléchargements, code de vérification, journal, Excel,
+verrou de période) ; parcours navigateur réel de chaque écran ; `pdftotext`/`pdftoppm` sur les
+PDF. `tsc`/`eslint` propres. **Bug trouvé par les tests** : la flèche « → » n'existe pas dans
+l'alphabet des polices PDF standard (caractères parasites) — remplacée par « de … à … ».

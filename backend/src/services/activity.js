@@ -131,6 +131,9 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
     moveOuts,
     periodsClosed,
     commissionRates,
+    chargeRemittances,
+    chargeRemittancesCancelled,
+    mainInvoicePayments,
     deleted,
   ] = await Promise.all([
     pool.query(
@@ -251,6 +254,34 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
        WHERE cr.tenant_id = :tenantId ${f('cr.set_by')} ORDER BY cr.created_at DESC LIMIT :n`,
       p,
     ),
+    pool.query(
+      `SELECT cr.id, cr.amount, cr.created_at, o.name AS owner_name,
+              u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
+       FROM owner_charge_remittances cr
+       JOIN owners o ON o.id = cr.owner_id
+       LEFT JOIN users u ON u.id = cr.recorded_by
+       WHERE cr.tenant_id = :tenantId ${f('cr.recorded_by')} ORDER BY cr.created_at DESC LIMIT :n`,
+      p,
+    ),
+    pool.query(
+      `SELECT cr.id, cr.amount, cr.deleted_at, o.name AS owner_name,
+              u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
+       FROM owner_charge_remittances cr
+       JOIN owners o ON o.id = cr.owner_id
+       LEFT JOIN users u ON u.id = cr.deleted_by
+       WHERE cr.tenant_id = :tenantId AND cr.deleted_at IS NOT NULL ${f('cr.deleted_by')} ORDER BY cr.deleted_at DESC LIMIT :n`,
+      p,
+    ),
+    pool.query(
+      `SELECT b.id, b.utility_type, b.period_start, b.main_paid_amount, b.main_paid_recorded_at, pr.code AS property_code,
+              u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
+       FROM utility_reading_batches b
+       JOIN properties pr ON pr.id = b.property_id
+       LEFT JOIN users u ON u.id = b.main_paid_recorded_by
+       WHERE b.tenant_id = :tenantId AND b.main_paid_amount IS NOT NULL ${f('b.main_paid_recorded_by')}
+       ORDER BY b.main_paid_recorded_at DESC LIMIT :n`,
+      p,
+    ),
     listDeletedEntries(tenantId, actorUserId, roleLabels),
   ]);
 
@@ -353,6 +384,24 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
       label: `Taux de commission modifié : ${r.owner_name} — ${Number(r.rate)} % (à partir du ${isoDate(r.starts_on)})`,
       actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
+    })),
+    ...chargeRemittances[0].map((r) => ({
+      type: 'charge_remittance_recorded',
+      label: `Reversement de charges au propriétaire : ${r.owner_name} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA`,
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
+      at: r.created_at,
+    })),
+    ...chargeRemittancesCancelled[0].map((r) => ({
+      type: 'charge_remittance_cancelled',
+      label: `Reversement de charges annulé : ${r.owner_name} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA`,
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
+      at: r.deleted_at,
+    })),
+    ...mainInvoicePayments[0].map((r) => ({
+      type: 'main_invoice_payment_declared',
+      label: `Facture mère ${r.utility_type === 'soneb' ? 'SONEB' : 'SBEE'} déclarée payée : ${r.property_code} (${isoDate(r.period_start).slice(0, 7)}) — ${Number(r.main_paid_amount).toLocaleString('fr-FR')} FCFA`,
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
+      at: r.main_paid_recorded_at,
     })),
     ...deleted.map((d) => ({
       type: d.type === 'expense' ? 'expense_deleted' : 'charge_deleted',

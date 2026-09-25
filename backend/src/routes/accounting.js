@@ -1121,13 +1121,25 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
               pu.code AS unit_code, pr.code AS property_code,
               ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
        FROM utility_payments up
-       JOIN utility_charges uc ON uc.id = up.charge_id
+       JOIN utility_charges uc ON uc.id = up.charge_id AND uc.deleted_at IS NULL
        JOIN leases l ON l.id = uc.lease_id
        JOIN renters r ON r.id = l.renter_id
        JOIN property_units pu ON pu.id = l.unit_id
        JOIN properties pr ON pr.id = pu.property_id
        LEFT JOIN users ru ON ru.id = up.recorded_by
        WHERE up.tenant_id = :tenantId AND up.paid_at BETWEEN :from AND :to`,
+      params,
+    );
+
+    // Reversements au propriétaire des charges SONEB/SBEE encaissées (étape 31) :
+    // la contrepartie, en sortie, des « Charge SONEB/SBEE réglée » ci-dessus.
+    const [chargeRemittanceRows] = await pool.query(
+      `SELECT cr.paid_at, cr.amount, cr.payment_method, cr.period_label, o.name AS owner_name,
+              ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
+       FROM owner_charge_remittances cr
+       JOIN owners o ON o.id = cr.owner_id
+       LEFT JOIN users ru ON ru.id = cr.recorded_by
+       WHERE cr.tenant_id = :tenantId AND cr.deleted_at IS NULL AND cr.paid_at BETWEEN :from AND :to`,
       params,
     );
 
@@ -1172,6 +1184,19 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
         tiers: r.owner_name,
         bien: '',
         categorie: r.period_label,
+        debit: Number(r.amount),
+        credit: null,
+        mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
+        enregistrePar: recorderName(r),
+      });
+    }
+    for (const r of chargeRemittanceRows) {
+      rows.push({
+        date: isoDate(r.paid_at),
+        type: 'Reversement de charges (propriétaire)',
+        tiers: r.owner_name,
+        bien: '',
+        categorie: r.period_label || 'Charges SONEB/SBEE',
         debit: Number(r.amount),
         credit: null,
         mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,

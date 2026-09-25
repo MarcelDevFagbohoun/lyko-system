@@ -54,7 +54,11 @@ function RelevesContent() {
       .then((res) => {
         const submetered = res.properties.filter((p) => submeteredTypes(p).length > 0);
         setProperties(submetered);
-        if (submetered.length > 0) setPropertyId(submetered[0].id);
+        // Lien depuis une alerte (« relevé manquant ») : `?propertyId=` pré-sélectionne le Bien.
+        // Lu via `window` plutôt que `useSearchParams` (qui exigerait une frontière Suspense pour le rendu statique).
+        const wanted = Number(new URLSearchParams(window.location.search).get("propertyId"));
+        const preselected = submetered.find((p) => p.id === wanted);
+        if (submetered.length > 0) setPropertyId((preselected ?? submetered[0]).id);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les biens."));
   }, [accessToken]);
@@ -166,6 +170,11 @@ function RelevesContent() {
                       <TableCell className="text-ink-soft">{UTILITY_TYPE_LABELS[b.utilityType]}</TableCell>
                       <TableCell>
                         <Badge variant={b.status === "valide" ? "success" : "neutral"}>{BATCH_STATUS_LABELS[b.status]}</Badge>
+                        {b.status === "valide" && (
+                          <span className={`mt-1 block text-body-xs ${b.mainPaidAmount != null ? "text-success-fg" : "text-warning-fg"}`}>
+                            {b.mainPaidAmount != null ? "Facture mère payée" : "Facture mère à déclarer"}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular">{formatFcfa(b.subAmount)}</TableCell>
                       <TableCell className="text-right tabular">

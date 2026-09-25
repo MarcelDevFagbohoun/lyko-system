@@ -14,12 +14,15 @@ const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { utilityConfigSchema, createBatchSchema, saveBatchSchema } = require('../validators/charges');
+const { utilityConfigSchema, createBatchSchema, saveBatchSchema, mainPaymentSchema } = require('../validators/charges');
 const { UTILITY_TYPE_KEYS, DIFFERENCE_ALERT_PCT } = require('../constants/charges');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
 const { assertPeriodOpen, isPeriodClosed } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
+const { getBatchPoint, getUtilityPoint, getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint');
+const { getChargeAccounts } = require('../services/utilityRemittance');
+const { listUtilityAlerts } = require('../services/utilityAlerts');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -48,10 +51,12 @@ async function loadProperty(tenantId, propertyId, scopeAgentId = null) {
 async function loadBatch(tenantId, batchId, scopeAgentId = null) {
   const [rows] = await pool.query(
     `SELECT b.*, p.code AS property_code, p.agent_id AS property_agent_id,
-            u.first_name AS recorder_first_name, u.last_name AS recorder_last_name, u.role AS recorder_role
+            u.first_name AS recorder_first_name, u.last_name AS recorder_last_name, u.role AS recorder_role,
+            mp.first_name AS main_paid_by_first_name, mp.last_name AS main_paid_by_last_name, mp.role AS main_paid_by_role
      FROM utility_reading_batches b
      JOIN properties p ON p.id = b.property_id
      LEFT JOIN users u ON u.id = b.recorded_by
+     LEFT JOIN users mp ON mp.id = b.main_paid_recorded_by
      WHERE b.id = :id AND b.tenant_id = :tenantId LIMIT 1`,
     { id: batchId, tenantId },
   );
@@ -109,7 +114,7 @@ function computeTotals(batch, rows) {
   return { subConsumption, subAmount, mainConsumption, mainAmount, differenceConsumption, differenceAmount, differencePct, alert };
 }
 
-function toPublicBatch(batch, rows) {
+function toPublicBatch(batch, rows, point = null) {
   return {
     batch: {
       id: batch.id,
@@ -132,6 +137,18 @@ function toPublicBatch(batch, rows) {
             ? batch.main_reading_end - batch.main_reading_start
             : null,
         invoiceAmount: num(batch.main_invoice_amount),
+        // Paiement de la facture mère par le propriétaire (étape 30) — mémo.
+        payment:
+          batch.main_paid_amount != null
+            ? {
+                amount: Number(batch.main_paid_amount),
+                paidAt: isoDate(batch.main_paid_at),
+                paymentMethod: batch.main_paid_method,
+                notes: batch.main_paid_notes,
+                recordedAt: batch.main_paid_recorded_at ? new Date(batch.main_paid_recorded_at).toISOString() : null,
+                recordedBy: toActor(batch.main_paid_by_first_name, batch.main_paid_by_last_name, batch.main_paid_by_role),
+              }
+            : null,
       },
       recordedBy: toActor(batch.recorder_first_name, batch.recorder_last_name, batch.recorder_role),
     },
@@ -150,6 +167,7 @@ function toPublicBatch(batch, rows) {
       charge: r.charge_id ? { id: r.charge_id, status: r.charge_status } : null,
     })),
     totals: computeTotals(batch, rows),
+    point,
   };
 }
 
@@ -166,7 +184,8 @@ async function respondBatch(res, tenantId, batchId, scopeAgentId = null) {
   const batch = await loadBatch(tenantId, batchId, scopeAgentId);
   batch.loss_allocation = await loadLossAllocation(batch.property_id, batch.utility_type);
   const rows = await loadRows(tenantId, batch);
-  res.json(toPublicBatch(batch, rows));
+  const point = batch.status === 'valide' ? await getBatchPoint(tenantId, batchId) : null;
+  res.json(toPublicBatch(batch, rows, point));
 }
 
 // ── Configuration du sous-comptage d'un Bien ─────────────────────────────
@@ -287,6 +306,7 @@ router.get('/properties/:propertyId/utility-batches', async (req, res, next) => 
           subAmount,
           mainConsumption,
           mainAmount,
+          mainPaidAmount: num(b.main_paid_amount),
           differenceConsumption: mainConsumption != null ? mainConsumption - subConsumption : null,
           differenceAmount: mainAmount != null ? mainAmount - subAmount : null,
         };
@@ -438,6 +458,114 @@ router.patch('/utility-batches/:id', async (req, res, next) => {
   }
 });
 
+// PUT /api/utility-batches/:id/main-payment  { amount, paidAt, paymentMethod?, notes? }
+// Enregistre (ou corrige) le paiement de la facture mère par le propriétaire.
+// Mémo pur : aucun mouvement de caisse du cabinet, donc ni verrou de période
+// ni écriture comptable.
+router.put('/utility-batches/:id/main-payment', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+  const parsed = mainPaymentSchema.safeParse(req.body);
+  if (!parsed.success) return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  const d = parsed.data;
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadBatch(req.user.tenantId, id, scopeAgentId);
+    await pool.query(
+      `UPDATE utility_reading_batches
+       SET main_paid_amount = :amount, main_paid_at = :paidAt, main_paid_method = :method, main_paid_notes = :notes,
+           main_paid_recorded_by = :by, main_paid_recorded_at = NOW()
+       WHERE id = :id AND tenant_id = :tenantId`,
+      {
+        amount: d.amount,
+        paidAt: d.paidAt,
+        method: d.paymentMethod ?? null,
+        notes: d.notes,
+        by: req.user.id,
+        id,
+        tenantId: req.user.tenantId,
+      },
+    );
+    logger.info('Paiement de la facture mère enregistré', { tenantId: req.user.tenantId, batchId: id, amount: d.amount, by: req.user.id });
+    await respondBatch(res, req.user.tenantId, id, scopeAgentId);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/utility-batches/:id/main-payment — annule la déclaration de paiement.
+router.delete('/utility-batches/:id/main-payment', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const batch = await loadBatch(req.user.tenantId, id, scopeAgentId);
+    if (batch.main_paid_amount == null) throw new ApiError(409, 'Aucun paiement de facture mère enregistré pour ce relevé.');
+    await pool.query(
+      `UPDATE utility_reading_batches
+       SET main_paid_amount = NULL, main_paid_at = NULL, main_paid_method = NULL, main_paid_notes = NULL,
+           main_paid_recorded_by = NULL, main_paid_recorded_at = NULL
+       WHERE id = :id AND tenant_id = :tenantId`,
+      { id, tenantId: req.user.tenantId },
+    );
+    logger.info('Paiement de la facture mère annulé', { tenantId: req.user.tenantId, batchId: id, by: req.user.id });
+    await respondBatch(res, req.user.tenantId, id, scopeAgentId);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/utility-point?ownerId=&propertyId=&from=YYYY-MM&to=YYYY-MM
+// Le point des charges : facture mère payée vs encaissé chez les locataires,
+// par propriétaire. Défaut : les 6 derniers mois (mois de début du relevé).
+// Avec `ownerId` : renvoie en plus le carnet complet de ce propriétaire
+// (entrées, reversements, solde à reverser). Le solde à reverser est un solde
+// de bout en bout d'un propriétaire : jamais exposé à un agent restreint.
+router.get('/utility-point', async (req, res, next) => {
+  try {
+    const ownerId = req.query.ownerId != null ? Number(req.query.ownerId) : null;
+    const propertyId = req.query.propertyId != null ? Number(req.query.propertyId) : null;
+    if ((ownerId != null && !Number.isInteger(ownerId)) || (propertyId != null && !Number.isInteger(propertyId))) {
+      throw new ApiError(400, 'Identifiant invalide');
+    }
+    const { fromMonth, toMonth } = resolveMonthWindow(req.query.from, req.query.to);
+
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const result = await getUtilityPoint(req.user.tenantId, { ownerId, propertyId, fromMonth, toMonth, scopeAgentId });
+
+    if (scopeAgentId == null) {
+      const accounts = await getChargeAccounts(pool, req.user.tenantId);
+      for (const o of result.owners) o.account = accounts.get(o.ownerId) ?? { collected: 0, remitted: 0, balance: 0 };
+    }
+
+    let carnet = null;
+    if (ownerId != null) {
+      const [ownerRows] = await pool.query('SELECT id, name FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
+        id: ownerId,
+        tenantId: req.user.tenantId,
+      });
+      if (!ownerRows[0]) throw new ApiError(404, 'Propriétaire introuvable');
+      carnet = await getOwnerCarnet(req.user.tenantId, ownerId, { fromMonth, toMonth, scopeAgentId });
+    }
+    res.json({ from: fromMonth, to: toMonth, ...result, carnet });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/utility-alerts — ce qui fait perdre de l'argent au propriétaire ou
+// laisse le carnet incomplet (voir services/utilityAlerts.js).
+router.get('/utility-alerts', async (req, res, next) => {
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const alerts = await listUtilityAlerts(req.user.tenantId, { scopeAgentId });
+    res.json({ alerts });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/utility-batches/:id/validate — génère les factures, verrouille.
 router.post('/utility-batches/:id/validate', async (req, res, next) => {
   const id = Number(req.params.id);
@@ -566,8 +694,11 @@ router.post('/utility-batches/:id/reopen', async (req, res, next) => {
        WHERE r.batch_id = :id`,
       { id },
     );
-    if (linked.some((c) => c.status === 'payee')) {
-      throw new ApiError(409, 'Une facture générée par ce relevé est déjà payée — impossible de rouvrir.');
+    // Un règlement partiel compte aussi : rouvrir supprime les factures, et
+    // leurs règlements partent avec (ON DELETE CASCADE) — l'argent encaissé
+    // disparaîtrait des livres sans trace.
+    if (linked.some((c) => c.status !== 'impayee')) {
+      throw new ApiError(409, 'Une facture générée par ce relevé a déjà reçu un règlement (même partiel) — impossible de rouvrir.');
     }
 
     await conn.beginTransaction();

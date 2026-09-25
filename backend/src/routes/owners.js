@@ -8,12 +8,16 @@ const {
   createOwnerSchema,
   updateOwnerSchema,
   createPayoutSchema,
+  createChargeRemittanceSchema,
+  cancelChargeRemittanceSchema,
   updateCommissionRateSchema,
 } = require('../validators/owners');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
-const { streamOwnerStatementPdf } = require('../services/pdf');
+const { streamOwnerStatementPdf, streamUtilityCarnetPdf } = require('../services/pdf');
 const { getEscrowBalances, getUnpaidOpeningDebtByOwner, pickRateValidAt, assertPayoutWithinBalance } = require('../services/commission');
 const { toActor } = require('../utils/actor');
+const { getChargeAccount, assertRemittanceWithinBalance, listRemittances } = require('../services/utilityRemittance');
+const { getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { resolvePropertyScope } = require('../services/scope');
@@ -269,6 +273,10 @@ router.get('/:id', canRead, async (req, res, next) => {
     const escrowBalances = await getEscrowBalances(req.user.tenantId);
     const escrow = escrowBalances.get(id) ?? { totalCollected: 0, totalPayouts: 0, balance: 0 };
     const unpaidOpeningDebtByOwner = await getUnpaidOpeningDebtByOwner(req.user.tenantId);
+    // Charges SONEB/SBEE encaissées à reverser (étape 31) — solde de bout en
+    // bout du propriétaire, jamais scopé par agent (comme le séquestre ci-dessus).
+    const chargesAccount = await getChargeAccount(pool, req.user.tenantId, id);
+    const chargeRemittances = await listRemittances(pool, req.user.tenantId, id, { limit: 100 });
 
     res.json({
       owner: toPublicOwner(owner),
@@ -281,6 +289,18 @@ router.get('/:id', canRead, async (req, res, next) => {
       // Dette initiale des locataires non encore réglée — volontairement à
       // part du solde séquestre ci-dessus (voir `getUnpaidOpeningDebtByOwner`).
       openingDebtUnpaid: unpaidOpeningDebtByOwner.get(id) ?? 0,
+      chargesAccount,
+      chargeRemittances: chargeRemittances.map((r) => ({
+        id: r.id,
+        amount: r.amount,
+        periodLabel: r.periodLabel,
+        paidAt: r.paidAt,
+        paymentMethod: r.paymentMethod,
+        paymentMethodLabel: PAYMENT_METHOD_LABELS[r.paymentMethod] ?? r.paymentMethod,
+        notes: r.notes,
+        recordedBy: toActor(r.byFirstName, r.byLastName, r.byRole),
+        createdAt: r.createdAt,
+      })),
       payouts: payoutRows.map((p) => ({
         id: p.id,
         amount: Number(p.amount),
@@ -434,6 +454,116 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
   }
 });
 
+// POST /api/owners/:id/charge-remittances — reverser au propriétaire des
+// charges SONEB/SBEE déjà encaissées chez ses locataires (étape 31). Le solde
+// est réévalué DANS la transaction, sous verrou de la fiche propriétaire :
+// deux reversements simultanés ne peuvent pas dépasser ensemble ce qui a été
+// encaissé. Aucune écriture comptable automatique — voir migration 063.
+router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = createChargeRemittanceSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    await assertPeriodOpen(req.user.tenantId, data.paidAt);
+
+    await conn.beginTransaction();
+    await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
+      id,
+      tenantId: req.user.tenantId,
+    });
+    await assertRemittanceWithinBalance(conn, req.user.tenantId, id, data.amount);
+
+    const [result] = await conn.query(
+      `INSERT INTO owner_charge_remittances (tenant_id, owner_id, amount, period_label, paid_at, payment_method, notes, recorded_by)
+       VALUES (:tenantId, :ownerId, :amount, :periodLabel, :paidAt, :paymentMethod, :notes, :recordedBy)`,
+      {
+        tenantId: req.user.tenantId,
+        ownerId: id,
+        amount: data.amount,
+        periodLabel: data.periodLabel,
+        paidAt: data.paidAt,
+        paymentMethod: data.paymentMethod,
+        notes: data.notes,
+        recordedBy: req.user.id,
+      },
+    );
+    await conn.commit();
+
+    const glActive = await isModuleActive(pool, req.user.tenantId);
+    logger.info('Reversement de charges au propriétaire enregistré', {
+      tenantId: req.user.tenantId,
+      ownerId: id,
+      remittanceId: result.insertId,
+      amount: data.amount,
+      by: req.user.id,
+    });
+    res.status(201).json({
+      remittanceId: result.insertId,
+      // Comptabilité avancée active : ce reversement n'est PAS comptabilisé
+      // automatiquement (règle à valider avec l'expert-comptable — B2).
+      accountingNote: glActive
+        ? "Comptabilité avancée : ce reversement de charges n'est pas encore comptabilisé automatiquement (règle à valider avec votre expert-comptable)."
+        : null,
+    });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// DELETE /api/owners/:id/charge-remittances/:remittanceId  { reason } — annulation
+// logique d'un reversement mal saisi : la trace reste, le montant redevient « à reverser ».
+router.delete('/:id/charge-remittances/:remittanceId', canPayout, async (req, res, next) => {
+  const id = Number(req.params.id);
+  const remittanceId = Number(req.params.remittanceId);
+  if (!Number.isInteger(id) || !Number.isInteger(remittanceId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = cancelChargeRemittanceSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Justification requise', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    const [rows] = await pool.query(
+      'SELECT id, paid_at, amount, deleted_at FROM owner_charge_remittances WHERE id = :remittanceId AND owner_id = :id AND tenant_id = :tenantId LIMIT 1',
+      { remittanceId, id, tenantId: req.user.tenantId },
+    );
+    if (!rows[0]) throw new ApiError(404, 'Reversement introuvable');
+    if (rows[0].deleted_at) throw new ApiError(409, 'Ce reversement est déjà annulé.');
+    await assertPeriodOpen(req.user.tenantId, isoDate(rows[0].paid_at));
+
+    await pool.query(
+      `UPDATE owner_charge_remittances
+       SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason
+       WHERE id = :remittanceId AND deleted_at IS NULL`,
+      { by: req.user.id, reason: parsed.data.reason, remittanceId },
+    );
+    logger.info('Reversement de charges annulé', {
+      tenantId: req.user.tenantId,
+      ownerId: id,
+      remittanceId,
+      by: req.user.id,
+      reason: parsed.data.reason,
+    });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PUT /api/owners/:id/commission-rate — nouveau taux de commission (DG
 // uniquement). Ne modifie JAMAIS un taux existant : clôture le taux actif
 // (`ends_on` = la veille du nouveau départ) et insère le nouveau, dans une
@@ -503,6 +633,25 @@ router.put('/:id/commission-rate', canCommission, async (req, res, next) => {
   }
 });
 
+// GET /api/owners/:id/carnet-charges.pdf?from=AAAA-MM&to=AAAA-MM — carnet des
+// charges SONEB/SBEE (point par relevé, entrées, reversements). Employé :
+// téléchargements illimités, sans code de vérification (comme le relevé).
+router.get('/:id/carnet-charges.pdf', requireAnyPermission('charges', 'proprietaires', 'comptabilite'), async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const { fromMonth, toMonth } = resolveMonthWindow(req.query.from, req.query.to);
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    const carnet = await getOwnerCarnet(req.user.tenantId, id, { fromMonth, toMonth, scopeAgentId });
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+    streamUtilityCarnetPdf(res, { tenant: tenantRows[0], owner, carnet });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/owners/:id/statement.pdf — relevé (patrimoine + historique des versements).
 router.get('/:id/statement.pdf', canReadDocs, async (req, res, next) => {
   const id = Number(req.params.id);
@@ -542,9 +691,14 @@ router.get('/:id/statement.pdf', canReadDocs, async (req, res, next) => {
       id: req.user.tenantId,
     });
 
+    // Charges SONEB/SBEE des 6 derniers mois (étape 31) — dans la portée de l'agent, comme les unités.
+    const { fromMonth, toMonth } = resolveMonthWindow();
+    const charges = await getOwnerCarnet(req.user.tenantId, id, { fromMonth, toMonth, scopeAgentId });
+
     streamOwnerStatementPdf(res, {
       tenant: tenantRows[0],
       owner,
+      charges,
       units: unitRows.map((u) => ({
         propertyCode: u.property_code,
         address: u.address,

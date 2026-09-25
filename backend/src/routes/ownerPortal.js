@@ -19,7 +19,8 @@ const { ApiError } = require('../middleware/error');
 const { requireOwnerPortalToken } = require('../middleware/portalAuth');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { getRecetteProprietaire } = require('../services/commission');
-const { streamOwnerStatementPdf } = require('../services/pdf');
+const { streamOwnerStatementPdf, streamUtilityCarnetPdf } = require('../services/pdf');
+const { getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 
 const router = Router();
@@ -138,6 +139,12 @@ router.get('/:token', async (req, res, next) => {
       { ownerId },
     );
 
+    // Carnet des charges SONEB/SBEE (étape 31) : les 6 mois se terminant au
+    // mois choisi — ce que le propriétaire a payé à la SONEB/SBEE face à ce
+    // qui a été encaissé chez ses locataires, et ce qui lui a été reversé.
+    const { fromMonth, toMonth } = resolveMonthWindow(null, yearMonth);
+    const charges = await getOwnerCarnet(tenantId, ownerId, { fromMonth, toMonth });
+
     res.json({
       tenant: {
         companyName: tenantRows[0]?.company_name ?? null,
@@ -145,6 +152,7 @@ router.get('/:token', async (req, res, next) => {
       },
       owner: { name },
       properties,
+      charges,
       recette: {
         yearMonth,
         byProperty: properties.map((p, i) => ({
@@ -201,9 +209,13 @@ router.get('/:token/statement.pdf', async (req, res, next) => {
     const issuance = await getOrCreateIssuance(tenantId, 'releve_proprietaire', ownerId);
     await registerDownload(issuance);
 
+    const { fromMonth, toMonth } = resolveMonthWindow();
+    const charges = await getOwnerCarnet(tenantId, ownerId, { fromMonth, toMonth });
+
     streamOwnerStatementPdf(res, {
       tenant: tenantRows[0],
       owner: ownerRows[0],
+      charges,
       verificationCode: issuance.verification_code,
       units: unitRows.map((u) => ({
         propertyCode: u.property_code,
@@ -220,6 +232,33 @@ router.get('/:token/statement.pdf', async (req, res, next) => {
         paidAt: p.paid_at,
         paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
       })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/owner-portal/:token/carnet-charges.pdf?from=AAAA-MM&to=AAAA-MM — son
+// carnet des charges SONEB/SBEE. Limite de 5 téléchargements + code de
+// vérification (étape 29), comme son relevé : un seul carnet « courant » par
+// propriétaire (le code atteste que le document émane bien du cabinet).
+router.get('/:token/carnet-charges.pdf', async (req, res, next) => {
+  try {
+    const { id: ownerId, tenantId } = req.portalOwner;
+    const { fromMonth, toMonth } = resolveMonthWindow(req.query.from, req.query.to);
+
+    const [ownerRows] = await pool.query('SELECT * FROM owners WHERE id = :id LIMIT 1', { id: ownerId });
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    const carnet = await getOwnerCarnet(tenantId, ownerId, { fromMonth, toMonth });
+
+    const issuance = await getOrCreateIssuance(tenantId, 'carnet_charges', ownerId);
+    await registerDownload(issuance);
+
+    streamUtilityCarnetPdf(res, {
+      tenant: tenantRows[0],
+      owner: ownerRows[0],
+      carnet,
+      verificationCode: issuance.verification_code,
     });
   } catch (err) {
     next(err);

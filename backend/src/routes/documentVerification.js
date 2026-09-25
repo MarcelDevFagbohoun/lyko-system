@@ -30,6 +30,7 @@ const DOCUMENT_TYPE_LABELS = {
   quittance: 'Quittance de loyer',
   attestation: 'Attestation de location',
   releve_proprietaire: 'Relevé propriétaire',
+  carnet_charges: 'Carnet des charges SONEB/SBEE',
 };
 
 // GET /api/verify/:code

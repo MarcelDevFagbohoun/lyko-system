@@ -155,6 +155,7 @@ Le moteur de partie double est **rigoureux** : équilibre garanti structurelleme
 ## Points à faire valider par un expert-comptable
 1. Le compte 4671 (« Propriétaires mandants ») pour le mandat de gestion locative — déjà signalé dans le code comme une approximation (SYSCOHADA ne prévoit pas de compte officiel dédié).
 2. L'usage du compte 411 pour la part reversée d'une charge SONEB/SBEE (B2).
+   *Complément (2026-09-25) :* le reversement au propriétaire des charges encaissées (étape 31) n'est volontairement **pas** comptabilisé automatiquement en comptabilité avancée — le compte à débiter dépend de cette même décision. À trancher avec l'expert-comptable avant d'automatiser.
 3. La base de calcul de l'IRF — brut vs. net de commission (B3).
 4. La comptabilité de trésorerie pure pour le loyer (`loyer_encaisse` constate le produit à l'encaissement effectif, jamais de créance 411 à l'échéance) — déjà annoté « hypothèse majeure à valider » dans le code.
 5. Toute règle métier de correction proposée pour A1/A2/A3 ci-dessus, qui touche à la fois la comptabilité et la relation commerciale avec les locataires/propriétaires.

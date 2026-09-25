@@ -810,6 +810,330 @@ const PAYMENT_METHOD_LABELS = {
 
 const UNIT_STATUS_LABELS = { libre: 'Libre', loue: 'Loué', reserve: 'Réservé' };
 
+// ────────────────────────────────────────────────────────────────────────
+// Carnet des charges SONEB/SBEE (étape 31)
+// ────────────────────────────────────────────────────────────────────────
+
+const POINT_STATUS_LABELS = {
+  paiement_non_renseigne: 'Paiement à déclarer',
+  a_recouvrer: 'À recouvrer',
+  a_charge_proprietaire: 'À charge du propriétaire',
+  solde: 'Soldé',
+};
+const POINT_STATUS_COLORS = {
+  paiement_non_renseigne: MUTED,
+  a_recouvrer: WARNING_FG,
+  a_charge_proprietaire: DANGER_FG,
+  solde: SUCCESS_FG,
+};
+const UTILITY_SHORT = { soneb: 'SONEB', sbee: 'SBEE' };
+const PAYMENT_METHOD_SHORT = { especes: 'Espèces', mobile_money: 'Mobile M.', virement: 'Virement', cheque: 'Chèque', kkiapay: 'En ligne' };
+// Limite basse du contenu avant de basculer sur une nouvelle page (le pied de page occupe y ≥ 772).
+const CONTENT_BOTTOM = 715;
+
+/** Montant sans suffixe, pour les colonnes de tableau (l'unité FCFA est rappelée en en-tête). */
+function formatAmountPlain(amount) {
+  return formatFcfa(amount).replace(' FCFA', '');
+}
+
+/** Texte sur UNE ligne, tronqué avec « … » s'il dépasse la colonne (jamais de retour à la ligne : la hauteur d'une ligne de tableau reste fixe). */
+function cellText(doc, text, x, y, width, { font = FONT_SANS, size = 9, color = INK, align = 'left' } = {}) {
+  doc.font(font).fontSize(size).fillColor(color);
+  let t = String(text ?? '');
+  if (doc.widthOfString(t) > width) {
+    while (t.length > 1 && doc.widthOfString(`${t}…`) > width) t = t.slice(0, -1);
+    t = `${t.trimEnd()}…`;
+  }
+  doc.text(t, x, y, { width, align, lineBreak: false });
+}
+
+function drawTableHeader(doc, columns, y) {
+  doc.font(FONT_SANS_BOLD).fontSize(7.5).fillColor(MUTED);
+  for (const c of columns) {
+    doc.text(c.label, c.x, y, { width: c.width, align: c.align ?? 'left', characterSpacing: 0.3, lineBreak: false });
+  }
+  const lineY = y + 13;
+  doc.moveTo(50, lineY).lineTo(545, lineY).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
+  return lineY + 8;
+}
+
+/** Passe à une nouvelle page si la place manque, en redessinant l'en-tête de tableau. */
+function ensureRoom(doc, y, needed, columns) {
+  if (y + needed <= CONTENT_BOTTOM) return y;
+  doc.addPage();
+  return columns ? drawTableHeader(doc, columns, 50) : 50;
+}
+
+const POINT_COLUMNS = [
+  { label: 'RELEVÉ', x: 50, width: 150 },
+  { label: 'FACTURE MÈRE', x: 205, width: 70, align: 'right' },
+  { label: 'FACTURÉ', x: 280, width: 65, align: 'right' },
+  { label: 'ENCAISSÉ', x: 350, width: 65, align: 'right' },
+  { label: 'RESTE', x: 420, width: 55, align: 'right' },
+  { label: 'STATUT', x: 482, width: 63 },
+];
+
+/** Tableau « point par relevé » : facture mère payée, facturé, encaissé, reste au propriétaire. */
+function drawPointTable(doc, batches, totals, y) {
+  y = drawTableHeader(doc, POINT_COLUMNS, y);
+  for (const b of batches) {
+    y = ensureRoom(doc, y, 30, POINT_COLUMNS);
+    const [c0, c1, c2, c3, c4, c5] = POINT_COLUMNS;
+    cellText(doc, `${b.propertyCode} · ${UTILITY_SHORT[b.utilityType] ?? b.utilityType}`, c0.x, y, c0.width, { font: FONT_SANS_BOLD });
+    cellText(doc, formatMonthLabel(b.periodStart.slice(0, 7)), c0.x, y + 11, c0.width, { size: 7.5, color: MUTED });
+    const invoice = b.mainPaid != null ? b.mainPaid : b.mainInvoice;
+    cellText(doc, invoice != null ? formatAmountPlain(invoice) : '—', c1.x, y, c1.width, {
+      font: FONT_MONO_BOLD, size: 8.5, align: 'right', color: b.mainPaid != null ? INK : MUTED,
+    });
+    cellText(doc, b.mainPaid != null ? `payée le ${formatDateSlash(b.mainPaidAt)}` : 'non déclarée', c1.x - 10, y + 11, c1.width + 10, {
+      size: 6.5, color: MUTED, align: 'right',
+    });
+    cellText(doc, formatAmountPlain(b.billed), c2.x, y, c2.width, { font: FONT_MONO_BOLD, size: 8.5, align: 'right' });
+    cellText(doc, formatAmountPlain(b.collected), c3.x, y, c3.width, { font: FONT_MONO_BOLD, size: 8.5, align: 'right' });
+    cellText(doc, b.gap != null ? formatAmountPlain(b.gap) : '—', c4.x, y, c4.width, {
+      font: FONT_MONO_BOLD, size: 8.5, align: 'right', color: b.gap != null && b.gap > 0 ? DANGER_FG : INK,
+    });
+    cellText(doc, POINT_STATUS_LABELS[b.status] ?? b.status, c5.x, y, c5.width, {
+      size: 7, color: POINT_STATUS_COLORS[b.status] ?? MUTED,
+    });
+    y += 30;
+  }
+  // Ligne de total (uniquement sur les relevés dont la facture mère est déclarée payée pour « reste »).
+  y = ensureRoom(doc, y, 26, POINT_COLUMNS);
+  doc.moveTo(50, y - 4).lineTo(545, y - 4).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
+  const [c0, c1, c2, c3, c4] = POINT_COLUMNS;
+  cellText(doc, 'Total', c0.x, y + 2, c0.width, { font: FONT_SANS_BOLD });
+  cellText(doc, formatAmountPlain(totals.mainPaidTotal), c1.x, y + 2, c1.width, { font: FONT_MONO_BOLD, size: 8.5, align: 'right' });
+  cellText(doc, formatAmountPlain(totals.billedTotal), c2.x, y + 2, c2.width, { font: FONT_MONO_BOLD, size: 8.5, align: 'right' });
+  cellText(doc, formatAmountPlain(totals.collectedTotal), c3.x, y + 2, c3.width, { font: FONT_MONO_BOLD, size: 8.5, align: 'right' });
+  cellText(doc, formatAmountPlain(totals.gapTotal), c4.x, y + 2, c4.width, {
+    font: FONT_MONO_BOLD, size: 8.5, align: 'right', color: totals.gapTotal > 0 ? DANGER_FG : SUCCESS_FG,
+  });
+  return y + 26;
+}
+
+/** Panneau de synthèse : le point (facture mère payée vs encaissé) puis, si connu, le compte à reverser. */
+function drawCarnetSummary(doc, carnet, y) {
+  const t = carnet.totals;
+  const rows = [
+    ['Facture mère payée par le propriétaire', formatFcfa(t.mainPaidTotal), INK],
+    ['Encaissé chez les locataires (relevés)', formatFcfa(t.collectedTotal), INK],
+    ['Impayés des locataires (encore récupérables)', formatFcfa(t.tenantUnpaidTotal), t.tenantUnpaidTotal > 0 ? WARNING_FG : INK],
+    ['Consommation non refacturée', formatFcfa(t.nonRebilledTotal), INK],
+    ['Reste à la charge du propriétaire', formatFcfa(t.gapTotal), t.gapTotal > 0 ? DANGER_FG : SUCCESS_FG],
+  ];
+  const height = rows.length * 17 + 16;
+  drawPanel(doc, 50, y, 495, height);
+  rows.forEach(([label, value, color], i) => {
+    const last = i === rows.length - 1;
+    drawPanelRow(doc, label, value, 66, y + 10 + i * 17, { labelWidth: 290, valueWidth: 155, valueColor: color, fontSize: last ? 10.5 : 9.5 });
+  });
+  y += height + 8;
+
+  if (t.pendingPaymentCount > 0) {
+    doc.font(FONT_SANS).fontSize(8).fillColor(WARNING_FG).text(
+      `${t.pendingPaymentCount} facture(s) mère(s) (${formatFcfa(t.pendingInvoiceAmount)}) pas encore déclarée(s) payée(s) : non comptée(s) dans le reste ci-dessus.`,
+      50, y, { width: 495 },
+    );
+    y = doc.y + 8;
+  }
+
+  if (carnet.account) {
+    const a = carnet.account;
+    const accRows = [
+      ['Charges encaissées à ce jour (toutes factures)', formatFcfa(a.collected), INK],
+      ['Déjà reversées au propriétaire', formatFcfa(a.remitted), INK],
+      ['Reste à reverser au propriétaire', formatFcfa(a.balance), PRIMARY],
+    ];
+    const accHeight = accRows.length * 17 + 16;
+    drawPanel(doc, 50, y, 495, accHeight, { fill: PRIMARY_BG, stroke: PRIMARY_BORDER });
+    accRows.forEach(([label, value, color], i) => {
+      const last = i === accRows.length - 1;
+      drawPanelRow(doc, label, value, 66, y + 10 + i * 17, { labelWidth: 290, valueWidth: 155, valueColor: color, fontSize: last ? 10.5 : 9.5 });
+    });
+    y += accHeight + 8;
+  }
+  return y;
+}
+
+const ENTRY_COLUMNS = [
+  { label: 'DATE', x: 50, width: 55 },
+  { label: 'LOCATAIRE', x: 108, width: 130 },
+  { label: 'BIEN · UNITÉ', x: 241, width: 90 },
+  { label: 'FLUIDE · PÉRIODE', x: 334, width: 90 },
+  { label: 'MODE', x: 427, width: 45 },
+  { label: 'MONTANT', x: 475, width: 70, align: 'right' },
+];
+
+/** Carnet des entrées : chaque règlement de charge reçu d'un locataire. */
+function drawEntriesTable(doc, entries, y) {
+  if (entries.items.length === 0) {
+    doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text('Aucune charge encaissée sur cette période.', 50, y);
+    return doc.y + 10;
+  }
+  y = drawTableHeader(doc, ENTRY_COLUMNS, y);
+  for (const e of entries.items) {
+    y = ensureRoom(doc, y, 18, ENTRY_COLUMNS);
+    const [c0, c1, c2, c3, c4, c5] = ENTRY_COLUMNS;
+    cellText(doc, formatDateSlash(e.paidAt), c0.x, y, c0.width, { font: FONT_MONO, size: 8.5 });
+    cellText(doc, e.renterName, c1.x, y, c1.width);
+    // Les codes d'unité reprennent déjà celui du Bien (« AUD-002-U03 ») : ne pas le répéter.
+    const unitLabel = e.unitCode.startsWith(e.propertyCode) ? e.unitCode : `${e.propertyCode} · ${e.unitCode}`;
+    cellText(doc, unitLabel, c2.x, y, c2.width, { color: INK_SOFT, size: 8.5 });
+    cellText(doc, `${UTILITY_SHORT[e.utilityType] ?? e.utilityType} ${formatMonthLabel(e.periodStart.slice(0, 7))}${e.batchId == null ? ' (indiv.)' : ''}`, c3.x, y, c3.width, { color: INK_SOFT, size: 8 });
+    cellText(doc, PAYMENT_METHOD_SHORT[e.paymentMethod] ?? e.paymentMethod, c4.x, y, c4.width, { color: MUTED, size: 7.5 });
+    cellText(doc, formatAmountPlain(e.amount), c5.x, y, c5.width, { font: FONT_MONO_BOLD, size: 8.5, align: 'right' });
+    y += 18;
+  }
+  y = ensureRoom(doc, y, 22, ENTRY_COLUMNS);
+  doc.moveTo(50, y - 3).lineTo(545, y - 3).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
+  cellText(doc, `Total encaissé (${entries.items.length} règlement${entries.items.length > 1 ? 's' : ''})`, 50, y + 2, 300, { font: FONT_SANS_BOLD });
+  cellText(doc, formatAmountPlain(entries.total), 475, y + 2, 70, { font: FONT_MONO_BOLD, size: 9, align: 'right' });
+  y += 22;
+  if (entries.outsideBatchesTotal > 0) {
+    doc.font(FONT_SANS).fontSize(7.5).fillColor(MUTED).text(
+      `dont ${formatFcfa(entries.outsideBatchesTotal)} de factures individuelles saisies hors relevé de compteurs (« indiv. »), absentes du tableau « point par relevé ».`,
+      50, y, { width: 495 },
+    );
+    y = doc.y + 6;
+  }
+  return y;
+}
+
+const REMITTANCE_COLUMNS = [
+  { label: 'DATE', x: 50, width: 70 },
+  { label: 'LIBELLÉ', x: 125, width: 230 },
+  { label: 'MODE', x: 360, width: 100 },
+  { label: 'MONTANT', x: 465, width: 80, align: 'right' },
+];
+
+function drawRemittancesTable(doc, remittances, y, { emptyText = 'Aucun reversement sur cette période.' } = {}) {
+  if (remittances.length === 0) {
+    doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text(emptyText, 50, y);
+    return doc.y + 10;
+  }
+  y = drawTableHeader(doc, REMITTANCE_COLUMNS, y);
+  for (const r of remittances) {
+    y = ensureRoom(doc, y, 18, REMITTANCE_COLUMNS);
+    const [c0, c1, c2, c3] = REMITTANCE_COLUMNS;
+    cellText(doc, formatDateSlash(r.paidAt), c0.x, y, c0.width, { font: FONT_MONO, size: 8.5 });
+    cellText(doc, r.periodLabel || r.notes || '—', c1.x, y, c1.width, { size: 8.5 });
+    cellText(doc, PAYMENT_METHOD_LABELS[r.paymentMethod] ?? r.paymentMethod, c2.x, y, c2.width, { color: MUTED, size: 8.5 });
+    cellText(doc, formatAmountPlain(r.amount), c3.x, y, c3.width, { font: FONT_MONO_BOLD, size: 8.5, align: 'right' });
+    y += 18;
+  }
+  return y + 4;
+}
+
+function periodLabelFr(from, to) {
+  // Pas de flèche « → » : absente de l'alphabet WinAnsi des polices PDF standard (rendue en caractères parasites).
+  const deMonth = (ym) => (/^[aeiou]/i.test(formatMonthLabel(ym)) ? `d'${formatMonthLabel(ym)}` : `de ${formatMonthLabel(ym)}`);
+  return from === to ? formatMonthLabel(from) : `${deMonth(from)} à ${formatMonthLabel(to)}`;
+}
+
+function safeFilenamePart(name) {
+  return String(name).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'proprietaire';
+}
+
+/**
+ * Carnet des charges SONEB/SBEE d'un propriétaire (étape 31) : le point par
+ * relevé (facture mère payée vs encaissé), le carnet des entrées (chaque
+ * règlement reçu d'un locataire) et les reversements au propriétaire.
+ * `verificationCode` : seulement pour la copie remise via le portail (cap de
+ * 5 téléchargements + code de vérification, comme le relevé propriétaire).
+ */
+function streamUtilityCarnetPdf(res, { tenant, owner, carnet, verificationCode }) {
+  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="carnet-charges-${safeFilenamePart(owner.name)}.pdf"`);
+  doc.pipe(res);
+
+  drawHeader(doc, tenant);
+
+  const topY = doc.y;
+  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('CARNET DES CHARGES', 50, topY, { width: 300 });
+  doc.font(FONT_SANS).fontSize(10).fillColor(MUTED).text('Eau (SONEB) et électricité (SBEE)', 50, doc.y);
+
+  const metaX = 335;
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Période', metaX, topY + 3, { width: 210, align: 'right' });
+  doc.font(FONT_SANS_BOLD).fontSize(10).fillColor(INK).text(periodLabelFr(carnet.from, carnet.to), metaX, topY + 14, { width: 210, align: 'right' });
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Généré le', metaX, topY + 30, { width: 210, align: 'right' });
+  doc.font(FONT_MONO_BOLD).fontSize(10).fillColor(INK).text(formatDateFr(new Date().toISOString().slice(0, 10)), metaX, topY + 41, { width: 210, align: 'right' });
+
+  let y = Math.max(doc.y, topY + 41 + 17) + 12;
+
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('PROPRIÉTAIRE', 50, y, { characterSpacing: 0.6 });
+  y += 13;
+  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(INK).text(owner.name, 50, y);
+  y += 15;
+  if (owner.phone) {
+    doc.font(FONT_MONO).fontSize(9).fillColor(MUTED).text(owner.phone, 50, y);
+    y += 13;
+  }
+  y += 10;
+
+  y = drawCarnetSummary(doc, carnet, y) + 8;
+
+  y = ensureRoom(doc, y, 90, null);
+  doc.font(FONT_SANS_BOLD).fontSize(12).fillColor(INK).text('Point par relevé', 50, y);
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Montants en FCFA', 50, y + 3, { width: 495, align: 'right' });
+  y = doc.y + 8;
+  if (carnet.batches.length === 0) {
+    doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text('Aucun relevé validé sur cette période.', 50, y);
+    y = doc.y + 14;
+  } else {
+    y = drawPointTable(doc, carnet.batches, carnet.totals, y) + 6;
+  }
+
+  y = ensureRoom(doc, y, 90, null);
+  doc.font(FONT_SANS_BOLD).fontSize(12).fillColor(INK).text('Entrées : charges payées par les locataires', 50, y);
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Montants en FCFA', 50, y + 3, { width: 495, align: 'right' });
+  y = doc.y + 8;
+  y = drawEntriesTable(doc, carnet.entries, y) + 10;
+
+  y = ensureRoom(doc, y, 80, null);
+  doc.font(FONT_SANS_BOLD).fontSize(12).fillColor(INK).text('Reversements au propriétaire (sur la période)', 50, y);
+  y = doc.y + 8;
+  y = drawRemittancesTable(doc, carnet.remittances, y);
+  if (carnet.remittances.length > 0) {
+    y = ensureRoom(doc, y, 20, null);
+    cellText(doc, `Total reversé sur la période`, 50, y, 300, { font: FONT_SANS_BOLD });
+    cellText(doc, formatAmountPlain(carnet.remittedInWindow), 465, y, 80, { font: FONT_MONO_BOLD, size: 9, align: 'right' });
+  }
+
+  drawFooter(doc, { verificationCode });
+  doc.end();
+}
+
+/** Section « Charges SONEB / SBEE » du relevé propriétaire : version compacte du carnet. */
+function drawChargesStatementSection(doc, charges, y) {
+  y = ensureRoom(doc, y, 150, null);
+  doc.font(FONT_SANS_BOLD).fontSize(12).fillColor(INK).text('Charges SONEB / SBEE', 50, y);
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text(periodLabelFr(charges.from, charges.to), 50, y + 3, { width: 495, align: 'right' });
+  y = doc.y + 8;
+
+  if (charges.batches.length === 0 && !charges.account) {
+    doc.font(FONT_SANS).fontSize(9).fillColor(MUTED).text('Aucun relevé de charges validé sur cette période.', 50, y);
+    return doc.y + 10;
+  }
+  y = drawCarnetSummary(doc, charges, y);
+  if (charges.batches.length > 0) {
+    y = ensureRoom(doc, y, 80, null);
+    y = drawPointTable(doc, charges.batches.slice(0, 18), charges.totals, y);
+    if (charges.batches.length > 18) {
+      doc.font(FONT_SANS).fontSize(7.5).fillColor(MUTED).text(`… et ${charges.batches.length - 18} autre(s) relevé(s) — voir le carnet des charges complet.`, 50, y - 6);
+      y = doc.y + 8;
+    }
+  }
+  if (charges.remittances.length > 0) {
+    y = ensureRoom(doc, y, 70, null);
+    doc.font(FONT_SANS_BOLD).fontSize(10).fillColor(INK).text('Derniers reversements de charges', 50, y);
+    y = doc.y + 8;
+    y = drawRemittancesTable(doc, charges.remittances.slice(0, 8), y);
+  }
+  return y;
+}
+
 /**
  * Relevé propriétaire : patrimoine géré (biens/unités, statut, loyer, locataire
  * en place) et historique des versements déjà effectués. Généré à la demande,
@@ -821,7 +1145,7 @@ const UNIT_STATUS_LABELS = { libre: 'Libre', loue: 'Loué', reserve: 'Réservé'
  * données en libellés à droite, bloc d'identité, tableaux avec ligne
  * totale mise en évidence, plutôt que des paragraphes/listes libres.
  */
-function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, verificationCode }) {
+function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, charges = null, verificationCode }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="releve-${owner.name.replace(/\s+/g, '-')}.pdf"`);
@@ -968,6 +1292,12 @@ function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, verificat
         .text(formatFcfa(p.amount), colAmount.x, y, { width: colAmount.width, align: 'right' });
       y += 18;
     }
+  }
+
+  // Charges SONEB/SBEE (étape 31) : le point + ce qu'il reste à reverser au propriétaire.
+  if (charges) {
+    y = Math.max(y, doc.y) + 24;
+    drawChargesStatementSection(doc, charges, y);
   }
 
   drawFooter(doc, { verificationCode });
@@ -1221,6 +1551,7 @@ module.exports = {
   streamReceiptPdf,
   streamCertificatePdf,
   streamOwnerStatementPdf,
+  streamUtilityCarnetPdf,
   streamMoveOutPdf,
   streamFinancialStatementsPdf,
   streamAccountingReportPdf,

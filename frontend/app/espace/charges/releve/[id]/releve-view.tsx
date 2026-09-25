@@ -17,6 +17,7 @@ import {
 import { UTILITY_TYPE_LABELS, BATCH_STATUS_LABELS, DIFFERENCE_ALERT_TEXT, LOSS_ALLOCATION_LABELS } from "@/lib/constants/charges";
 import { formatFcfa, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { MainPaymentCard } from "@/components/charges/main-payment-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -381,6 +382,8 @@ function ReleveContent() {
             <span>{DIFFERENCE_ALERT_TEXT[computed.alert]}</span>
           </div>
         )}
+
+        <MainPaymentCard data={data} onChange={setData} />
 
         {draft ? (
           <div className="flex flex-wrap items-center gap-2">

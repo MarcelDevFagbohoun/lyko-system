@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { OwnerPortalCharges } from "@/components/charges/owner-portal-charges";
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   especes: "Espèces",
@@ -76,7 +77,7 @@ export function OwnerPortailView() {
     );
   }
 
-  const { tenant, owner, properties, recette, payouts } = dashboard;
+  const { tenant, owner, properties, recette, payouts, charges } = dashboard;
   const multipleProperties = properties.length > 1;
 
   return (
@@ -180,6 +181,8 @@ export function OwnerPortailView() {
                 </Card>
               );
             })}
+
+            <OwnerPortalCharges token={token} charges={charges} />
 
             <Card>
               <CardHeader>

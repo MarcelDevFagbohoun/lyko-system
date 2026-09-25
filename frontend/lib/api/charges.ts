@@ -183,8 +183,138 @@ export type UtilityBatchSummary = {
   subAmount: number;
   mainConsumption: number | null;
   mainAmount: number | null;
+  /** Montant déclaré payé par le propriétaire à la SONEB/SBEE (null = pas encore renseigné). */
+  mainPaidAmount: number | null;
   differenceConsumption: number | null;
   differenceAmount: number | null;
+};
+
+/** Modes acceptés pour la facture mère (pas KKiaPay : c'est le propriétaire qui règle, pas un locataire en ligne). */
+export type MainPaymentMethod = Exclude<PaymentMethod, "kkiapay">;
+
+/** Paiement de la facture mère par le propriétaire (mémo — aucun mouvement de caisse du cabinet). */
+export type MainPayment = {
+  amount: number;
+  paidAt: string;
+  paymentMethod: MainPaymentMethod | null;
+  notes: string | null;
+  recordedAt: string | null;
+  recordedBy: Actor;
+};
+
+export type PointStatus = "paiement_non_renseigne" | "a_recouvrer" | "a_charge_proprietaire" | "solde";
+
+export type BatchPoint = {
+  batchId: number;
+  propertyId: number;
+  propertyCode: string;
+  ownerId: number;
+  ownerName: string;
+  utilityType: UtilityType;
+  periodStart: string;
+  periodEnd: string;
+  mainInvoice: number | null;
+  mainPaid: number | null;
+  mainPaidAt: string | null;
+  chargesCount: number;
+  unpaidChargesCount: number;
+  billed: number;
+  collected: number;
+  tenantUnpaid: number;
+  /** Facture mère payée − encaissé (null tant que le paiement n'est pas renseigné). */
+  gap: number | null;
+  /** Facture mère payée − facturé aux locataires : la consommation jamais refacturée. */
+  nonRebilled: number | null;
+  status: PointStatus;
+};
+
+export type PointTotals = {
+  batchCount: number;
+  mainInvoiceTotal: number;
+  billedTotal: number;
+  collectedTotal: number;
+  tenantUnpaidTotal: number;
+  mainPaidTotal: number;
+  gapTotal: number;
+  nonRebilledTotal: number;
+  tenantUnpaidOnPaidTotal: number;
+  pendingPaymentCount: number;
+  pendingInvoiceAmount: number;
+};
+
+/** Charges encaissées chez les locataires d'un propriétaire, et ce qui lui a déjà été reversé (cumul, hors agent restreint). */
+export type ChargeAccount = { collected: number; remitted: number; balance: number };
+
+/** Une entrée du carnet : un règlement de charge reçu d'un locataire. `batchId` nul = facture individuelle hors relevé. */
+export type CarnetEntry = {
+  paymentId: number;
+  paidAt: string;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  chargeId: number;
+  batchId: number | null;
+  utilityType: UtilityType;
+  periodStart: string;
+  periodEnd: string;
+  propertyId: number;
+  propertyCode: string;
+  unitCode: string;
+  renterName: string;
+};
+
+export type CarnetRemittance = {
+  id: number;
+  amount: number;
+  periodLabel: string | null;
+  paidAt: string;
+  paymentMethod: MainPaymentMethod;
+  notes: string | null;
+};
+
+/** Le carnet complet d'un propriétaire sur une fenêtre de mois. */
+export type OwnerCarnet = {
+  from: string;
+  to: string;
+  batches: BatchPoint[];
+  totals: PointTotals;
+  entries: { items: CarnetEntry[]; total: number; outsideBatchesTotal: number };
+  remittances: CarnetRemittance[];
+  remittedInWindow: number;
+  /** null pour un agent restreint : un solde de bout en bout n'est jamais exposé partiellement. */
+  account: ChargeAccount | null;
+};
+
+export type UtilityPoint = {
+  from: string;
+  to: string;
+  owners: { ownerId: number; ownerName: string; batches: BatchPoint[]; totals: PointTotals; account?: ChargeAccount }[];
+  totals: PointTotals;
+  /** Renseigné seulement quand `ownerId` est demandé. */
+  carnet: OwnerCarnet | null;
+};
+
+export type UtilityAlertType =
+  | "releve_manquant"
+  | "releve_a_valider"
+  | "facture_mere_non_declaree"
+  | "ecart_eleve"
+  | "charges_a_reverser";
+
+export type UtilityAlert = {
+  key: string;
+  type: UtilityAlertType;
+  severity: "danger" | "warning" | "info";
+  title: string;
+  detail: string;
+  propertyId?: number;
+  propertyCode?: string;
+  ownerId?: number;
+  ownerName?: string | null;
+  batchId?: number;
+  utilityType?: UtilityType;
+  amount?: number | null;
+  daysLate?: number;
+  href: string;
 };
 
 export type UtilityBatchRow = {
@@ -214,7 +344,13 @@ export type UtilityBatch = {
     status: BatchStatus;
     validatedAt: string | null;
     lossAllocation: LossAllocation;
-    main: { readingStart: number | null; readingEnd: number | null; consumption: number | null; invoiceAmount: number | null };
+    main: {
+      readingStart: number | null;
+      readingEnd: number | null;
+      consumption: number | null;
+      invoiceAmount: number | null;
+      payment: MainPayment | null;
+    };
     recordedBy: Actor;
   };
   rows: UtilityBatchRow[];
@@ -228,6 +364,8 @@ export type UtilityBatch = {
     differencePct: number | null;
     alert: DifferenceAlert;
   };
+  /** Le point de ce relevé (facture mère payée vs encaissé) — null tant que le relevé n'est pas validé. */
+  point: BatchPoint | null;
 };
 
 export function listUtilityBatches(accessToken: string, propertyId: number, utilityType?: UtilityType) {
@@ -278,4 +416,40 @@ export function reopenUtilityBatch(accessToken: string, id: number) {
 
 export function deleteUtilityBatch(accessToken: string, id: number) {
   return apiFetch<void>(`/api/utility-batches/${id}`, { method: "DELETE", accessToken });
+}
+
+export function saveMainPayment(
+  accessToken: string,
+  batchId: number,
+  input: { amount: number; paidAt: string; paymentMethod?: MainPaymentMethod; notes?: string },
+) {
+  return apiFetch<UtilityBatch>(`/api/utility-batches/${batchId}/main-payment`, {
+    method: "PUT",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteMainPayment(accessToken: string, batchId: number) {
+  return apiFetch<UtilityBatch>(`/api/utility-batches/${batchId}/main-payment`, { method: "DELETE", accessToken });
+}
+
+export function getUtilityPoint(accessToken: string, filters: { ownerId?: number; propertyId?: number; from?: string; to?: string } = {}) {
+  const qs = new URLSearchParams();
+  if (filters.ownerId != null) qs.set("ownerId", String(filters.ownerId));
+  if (filters.propertyId != null) qs.set("propertyId", String(filters.propertyId));
+  if (filters.from) qs.set("from", filters.from);
+  if (filters.to) qs.set("to", filters.to);
+  const q = qs.toString();
+  return apiFetch<UtilityPoint>(`/api/utility-point${q ? `?${q}` : ""}`, { accessToken });
+}
+
+export function getUtilityAlerts(accessToken: string) {
+  return apiFetch<{ alerts: UtilityAlert[] }>("/api/utility-alerts", { accessToken });
+}
+
+/** Chemin du carnet PDF d'un propriétaire (téléchargé avec le jeton, voir `openAuthenticatedPdf`). */
+export function utilityCarnetPdfPath(ownerId: number, from: string, to: string) {
+  return `/api/owners/${ownerId}/carnet-charges.pdf?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
 }

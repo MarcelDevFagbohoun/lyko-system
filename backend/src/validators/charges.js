@@ -75,6 +75,16 @@ const createUtilityPaymentSchema = z.object({
   notes: optionalText(255),
 });
 
+// Paiement de la facture mère par le propriétaire (étape 30) — simple mémo :
+// le mode est facultatif (le propriétaire règle souvent à la SONEB/SBEE sans
+// que le cabinet ne connaisse le moyen exact).
+const mainPaymentSchema = z.object({
+  amount: amountSchema,
+  paidAt: dateSchema,
+  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
+  notes: optionalText(255),
+});
+
 // Suppression = suppression logique (traçabilité) : une justification est
 // systématiquement exigée, quel que soit le rôle de qui supprime.
 const deleteReasonSchema = z.object({
@@ -142,6 +152,7 @@ module.exports = {
   createChargeSchema,
   updateChargeSchema,
   createUtilityPaymentSchema,
+  mainPaymentSchema,
   deleteReasonSchema,
   utilityConfigSchema,
   createBatchSchema,

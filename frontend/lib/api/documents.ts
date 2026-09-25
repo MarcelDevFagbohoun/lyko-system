@@ -5,7 +5,7 @@ import { apiFetch } from "./client";
  * (étape 29) — consultation/réinitialisation côté espace employé, et
  * vérification publique par code (sans compte).
  */
-export type DocumentType = "quittance" | "attestation" | "releve_proprietaire";
+export type DocumentType = "quittance" | "attestation" | "releve_proprietaire" | "carnet_charges";
 
 export type DocumentIssuanceStatus = {
   downloadCount: number;

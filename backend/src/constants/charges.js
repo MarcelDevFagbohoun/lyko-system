@@ -24,7 +24,27 @@ const LOSS_ALLOCATION_LABELS = {
   prorata: 'Répartie entre les locataires (au prorata)',
 };
 
+// Alertes du suivi des charges (étape 31) — délais de grâce avant qu'une
+// situation ne devienne une alerte. Constantes plutôt que réglages : ce sont
+// des seuils de confort, pas des règles métier propres à un cabinet.
+const UTILITY_ALERT_RULES = {
+  /** Jour du mois à partir duquel le relevé du mois précédent est attendu. */
+  RELEVE_EXPECTED_FROM_DAY: 5,
+  /** Un relevé laissé en brouillon plus longtemps que ça est signalé. */
+  DRAFT_BATCH_DAYS: 7,
+  /** Délai après validation avant de réclamer la déclaration de la facture mère payée. */
+  MAIN_PAYMENT_DAYS: 7,
+  /** À partir de combien de jours une facture mère non déclarée devient urgente. */
+  MAIN_PAYMENT_URGENT_DAYS: 30,
+  /** Charges encaissées non reversées depuis plus de N jours. */
+  REMITTANCE_DAYS: 7,
+  REMITTANCE_URGENT_DAYS: 30,
+  /** Écarts compteur/décompteurs signalés seulement sur les relevés récents. */
+  ANOMALY_WINDOW_DAYS: 90,
+};
+
 module.exports = {
+  UTILITY_ALERT_RULES,
   UTILITY_TYPES,
   UTILITY_TYPE_KEYS,
   CHARGE_STATUSES,

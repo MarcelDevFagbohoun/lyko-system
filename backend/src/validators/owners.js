@@ -68,6 +68,27 @@ const createPayoutSchema = z.object({
   notes: optionalText(255),
 });
 
+// Reversement des charges SONEB/SBEE encaissées (étape 31) : même forme qu'un
+// versement de loyer, libellé de période facultatif (« Charges septembre »).
+const createChargeRemittanceSchema = z.object({
+  amount: z.coerce
+    .number()
+    .int('Montant entier requis')
+    .positive('Le montant doit être supérieur à 0')
+    .max(1_000_000_000, 'Montant hors limite'),
+  periodLabel: optionalText(50),
+  paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide'),
+  paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque'], {
+    errorMap: () => ({ message: 'Mode de règlement invalide' }),
+  }),
+  notes: optionalText(255),
+});
+
+// Annulation = suppression logique avec justification obligatoire.
+const cancelChargeRemittanceSchema = z.object({
+  reason: z.string().trim().min(5, 'Justification requise (5 caractères minimum)').max(255, 'Trop long'),
+});
+
 // Nouveau taux de commission (DG uniquement) : pourcentage borné [0, 100],
 // avec deux décimales (ex. 12.5 %). `startsOn` facultatif — la route
 // applique aujourd'hui par défaut si absent.
@@ -88,6 +109,8 @@ module.exports = {
   createOwnerSchema,
   updateOwnerSchema,
   createPayoutSchema,
+  createChargeRemittanceSchema,
+  cancelChargeRemittanceSchema,
   updateCommissionRateSchema,
   recetteQuerySchema,
 };

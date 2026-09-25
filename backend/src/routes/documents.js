@@ -17,7 +17,7 @@ const logger = require('../utils/logger');
 const router = Router();
 router.use(requireAuth);
 
-const DOCUMENT_TYPES = ['quittance', 'attestation', 'releve_proprietaire'];
+const DOCUMENT_TYPES = ['quittance', 'attestation', 'releve_proprietaire', 'carnet_charges'];
 
 /**
  * Vérifie que `referenceId` désigne bien une ligne de CE tenant pour ce type

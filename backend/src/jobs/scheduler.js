@@ -21,6 +21,7 @@ const { runMonthlyRentDigest } = require('./monthlyRentDigest');
 const { runDailyArrearsDigest } = require('./dailyArrearsDigest');
 const { runBalanceAlertJob } = require('./balanceAlertJob');
 const { runClosingReminderJob } = require('./closingReminderJob');
+const { runUtilityAlertsJob } = require('./utilityAlertsJob');
 
 function runSafely(label, fn) {
   return async () => {
@@ -48,8 +49,10 @@ function startScheduler() {
   cron.schedule('0 6 * * *', runSafely('alerte de balance déséquilibrée', runBalanceAlertJob));
   // 07h10 chaque jour — rappel de clôture mensuelle.
   cron.schedule('10 7 * * *', runSafely('rappel de clôture mensuelle', runClosingReminderJob));
+  // 07h20 chaque jour — alertes du suivi des charges SONEB/SBEE.
+  cron.schedule('20 7 * * *', runSafely('alertes du suivi des charges SONEB/SBEE', runUtilityAlertsJob));
 
-  logger.info('Tâches planifiées (node-cron) démarrées : 4 tâches actives');
+  logger.info('Tâches planifiées (node-cron) démarrées : 5 tâches actives');
 }
 
 module.exports = { startScheduler };

@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, Phone, Mail, MapPin, FileDown, Wallet, Building2, ShieldCheck, Pencil, Percent, Link2, Copy, Check, MessageCircle, Landmark } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
+import type { ChargeAccount } from "@/lib/api/charges";
 import {
   getOwner,
   updateOwner,
@@ -19,12 +20,15 @@ import {
   type CreatePayoutInput,
   type CommissionRate,
   type EscrowBalance,
+  type OwnerChargeRemittance,
 } from "@/lib/api/owners";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa, formatDateLabel, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { DocumentDownloadStatus } from "@/components/documents/document-download-status";
 import { Badge } from "@/components/ui/badge";
+import { UtilityPointPanel } from "@/components/charges/utility-point-panel";
+import { ChargeRemittanceCard } from "@/components/charges/charge-remittance-card";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Attribution } from "@/components/ui/attribution";
@@ -72,11 +76,16 @@ function ProprietaireContent() {
     (user?.permissions.includes("comptabilite") ?? false) ||
     (user?.permissions.includes("locataires") ?? false);
 
+  // Le carnet des charges relève du module Charges : même garde que côté serveur.
+  const canSeeCharges = user?.role === "dg" || (user?.permissions.includes("charges") ?? false);
+
   const [owner, setOwner] = React.useState<Owner | null>(null);
   const [properties, setProperties] = React.useState<OwnerProperty[] | null>(null);
   const [payouts, setPayouts] = React.useState<OwnerPayout[] | null>(null);
   const [escrowBalance, setEscrowBalance] = React.useState<EscrowBalance | null>(null);
   const [openingDebtUnpaid, setOpeningDebtUnpaid] = React.useState(0);
+  const [chargesAccount, setChargesAccount] = React.useState<ChargeAccount | null>(null);
+  const [chargeRemittances, setChargeRemittances] = React.useState<OwnerChargeRemittance[]>([]);
   const [activeCommissionRate, setActiveCommissionRate] = React.useState<CommissionRate | null>(null);
   const [commissionRates, setCommissionRates] = React.useState<CommissionRate[]>([]);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -91,6 +100,8 @@ function ProprietaireContent() {
         setPayouts(res.payouts);
         setEscrowBalance(res.escrowBalance);
         setOpeningDebtUnpaid(res.openingDebtUnpaid);
+        setChargesAccount(res.chargesAccount);
+        setChargeRemittances(res.chargeRemittances);
         setActiveCommissionRate(res.activeCommissionRate);
         setCommissionRates(res.commissionRates);
       })
@@ -284,6 +295,42 @@ function ProprietaireContent() {
         )}
 
         <EscrowBalanceCard escrow={escrowBalance} openingDebtUnpaid={openingDebtUnpaid} />
+
+        {chargesAccount && (
+          <ChargeRemittanceCard
+            ownerId={owner.id}
+            ownerName={owner.name}
+            account={chargesAccount}
+            remittances={chargeRemittances}
+            accessToken={accessToken}
+            canRecord={canPayout}
+            onChanged={load}
+          />
+        )}
+
+        {canSeeCharges && (
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <CardTitle>Carnet des charges SONEB / SBEE</CardTitle>
+                  <CardDescription>
+                    Ce que ce propriétaire a payé à la SONEB/SBEE face à ce qui a été encaissé chez ses locataires, mois par mois.
+                  </CardDescription>
+                </div>
+                <DocumentDownloadStatus
+                  documentType="carnet_charges"
+                  referenceId={owner.id}
+                  accessToken={accessToken}
+                  isDg={user?.role === "dg"}
+                />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <UtilityPointPanel ownerId={owner.id} />
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>

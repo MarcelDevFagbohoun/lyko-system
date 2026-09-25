@@ -1,6 +1,7 @@
 import { apiFetch, API_URL } from "./client";
 import type { PaymentMethod } from "./renters";
 import type { UnitStatus } from "./properties";
+import type { OwnerCarnet } from "./charges";
 
 /**
  * Client du portail propriétaire (étape 13, idée n°1) : même principe que
@@ -59,6 +60,8 @@ export type OwnerPortalDashboard = {
     totals: Omit<OwnerPortalRecetteEntry, "propertyId" | "propertyCode" | "rate" | "rateDefined">;
   };
   payouts: OwnerPortalPayout[];
+  /** Carnet des charges SONEB/SBEE : les 6 mois se terminant au mois affiché (étape 31). */
+  charges: OwnerCarnet;
 };
 
 /** `mois` facultatif (AAAA-MM) : le mois en cours par défaut côté serveur. */
@@ -69,4 +72,9 @@ export function getOwnerPortalDashboard(token: string, mois?: string) {
 
 export function ownerPortalStatementPdfUrl(token: string) {
   return `${API_URL}/api/owner-portal/${token}/statement.pdf`;
+}
+
+/** Carnet des charges en PDF (5 téléchargements max + code de vérification, comme le relevé). */
+export function ownerPortalCarnetPdfUrl(token: string, from: string, to: string) {
+  return `${API_URL}/api/owner-portal/${token}/carnet-charges.pdf?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
 }

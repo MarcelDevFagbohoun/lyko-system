@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Droplets, Zap, Plus, Search, Check, Trash2, Pencil, Lock, Gauge } from "lucide-react";
+import { Droplets, Zap, Plus, Search, Check, Trash2, Pencil, Lock, Gauge, Scale } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import {
   listCharges,
@@ -20,6 +20,7 @@ import { UTILITY_TYPE_LABELS, CHARGE_STATUS_LABELS } from "@/lib/constants/charg
 import { ApiError } from "@/lib/api/client";
 import { formatFcfa, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
 import { PaymentLinkCard } from "@/components/payments/payment-link-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -107,6 +108,12 @@ function ChargesContent() {
             <p className="text-body-md text-ink-soft">Factures d&apos;eau et d&apos;électricité à la charge des locataires.</p>
           </div>
           <div className="flex w-fit flex-wrap gap-2">
+            <Link href="/espace/charges/point">
+              <Button variant="secondary">
+                <Scale size={18} />
+                Le point des charges
+              </Button>
+            </Link>
             <Link href="/espace/charges/releves">
               <Button variant="secondary">
                 <Gauge size={18} />
@@ -121,6 +128,8 @@ function ChargesContent() {
             </Link>
           </div>
         </div>
+
+        <UtilityAlertsCard hideWhenEmpty />
 
         {charges && charges.some((c) => c.status !== "payee") && (
           <Card>
