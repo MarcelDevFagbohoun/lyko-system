@@ -63,7 +63,10 @@ function toIsoDateString(d) {
  * jour) : comportement historique (buggé) inchangé — ne JAMAIS omettre pour
  * un nouvel appel.
  */
-function computeArrears({ startDate, createdAt, upToDateAtOnboarding, rentDueDay, monthlyRent, payments }, today = new Date()) {
+function computeArrears(
+  { startDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments },
+  today = new Date(),
+) {
   const createdAtIso = createdAt ? toIsoDateString(createdAt) : null;
   const baselineDate = createdAtIso && createdAtIso > startDate ? createdAtIso : startDate;
   let baselineMonth = baselineDate.slice(0, 7);
@@ -96,7 +99,13 @@ function computeArrears({ startDate, createdAt, upToDateAtOnboarding, rentDueDay
     nextDueMonth = paidThrough && paidThrough >= baselineMonth ? addMonth(paidThrough) : baselineMonth;
   }
 
-  const [y, m] = nextDueMonth.split('-').map(Number);
+  // Convention de paiement (demande directe de l'utilisateur, 2026-09-24) :
+  // 'terme_echu' repousse l'échéance au mois SUIVANT celui facturé (le
+  // loyer de septembre ne se paie qu'en octobre) — 'avance' (défaut,
+  // comportement historique) et l'omission de `rentTiming` restent
+  // strictement identiques : l'échéance reste dans le mois facturé lui-même.
+  const dueMonthForDate = rentTiming === 'terme_echu' ? addMonth(nextDueMonth) : nextDueMonth;
+  const [y, m] = dueMonthForDate.split('-').map(Number);
   const dueDate = new Date(Date.UTC(y, m - 1, rentDueDay));
   const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   const daysLate = Math.floor((todayUtc - dueDate) / 86_400_000);
@@ -176,10 +185,12 @@ function monthsBetweenInclusive(fromYm, toYm) {
  * Un paiement a-t-il été réglé APRÈS l'échéance de son propre mois (même
  * convention que `computeArrears` : le jour de l'échéance lui-même n'est pas
  * en retard, seulement le lendemain) ? `paidAt` peut être un objet `Date`
- * (colonne DATE MySQL) ou une chaîne 'AAAA-MM-JJ'.
+ * (colonne DATE MySQL) ou une chaîne 'AAAA-MM-JJ'. `rentTiming` (voir
+ * `computeArrears`) : 'terme_echu' repousse l'échéance au mois suivant.
  */
-function isPaymentLate(coversMonth, rentDueDay, paidAt) {
-  const [y, m] = coversMonth.split('-').map(Number);
+function isPaymentLate(coversMonth, rentDueDay, paidAt, rentTiming) {
+  const dueMonthForDate = rentTiming === 'terme_echu' ? addMonth(coversMonth) : coversMonth;
+  const [y, m] = dueMonthForDate.split('-').map(Number);
   const dueDate = new Date(Date.UTC(y, m - 1, rentDueDay));
   const paid = paidAt instanceof Date ? paidAt : new Date(paidAt);
   const paidUtc = new Date(Date.UTC(paid.getUTCFullYear(), paid.getUTCMonth(), paid.getUTCDate()));
@@ -204,7 +215,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
     params.scopeAgentId = scopeAgentId;
   }
   const [activeLeases] = await pool.query(
-    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.opening_debt_amount,
+    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing, l.opening_debt_amount,
             l.created_at, l.up_to_date_at_onboarding,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
             un.code AS unit_code, p.code AS property_code
@@ -244,6 +255,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
+      rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
       payments: paymentsByLease.get(lease.id) || [],
     });
@@ -299,7 +311,7 @@ async function snapshotLeaseBalances(tenantId, period) {
   const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
 
   const [leases] = await pool.query(
-    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.opening_debt_amount,
+    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing, l.opening_debt_amount,
             l.created_at, l.up_to_date_at_onboarding
      FROM leases l
      WHERE l.tenant_id = :tenantId AND l.start_date <= :last AND (l.end_date IS NULL OR l.end_date >= :first)`,
@@ -332,6 +344,7 @@ async function snapshotLeaseBalances(tenantId, period) {
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
+      rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
       payments: paymentsByLease.get(lease.id) || [],
     });
@@ -368,7 +381,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
     params.scopeAgentId = scopeAgentId;
   }
   const [activeLeases] = await pool.query(
-    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day,
+    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing,
             l.created_at, l.up_to_date_at_onboarding,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
             un.code AS unit_code, p.code AS property_code
@@ -406,6 +419,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
+      rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
       payments: leasePayments.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
     });
@@ -421,7 +435,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
 
     const recentPayments = leasePayments.slice(0, 3);
     if (recentPayments.length < 2) continue;
-    const lateCount = recentPayments.filter((p) => isPaymentLate(p.covers_month, lease.rent_due_day, p.paid_at)).length;
+    const lateCount = recentPayments.filter((p) => isPaymentLate(p.covers_month, lease.rent_due_day, p.paid_at, lease.rent_timing)).length;
     if (lateCount < 2) continue;
 
     results.push({
@@ -448,6 +462,7 @@ module.exports = {
   addMonth,
   allocateRentPayment,
   monthsBetweenInclusive,
+  isPaymentLate,
   listPortfolioArrears,
   listPredictiveLateAlerts,
   snapshotLeaseBalances,

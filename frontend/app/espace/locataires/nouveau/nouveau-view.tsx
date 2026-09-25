@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Copy, Check, MessageCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
-import { createRenter, type PaymentMethod } from "@/lib/api/renters";
+import { createRenter, RENT_TIMING_LABELS, type PaymentMethod, type RentTiming } from "@/lib/api/renters";
 import type { Unit } from "@/lib/api/properties";
 import { normalizeBeninPhone, buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa } from "@/lib/utils";
@@ -32,6 +32,7 @@ type FormState = {
   entryFeePaymentMethod: string;
   entryFeePaidAt: string;
   rentDueDay: string;
+  rentTiming: RentTiming;
   startDate: string;
   openingDebtAmount: string;
   upToDateAtOnboarding: boolean;
@@ -53,6 +54,7 @@ const INITIAL: FormState = {
   entryFeePaymentMethod: "",
   entryFeePaidAt: todayIso(),
   rentDueDay: "5",
+  rentTiming: "avance",
   startDate: todayIso(),
   openingDebtAmount: "",
   upToDateAtOnboarding: false,
@@ -81,7 +83,7 @@ type CreatedRenter = {
 };
 
 function NouveauContent() {
-  const { accessToken } = useAuth();
+  const { accessToken, tenant } = useAuth();
   const online = useOnlineStatus();
   const [form, setForm] = React.useState<FormState>(INITIAL);
   const [selectedUnit, setSelectedUnit] = React.useState<Unit | null>(null);
@@ -93,6 +95,15 @@ function NouveauContent() {
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
+
+  // Pré-remplit depuis le réglage par défaut de l'entreprise (Paramètres) —
+  // uniquement si l'agent n'a pas encore touché ce champ lui-même.
+  React.useEffect(() => {
+    if (tenant?.defaultRentTiming && !touched.rentTiming) {
+      set("rentTiming", tenant.defaultRentTiming);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenant?.defaultRentTiming]);
 
   function handleSelectUnit(unit: Unit) {
     setSelectedUnit(unit);
@@ -162,6 +173,7 @@ function NouveauContent() {
             : undefined,
         entryFeePaidAt: Number(form.entryFeeAmount || "0") > 0 ? form.entryFeePaidAt : undefined,
         rentDueDay: Number(form.rentDueDay),
+        rentTiming: form.rentTiming,
         startDate: form.startDate,
         openingDebtAmount: Number(form.openingDebtAmount || "0"),
         upToDateAtOnboarding: isHistoricalStartDate ? form.upToDateAtOnboarding : undefined,
@@ -349,6 +361,25 @@ function NouveauContent() {
                     <Input id="startDate" type="date" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, startDate: true }))} />
                   </Field>
                 </div>
+                <Field
+                  label="Convention de paiement"
+                  htmlFor="rentTiming"
+                  hint="Réglable par défaut dans Paramètres — à ajuster ici si ce propriétaire a sa propre habitude"
+                >
+                  <select
+                    id="rentTiming"
+                    value={form.rentTiming}
+                    onChange={(e) => {
+                      set("rentTiming", e.target.value as RentTiming);
+                      setTouched((t) => ({ ...t, rentTiming: true }));
+                    }}
+                    className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    {Object.entries(RENT_TIMING_LABELS).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </Field>
                 <Field
                   label="Impayés existants à l'entrée (FCFA)"
                   htmlFor="openingDebtAmount"

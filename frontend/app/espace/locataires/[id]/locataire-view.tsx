@@ -20,6 +20,7 @@ import {
   listLateFees,
   payOpeningDebt,
   getLeaseBalanceSnapshots,
+  RENT_TIMING_LABELS,
   type Renter,
   type Lease,
   type PaymentMethod,
@@ -713,7 +714,11 @@ function LeaseCard({
           <Metric
             label="Prochaine échéance"
             value={lease.arrears?.dueDate ?? "—"}
-            sub={lease.arrears ? `Payé jusqu'à ${lease.arrears.paidThroughMonth ?? "aucun mois"}` : undefined}
+            sub={
+              lease.arrears
+                ? `Payé jusqu'à ${lease.arrears.paidThroughMonth ?? "aucun mois"} · ${RENT_TIMING_LABELS[lease.rentTiming]}`
+                : undefined
+            }
           />
         </div>
 

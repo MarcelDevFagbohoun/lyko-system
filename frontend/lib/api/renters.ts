@@ -4,6 +4,17 @@ import type { InspectionCondition } from "@/lib/constants/inspection";
 
 export type PaymentMethod = "especes" | "mobile_money" | "virement" | "cheque" | "kkiapay";
 
+/**
+ * Convention de paiement du loyer (demande directe de l'utilisateur,
+ * 2026-09-24) : 'avance' (défaut) = le loyer du mois M se paie dans le mois
+ * M ; 'terme_echu' = seulement après, dans le mois M+1.
+ */
+export type RentTiming = "avance" | "terme_echu";
+export const RENT_TIMING_LABELS: Record<RentTiming, string> = {
+  avance: "Payé d'avance (dans le mois facturé)",
+  terme_echu: "Payé à terme échu (après le mois facturé)",
+};
+
 /** Bien (bâtiment) tel qu'imbriqué dans un bail, avec son propriétaire. */
 export type LeaseProperty = {
   id: number;
@@ -136,6 +147,7 @@ export type Lease = {
   entryFeeReceivedAt: string | null;
   entryFeeReceivedMethod: PaymentMethod | null;
   rentDueDay: number;
+  rentTiming: RentTiming;
   startDate: string;
   endDate: string | null;
   status: "active" | "ended";
@@ -197,6 +209,8 @@ export type CreateRenterInput = {
   entryFeePaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
   entryFeePaidAt?: string;
   rentDueDay: number;
+  /** Optionnel — si omis, le serveur retombe sur le réglage par défaut de l'entreprise (Paramètres). */
+  rentTiming?: RentTiming;
   startDate: string;
   /** Onboarding d'un locataire déjà en place : impayés déjà dus avant Lyko System, 0 si aucun. */
   openingDebtAmount?: number;

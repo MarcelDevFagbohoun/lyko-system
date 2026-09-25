@@ -10,7 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { computeArrears, allocateRentPayment } = require('../src/services/rentTracking');
+const { computeArrears, allocateRentPayment, isPaymentLate } = require('../src/services/rentTracking');
 
 const TODAY = new Date('2026-09-22T00:00:00Z');
 
@@ -197,6 +197,34 @@ test("allocateRentPayment — un nouveau paiement encore insuffisant pour le rel
     amount: 30000,
   });
   assert.deepEqual(result.allocations, [{ coversMonth: '2026-09', amount: 30000, isPartial: true }]);
+});
+
+// Convention de paiement du loyer (demande directe de l'utilisateur,
+// 2026-09-24) : 'terme_echu' repousse l'échéance au mois SUIVANT celui
+// facturé (le loyer de septembre ne se paie qu'en octobre), au lieu du mois
+// facturé lui-même ('avance', défaut, comportement historique).
+
+test("computeArrears — 'terme_echu' repousse l'échéance au mois suivant (peut inverser le statut)", () => {
+  // Loyer de septembre : sans paiement, le 22 septembre.
+  const base = { startDate: '2026-09-01', rentDueDay: 5, monthlyRent: 100000, payments: [] };
+
+  const avance = computeArrears({ ...base, rentTiming: 'avance' }, TODAY);
+  assert.equal(avance.dueDate, '2026-09-05');
+  assert.equal(avance.status, 'late', "avance : échéance le 5 septembre, déjà dépassée le 22");
+
+  const termeEchu = computeArrears({ ...base, rentTiming: 'terme_echu' }, TODAY);
+  assert.equal(termeEchu.dueDate, '2026-10-05');
+  assert.equal(termeEchu.status, 'current', "terme échu : le loyer de septembre n'est dû que le 5 octobre");
+
+  const omis = computeArrears(base, TODAY);
+  assert.equal(omis.dueDate, avance.dueDate, "rentTiming omis (compatibilité) : identique à 'avance'");
+});
+
+test("isPaymentLate — même bascule que computeArrears selon la convention", () => {
+  // Loyer d'août, réglé le 3 septembre.
+  assert.equal(isPaymentLate('2026-08', 5, '2026-09-03', 'avance'), true, "avance : échéance le 5 août, réglé après");
+  assert.equal(isPaymentLate('2026-08', 5, '2026-09-03', 'terme_echu'), false, "terme échu : échéance le 5 septembre, réglé avant");
+  assert.equal(isPaymentLate('2026-08', 5, '2026-09-03'), true, "rentTiming omis (compatibilité) : identique à 'avance'");
 });
 
 test('allocateRentPayment — sans reliquat (mois neuf), comportement identique à avant ce correctif', () => {

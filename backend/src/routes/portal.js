@@ -118,6 +118,7 @@ router.get('/:token', async (req, res, next) => {
         createdAt: activeLease.created_at,
         upToDateAtOnboarding: !!activeLease.up_to_date_at_onboarding,
         rentDueDay: activeLease.rent_due_day,
+        rentTiming: activeLease.rent_timing,
         monthlyRent: activeLease.monthly_rent,
         payments: payRows.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
       });

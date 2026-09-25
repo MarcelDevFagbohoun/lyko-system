@@ -116,6 +116,11 @@ function toPublicTenant(tenant) {
     // La clé publique n'est exposée que là où le widget s'ouvre réellement
     // (portail locataire, page publique de paiement).
     kkiapayEnabled: !!tenant.kkiapay_enabled,
+    // Convention de paiement du loyer par défaut (avance/terme échu) — sert
+    // à pré-remplir le formulaire de création de bail ; réglable par le DG
+    // dans Paramètres, mais doit être lisible par TOUT employé qui crée un
+    // bail (contrairement à `/api/settings`, réservé au DG).
+    defaultRentTiming: tenant.default_rent_timing,
   };
 }
 
@@ -137,6 +142,8 @@ async function respondWithSession(res, row) {
       dg_title: row.dg_title,
       comptable_title: row.comptable_title,
       agent_title: row.agent_title,
+      kkiapay_enabled: row.kkiapay_enabled,
+      default_rent_timing: row.default_rent_timing,
     }),
     accessToken,
   });
@@ -214,6 +221,7 @@ router.post('/register', registerLimiter, upload.single('logo'), async (req, res
       ifu: data.ifu,
       contact_phone: data.phone,
       logo_path: logoPath,
+      default_rent_timing: 'avance', // valeur par défaut de la colonne, entreprise juste créée
     };
 
     const { accessToken, refreshToken } = await issueSession(user);
@@ -243,7 +251,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.phone = :phone LIMIT 1`,
       { phone },
@@ -286,7 +294,7 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.identifier = :identifier LIMIT 1`,
       { identifier },
@@ -383,7 +391,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = :id LIMIT 1`,
       { id: req.user.id },
@@ -403,6 +411,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
         dg_title: row.dg_title,
         comptable_title: row.comptable_title,
         agent_title: row.agent_title,
+        default_rent_timing: row.default_rent_timing,
       }),
     });
   } catch (err) {

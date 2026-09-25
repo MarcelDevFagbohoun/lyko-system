@@ -115,6 +115,21 @@ async function recordEntryFeeReceived(conn, { tenantId, leaseId, amount, payment
 }
 
 /**
+ * Convention de paiement du loyer (avance/terme échu, demande directe de
+ * l'utilisateur, 2026-09-24) — si l'agent n'en a pas choisi une explicitement
+ * à la création du bail, retombe sur le réglage par défaut de l'entreprise
+ * (Paramètres). Jamais un défaut codé en dur ici : chaque entreprise choisit
+ * le sien (`tenants.default_rent_timing`, lui-même par défaut 'avance').
+ */
+async function resolveRentTiming(conn, tenantId, explicit) {
+  if (explicit) return explicit;
+  const [rows] = await conn.query('SELECT default_rent_timing FROM tenants WHERE id = :tenantId LIMIT 1', {
+    tenantId,
+  });
+  return rows[0]?.default_rent_timing ?? 'avance';
+}
+
+/**
  * Marketplace : une Unité qui reçoit un nouveau bail n'est plus vacante —
  * son éventuelle annonce doit disparaître, pour ne jamais réafficher un
  * contenu obsolète (prix, description, photos) la prochaine fois qu'elle
@@ -194,6 +209,7 @@ function toPublicLease(row) {
     entryFeeReceivedAt: row.entry_fee_received_at ? isoDate(row.entry_fee_received_at) : null,
     entryFeeReceivedMethod: row.entry_fee_received_method ?? null,
     rentDueDay: row.rent_due_day,
+    rentTiming: row.rent_timing,
     startDate: isoDate(row.start_date),
     endDate: isoDate(row.end_date),
     status: row.lease_status ?? row.status,
@@ -236,7 +252,7 @@ const LEASE_UNIT_PROPERTY_SELECT = `
   l.id AS lease_id, l.monthly_rent AS lease_monthly_rent, l.deposit_amount,
   l.deposit_status, l.opening_debt_amount, l.up_to_date_at_onboarding,
   l.entry_fee_amount, l.entry_fee_received_at, l.entry_fee_received_method,
-  l.rent_due_day, l.start_date, l.end_date, l.status AS lease_status,
+  l.rent_due_day, l.rent_timing, l.start_date, l.end_date, l.status AS lease_status,
   l.created_at AS lease_created_at,
   lu.first_name AS lease_creator_first_name, lu.last_name AS lease_creator_last_name, lu.role AS lease_creator_role,
   u.id AS unit_id, u.code AS unit_code, u.designation, u.designation_custom,
@@ -310,6 +326,7 @@ router.get('/', canRead, async (req, res, next) => {
         createdAt: lease.createdAt,
         upToDateAtOnboarding: lease.upToDateAtOnboarding,
         rentDueDay: lease.rentDueDay,
+        rentTiming: lease.rentTiming,
         monthlyRent: lease.monthlyRent,
         payments: paymentsByLease.get(row.lease_id) || [],
       });
@@ -451,6 +468,7 @@ router.get('/:id', canRead, async (req, res, next) => {
               createdAt: lease.createdAt,
               upToDateAtOnboarding: lease.upToDateAtOnboarding,
               rentDueDay: lease.rentDueDay,
+              rentTiming: lease.rentTiming,
               monthlyRent: lease.monthlyRent,
               payments,
             })
@@ -528,9 +546,10 @@ router.post('/', canManage, async (req, res, next) => {
     const renterId = renterResult.insertId;
 
     const rent = data.monthlyRent ?? Number(unit.monthly_rent);
+    const rentTiming = await resolveRentTiming(conn, req.user.tenantId, data.rentTiming);
     const [leaseResult] = await conn.query(
-      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount)`,
+      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount)`,
       {
         tenantId: req.user.tenantId,
         unitId: data.unitId,
@@ -538,6 +557,7 @@ router.post('/', canManage, async (req, res, next) => {
         rent,
         deposit: data.depositAmount,
         dueDay: data.rentDueDay,
+        rentTiming,
         startDate: data.startDate,
         createdBy: req.user.id,
         openingDebtAmount: data.openingDebtAmount,
@@ -671,9 +691,10 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
     await conn.beginTransaction();
 
     const rent = data.monthlyRent ?? Number(unit.monthly_rent);
+    const rentTiming = await resolveRentTiming(conn, req.user.tenantId, data.rentTiming);
     const [leaseResult] = await conn.query(
-      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount)`,
+      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount)`,
       {
         tenantId: req.user.tenantId,
         unitId: data.unitId,
@@ -681,6 +702,7 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
         rent,
         deposit: data.depositAmount,
         dueDay: data.rentDueDay,
+        rentTiming,
         startDate: data.startDate,
         createdBy: req.user.id,
         openingDebtAmount: data.openingDebtAmount,

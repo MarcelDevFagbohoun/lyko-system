@@ -35,6 +35,9 @@ export type AuthTenant = {
   // Sert uniquement à afficher/masquer le bouton « Générer un lien de
   // paiement » — le personnel ne paie jamais lui-même, voir routes/auth.js.
   kkiapayEnabled: boolean;
+  // Convention de paiement du loyer par défaut (avance/terme échu) — pré-
+  // remplit le formulaire de création de bail (réglable dans Paramètres).
+  defaultRentTiming: "avance" | "terme_echu";
 };
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";

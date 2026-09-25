@@ -1,5 +1,6 @@
 import { apiFetch } from "./client";
 import type { RoleTitles } from "@/lib/auth/auth-context";
+import type { RentTiming } from "./renters";
 
 export type ContractPlaceholder = { key: string; label: string };
 
@@ -18,6 +19,8 @@ export type TenantSettings = {
   kkiapayPublicKey: string | null;
   /** Les clés privée/secrète ne sont jamais renvoyées — seulement si elles sont déjà enregistrées. */
   kkiapayConfigured: boolean;
+  /** Pré-remplit la convention de paiement du loyer de chaque nouveau bail. */
+  defaultRentTiming: RentTiming;
 };
 
 export function getSettings(accessToken: string) {
@@ -38,6 +41,7 @@ export function updateSettings(
     kkiapayPublicKey?: string;
     kkiapayPrivateKey?: string;
     kkiapaySecretKey?: string;
+    defaultRentTiming?: RentTiming;
   },
 ) {
   const fd = new FormData();
@@ -55,6 +59,7 @@ export function updateSettings(
   // serveur, mais autant ne pas l'envoyer du tout).
   if (input.kkiapayPrivateKey) fd.append("kkiapayPrivateKey", input.kkiapayPrivateKey);
   if (input.kkiapaySecretKey) fd.append("kkiapaySecretKey", input.kkiapaySecretKey);
+  if (input.defaultRentTiming !== undefined) fd.append("defaultRentTiming", input.defaultRentTiming);
 
   return apiFetch<{ settings: TenantSettings }>("/api/settings", {
     method: "PATCH",

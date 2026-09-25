@@ -6,6 +6,7 @@ import { ArrowLeft, Stamp, PenTool, RotateCcw, CreditCard, ExternalLink, Landmar
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, API_URL } from "@/lib/api/client";
 import { getSettings, updateSettings, type TenantSettings } from "@/lib/api/settings";
+import { RENT_TIMING_LABELS, type RentTiming } from "@/lib/api/renters";
 import {
   getGlActivationStatus,
   activateGlModule,
@@ -58,6 +59,7 @@ function ParametresContent() {
   const [kkiapayPublicKey, setKkiapayPublicKey] = React.useState("");
   const [kkiapayPrivateKey, setKkiapayPrivateKey] = React.useState("");
   const [kkiapaySecretKey, setKkiapaySecretKey] = React.useState("");
+  const [defaultRentTiming, setDefaultRentTiming] = React.useState<RentTiming>("avance");
 
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
@@ -75,6 +77,7 @@ function ParametresContent() {
         setKkiapayEnabled(res.settings.kkiapayEnabled);
         setKkiapaySandbox(res.settings.kkiapaySandbox);
         setKkiapayPublicKey(res.settings.kkiapayPublicKey ?? "");
+        setDefaultRentTiming(res.settings.defaultRentTiming);
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Impossible de charger les paramètres."));
   }, [accessToken]);
@@ -117,6 +120,7 @@ function ParametresContent() {
         kkiapayPublicKey,
         kkiapayPrivateKey,
         kkiapaySecretKey,
+        defaultRentTiming,
       });
       setSettings(res.settings);
       setStampFile(null);
@@ -246,6 +250,30 @@ function ParametresContent() {
                 >
                   {settings.roleTitlePresets.agent.map((t) => (
                     <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </Field>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Convention de paiement du loyer</CardTitle>
+              <CardDescription>
+                Réglage par défaut, appliqué à chaque nouveau bail — modifiable bail par bail à la
+                création si un propriétaire géré a sa propre habitude.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Field label="Par défaut" htmlFor="defaultRentTiming">
+                <select
+                  id="defaultRentTiming"
+                  value={defaultRentTiming}
+                  onChange={(e) => setDefaultRentTiming(e.target.value as RentTiming)}
+                  className="h-[38px] w-full max-w-md rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  {Object.entries(RENT_TIMING_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
                   ))}
                 </select>
               </Field>

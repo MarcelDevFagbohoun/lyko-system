@@ -53,6 +53,9 @@ function toPublicSettings(tenant) {
     kkiapaySandbox: !!tenant.kkiapay_sandbox,
     kkiapayPublicKey: tenant.kkiapay_public_key,
     kkiapayConfigured: !!(tenant.kkiapay_private_key_enc && tenant.kkiapay_secret_key_enc),
+    // Convention de paiement du loyer par défaut (avance/terme échu) —
+    // pré-remplit chaque nouveau bail, voir constants/rentTiming.js.
+    defaultRentTiming: tenant.default_rent_timing,
   };
 }
 
@@ -138,6 +141,11 @@ router.patch(
         }
         fields.push('kkiapay_enabled = :kkiapayEnabled');
         params.kkiapayEnabled = data.kkiapayEnabled;
+      }
+
+      if (data.defaultRentTiming !== undefined) {
+        fields.push('default_rent_timing = :defaultRentTiming');
+        params.defaultRentTiming = data.defaultRentTiming;
       }
 
       const stampFile = req.files?.stamp?.[0];

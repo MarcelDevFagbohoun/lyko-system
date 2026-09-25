@@ -2,6 +2,7 @@
 
 const { z } = require('zod');
 const { ROLE_TITLE_PRESETS } = require('../constants/roles');
+const { RENT_TIMING_KEYS } = require('../constants/rentTiming');
 
 // Menu déroulant fermé (jamais de champ libre) : seules les propositions de
 // `ROLE_TITLE_PRESETS` sont acceptées — ce nom est affiché partout, y
@@ -60,6 +61,10 @@ const updateSettingsSchema = z.object({
     .transform((v) => (v === undefined ? undefined : v || null)),
   kkiapayPrivateKey: z.string().trim().max(255).optional().or(z.literal('')),
   kkiapaySecretKey: z.string().trim().max(255).optional().or(z.literal('')),
+
+  // Convention de paiement du loyer par défaut (avance/terme échu) — pré-
+  // remplit chaque nouveau bail (demande directe de l'utilisateur, 2026-09-24).
+  defaultRentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),
 });
 
 module.exports = { updateSettingsSchema };

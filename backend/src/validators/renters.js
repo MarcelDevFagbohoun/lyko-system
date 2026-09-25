@@ -2,6 +2,7 @@
 
 const { z } = require('zod');
 const { phoneSchema, nameSchema } = require('./auth');
+const { RENT_TIMING_KEYS } = require('../constants/rentTiming');
 
 const emailSchema = z
   .string()
@@ -91,6 +92,10 @@ const createRenterSchema = z
     ...depositFields,
     ...entryFeeFields,
     rentDueDay: z.coerce.number().int().min(1).max(28).default(5),
+    // Convention de paiement (avance/terme échu, demande directe de
+    // l'utilisateur, 2026-09-24) : optionnel — si omis, la route retombe
+    // sur le réglage par défaut de l'entreprise (tenants.default_rent_timing).
+    rentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),
     startDate: dateSchema,
     // Impayés existants à l'entrée (onboarding d'un locataire déjà en place
     // avant l'utilisation de Lyko System) : montant déclaré une fois,
@@ -116,6 +121,10 @@ const createLeaseSchema = z
     ...depositFields,
     ...entryFeeFields,
     rentDueDay: z.coerce.number().int().min(1).max(28).default(5),
+    // Convention de paiement (avance/terme échu, demande directe de
+    // l'utilisateur, 2026-09-24) : optionnel — si omis, la route retombe
+    // sur le réglage par défaut de l'entreprise (tenants.default_rent_timing).
+    rentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),
     startDate: dateSchema,
     openingDebtAmount: amountSchema.default(0),
     upToDateAtOnboarding: z.coerce.boolean().default(false),

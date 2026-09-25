@@ -184,6 +184,7 @@ async function recordRentPayment(
     createdAt: lease.created_at,
     upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
     rentDueDay: lease.rent_due_day,
+    rentTiming: lease.rent_timing,
     monthlyRent: lease.monthly_rent,
     payments: payRows.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
   });
@@ -422,6 +423,7 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
+      rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
       payments: payRowsForGuard.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
     });
@@ -1006,6 +1008,7 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
         createdAt: lease.created_at,
         upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
         rentDueDay: lease.rent_due_day,
+        rentTiming: lease.rent_timing,
         monthlyRent: lease.monthly_rent,
         payments: payments.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
       });
