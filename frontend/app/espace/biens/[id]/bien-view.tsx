@@ -39,6 +39,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 
 const LocationPicker = dynamic(() => import("@/components/properties/location-picker"), {
   ssr: false,
@@ -401,7 +402,7 @@ function RecetteCard({
         {recette && !loading && (
           <>
             {!recette.rateDefined && (
-              <div className="rounded-lg border border-warning-border bg-warning/10 px-3 py-2.5 text-body-sm text-warning-fg">
+              <div className="rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5 text-body-sm text-warning-fg">
                 Aucun taux de commission défini pour ce propriétaire — 0 % appliqué par défaut.{" "}
                 <Link href={`/espace/proprietaires/${recette.ownerId}`} className="underline hover:no-underline">
                   Définir un taux
@@ -457,6 +458,7 @@ function NewPropertyExpenseForm({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
+  const idem = useIdempotencyKey();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -476,7 +478,9 @@ function NewPropertyExpenseForm({
         notes: notes.trim() || undefined,
         propertyId,
         unitId: unitId ? Number(unitId) : undefined,
+        idempotencyKey: idem.key,
       });
+      idem.renew();
       onRecorded();
       toast.success("Dépense enregistrée.");
     } catch (err) {

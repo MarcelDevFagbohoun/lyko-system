@@ -1,4 +1,7 @@
+"use client";
+
 import * as React from "react";
+import { TABLE_TONES, useCardTone } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 /**
@@ -7,18 +10,23 @@ import { cn } from "@/lib/utils";
  * hairline, montants alignés à droite (tabular).
  */
 function Table({ className, ...props }: React.HTMLAttributes<HTMLTableElement>) {
+  // Posé directement sur la page, le tableau prend la teinte du module (liseré + en-tête) ;
+  // dans une carte teintée le contexte est remis à blanc : il garde alors la charte neutre.
+  const tone = TABLE_TONES[useCardTone()];
   return (
-    <div className="w-full overflow-x-auto rounded-lg border border-border">
+    <div className={cn("w-full overflow-x-auto rounded-lg border bg-surface", tone.wrapper)}>
       <table className={cn("w-full caption-bottom text-left text-body-sm", className)} {...props} />
     </div>
   );
 }
 
 function TableHeader({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
+  const tone = TABLE_TONES[useCardTone()];
   return (
     <thead
       className={cn(
-        "bg-surface-muted [&_th]:h-9 [&_th]:px-3 [&_th]:font-label-sm [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-ink-muted",
+        tone.head,
+        "[&_th]:h-9 [&_th]:px-3 [&_th]:font-label-sm [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-ink-muted",
         className,
       )}
       {...props}

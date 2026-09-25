@@ -1,6 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
+const { idempotencyKeySchema } = require('./idempotency');
 const { FIXED_ASSET_CATEGORY_KEYS } = require('../constants/fixedAssets');
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)');
@@ -22,6 +23,7 @@ const createFixedAssetSchema = z
     paymentStatus: z.enum(['paid', 'unpaid']).default('paid'),
     paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
     supplierName: z.string().trim().min(2, 'Nom du fournisseur requis').max(150, 'Trop long').optional(),
+    idempotencyKey: idempotencyKeySchema,
   })
   .superRefine((data, ctx) => {
     if (data.paymentStatus === 'paid' && !data.paymentMethod) {

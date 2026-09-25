@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
+const { claimIdempotencyKey, DUPLICATE_MESSAGE } = require('../services/paymentGuards');
 const { requireAuth, requirePermission, requireRole } = require('../middleware/auth');
 const { createChargeSchema, updateChargeSchema, createUtilityPaymentSchema, deleteReasonSchema } = require('../validators/charges');
 const { UTILITY_TYPES, UTILITY_TYPE_KEYS, CHARGE_STATUSES } = require('../constants/charges');
@@ -176,6 +177,60 @@ router.get('/', async (req, res, next) => {
     );
 
     res.json({ charges: rows.map(toPublicCharge) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/charges/month-summary?month=AAAA-MM — encadré « Ce mois-ci » de la page Charges :
+// factures émises dans le mois (facturé / réglé / reste), règlements reçus dans le mois
+// (toutes factures confondues) et ce qui reste dû sur les mois précédents. Défaut : mois en cours.
+// Mêmes exclusions que la liste : factures supprimées logiquement ignorées.
+router.get('/month-summary', async (req, res, next) => {
+  try {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const month = typeof req.query.month === 'string' && req.query.month ? req.query.month : currentMonth;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new ApiError(400, 'Mois invalide (AAAA-MM)');
+    const [y, m] = month.split('-').map(Number);
+    const params = {
+      tenantId: req.user.tenantId,
+      firstDay: `${month}-01`,
+      lastDay: new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10),
+    };
+    const paidPerCharge = '(SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id)';
+
+    const [[billed]] = await pool.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(uc.amount), 0) AS billed, COALESCE(SUM(pt.paid_total), 0) AS paid
+       FROM utility_charges uc LEFT JOIN ${paidPerCharge} pt ON pt.charge_id = uc.id
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.billed_at BETWEEN :firstDay AND :lastDay`,
+      params,
+    );
+    const [[older]] = await pool.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(uc.amount - COALESCE(pt.paid_total, 0)), 0) AS remaining
+       FROM utility_charges uc LEFT JOIN ${paidPerCharge} pt ON pt.charge_id = uc.id
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.status <> 'payee' AND uc.billed_at < :firstDay`,
+      params,
+    );
+    const [[received]] = await pool.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(up.amount), 0) AS total
+       FROM utility_payments up JOIN utility_charges uc ON uc.id = up.charge_id AND uc.deleted_at IS NULL
+       WHERE up.tenant_id = :tenantId AND up.paid_at BETWEEN :firstDay AND :lastDay`,
+      params,
+    );
+    const billedTotal = Number(billed.billed);
+    const paid = Math.min(Number(billed.paid), billedTotal);
+    res.json({
+      month,
+      isCurrentMonth: month === currentMonth,
+      billedCount: Number(billed.n),
+      billed: billedTotal,
+      paid,
+      remaining: billedTotal - paid,
+      receivedInMonth: Number(received.total),
+      receivedCount: Number(received.n),
+      olderRemaining: Number(older.remaining),
+      olderCount: Number(older.n),
+    });
   } catch (err) {
     next(err);
   }
@@ -433,16 +488,22 @@ router.post('/:id/payments', async (req, res, next) => {
     // principe que les paiements de loyer (routes/leases.js).
     await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id });
 
-    // Garde anti-doublon : un règlement identique tout juste enregistré
-    // (< 2 min, même date/mode/montant) est très probablement un double-clic.
-    const [recent] = await conn.query(
-      `SELECT COUNT(*) AS n FROM utility_payments
-       WHERE charge_id = :id AND paid_at = :paidAt AND payment_method = :method AND amount = :amount
-         AND created_at > (NOW() - INTERVAL 2 MINUTE)`,
-      { id, paidAt: data.paidAt, method: data.paymentMethod, amount: data.amount },
-    );
-    if (Number(recent[0].n) > 0) {
-      throw new ApiError(409, 'Un règlement identique vient d\'être enregistré. Rechargez la page pour le voir.');
+    // Garde anti-doublon (étape 36). Voie normale : clé d'idempotence jointe à l'envoi, réclamée dans
+    // la transaction — deux règlements VOULUS, même de montants égaux le même jour avec le même mode
+    // (deux acomptes identiques), ne sont jamais confondus. Envoi SANS clé (ancien client) :
+    // heuristique héritée — même date, mode et montant sous 2 minutes.
+    if (data.idempotencyKey) {
+      await claimIdempotencyKey(conn, req.user.tenantId, 'charge_payment', data.idempotencyKey);
+    } else {
+      const [recent] = await conn.query(
+        `SELECT COUNT(*) AS n FROM utility_payments
+         WHERE charge_id = :id AND paid_at = :paidAt AND payment_method = :method AND amount = :amount
+           AND created_at > (NOW() - INTERVAL 2 MINUTE)`,
+        { id, paidAt: data.paidAt, method: data.paymentMethod, amount: data.amount },
+      );
+      if (Number(recent[0].n) > 0) {
+        throw new ApiError(409, DUPLICATE_MESSAGE, { code: ['duplicate_request'] });
+      }
     }
 
     const { newStatus } = await recordUtilityPayment(conn, {

@@ -23,6 +23,7 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
+import { CADRES } from "@/lib/module-theme";
 
 /** Taux d'occupation : favorable au-delà de 85 %, à surveiller entre 50 et 85 %, préoccupant en-deçà. */
 function occupancyTone(rate: number): "success" | "warning" | "danger" {
@@ -159,6 +160,7 @@ function TableauDeBordContent() {
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card
+            tone={CADRES.operations.tone}
             className={cn(
               "border-l-4",
               overview && overview.complaints.openCount > 0 ? "border-l-danger-strong" : "border-l-success-strong",

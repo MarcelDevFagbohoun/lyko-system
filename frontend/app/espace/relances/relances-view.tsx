@@ -29,6 +29,7 @@ import { Field, Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 
 /**
  * Centre de relance groupée (étape 10) : tous les locataires en retard sur
@@ -304,6 +305,7 @@ function ArrearsRow({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
+  const idem = useIdempotencyKey();
 
   const message = buildRentReminderMessage({
     renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
@@ -325,7 +327,13 @@ function ArrearsRow({
     setSubmitting(true);
     setError(null);
     try {
-      await applyLateFee(accessToken, a.leaseId, { amount: value, appliedAt, reason: reason.trim() || undefined });
+      await applyLateFee(accessToken, a.leaseId, {
+        amount: value,
+        appliedAt,
+        reason: reason.trim() || undefined,
+        idempotencyKey: idem.key,
+      });
+      idem.renew();
       toast.success(`Pénalité de ${formatFcfa(value)} appliquée à ${a.renterName}.`);
       setAmount("");
       setReason("");

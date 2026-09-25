@@ -1,6 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
+const { idempotencyKeySchema } = require('./idempotency');
 const { normalizeBeninPhone } = require('./auth');
 
 const optionalText = (max) =>
@@ -66,6 +67,7 @@ const createPayoutSchema = z.object({
     errorMap: () => ({ message: 'Mode de règlement invalide' }),
   }),
   notes: optionalText(255),
+  idempotencyKey: idempotencyKeySchema,
 });
 
 // Reversement des charges SONEB/SBEE encaissées (étape 31) : même forme qu'un
@@ -82,6 +84,7 @@ const createChargeRemittanceSchema = z.object({
     errorMap: () => ({ message: 'Mode de règlement invalide' }),
   }),
   notes: optionalText(255),
+  idempotencyKey: idempotencyKeySchema,
 });
 
 // Annulation = suppression logique avec justification obligatoire.

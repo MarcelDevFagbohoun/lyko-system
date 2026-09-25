@@ -21,6 +21,7 @@ const {
 } = require('../validators/inspections');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { computeArrears, allocateRentPayment } = require('../services/rentTracking');
+const { claimIdempotencyKey, hasRecentIdenticalRentPayment, DUPLICATE_MESSAGE } = require('../services/paymentGuards');
 const { streamReceiptPdf, streamMoveOutPdf } = require('../services/pdf');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
@@ -404,42 +405,55 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
     // deux requêtes simultanées ne pourront pas insérer chacune sans voir l'autre.
     await conn.query('SELECT id FROM leases WHERE id = :leaseId FOR UPDATE', { leaseId });
 
-    // Garde anti-doublon : un paiement pour CE MÊME MOIS (calculé comme le
-    // ferait `recordRentPayment`), même date et même mode, enregistré il y a
-    // moins de 2 minutes sur ce bail → très probablement un double-clic sur
-    // le même versement (le verrou FOR UPDATE ci-dessus empêche déjà un
-    // doublon strictement simultané, cette garde couvre une resoumission un
-    // peu plus tardive). Un mois différent reste permis : rattraper
-    // plusieurs mois de retard à la suite, y compris avec le même mode de
-    // règlement répété, est un usage normal.
-    const [payRowsForGuard] = await conn.query(
-      'SELECT covers_month, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
-      { leaseId },
-    );
-    const startDateForGuard =
-      lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
-    const arrearsForGuard = computeArrears({
-      startDate: startDateForGuard,
-      createdAt: lease.created_at,
-      upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
-      rentDueDay: lease.rent_due_day,
-      rentTiming: lease.rent_timing,
-      monthlyRent: lease.monthly_rent,
-      payments: payRowsForGuard.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
-    });
-    const startMonthForGuard =
-      data.coversMonth && data.coversMonth >= arrearsForGuard.nextDueMonth
-        ? data.coversMonth
-        : arrearsForGuard.nextDueMonth;
-    const [recent] = await conn.query(
-      `SELECT id FROM rent_payments
-       WHERE lease_id = :leaseId AND covers_month = :startMonth AND paid_at = :paidAt AND payment_method = :method
-         AND created_at > (NOW() - INTERVAL 2 MINUTE) AND deleted_at IS NULL
-       LIMIT 1`,
-      { leaseId, startMonth: startMonthForGuard, paidAt: data.paidAt, method: data.paymentMethod },
-    );
-    if (recent.length > 0) {
-      throw new ApiError(409, 'Un paiement identique vient d\'être enregistré. Rechargez la page pour le voir.');
+    // Garde anti-doublon (étape 36). Voie normale : une clé d'idempotence jointe à l'envoi,
+    // réclamée ici dans la transaction — un vrai doublon (rejeu de la file hors-ligne après une
+    // réponse perdue, nouvelle tentative réseau) est refusé, mais deux paiements VOULUS ne sont
+    // jamais confondus, même de montants égaux le même jour avec le même mode (deux moitiés d'un
+    // loyer, par exemple). Envoi SANS clé (ancien client) : heuristique héritée, qui compare
+    // désormais aussi le MONTANT — elle refusait à tort de payer le reste d'un mois partiel juste
+    // après un premier versement. (Le verrou FOR UPDATE ci-dessus sérialise déjà les envois
+    // strictement simultanés ; un mois différent reste toujours permis.)
+    if (data.idempotencyKey) {
+      await claimIdempotencyKey(conn, req.user.tenantId, 'rent_payment', data.idempotencyKey);
+    } else {
+      const [payRowsForGuard] = await conn.query(
+        'SELECT covers_month, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
+        { leaseId },
+      );
+      const startDateForGuard =
+        lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
+      const arrearsForGuard = computeArrears({
+        startDate: startDateForGuard,
+        createdAt: lease.created_at,
+        upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
+        rentDueDay: lease.rent_due_day,
+        rentTiming: lease.rent_timing,
+        monthlyRent: lease.monthly_rent,
+        payments: payRowsForGuard.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
+      });
+      const startMonthForGuard =
+        data.coversMonth && data.coversMonth >= arrearsForGuard.nextDueMonth
+          ? data.coversMonth
+          : arrearsForGuard.nextDueMonth;
+      // Montant de la PREMIÈRE écriture que ce paiement créerait (même répartition que `recordRentPayment`).
+      const firstAllocation = allocateRentPayment({
+        nextDueMonth: startMonthForGuard,
+        monthlyRent: lease.monthly_rent,
+        alreadyPaidForNextDueMonth: startMonthForGuard === arrearsForGuard.nextDueMonth ? arrearsForGuard.paidForNextDueMonth : 0,
+        amount: data.amount,
+      }).allocations[0];
+      if (
+        firstAllocation &&
+        (await hasRecentIdenticalRentPayment(conn, {
+          leaseId,
+          coversMonth: startMonthForGuard,
+          paidAt: data.paidAt,
+          paymentMethod: data.paymentMethod,
+          amount: firstAllocation.amount,
+        }))
+      ) {
+        throw new ApiError(409, DUPLICATE_MESSAGE, { code: ['duplicate_request'] });
+      }
     }
 
     const { fullMonths, partialAmount, monthsCovered, payments: created } = await recordRentPayment(conn, {
@@ -539,6 +553,8 @@ router.post('/:leaseId/late-fees', canPayments, async (req, res, next) => {
     const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
 
     await conn.beginTransaction();
+    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'late_fee', data.idempotencyKey);
 
     const [result] = await conn.query(
       `INSERT INTO late_fees (tenant_id, lease_id, amount, applied_at, reason, applied_by)
@@ -645,6 +661,8 @@ router.post('/:leaseId/opening-debt/payments', canPayments, async (req, res, nex
     // pouvoir dépasser ensemble le solde restant (même principe que le
     // verrou sur le paiement de loyer ci-dessus).
     await conn.query('SELECT id FROM leases WHERE id = :leaseId FOR UPDATE', { leaseId });
+    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'opening_debt_payment', data.idempotencyKey);
 
     const remaining = await getOpeningDebtRemaining(conn, req.user.tenantId, lease);
     if (remaining <= 0) {

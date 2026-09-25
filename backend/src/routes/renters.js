@@ -12,7 +12,7 @@ const {
   createLeaseSchema,
 } = require('../validators/renters');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
-const { computeArrears } = require('../services/rentTracking');
+const { computeArrears, buildRentStrip } = require('../services/rentTracking');
 const { streamCertificatePdf } = require('../services/pdf');
 const { toPublicInspectionReport, toPublicMoveOutReport } = require('../services/inspection');
 const { toActor } = require('../utils/actor');
@@ -319,8 +319,9 @@ router.get('/', canRead, async (req, res, next) => {
 
     const renters = rows.map((row) => {
       const renter = toPublicRenter(row);
-      if (!row.lease_id) return { ...renter, activeLease: null, arrears: null };
+      if (!row.lease_id) return { ...renter, activeLease: null, arrears: null, rentStrip: null };
       const lease = toPublicLease(row);
+      const leasePayments = paymentsByLease.get(row.lease_id) || [];
       const arrears = computeArrears({
         startDate: lease.startDate,
         createdAt: lease.createdAt,
@@ -328,9 +329,20 @@ router.get('/', canRead, async (req, res, next) => {
         rentDueDay: lease.rentDueDay,
         rentTiming: lease.rentTiming,
         monthlyRent: lease.monthlyRent,
-        payments: paymentsByLease.get(row.lease_id) || [],
+        payments: leasePayments,
       });
-      return { ...renter, activeLease: lease, arrears };
+      // Frise des 12 mois (état de chaque mois) — même source que le retard ci-dessus.
+      const rentStrip = buildRentStrip({
+        startDate: lease.startDate,
+        endDate: lease.endDate,
+        createdAt: lease.createdAt,
+        upToDateAtOnboarding: lease.upToDateAtOnboarding,
+        rentDueDay: lease.rentDueDay,
+        rentTiming: lease.rentTiming,
+        monthlyRent: lease.monthlyRent,
+        payments: leasePayments,
+      });
+      return { ...renter, activeLease: lease, arrears, rentStrip };
     });
 
     res.json({ renters });
@@ -465,6 +477,19 @@ router.get('/:id', canRead, async (req, res, next) => {
         arrears: isActive
           ? computeArrears({
               startDate: lease.startDate,
+              createdAt: lease.createdAt,
+              upToDateAtOnboarding: lease.upToDateAtOnboarding,
+              rentDueDay: lease.rentDueDay,
+              rentTiming: lease.rentTiming,
+              monthlyRent: lease.monthlyRent,
+              payments,
+            })
+          : null,
+        // Frise des 12 mois — seulement pour un bail actif (un bail terminé n'a plus d'échéance à suivre).
+        rentStrip: isActive
+          ? buildRentStrip({
+              startDate: lease.startDate,
+              endDate: lease.endDate,
               createdAt: lease.createdAt,
               upToDateAtOnboarding: lease.upToDateAtOnboarding,
               rentDueDay: lease.rentDueDay,

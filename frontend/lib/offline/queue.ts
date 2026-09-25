@@ -80,8 +80,14 @@ export async function processQueue(accessToken: string | null): Promise<void> {
           await queueUpdate(item.id, { status: "pending" });
           break;
         }
-        const message = err instanceof ApiError ? err.message : "Échec de synchronisation";
-        await queueUpdate(item.id, { status: "failed", error: message });
+        // Déjà enregistré (clé d'idempotence déjà consommée) : la réponse d'une tentative précédente
+        // s'était perdue, mais le serveur avait bien tout enregistré — rien à refaire ni à signaler.
+        if (err instanceof ApiError && err.status === 409 && err.details?.code?.[0] === "duplicate_request") {
+          await queueRemove(item.id);
+        } else {
+          const message = err instanceof ApiError ? err.message : "Échec de synchronisation";
+          await queueUpdate(item.id, { status: "failed", error: message });
+        }
       }
       await notify();
     }

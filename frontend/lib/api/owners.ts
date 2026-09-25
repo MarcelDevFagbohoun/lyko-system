@@ -140,6 +140,8 @@ export type CreatePayoutInput = {
   paidAt: string;
   paymentMethod: PaymentMethod;
   notes?: string;
+  /** Clé d'idempotence de CET envoi (voir `useIdempotencyKey`). */
+  idempotencyKey?: string;
 };
 
 export function createPayout(accessToken: string, ownerId: number, input: CreatePayoutInput) {
@@ -157,6 +159,8 @@ export type CreateChargeRemittanceInput = {
   paymentMethod: MainPaymentMethod;
   periodLabel?: string;
   notes?: string;
+  /** Clé d'idempotence de CET envoi (voir `useIdempotencyKey`). */
+  idempotencyKey?: string;
 };
 
 export function createChargeRemittance(accessToken: string, ownerId: number, input: CreateChargeRemittanceInput) {

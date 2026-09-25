@@ -18,7 +18,7 @@ const config: Config = {
     extend: {
       colors: {
         // ── Fonds & surfaces ────────────────────────────────
-        canvas: "#F8FAFC", // fond de page (slate-50)
+        canvas: "#F3F6FB", // fond de page — bleu-gris très doux : les cartes teintées ressortent dessus
         surface: {
           DEFAULT: "#FFFFFF", // cartes, panneaux
           muted: "#F1F5F9", // zones creuses, en-têtes de tableau
@@ -44,6 +44,23 @@ const config: Config = {
           fg: "#FFFFFF",
           bg: "#E8ECF9", // teinte claire — boutons d'action secondaires (gras + colorés, jamais plats)
           border: "#B7C3EA",
+        },
+
+        // ── Teintes des « cadres » (module de l'espace : voir lib/module-theme.ts) ──
+        // Une couleur = un cadre, jamais réutilisée pour un autre : bleu = vue d'ensemble,
+        // violet = patrimoine, orange = opérations, cyan = finances, ardoise = administration.
+        // Volontairement à l'écart des couleurs de STATUT ci-dessous (vert = payé, rouge = retard…),
+        // qui gardent leur sens. bg + border = fond/liseré des cartes ; solid = pastille, icône, filet.
+        tint: {
+          blue: { bg: "#E9F0FF", border: "#C9D9FB", solid: "#2F5BD8" },
+          violet: { bg: "#F0EBFF", border: "#D9CEFA", solid: "#7048E8" },
+          orange: { bg: "#FFEEE0", border: "#FAD4B4", solid: "#E8590C" },
+          cyan: { bg: "#E0F4F9", border: "#B9E3EE", solid: "#0E8AA8" },
+          slate: { bg: "#ECF0F6", border: "#D5DCE7", solid: "#64748B" },
+          // Teintes libres (usage ponctuel via `tone=`), sans cadre attitré.
+          teal: { bg: "#E4F6F1", border: "#BFE6DA", solid: "#0F9D82" },
+          amber: { bg: "#FEF3DE", border: "#F4DDAE", solid: "#C98A0B" },
+          rose: { bg: "#FDEAEE", border: "#F5CBD5", solid: "#D6336C" },
         },
 
         // ── Statuts (cohérents sur toute la plateforme) ─────

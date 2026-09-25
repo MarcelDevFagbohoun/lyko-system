@@ -1,6 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
+const { idempotencyKeySchema } = require('./idempotency');
 const { EXPENSE_CATEGORY_KEYS, EXPENSE_PAYMENT_METHODS } = require('../constants/expenses');
 
 const optionalText = (max) =>
@@ -40,6 +41,7 @@ const createExpenseSchema = z
     notes: optionalText(255),
     propertyId: z.coerce.number().int().positive().optional(),
     unitId: z.coerce.number().int().positive().optional(),
+    idempotencyKey: idempotencyKeySchema,
   })
   .superRefine((data, ctx) => {
     if (data.paymentStatus === 'paid' && !data.paymentMethod) {

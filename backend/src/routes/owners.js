@@ -16,6 +16,7 @@ const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties')
 const { streamOwnerStatementPdf, streamUtilityCarnetPdf } = require('../services/pdf');
 const { getEscrowBalances, getUnpaidOpeningDebtByOwner, pickRateValidAt, assertPayoutWithinBalance } = require('../services/commission');
 const { toActor } = require('../utils/actor');
+const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { getChargeAccount, assertRemittanceWithinBalance, listRemittances } = require('../services/utilityRemittance');
 const { getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
@@ -395,11 +396,18 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
     const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
-    // Garde-fou (audit comptable, anomalie A2) — voir services/commission.js
-    // `assertPayoutWithinBalance` pour le détail du cas réel trouvé.
-    await assertPayoutWithinBalance(req.user.tenantId, id, data.amount);
-
     await conn.beginTransaction();
+    // Sérialise les versements d'un même propriétaire : le solde est vérifié APRÈS ce verrou et DANS la
+    // transaction (garde-fou de l'audit comptable A2, voir services/commission.js
+    // `assertPayoutWithinBalance`) — deux versements simultanés, chacun inférieur au solde, ne peuvent
+    // plus le dépasser ensemble.
+    await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
+      id,
+      tenantId: req.user.tenantId,
+    });
+    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'owner_payout', data.idempotencyKey);
+    await assertPayoutWithinBalance(req.user.tenantId, id, data.amount, conn);
 
     const [result] = await conn.query(
       `INSERT INTO owner_payouts (tenant_id, owner_id, amount, period_label, paid_at, payment_method, notes, recorded_by)
@@ -480,6 +488,8 @@ router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
       id,
       tenantId: req.user.tenantId,
     });
+    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'charge_remittance', data.idempotencyKey);
     await assertRemittanceWithinBalance(conn, req.user.tenantId, id, data.amount);
 
     const [result] = await conn.query(

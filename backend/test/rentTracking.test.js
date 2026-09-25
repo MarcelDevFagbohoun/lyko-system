@@ -10,7 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { computeArrears, allocateRentPayment, isPaymentLate } = require('../src/services/rentTracking');
+const { computeArrears, allocateRentPayment, isPaymentLate, buildRentStrip, summarizeRentMonth } = require('../src/services/rentTracking');
 
 const TODAY = new Date('2026-09-22T00:00:00Z');
 
@@ -234,4 +234,222 @@ test('allocateRentPayment — sans reliquat (mois neuf), comportement identique 
     { coversMonth: '2026-10', amount: 100000, isPartial: false },
     { coversMonth: '2026-11', amount: 50000, isPartial: true },
   ]);
+});
+
+test("computeArrears — « payé jusqu'à » = dernier mois SOLDÉ consécutif (jamais un mois partiel ni un mois payé après un trou)", () => {
+  const pay = (coversMonth, amount) => ({ coversMonth, amount });
+  const base = { startDate: '2026-08-01', createdAt: '2026-08-01', rentDueDay: 5, monthlyRent: 75000 };
+
+  // Août à novembre soldés, décembre seulement entamé (50 000 / 75 000) : payé jusqu'à NOVEMBRE.
+  let a = computeArrears(
+    { ...base, payments: [pay('2026-08', 75000), pay('2026-09', 75000), pay('2026-10', 75000), pay('2026-11', 75000), pay('2026-12', 30000), pay('2026-12', 20000)] },
+    TODAY,
+  );
+  assert.equal(a.paidThroughMonth, '2026-11');
+  assert.equal(a.nextDueMonth, '2026-12');
+  assert.equal(a.paidForNextDueMonth, 50000);
+
+  // Trou : août soldé, septembre impayé, octobre soldé → payé jusqu'à AOÛT seulement.
+  a = computeArrears({ ...base, payments: [pay('2026-08', 75000), pay('2026-10', 75000)] }, TODAY);
+  assert.equal(a.paidThroughMonth, '2026-08');
+  assert.equal(a.nextDueMonth, '2026-09');
+
+  // Aucun paiement : aucun mois.
+  assert.equal(computeArrears({ ...base, payments: [] }, TODAY).paidThroughMonth, null);
+
+  // Premier mois seulement entamé : aucun mois soldé.
+  assert.equal(computeArrears({ ...base, payments: [pay('2026-08', 20000)] }, TODAY).paidThroughMonth, null);
+
+  // Tout soldé jusqu'à octobre : inchangé par rapport à avant.
+  a = computeArrears({ ...base, payments: [pay('2026-08', 75000), pay('2026-09', 75000), pay('2026-10', 75000)] }, TODAY);
+  assert.equal(a.paidThroughMonth, '2026-10');
+  assert.equal(a.nextDueMonth, '2026-11');
+
+  // Locataire déjà en place, enregistré en septembre, loyers antérieurs payés avant le suivi :
+  // le dernier mois payé AVANT le début du suivi reste affiché.
+  a = computeArrears(
+    { startDate: '2026-01-01', createdAt: '2026-09-10', rentDueDay: 5, monthlyRent: 75000, payments: [pay('2026-07', 75000), pay('2026-08', 75000)] },
+    TODAY,
+  );
+  assert.equal(a.paidThroughMonth, '2026-08');
+  assert.equal(a.nextDueMonth, '2026-09');
+
+  // Sans monthlyRent (compatibilité) : dernier mois ayant reçu un paiement, comme avant.
+  a = computeArrears({ startDate: '2026-08-01', createdAt: '2026-08-01', rentDueDay: 5, payments: [pay('2026-08', 100), pay('2026-10', 100)] }, TODAY);
+  assert.equal(a.paidThroughMonth, '2026-10');
+});
+
+
+// ── Frise des 12 mois (buildRentStrip) ─────────────────────────────────────
+
+const statusOf = (strip) => Object.fromEntries(strip.map((m) => [m.month, m.status]));
+const pay = (coversMonth, amount) => ({ coversMonth, amount });
+
+test('buildRentStrip — 12 mois consécutifs : 8 passés, le mois en cours, 3 à venir', () => {
+  const strip = buildRentStrip({ startDate: '2026-01-01', createdAt: '2026-01-01', rentDueDay: 5, monthlyRent: 75000, payments: [] }, TODAY);
+  assert.equal(strip.length, 12);
+  assert.deepEqual(strip.map((m) => m.month), ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12']);
+  assert.deepEqual(strip.filter((m) => m.isCurrent).map((m) => m.month), ['2026-09']);
+  // La fenêtre traverse bien un changement d'année.
+  const across = buildRentStrip({ startDate: '2025-01-01', rentDueDay: 5, monthlyRent: 1, payments: [] }, new Date('2027-02-10T00:00:00Z'));
+  assert.equal(across[0].month, '2026-06');
+  assert.equal(across[11].month, '2027-05');
+});
+
+test("buildRentStrip — convention d'avance : payé / partiel en retard / en retard / à venir", () => {
+  const payments = ['01', '02', '03', '04', '05', '06'].map((m) => pay(`2026-${m}`, 75000)).concat([pay('2026-07', 30000)]);
+  const strip = buildRentStrip({ startDate: '2026-01-01', createdAt: '2026-01-01', rentDueDay: 5, monthlyRent: 75000, payments }, TODAY);
+  const st = statusOf(strip);
+  for (const m of ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06']) assert.equal(st[m], 'paye', m);
+  assert.equal(st['2026-07'], 'partiel');
+  const july = strip.find((m) => m.month === '2026-07');
+  assert.equal(july.paid, 30000);
+  assert.equal(july.remaining, 45000);
+  assert.equal(july.late, true, 'juillet est partiel ET son échéance (5 juillet) est passée');
+  assert.equal(st['2026-08'], 'en_retard');
+  assert.equal(st['2026-09'], 'en_retard', 'échéance du 5 septembre passée (aujourd\'hui le 22)');
+  assert.equal(st['2026-10'], 'a_venir');
+  assert.equal(st['2026-12'], 'a_venir');
+  assert.equal(strip.find((m) => m.month === '2026-08').dueDate, '2026-08-05');
+});
+
+test("buildRentStrip — à terme échu : le loyer d'un mois n'est dû que le mois suivant", () => {
+  const strip = buildRentStrip({ startDate: '2026-01-01', createdAt: '2026-01-01', rentDueDay: 5, rentTiming: 'terme_echu', monthlyRent: 75000, payments: [] }, TODAY);
+  const st = statusOf(strip);
+  assert.equal(st['2026-08'], 'en_retard', 'août est dû le 5 septembre : passé');
+  assert.equal(st['2026-09'], 'a_payer', 'septembre est dû le 5 octobre : pas encore en retard');
+  assert.equal(st['2026-10'], 'a_venir');
+  assert.equal(strip.find((m) => m.month === '2026-09').dueDate, '2026-10-05');
+});
+
+test('buildRentStrip — suivi démarré tard : les mois d\'avant ne sont ni en retard ni « à jour »', () => {
+  // Entré en janvier, mais enregistré sur la plateforme le 10 juin.
+  const st = statusOf(buildRentStrip({ startDate: '2026-01-01', createdAt: '2026-06-10', rentDueDay: 5, monthlyRent: 75000, payments: [] }, TODAY));
+  for (const m of ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05']) assert.equal(st[m], 'avant_suivi', m);
+  assert.equal(st['2026-06'], 'en_retard');
+  // Un mois d'avant le suivi réellement payé s'affiche payé.
+  const paid = statusOf(buildRentStrip({ startDate: '2026-01-01', createdAt: '2026-06-10', rentDueDay: 5, monthlyRent: 75000, payments: [pay('2026-05', 75000)] }, TODAY));
+  assert.equal(paid['2026-05'], 'paye');
+  // Entré « à jour » : le mois de l'enregistrement n'est pas réclamé non plus.
+  const upToDate = statusOf(buildRentStrip({ startDate: '2026-01-01', createdAt: '2026-09-10', upToDateAtOnboarding: true, rentDueDay: 5, monthlyRent: 75000, payments: [] }, TODAY));
+  assert.equal(upToDate['2026-09'], 'avant_suivi');
+  assert.equal(upToDate['2026-10'], 'a_venir');
+});
+
+test('buildRentStrip — bail commencé en cours de fenêtre ou terminé : hors_bail', () => {
+  const started = statusOf(buildRentStrip({ startDate: '2026-04-15', createdAt: '2026-04-15', rentDueDay: 5, monthlyRent: 75000, payments: [] }, TODAY));
+  for (const m of ['2026-01', '2026-02', '2026-03']) assert.equal(started[m], 'hors_bail', m);
+  assert.equal(started['2026-04'], 'en_retard');
+
+  const ended = statusOf(buildRentStrip({ startDate: '2026-01-01', endDate: '2026-07-31', createdAt: '2026-01-01', rentDueDay: 5, monthlyRent: 75000, payments: [pay('2026-01', 75000)] }, TODAY));
+  assert.equal(ended['2026-01'], 'paye');
+  assert.equal(ended['2026-07'], 'en_retard');
+  for (const m of ['2026-08', '2026-09', '2026-12']) assert.equal(ended[m], 'hors_bail', m);
+});
+
+test("buildRentStrip — paiements d'avance : un mois futur entamé est partiel sans être en retard ; un mois futur soldé est payé", () => {
+  const strip = buildRentStrip(
+    { startDate: '2026-01-01', createdAt: '2026-01-01', rentDueDay: 5, monthlyRent: 75000, payments: [pay('2026-11', 20000), pay('2026-12', 75000)] },
+    TODAY,
+  );
+  const nov = strip.find((m) => m.month === '2026-11');
+  assert.equal(nov.status, 'partiel');
+  assert.equal(nov.late, false);
+  assert.equal(strip.find((m) => m.month === '2026-12').status, 'paye');
+  // Plusieurs paiements du même mois se cumulent.
+  const cumul = buildRentStrip({ startDate: '2026-01-01', createdAt: '2026-01-01', rentDueDay: 5, monthlyRent: 75000, payments: [pay('2026-08', 30000), pay('2026-08', 45000)] }, TODAY);
+  assert.equal(cumul.find((m) => m.month === '2026-08').status, 'paye');
+});
+
+test('buildRentStrip — cohérent avec computeArrears : le premier mois non soldé est nextDueMonth, et « en retard » ⇔ status late', () => {
+  const lease = {
+    startDate: '2026-01-01',
+    createdAt: '2026-01-01',
+    rentDueDay: 5,
+    monthlyRent: 75000,
+    payments: ['01', '02', '03', '04', '05'].map((m) => pay(`2026-${m}`, 75000)).concat([pay('2026-06', 40000)]),
+  };
+  const arrears = computeArrears(lease, TODAY);
+  const strip = buildRentStrip(lease, TODAY);
+  const firstUnsettled = strip.find((m) => m.status !== 'paye');
+  assert.equal(firstUnsettled.month, arrears.nextDueMonth);
+  assert.equal(firstUnsettled.status, 'partiel');
+  assert.equal(firstUnsettled.paid, arrears.paidForNextDueMonth);
+  assert.equal(arrears.status, 'late');
+  assert.equal(firstUnsettled.late, true);
+  // Terme échu : même cohérence sur le statut de retard.
+  for (const rentTiming of ['avance', 'terme_echu']) {
+    const l = { ...lease, rentTiming, payments: lease.payments.slice(0, 5).concat([pay('2026-06', 75000), pay('2026-07', 75000), pay('2026-08', 75000)]) };
+    const a = computeArrears(l, TODAY);
+    const s = buildRentStrip(l, TODAY);
+    const next = s.find((m) => m.month === a.nextDueMonth);
+    assert.equal(next.dueDate, a.dueDate, `${rentTiming} : même date d'échéance`);
+    assert.equal(next.late, a.status === 'late', `${rentTiming} : même verdict de retard`);
+  }
+});
+
+
+// ── Encadré « Ce mois-ci » (summarizeRentMonth) ────────────────────────────
+
+const lease = (o) => ({ startDate: '2026-01-01', createdAt: '2026-01-01', rentDueDay: 5, monthlyRent: 50000, paid: 0, ...o });
+
+test('summarizeRentMonth — attendu, encaissé, reste ; retard vs pas encore dû ; baux hors sujet ignorés', () => {
+  const leases = [
+    lease({ monthlyRent: 75000, paid: 75000 }), // A : payé
+    lease({ monthlyRent: 100000, paid: 40000 }), // B : partiel, échéance (5) passée → en retard
+    lease({ monthlyRent: 60000, rentDueDay: 28 }), // C : rien, échéance le 28 → à payer
+    lease({ monthlyRent: 50000 }), // D : rien, échéance passée → en retard
+    lease({ monthlyRent: 80000, rentTiming: 'terme_echu' }), // H : dû le 5 octobre → à payer
+    lease({ monthlyRent: 999999, endDate: '2026-08-31' }), // E : bail terminé fin août → ignoré
+    lease({ monthlyRent: 999999, startDate: '2026-10-01', createdAt: '2026-10-01' }), // F : commence en octobre → ignoré
+    lease({ monthlyRent: 999999, createdAt: '2026-09-10', upToDateAtOnboarding: true }), // G : entré « à jour » en septembre → ignoré
+  ];
+  const r = summarizeRentMonth(leases, '2026-09', TODAY);
+  assert.equal(r.counts.leases, 5);
+  assert.deepEqual({ paye: r.counts.paye, partiel: r.counts.partiel, en_retard: r.counts.en_retard, a_payer: r.counts.a_payer, a_venir: r.counts.a_venir, late: r.counts.late },
+    { paye: 1, partiel: 1, en_retard: 1, a_payer: 2, a_venir: 0, late: 2 });
+  assert.equal(r.expected, 75000 + 100000 + 60000 + 50000 + 80000);
+  assert.equal(r.collected, 75000 + 40000);
+  assert.equal(r.remaining, 60000 + 60000 + 50000 + 80000);
+  assert.equal(r.lateRemaining, 60000 + 50000, 'B (reste 60 000) et D (50 000) sont en retard');
+  assert.equal(r.upcomingRemaining, 60000 + 80000, 'C et H ne sont pas encore dus');
+  assert.equal(r.expected, r.collected + r.remaining, 'invariant : attendu = encaissé + reste');
+  assert.equal(r.lateRemaining + r.upcomingRemaining, r.remaining);
+});
+
+test('summarizeRentMonth — mois futur : rien n\'est en retard ; aucun bail : zéros ; surpaiement plafonné', () => {
+  const future = summarizeRentMonth([lease({ monthlyRent: 75000 }), lease({ monthlyRent: 50000, paid: 20000 })], '2026-12', TODAY);
+  assert.equal(future.counts.a_venir, 1);
+  assert.equal(future.counts.partiel, 1);
+  assert.equal(future.counts.late, 0);
+  assert.equal(future.lateRemaining, 0);
+  assert.equal(future.remaining, 75000 + 30000);
+
+  const none = summarizeRentMonth([], '2026-09', TODAY);
+  assert.equal(none.expected + none.collected + none.remaining, 0);
+  assert.equal(none.counts.leases, 0);
+
+  // Un cumul supérieur au loyer (anormal) ne fait jamais dépasser l'attendu.
+  const over = summarizeRentMonth([lease({ monthlyRent: 50000, paid: 80000 })], '2026-09', TODAY);
+  assert.equal(over.collected, 50000);
+  assert.equal(over.remaining, 0);
+  assert.equal(over.expected, over.collected + over.remaining);
+});
+
+test('summarizeRentMonth — cohérent avec la frise : même état de chaque bail pour le mois', () => {
+  const cases = [
+    lease({ monthlyRent: 75000, paid: 75000 }),
+    lease({ monthlyRent: 100000, paid: 40000 }),
+    lease({ monthlyRent: 60000, rentDueDay: 28 }),
+    lease({ monthlyRent: 50000 }),
+    lease({ monthlyRent: 80000, rentTiming: 'terme_echu' }),
+  ];
+  for (const l of cases) {
+    const strip = buildRentStrip({ ...l, payments: l.paid ? [{ coversMonth: '2026-09', amount: l.paid }] : [] }, TODAY);
+    const septembre = strip.find((m) => m.month === '2026-09');
+    const one = summarizeRentMonth([l], '2026-09', TODAY);
+    assert.equal(one.counts[septembre.status], 1, `statut ${septembre.status}`);
+    assert.equal(one.counts.late, septembre.late ? 1 : 0);
+    assert.equal(one.remaining, septembre.remaining);
+  }
 });

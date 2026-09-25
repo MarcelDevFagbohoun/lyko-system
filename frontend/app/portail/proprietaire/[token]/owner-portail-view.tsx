@@ -12,7 +12,8 @@ import {
 import { formatFcfa, monthLabelFr } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardToneProvider } from "@/components/ui/card";
+import { CADRES } from "@/lib/module-theme";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { OwnerPortalCharges } from "@/components/charges/owner-portal-charges";
@@ -137,7 +138,7 @@ export function OwnerPortailView() {
                     {r && (
                       <>
                         {!r.rateDefined && (
-                          <div className="rounded-lg border border-warning-border bg-warning/10 px-3 py-2.5 text-body-sm text-warning-fg">
+                          <div className="rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5 text-body-sm text-warning-fg">
                             Aucun taux de commission défini pour l&apos;instant — 0 % appliqué par défaut.
                           </div>
                         )}
@@ -250,7 +251,9 @@ function OwnerPortailShell({
           <span className="font-display text-headline-md text-ink">{tenant?.companyName ?? "Lyko System"}</span>
         )}
       </header>
-      <main className="flex w-full flex-1 flex-col items-center px-4 py-10">{children}</main>
+      <main className="flex w-full flex-1 flex-col items-center px-4 py-10">
+        <CardToneProvider tone={CADRES.patrimoine.tone}>{children}</CardToneProvider>
+      </main>
     </div>
   );
 }

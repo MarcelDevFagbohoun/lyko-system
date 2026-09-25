@@ -35,10 +35,11 @@ const { computeMonthlyDepreciation } = require('../services/gl/glDepreciationSer
 const { notifyDg } = require('../services/gl/glNotificationService');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
 const { assertPeriodOpen, isPeriodClosed, getPeriodClosability } = require('../services/accountingPeriods');
-const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances } = require('../services/rentTracking');
+const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, summarizeRentMonth } = require('../services/rentTracking');
 const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate } = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
 const { resolvePropertyScope } = require('../services/scope');
+const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { streamAccountingReportPdf } = require('../services/pdf');
 const logger = require('../utils/logger');
 
@@ -254,6 +255,8 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
     }
 
     await conn.beginTransaction();
+    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'expense', data.idempotencyKey);
 
     // "À crédit" : récupère ou crée le fournisseur par nom (pas de module
     // fournisseurs complet — juste assez pour un tiers identifiable et
@@ -524,6 +527,8 @@ router.post('/fixed-assets', canAccounting, async (req, res, next) => {
   try {
     await assertPeriodOpen(req.user.tenantId, data.acquisitionDate);
     await conn.beginTransaction();
+    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'fixed_asset', data.idempotencyKey);
 
     let supplierId = null;
     if (data.paymentStatus === 'unpaid') {
@@ -1313,6 +1318,58 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
     res.setHeader('Content-Disposition', `attachment; filename="registre-comptable-${from}-au-${to}.xlsx"`);
     await workbook.xlsx.write(res);
     res.end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/rent-month?month=AAAA-MM — encadré « Ce mois-ci » : loyers attendus,
+// encaissés et restant à encaisser pour un mois de loyer, tous baux suivis confondus
+// (voir `summarizeRentMonth`). Défaut : le mois en cours. Portée « Biens gérés » respectée.
+router.get('/rent-month', canAccounting, async (req, res, next) => {
+  try {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const month = typeof req.query.month === 'string' && req.query.month ? req.query.month : currentMonth;
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new ApiError(400, 'Mois invalide (AAAA-MM)');
+
+    const [y, m] = month.split('-').map(Number);
+    const firstDay = `${month}-01`;
+    const lastDay = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    const params = { tenantId: req.user.tenantId, month, firstDay, lastDay };
+    let scopeClause = '';
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    if (scopeAgentId != null) {
+      scopeClause = 'AND p.agent_id = :scopeAgentId';
+      params.scopeAgentId = scopeAgentId;
+    }
+    const [leases] = await pool.query(
+      `SELECT l.start_date, l.end_date, l.created_at, l.up_to_date_at_onboarding, l.rent_due_day, l.rent_timing,
+              l.monthly_rent, COALESCE(pay.paid, 0) AS paid
+       FROM leases l
+       JOIN property_units u ON u.id = l.unit_id
+       JOIN properties p ON p.id = u.property_id
+       LEFT JOIN (
+         SELECT lease_id, SUM(amount) AS paid FROM rent_payments
+         WHERE covers_month = :month AND deleted_at IS NULL GROUP BY lease_id
+       ) pay ON pay.lease_id = l.id
+       WHERE l.tenant_id = :tenantId AND l.start_date <= :lastDay
+         AND (l.status = 'active' OR (l.end_date IS NOT NULL AND l.end_date >= :firstDay)) ${scopeClause}`,
+      params,
+    );
+    const summary = summarizeRentMonth(
+      leases.map((l) => ({
+        startDate: l.start_date,
+        endDate: l.end_date,
+        createdAt: l.created_at,
+        upToDateAtOnboarding: !!l.up_to_date_at_onboarding,
+        rentDueDay: l.rent_due_day,
+        rentTiming: l.rent_timing,
+        monthlyRent: Number(l.monthly_rent),
+        paid: Number(l.paid),
+      })),
+      month,
+    );
+    res.json({ ...summary, isCurrentMonth: month === currentMonth });
   } catch (err) {
     next(err);
   }

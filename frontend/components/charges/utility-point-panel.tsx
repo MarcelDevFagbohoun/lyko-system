@@ -272,7 +272,7 @@ function CarnetBlock({ carnet }: { carnet: OwnerCarnet }) {
 /** Encaissé / reversé / à reverser — cumul à ce jour, jamais borné à la fenêtre affichée. */
 export function AccountLine({ account }: { account: ChargeAccount }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-primary-border bg-primary-bg/40 p-4">
+    <div className="flex flex-col gap-2 rounded-lg border border-primary-border bg-primary-bg p-4">
       <p className="font-label-md text-ink">Compte des charges à reverser (cumul à ce jour)</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="Charges encaissées" value={formatFcfa(account.collected, { withSuffix: false })} unit="FCFA" tone="default" />

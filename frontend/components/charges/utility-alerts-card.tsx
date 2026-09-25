@@ -8,6 +8,7 @@ import { getUtilityAlerts, type UtilityAlert } from "@/lib/api/charges";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { CADRES } from "@/lib/module-theme";
 
 const SEVERITY_STYLE: Record<UtilityAlert["severity"], { icon: React.ElementType; border: string; iconCls: string }> = {
   danger: { icon: AlertOctagon, border: "border-l-danger-strong", iconCls: "text-danger-fg" },
@@ -38,7 +39,7 @@ export function UtilityAlertsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: b
   if (alerts.length === 0) {
     if (hideWhenEmpty) return null;
     return (
-      <Card>
+      <Card tone={CADRES.finances.tone}>
         <CardContent className="flex items-center gap-2 py-4 text-body-sm text-ink-muted">
           <CheckCircle2 size={16} className="text-success" />
           Aucune alerte sur le suivi des charges : relevés à jour, factures mères déclarées, rien à reverser en retard.
@@ -48,7 +49,7 @@ export function UtilityAlertsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: b
   }
 
   return (
-    <Card>
+    <Card tone={CADRES.finances.tone}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <BellRing size={18} className="text-warning-fg" />

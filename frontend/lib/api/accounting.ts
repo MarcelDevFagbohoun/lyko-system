@@ -79,6 +79,8 @@ export type CreateExpenseInput = {
   /** Rattache la dépense à un Bien (réduit sa recette nette) ; `unitId` doit appartenir à ce Bien. */
   propertyId?: number;
   unitId?: number;
+  /** Clé d'idempotence de CET envoi (voir `useIdempotencyKey`). */
+  idempotencyKey?: string;
 };
 
 export function createExpense(accessToken: string, input: CreateExpenseInput) {
@@ -94,6 +96,7 @@ export function createExpense(accessToken: string, input: CreateExpenseInput) {
   if (rest.notes) fd.append("notes", rest.notes);
   if (rest.propertyId) fd.append("propertyId", String(rest.propertyId));
   if (rest.unitId) fd.append("unitId", String(rest.unitId));
+  if (rest.idempotencyKey) fd.append("idempotencyKey", rest.idempotencyKey);
   if (receipt) fd.append("receipt", receipt);
   return apiFetch<{ expenseId: number }>("/api/accounting/expenses", {
     method: "POST",
@@ -233,6 +236,24 @@ export function accountingReportPdfPath(from: string, to: string) {
 /** Registre comptable détaillé exportable en Excel (étape 27) — même période que le tableau de bord écran. */
 export function accountingExportXlsxPath(from: string, to: string) {
   return `/api/accounting/export.xlsx?from=${from}&to=${to}`;
+}
+
+/** Loyers d'un mois de loyer, tous baux suivis confondus (encadré « Ce mois-ci » de Comptabilité). */
+export type RentMonthSummary = {
+  month: string;
+  isCurrentMonth: boolean;
+  expected: number;
+  collected: number;
+  remaining: number;
+  /** Part du reste dont l'échéance est déjà passée. */
+  lateRemaining: number;
+  /** Part du reste pas encore due. */
+  upcomingRemaining: number;
+  counts: { leases: number; paye: number; partiel: number; en_retard: number; a_payer: number; a_venir: number; late: number };
+};
+
+export function getRentMonthSummary(accessToken: string, month: string) {
+  return apiFetch<RentMonthSummary>(`/api/accounting/rent-month?month=${encodeURIComponent(month)}`, { accessToken });
 }
 
 export type RentPaymentEntry = {
@@ -426,6 +447,8 @@ export type CreateFixedAssetInput = {
   paymentStatus?: "paid" | "unpaid";
   paymentMethod?: PaymentMethod;
   supplierName?: string;
+  /** Clé d'idempotence de CET envoi (voir `useIdempotencyKey`). */
+  idempotencyKey?: string;
 };
 
 export function createFixedAsset(accessToken: string, input: CreateFixedAssetInput) {

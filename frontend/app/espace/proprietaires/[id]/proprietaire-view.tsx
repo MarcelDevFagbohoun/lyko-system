@@ -35,6 +35,7 @@ import { Attribution } from "@/components/ui/attribution";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 
 const UNIT_STATUS_BADGE = {
   libre: { variant: "success" as const, label: "Libre" },
@@ -691,6 +692,7 @@ function PayoutForm({
 
   const methodLabel = PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
   const toast = useToast();
+  const idem = useIdempotencyKey();
 
   function reset() {
     setOpen(false);
@@ -721,7 +723,9 @@ function PayoutForm({
         paidAt,
         paymentMethod: method,
         notes: notes.trim() || undefined,
+        idempotencyKey: idem.key,
       });
+      idem.renew();
       const paidAmount = Number(amount);
       reset();
       onRecorded();

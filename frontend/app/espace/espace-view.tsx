@@ -8,6 +8,7 @@ import { MyTasksCard } from "@/components/espace/my-tasks-card";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { CADRES } from "@/lib/module-theme";
 
 /**
  * Espace principal après connexion (section 4.3) : état vide avec guide de
@@ -47,7 +48,7 @@ function EspaceContent() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {isDg && (
             <Link href="/espace/employes" className="group">
-              <Card className="h-full transition-shadow group-hover:shadow-md">
+              <Card tone={CADRES.administration.tone} className="h-full transition-shadow group-hover:shadow-md">
                 <CardHeader>
                   <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
                     <UserPlus size={20} />
@@ -67,7 +68,7 @@ function EspaceContent() {
           {canLocataires ? (
             <>
               <Link href="/espace/biens/nouveau" className="group">
-                <Card className="h-full transition-shadow group-hover:shadow-md">
+                <Card tone={CADRES.patrimoine.tone} className="h-full transition-shadow group-hover:shadow-md">
                   <CardHeader>
                     <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
                       <Building2 size={20} />
@@ -81,7 +82,7 @@ function EspaceContent() {
                 </Card>
               </Link>
               <Link href="/espace/locataires/nouveau" className="group">
-                <Card className="h-full transition-shadow group-hover:shadow-md">
+                <Card tone={CADRES.patrimoine.tone} className="h-full transition-shadow group-hover:shadow-md">
                   <CardHeader>
                     <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
                       <UserPlus size={20} />
@@ -97,7 +98,7 @@ function EspaceContent() {
             </>
           ) : canPayments ? (
             <Link href="/espace/locataires" className="group">
-              <Card className="h-full transition-shadow group-hover:shadow-md">
+              <Card tone={CADRES.finances.tone} className="h-full transition-shadow group-hover:shadow-md">
                 <CardHeader>
                   <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
                     <Receipt size={20} />

@@ -18,11 +18,14 @@ import { generateChargePaymentLink } from "@/lib/api/paymentLinks";
 import type { PaymentMethod } from "@/lib/api/renters";
 import { UTILITY_TYPE_LABELS, CHARGE_STATUS_LABELS } from "@/lib/constants/charges";
 import { ApiError } from "@/lib/api/client";
-import { formatFcfa, cn } from "@/lib/utils";
+import { formatFcfa, cn, newIdempotencyKey } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
+import { ChargeMonthCard } from "@/components/charges/charge-month-card";
 import { PaymentLinkCard } from "@/components/payments/payment-link-card";
 import { Badge } from "@/components/ui/badge";
+import { MonthGroupsToolbar, MonthHeaderRow, countLabel, useMonthGroups } from "@/components/ui/month-group";
+import { sumBy } from "@/lib/group-by-month";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,6 +50,9 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "virement", label: "Virement" },
   { value: "cheque", label: "Chèque" },
 ];
+
+// Regroupement par mois de la période facturée (fonction de module : stable entre les rendus).
+const chargeMonth = (c: UtilityCharge) => c.periodStart;
 
 export function ChargesView() {
   return (
@@ -95,6 +101,8 @@ function ChargesContent() {
       });
   }, [accessToken]);
 
+  const chargeGroups = useMonthGroups(charges, chargeMonth);
+
   const totalUnpaid = (charges ?? [])
     .filter((c) => c.status !== "payee")
     .reduce((s, c) => s + c.remainingAmount, 0);
@@ -130,6 +138,8 @@ function ChargesContent() {
         </div>
 
         <UtilityAlertsCard hideWhenEmpty />
+
+        <ChargeMonthCard />
 
         {charges && charges.some((c) => c.status !== "payee") && (
           <Card>
@@ -197,30 +207,60 @@ function ChargesContent() {
             </CardContent>
           </Card>
         ) : charges ? (
-          <Table>
-            <TableHeader>
-              <tr>
-                <TableHead>Locataire</TableHead>
-                <TableHead>Bien / unité</TableHead>
-                <TableHead>Fluide</TableHead>
-                <TableHead>Période</TableHead>
-                <TableHead className="text-right">Montant</TableHead>
-                <TableHead>Statut</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </tr>
-            </TableHeader>
-            <TableBody>
-              {charges.map((c) => (
-                <ChargeRow
-                  key={c.id}
-                  charge={c}
-                  accessToken={accessToken}
-                  locked={closedPeriods.has(c.billedAt.slice(0, 7))}
-                  onChanged={load}
-                />
-              ))}
-            </TableBody>
-          </Table>
+          <div className="flex flex-col gap-2">
+            <MonthGroupsToolbar count={chargeGroups.groups.length} allOpen={chargeGroups.allOpen} onSetAll={chargeGroups.setAll} />
+            <Table>
+              <TableHeader>
+                <tr>
+                  <TableHead>Locataire</TableHead>
+                  <TableHead>Bien / unité</TableHead>
+                  <TableHead>Fluide</TableHead>
+                  <TableHead>Période</TableHead>
+                  <TableHead className="text-right">Montant</TableHead>
+                  <TableHead>Statut</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </tr>
+              </TableHeader>
+              {chargeGroups.groups.map((g, i) => {
+                const open = chargeGroups.isOpen(g.month, i);
+                const remaining = sumBy(g.items, (c) => c.remainingAmount);
+                return (
+                  <TableBody key={g.month || "sans-date"}>
+                    <MonthHeaderRow
+                      colSpan={7}
+                      noun="Charges"
+                      month={g.month}
+                      open={open}
+                      onToggle={() => chargeGroups.toggle(g.month, i)}
+                      badge={
+                        remaining > 0 ? (
+                          <Badge variant="warning">Reste {formatFcfa(remaining)}</Badge>
+                        ) : (
+                          <Badge variant="success">Tout réglé</Badge>
+                        )
+                      }
+                      summary={
+                        <>
+                          {countLabel(g.items.length, "facture")} ·{" "}
+                          <span className="tabular font-label-md text-ink">{formatFcfa(sumBy(g.items, (c) => c.amount))}</span>
+                        </>
+                      }
+                    />
+                    {open &&
+                      g.items.map((c) => (
+                        <ChargeRow
+                          key={c.id}
+                          charge={c}
+                          accessToken={accessToken}
+                          locked={closedPeriods.has(c.billedAt.slice(0, 7))}
+                          onChanged={load}
+                        />
+                      ))}
+                  </TableBody>
+                );
+              })}
+            </Table>
+          </div>
         ) : null}
       </div>
     </div>
@@ -247,6 +287,9 @@ function ChargeRow({
   const [method, setMethod] = React.useState<PaymentMethod>("mobile_money");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().slice(0, 10));
   const [payAmount, setPayAmount] = React.useState(String(charge.remainingAmount));
+  // Clé d'idempotence de l'envoi en cours (étape 36) : renouvelée après chaque règlement enregistré,
+  // conservée si l'envoi échoue (une clé n'est consommée que si le règlement est enregistré).
+  const [idempotencyKey, setIdempotencyKey] = React.useState(() => newIdempotencyKey());
   const [readingStart, setReadingStart] = React.useState(String(charge.readingStart));
   const [readingEnd, setReadingEnd] = React.useState(String(charge.readingEnd));
   const [unitPrice, setUnitPrice] = React.useState(String(charge.unitPrice));
@@ -268,7 +311,8 @@ function ChargeRow({
     setSubmitting(true);
     setError(null);
     try {
-      await recordChargePayment(accessToken, charge.id, { amount, paymentMethod: method, paidAt });
+      await recordChargePayment(accessToken, charge.id, { amount, paymentMethod: method, paidAt, idempotencyKey });
+      setIdempotencyKey(newIdempotencyKey());
       setPaying(false);
       onChanged();
     } catch (err) {

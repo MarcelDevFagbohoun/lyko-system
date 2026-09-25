@@ -1,6 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
+const { idempotencyKeySchema } = require('./idempotency');
 const { UTILITY_TYPE_KEYS, LOSS_ALLOCATION_MODES } = require('../constants/charges');
 
 const optionalText = (max) =>
@@ -73,6 +74,9 @@ const createUtilityPaymentSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
   paidAt: dateSchema,
   notes: optionalText(255),
+  // Clé d'idempotence de CET envoi (étape 36) : même clé = un seul règlement. Facultative (ancien
+  // client) : le serveur retombe alors sur sa garde héritée (même date, mode et montant sous 2 min).
+  idempotencyKey: idempotencyKeySchema,
 });
 
 // Paiement de la facture mère par le propriétaire (étape 30) — simple mémo :

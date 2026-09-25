@@ -3,6 +3,7 @@
 const { z } = require('zod');
 const { phoneSchema, nameSchema } = require('./auth');
 const { RENT_TIMING_KEYS } = require('../constants/rentTiming');
+const { idempotencyKeySchema } = require('./idempotency');
 
 const emailSchema = z
   .string()
@@ -154,6 +155,10 @@ const createPaymentSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de paiement invalide' }) }),
   paidAt: dateSchema,
   notes: optionalText(255),
+  // Clé d'idempotence (étape 36) : générée par le navigateur pour CET envoi ; deux envois de même
+  // clé = un seul paiement. Facultative (ancien client) : le serveur retombe alors sur sa garde
+  // héritée, qui compare mois, date, mode ET montant.
+  idempotencyKey: idempotencyKeySchema,
 });
 
 // Annulation d'un paiement de loyer (audit comptable, anomalie A3) — même
@@ -169,6 +174,7 @@ const createLateFeeSchema = z.object({
   amount: amountSchema.refine((v) => v > 0, 'Le montant doit être supérieur à 0'),
   appliedAt: dateSchema,
   reason: optionalText(255),
+  idempotencyKey: idempotencyKeySchema,
 });
 
 // Règlement (total ou partiel) de la dette initiale d'un bail — le serveur
@@ -178,6 +184,7 @@ const createOpeningDebtPaymentSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de paiement invalide' }) }),
   paidAt: dateSchema,
   notes: optionalText(255),
+  idempotencyKey: idempotencyKeySchema,
 });
 
 module.exports = {

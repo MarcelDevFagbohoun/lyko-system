@@ -19,9 +19,11 @@ import type { ComplaintCategory } from "@/lib/api/complaints";
 import { COMPLAINT_CATEGORY_LABELS } from "@/lib/constants/complaints";
 import { formatFcfa, monthLabelFr, formatLateDuration } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { RentStrip } from "@/components/renters/rent-strip";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardToneProvider } from "@/components/ui/card";
+import { CADRES } from "@/lib/module-theme";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -81,8 +83,11 @@ export function PortailView() {
     );
   }
 
-  const { tenant, renter, activeLease, arrears, payments, unpaidCharges } = dashboard;
+  const { tenant, renter, activeLease, arrears, rentStrip, payments, unpaidCharges } = dashboard;
   const canPayOnline = tenant.kkiapayEnabled && !!tenant.kkiapayPublicKey;
+  // Un mois déjà entamé se complète : le locataire paie le RESTE, pas un loyer entier.
+  const partialRemaining =
+    activeLease && (arrears?.paidForNextDueMonth ?? 0) > 0 ? Math.max(0, activeLease.monthlyRent - (arrears?.paidForNextDueMonth ?? 0)) : 0;
 
   return (
     <PortailShell tenant={tenant}>
@@ -130,6 +135,20 @@ export function PortailView() {
                   <Metric label="Prochaine échéance" value={arrears?.dueDate ?? "—"} />
                 </div>
 
+                {partialRemaining > 0 && arrears && (
+                  <div className="rounded-lg border border-warning-border bg-warning-bg px-4 py-3 text-body-sm text-warning-fg">
+                    <span className="font-label-md capitalize">{monthLabelFr(arrears.nextDueMonth)}</span> n&apos;est payé qu&apos;en partie :
+                    il vous reste <span className="font-label-md">{formatFcfa(partialRemaining)}</span> à régler pour ce mois.
+                  </div>
+                )}
+
+                {rentStrip && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+                    <span className="font-label-sm uppercase tracking-wider text-ink-muted">Mes 12 mois de loyer</span>
+                    <RentStrip months={rentStrip} variant="full" />
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     type="button"
@@ -141,13 +160,13 @@ export function PortailView() {
                   </Button>
                   {canPayOnline && (
                     <PayNowButton
-                      amount={activeLease.monthlyRent}
+                      amount={partialRemaining > 0 ? partialRemaining : activeLease.monthlyRent}
                       reference={`t${tenant.id}:rent:${activeLease.id}`}
                       publicKey={tenant.kkiapayPublicKey!}
                       sandbox={tenant.kkiapaySandbox}
                       onVerify={(transactionId) => verifyPortalRentPayment(token, transactionId)}
                       onPaid={load}
-                      label="Payer mon loyer en ligne"
+                      label={partialRemaining > 0 ? `Payer le reste (${formatFcfa(partialRemaining)}) en ligne` : "Payer mon loyer en ligne"}
                     />
                   )}
                 </div>
@@ -361,7 +380,9 @@ function PortailShell({
           <span className="font-display text-headline-md text-ink">{tenant?.companyName ?? "Lyko System"}</span>
         )}
       </header>
-      <main className="flex w-full flex-1 flex-col items-center px-4 py-10">{children}</main>
+      <main className="flex w-full flex-1 flex-col items-center px-4 py-10">
+        <CardToneProvider tone={CADRES.finances.tone}>{children}</CardToneProvider>
+      </main>
     </div>
   );
 }

@@ -13,7 +13,7 @@ const { ApiError } = require('../middleware/error');
 const { requirePortalToken } = require('../middleware/portalAuth');
 const { portalComplaintSchema } = require('../validators/portal');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
-const { computeArrears } = require('../services/rentTracking');
+const { computeArrears, buildRentStrip } = require('../services/rentTracking');
 const { streamReceiptPdf, streamCertificatePdf } = require('../services/pdf');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 const { verifyAndRecordKkiapay } = require('../services/paymentVerification');
@@ -93,6 +93,7 @@ router.get('/:token', async (req, res, next) => {
 
     let payments = [];
     let arrears = null;
+    let rentStrip = null;
     let unpaidCharges = [];
     if (activeLease) {
       const [payRows] = await pool.query(
@@ -114,6 +115,16 @@ router.get('/:token', async (req, res, next) => {
       const startDate =
         activeLease.start_date instanceof Date ? activeLease.start_date.toISOString().slice(0, 10) : activeLease.start_date;
       arrears = computeArrears({
+        startDate,
+        createdAt: activeLease.created_at,
+        upToDateAtOnboarding: !!activeLease.up_to_date_at_onboarding,
+        rentDueDay: activeLease.rent_due_day,
+        rentTiming: activeLease.rent_timing,
+        monthlyRent: activeLease.monthly_rent,
+        payments: payRows.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
+      });
+      // Frise des 12 mois : ses propres paiements, mois par mois.
+      rentStrip = buildRentStrip({
         startDate,
         createdAt: activeLease.created_at,
         upToDateAtOnboarding: !!activeLease.up_to_date_at_onboarding,
@@ -172,6 +183,7 @@ router.get('/:token', async (req, res, next) => {
           }
         : null,
       arrears,
+      rentStrip,
       payments,
       unpaidCharges,
     });

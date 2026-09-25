@@ -48,6 +48,10 @@ import { UTILITY_TYPE_LABELS } from "@/lib/constants/charges";
 import { formatFcfa, formatDateHeading, formatTimeOfDay, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
+import { MonthGroupsToolbar, MonthHeaderRow, countLabel, useMonthGroups } from "@/components/ui/month-group";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
+import { RentMonthCard } from "@/components/accounting/rent-month-card";
+import { sumBy } from "@/lib/group-by-month";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -91,6 +95,11 @@ export function ComptabiliteView() {
   );
 }
 
+// Regroupement par mois (fonctions de module : stables entre les rendus) — les paiements
+// de loyer par MOIS DE LOYER concerné, les versements par mois de règlement.
+const rentPaymentMonth = (p: RentPaymentEntry) => p.coversMonth;
+const ownerPayoutMonth = (p: OwnerPayoutEntry) => p.paidAt;
+
 function ComptabiliteContent() {
   const { accessToken, user } = useAuth();
   const isDg = user?.role === "dg";
@@ -132,6 +141,9 @@ function ComptabiliteContent() {
   // Regroupe le journal par jour de SAISIE (préfixe de `createdAt`, pas
   // `expenseDate`) : l'ordre reçu du back-end est déjà décroissant sur ce
   // même champ, donc chaque groupe hérite naturellement du bon ordre interne.
+  const rentGroups = useMonthGroups(rentPayments, rentPaymentMonth);
+  const payoutGroups = useMonthGroups(ownerPayouts, ownerPayoutMonth);
+
   const expenseGroups = React.useMemo(() => {
     if (!expenses) return [];
     const groups: { dateKey: string; items: Expense[]; total: number }[] = [];
@@ -221,6 +233,8 @@ function ComptabiliteContent() {
             onChanged={load}
           />
         )}
+
+        <RentMonthCard yearMonth={yearMonth} />
 
         {dashboard && <DashboardCards dashboard={dashboard} />}
 
@@ -354,7 +368,9 @@ function ComptabiliteContent() {
         <Card className="border-success-border bg-success/5">
           <CardHeader>
             <CardTitle>Paiements des locataires</CardTitle>
-            <CardDescription>Loyers encaissés sur la période sélectionnée.</CardDescription>
+            <CardDescription>
+              Loyers encaissés sur la période sélectionnée, regroupés par mois de loyer concerné.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {rentPayments === null ? (
@@ -362,34 +378,54 @@ function ComptabiliteContent() {
             ) : rentPayments.length === 0 ? (
               <p className="text-body-sm text-ink-muted">Aucun paiement de loyer sur cette période.</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <tr>
-                    <TableHead>Locataire</TableHead>
-                    <TableHead>Unité</TableHead>
-                    <TableHead>Mois concerné</TableHead>
-                    <TableHead className="text-right">Montant</TableHead>
-                    <TableHead>Mode</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Enregistré par</TableHead>
-                  </tr>
-                </TableHeader>
-                <TableBody>
-                  {rentPayments.map((p) => (
-                    <TableRow key={p.id}>
-                      <TableCell>{p.renter.firstName} {p.renter.lastName}</TableCell>
-                      <TableCell className="text-ink-soft">{p.unitCode}</TableCell>
-                      <TableCell className="text-ink-soft">{p.coversMonth}</TableCell>
-                      <TableAmount>{formatFcfa(p.amount)}</TableAmount>
-                      <TableCell className="text-ink-soft">{p.paymentMethodLabel}</TableCell>
-                      <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
-                      <TableCell className="text-ink-soft">
-                        {p.recordedBy ? `${p.recordedBy.name} (${p.recordedBy.roleLabel})` : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="flex flex-col gap-2">
+                <MonthGroupsToolbar count={rentGroups.groups.length} allOpen={rentGroups.allOpen} onSetAll={rentGroups.setAll} />
+                <Table>
+                  <TableHeader>
+                    <tr>
+                      <TableHead>Locataire</TableHead>
+                      <TableHead>Unité</TableHead>
+                      <TableHead className="text-right">Montant</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Enregistré par</TableHead>
+                    </tr>
+                  </TableHeader>
+                  {rentGroups.groups.map((g, i) => {
+                    const open = rentGroups.isOpen(g.month, i);
+                    return (
+                      <TableBody key={g.month || "sans-date"}>
+                        <MonthHeaderRow
+                          colSpan={6}
+                          noun="Loyer"
+                          month={g.month}
+                          open={open}
+                          onToggle={() => rentGroups.toggle(g.month, i)}
+                          summary={
+                            <>
+                              {countLabel(g.items.length, "paiement")} ·{" "}
+                              <span className="tabular font-label-md text-ink">{formatFcfa(sumBy(g.items, (p) => p.amount))}</span>
+                            </>
+                          }
+                        />
+                        {open &&
+                          g.items.map((p) => (
+                            <TableRow key={p.id}>
+                              <TableCell>{p.renter.firstName} {p.renter.lastName}</TableCell>
+                              <TableCell className="text-ink-soft">{p.unitCode}</TableCell>
+                              <TableAmount>{formatFcfa(p.amount)}</TableAmount>
+                              <TableCell className="text-ink-soft">{p.paymentMethodLabel}</TableCell>
+                              <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
+                              <TableCell className="text-ink-soft">
+                                {p.recordedBy ? `${p.recordedBy.name} (${p.recordedBy.roleLabel})` : "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                      </TableBody>
+                    );
+                  })}
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -397,7 +433,7 @@ function ComptabiliteContent() {
         <Card className="border-info-border bg-info/5">
           <CardHeader>
             <CardTitle>Versements aux propriétaires</CardTitle>
-            <CardDescription>Loyers nets reversés sur la période sélectionnée.</CardDescription>
+            <CardDescription>Loyers nets reversés sur la période sélectionnée, regroupés par mois de règlement.</CardDescription>
           </CardHeader>
           <CardContent>
             {ownerPayouts === null ? (
@@ -405,36 +441,58 @@ function ComptabiliteContent() {
             ) : ownerPayouts.length === 0 ? (
               <p className="text-body-sm text-ink-muted">Aucun versement propriétaire sur cette période.</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <tr>
-                    <TableHead>Propriétaire</TableHead>
-                    <TableHead>Période versement</TableHead>
-                    <TableHead className="text-right">Montant</TableHead>
-                    <TableHead>Mode</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Enregistré par</TableHead>
-                  </tr>
-                </TableHeader>
-                <TableBody>
-                  {ownerPayouts.map((p) => (
-                    <TableRow key={p.id}>
-                      <TableCell>
-                        <Link href={`/espace/proprietaires/${p.owner.id}`} className="text-primary hover:underline">
-                          {p.owner.name}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="text-ink-soft">{p.periodLabel}</TableCell>
-                      <TableAmount>{formatFcfa(p.amount)}</TableAmount>
-                      <TableCell className="text-ink-soft">{p.paymentMethodLabel}</TableCell>
-                      <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
-                      <TableCell className="text-ink-soft">
-                        {p.recordedBy ? `${p.recordedBy.name} (${p.recordedBy.roleLabel})` : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="flex flex-col gap-2">
+                <MonthGroupsToolbar count={payoutGroups.groups.length} allOpen={payoutGroups.allOpen} onSetAll={payoutGroups.setAll} />
+                <Table>
+                  <TableHeader>
+                    <tr>
+                      <TableHead>Propriétaire</TableHead>
+                      <TableHead>Période versement</TableHead>
+                      <TableHead className="text-right">Montant</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Enregistré par</TableHead>
+                    </tr>
+                  </TableHeader>
+                  {payoutGroups.groups.map((g, i) => {
+                    const open = payoutGroups.isOpen(g.month, i);
+                    return (
+                      <TableBody key={g.month || "sans-date"}>
+                        <MonthHeaderRow
+                          colSpan={6}
+                          noun="Versements"
+                          month={g.month}
+                          open={open}
+                          onToggle={() => payoutGroups.toggle(g.month, i)}
+                          summary={
+                            <>
+                              {countLabel(g.items.length, "versement")} ·{" "}
+                              <span className="tabular font-label-md text-ink">{formatFcfa(sumBy(g.items, (p) => p.amount))}</span>
+                            </>
+                          }
+                        />
+                        {open &&
+                          g.items.map((p) => (
+                            <TableRow key={p.id}>
+                              <TableCell>
+                                <Link href={`/espace/proprietaires/${p.owner.id}`} className="text-primary hover:underline">
+                                  {p.owner.name}
+                                </Link>
+                              </TableCell>
+                              <TableCell className="text-ink-soft">{p.periodLabel}</TableCell>
+                              <TableAmount>{formatFcfa(p.amount)}</TableAmount>
+                              <TableCell className="text-ink-soft">{p.paymentMethodLabel}</TableCell>
+                              <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
+                              <TableCell className="text-ink-soft">
+                                {p.recordedBy ? `${p.recordedBy.name} (${p.recordedBy.roleLabel})` : "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                      </TableBody>
+                    );
+                  })}
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -1046,6 +1104,7 @@ function ExpenseForm({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
+  const idem = useIdempotencyKey();
 
   React.useEffect(() => {
     if (!accessToken || !open) return;
@@ -1068,7 +1127,9 @@ function ExpenseForm({
         supplierName: paymentStatus === "unpaid" ? supplierName.trim() : undefined,
         notes: notes.trim() || undefined,
         receipt: receipt ?? undefined,
+        idempotencyKey: idem.key,
       });
+      idem.renew();
       setOpen(false);
       setLabel("");
       setAmount("");
@@ -1542,6 +1603,7 @@ function FixedAssetForm({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
+  const idem = useIdempotencyKey();
 
   React.useEffect(() => {
     if (!accessToken || !open) return;
@@ -1563,7 +1625,9 @@ function FixedAssetForm({
         paymentStatus,
         paymentMethod: paymentStatus === "paid" ? method : undefined,
         supplierName: paymentStatus === "unpaid" ? supplierName.trim() : undefined,
+        idempotencyKey: idem.key,
       });
+      idem.renew();
       setOpen(false);
       setLabel("");
       setAcquisitionCost("");

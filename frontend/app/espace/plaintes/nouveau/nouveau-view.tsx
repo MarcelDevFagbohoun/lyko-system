@@ -130,7 +130,7 @@ function NouveauContent() {
           <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-5" noValidate>
               {!online && (
-                <div className="flex items-center gap-2 rounded-lg border border-warning-border bg-warning/10 px-3 py-2.5 text-body-sm text-warning-fg">
+                <div className="flex items-center gap-2 rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5 text-body-sm text-warning-fg">
                   <CloudOff size={16} className="shrink-0" />
                   Hors-ligne : cette plainte sera mise en attente et envoyée automatiquement dès le retour de la
                   connexion. Les photos ne peuvent pas être jointes hors-ligne.

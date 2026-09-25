@@ -1,5 +1,5 @@
 import { apiFetch, API_URL } from "./client";
-import type { PaymentMethod } from "./renters";
+import type { PaymentMethod, RentStripMonth } from "./renters";
 import type { ComplaintCategory, ComplaintPriority } from "./complaints";
 
 /**
@@ -14,6 +14,8 @@ import type { ComplaintCategory, ComplaintPriority } from "./complaints";
 export type PortalArrears = {
   paidThroughMonth: string | null;
   nextDueMonth: string;
+  /** Déjà payé pour `nextDueMonth` — absent d'une réponse mise en cache avant cette version. */
+  paidForNextDueMonth?: number;
   dueDate: string;
   daysLate: number;
   monthsLate: number;
@@ -58,6 +60,8 @@ export type PortalDashboard = {
     startDate: string;
   } | null;
   arrears: PortalArrears | null;
+  /** Ses 12 mois de loyer, mois par mois (null sans bail actif). */
+  rentStrip: RentStripMonth[] | null;
   payments: PortalPayment[];
   unpaidCharges: PortalUnpaidCharge[];
 };

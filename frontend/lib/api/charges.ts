@@ -106,7 +106,7 @@ export function getChargePayments(accessToken: string, id: number) {
 export function recordChargePayment(
   accessToken: string,
   id: number,
-  input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string },
+  input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string; idempotencyKey?: string },
 ) {
   return apiFetch<{ charge: UtilityCharge }>(`/api/charges/${id}/payments`, {
     method: "POST",
@@ -452,4 +452,26 @@ export function getUtilityAlerts(accessToken: string) {
 /** Chemin du carnet PDF d'un propriétaire (téléchargé avec le jeton, voir `openAuthenticatedPdf`). */
 export function utilityCarnetPdfPath(ownerId: number, from: string, to: string) {
   return `/api/owners/${ownerId}/carnet-charges.pdf?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+}
+
+/** Charges d'un mois (encadré « Ce mois-ci » de la page Charges). */
+export type ChargeMonthSummary = {
+  month: string;
+  isCurrentMonth: boolean;
+  /** Factures émises dans le mois. */
+  billedCount: number;
+  billed: number;
+  paid: number;
+  remaining: number;
+  /** Règlements reçus dans le mois (toutes factures confondues). */
+  receivedInMonth: number;
+  receivedCount: number;
+  /** Encore dû sur les factures émises avant ce mois. */
+  olderRemaining: number;
+  olderCount: number;
+};
+
+export function getChargeMonthSummary(accessToken: string, month?: string) {
+  const qs = month ? `?month=${encodeURIComponent(month)}` : "";
+  return apiFetch<ChargeMonthSummary>(`/api/charges/month-summary${qs}`, { accessToken });
 }

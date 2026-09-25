@@ -33,6 +33,19 @@ function toIsoDateString(d) {
 }
 
 /**
+ * Premier mois réellement SUIVI pour un bail : le mois du début du bail, ou
+ * celui de son enregistrement sur la plateforme s'il est postérieur (le suivi
+ * ne remonte jamais avant Lyko System) ; un locataire entré « à jour » démarre le
+ * mois d'après. Partagé par le calcul de retard et la frise des mois.
+ */
+function baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding }) {
+  const createdAtIso = createdAt ? toIsoDateString(createdAt) : null;
+  const baselineDate = createdAtIso && createdAtIso > startDate ? createdAtIso : startDate;
+  const baselineMonth = baselineDate.slice(0, 7);
+  return upToDateAtOnboarding ? addMonth(baselineMonth) : baselineMonth;
+}
+
+/**
  * Calcule le statut de paiement d'un bail : mois payés (à partir de la date
  * de début et des paiements enregistrés), prochaine échéance, retard éventuel.
  * `payments` : tableau de { coversMonth: 'YYYY-MM', amount }. `amount` est
@@ -67,10 +80,7 @@ function computeArrears(
   { startDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments },
   today = new Date(),
 ) {
-  const createdAtIso = createdAt ? toIsoDateString(createdAt) : null;
-  const baselineDate = createdAtIso && createdAtIso > startDate ? createdAtIso : startDate;
-  let baselineMonth = baselineDate.slice(0, 7);
-  if (upToDateAtOnboarding) baselineMonth = addMonth(baselineMonth);
+  const baselineMonth = baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding });
 
   const paidThrough = payments.length > 0 ? payments.map((p) => p.coversMonth).sort().at(-1) : null;
 
@@ -112,8 +122,25 @@ function computeArrears(
   const { months: monthsLate, remainderDays: remainderDaysLate } =
     daysLate > 0 ? monthsAndDaysLate(dueDate, todayUtc) : { months: 0, remainderDays: 0 };
 
+  // « Payé jusqu'à » : le dernier mois réellement SOLDÉ, de façon consécutive
+  // depuis le début du suivi — jamais un mois seulement entamé ni un mois payé
+  // après un trou. Avec `monthlyRent`, c'est le mois qui précède `nextDueMonth` ;
+  // s'il précède le début du suivi (locataire déjà en place à l'enregistrement),
+  // on retombe sur le dernier mois payé AVANT ce début. Sans `monthlyRent`
+  // (compatibilité) : dernier mois ayant reçu un paiement, comme avant.
+  let paidThroughMonth = paidThrough;
+  if (rent != null && rent > 0) {
+    const [ny, nm] = nextDueMonth.split('-').map(Number);
+    const prev = new Date(Date.UTC(ny, nm - 2, 1));
+    const lastSettled = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
+    paidThroughMonth =
+      lastSettled >= baselineMonth
+        ? lastSettled
+        : (payments.map((p) => p.coversMonth).filter((mth) => mth < baselineMonth).sort().at(-1) ?? null);
+  }
+
   return {
-    paidThroughMonth: paidThrough,
+    paidThroughMonth,
     nextDueMonth,
     // Combien est déjà réglé pour `nextDueMonth` (0 si rien) — permet à
     // `allocateRentPayment` de COMPLÉTER un mois déjà partiellement payé au
@@ -457,8 +484,159 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
   return results;
 }
 
+/** Mois décalé de `delta` mois au format 'YYYY-MM' (delta négatif accepté). */
+function shiftMonth(yearMonth, delta) {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * État d'UN mois de loyer pour UN bail — la règle unique derrière la frise des
+ * 12 mois et l'encadré « Ce mois-ci ». `paid` = cumul payé pour ce mois.
+ * Renvoie { status, late, dueDate } ; statuts documentés sur `buildRentStrip`.
+ */
+function rentMonthState({ month, paid, rent, rentDueDay, rentTiming, startMonth, endMonth, baselineMonth }, todayIso) {
+  const currentMonth = todayIso.slice(0, 7);
+  const dueMonth = rentTiming === 'terme_echu' ? shiftMonth(month, 1) : month;
+  const dueDate = `${dueMonth}-${String(rentDueDay).padStart(2, '0')}`;
+  const overdue = todayIso > dueDate;
+
+  let status;
+  let late = false;
+  if (rent > 0 && paid >= rent) {
+    status = 'paye';
+  } else if (paid > 0) {
+    status = 'partiel';
+    late = month >= baselineMonth && overdue;
+  } else if (month < startMonth || (endMonth && month > endMonth)) {
+    status = 'hors_bail';
+  } else if (month < baselineMonth) {
+    status = 'avant_suivi';
+  } else if (overdue) {
+    status = 'en_retard';
+    late = true;
+  } else if (month <= currentMonth) {
+    status = 'a_payer';
+  } else {
+    status = 'a_venir';
+  }
+  return { status, late, dueDate };
+}
+
+// Fenêtre de la frise : 12 mois consécutifs — 8 mois passés, le mois en cours,
+// puis 3 mois à venir (les paiements d'avance se voient, l'échéance qui approche aussi).
+const STRIP_MONTHS_BEFORE = 8;
+const STRIP_MONTHS = 12;
+
+/**
+ * Frise des 12 mois d'un bail (« qui est à jour ? » d'un coup d'œil) : l'état
+ * de CHAQUE mois, calculé mois par mois à partir des paiements — jamais
+ * déduit de la seule prochaine échéance, pour qu'un mois payé après un trou,
+ * ou seulement entamé, reste lisible.
+ *
+ *  - paye         : le cumul payé pour ce mois atteint le loyer
+ *  - partiel      : payé en partie (`late` dit si l'échéance est passée)
+ *  - en_retard    : rien payé et échéance dépassée
+ *  - a_payer      : mois en cours (ou passé) rien payé, échéance pas encore passée
+ *  - a_venir      : mois futur, rien payé
+ *  - avant_suivi  : le bail existait mais Lyko System ne le suivait pas encore
+ *  - hors_bail    : avant le début ou après la fin du bail
+ *
+ * L'échéance suit la convention du bail (`rentTiming`) exactement comme
+ * `computeArrears` : à terme échu, le loyer d'un mois est dû le mois suivant.
+ */
+function buildRentStrip(
+  { startDate, endDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments },
+  today = new Date(),
+) {
+  const rent = Number(monthlyRent) || 0;
+  const todayIso = today.toISOString().slice(0, 10);
+  const currentMonth = todayIso.slice(0, 7);
+  const startMonth = toIsoDateString(startDate).slice(0, 7);
+  const endMonth = endDate ? toIsoDateString(endDate).slice(0, 7) : null;
+  const baselineMonth = baselineMonthOf({ startDate: toIsoDateString(startDate), createdAt, upToDateAtOnboarding });
+
+  const paidByMonth = new Map();
+  for (const p of payments) {
+    paidByMonth.set(p.coversMonth, (paidByMonth.get(p.coversMonth) ?? 0) + Number(p.amount ?? 0));
+  }
+
+  const firstMonth = shiftMonth(currentMonth, -STRIP_MONTHS_BEFORE);
+  const months = [];
+  for (let i = 0; i < STRIP_MONTHS; i += 1) {
+    const month = shiftMonth(firstMonth, i);
+    const paid = paidByMonth.get(month) ?? 0;
+    const state = rentMonthState({ month, paid, rent, rentDueDay, rentTiming, startMonth, endMonth, baselineMonth }, todayIso);
+    months.push({
+      month,
+      status: state.status,
+      paid,
+      due: rent,
+      remaining: Math.max(0, rent - paid),
+      dueDate: state.dueDate,
+      late: state.late,
+      isCurrent: month === currentMonth,
+    });
+  }
+  return months;
+}
+
+/**
+ * Loyers d'un mois donné, tous baux confondus (encadré « Ce mois-ci ») :
+ * attendu, encaissé, reste — et parmi le reste, ce qui est déjà en retard
+ * (échéance passée) et ce qui n'est pas encore dû. Même règle par bail que la
+ * frise (`rentMonthState`) : un bail n'entre dans l'attendu que si le mois le
+ * concerne (ni hors bail, ni antérieur au suivi). `leases[i].paid` = cumul
+ * payé pour CE mois de loyer. Invariant : attendu = encaissé + reste.
+ */
+function summarizeRentMonth(leases, month, today = new Date()) {
+  const todayIso = today.toISOString().slice(0, 10);
+  const out = {
+    month,
+    expected: 0,
+    collected: 0,
+    remaining: 0,
+    lateRemaining: 0,
+    upcomingRemaining: 0,
+    counts: { leases: 0, paye: 0, partiel: 0, en_retard: 0, a_payer: 0, a_venir: 0, late: 0 },
+  };
+  for (const lease of leases) {
+    const rent = Number(lease.monthlyRent) || 0;
+    const paid = Number(lease.paid) || 0;
+    const startDate = toIsoDateString(lease.startDate);
+    const state = rentMonthState(
+      {
+        month,
+        paid,
+        rent,
+        rentDueDay: lease.rentDueDay,
+        rentTiming: lease.rentTiming,
+        startMonth: startDate.slice(0, 7),
+        endMonth: lease.endDate ? toIsoDateString(lease.endDate).slice(0, 7) : null,
+        baselineMonth: baselineMonthOf({ startDate, createdAt: lease.createdAt, upToDateAtOnboarding: lease.upToDateAtOnboarding }),
+      },
+      todayIso,
+    );
+    if (state.status === 'hors_bail' || state.status === 'avant_suivi') continue;
+    const remaining = Math.max(0, rent - paid);
+    out.counts.leases += 1;
+    out.counts[state.status] += 1;
+    if (state.late) out.counts.late += 1;
+    out.expected += rent;
+    out.remaining += remaining;
+    out.collected += rent - remaining;
+    if (state.late) out.lateRemaining += remaining;
+    else out.upcomingRemaining += remaining;
+  }
+  return out;
+}
+
 module.exports = {
   computeArrears,
+  buildRentStrip,
+  summarizeRentMonth,
+  rentMonthState,
   addMonth,
   allocateRentPayment,
   monthsBetweenInclusive,

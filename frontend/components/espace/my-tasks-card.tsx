@@ -22,6 +22,7 @@ import { formatFcfa, formatTaskDueLabel, buildRentReminderMessage, cn } from "@/
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { CADRES } from "@/lib/module-theme";
 
 type Tone = "danger" | "warning" | "info" | "primary";
 
@@ -256,7 +257,7 @@ function CategoryCard({
 }) {
   if (count === 0) return null;
   return (
-    <Card className={cn("border-l-4", TONE_BORDER[tone])}>
+    <Card tone={CADRES.operations.tone} className={cn("border-l-4", TONE_BORDER[tone])}>
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">

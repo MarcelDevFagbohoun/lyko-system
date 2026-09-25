@@ -41,11 +41,32 @@ export type LeaseUnit = {
 export type Arrears = {
   paidThroughMonth: string | null;
   nextDueMonth: string;
+  /** Déjà payé pour `nextDueMonth` (0 si rien) : un mois entamé se complète, il ne repart pas de zéro. */
+  paidForNextDueMonth: number;
   dueDate: string;
   daysLate: number;
   monthsLate: number;
   remainderDaysLate: number;
   status: "current" | "late";
+};
+
+/** État d'un mois dans la frise des 12 mois d'un bail (calculé côté serveur, mois par mois). */
+export type RentStripStatus = "paye" | "partiel" | "en_retard" | "a_payer" | "a_venir" | "avant_suivi" | "hors_bail";
+
+export type RentStripMonth = {
+  /** « AAAA-MM » */
+  month: string;
+  status: RentStripStatus;
+  /** Cumul payé pour ce mois. */
+  paid: number;
+  /** Loyer dû pour ce mois. */
+  due: number;
+  remaining: number;
+  /** Échéance de ce mois selon la convention du bail (« AAAA-MM-JJ »). */
+  dueDate: string;
+  /** Échéance dépassée alors que le mois n'est pas soldé. */
+  late: boolean;
+  isCurrent: boolean;
 };
 
 export type Payment = {
@@ -154,6 +175,8 @@ export type Lease = {
   unit: LeaseUnit;
   payments: Payment[];
   arrears: Arrears | null;
+  /** Frise des 12 mois : uniquement renvoyée par GET /api/renters/:id (bail actif) — la liste la porte au niveau de l'élément. */
+  rentStrip?: RentStripMonth[] | null;
   moveInReport: MoveInReport | null;
   moveOutReport: MoveOutReport | null;
   createdBy: Actor;
@@ -175,7 +198,7 @@ export type Renter = {
   portalLinkCreatedAt: string | null;
 };
 
-export type RenterListItem = Renter & { activeLease: Lease | null; arrears: Arrears | null };
+export type RenterListItem = Renter & { activeLease: Lease | null; arrears: Arrears | null; rentStrip: RentStripMonth[] | null };
 
 export function listRenters(accessToken: string) {
   return apiFetch<{ renters: RenterListItem[] }>("/api/renters", { accessToken });
@@ -282,6 +305,8 @@ export type CreatePaymentInput = {
   paymentMethod: PaymentMethod;
   paidAt: string;
   notes?: string;
+  /** Clé d'idempotence de CET envoi (voir `newIdempotencyKey`) : un rejeu avec la même clé n'enregistre rien de plus. */
+  idempotencyKey?: string;
 };
 
 /** Une écriture créée par un paiement (un mois de loyer, une quittance). */
@@ -345,6 +370,9 @@ export async function createPayment(
       };
       if (input.coversMonth) body.coversMonth = input.coversMonth;
       if (input.notes) body.notes = input.notes;
+      // La MÊME clé suit le paiement dans la file : si la réponse s'était perdue alors que le serveur
+      // l'avait enregistré, le rejeu ne le double pas.
+      if (input.idempotencyKey) body.idempotencyKey = input.idempotencyKey;
       await enqueueMutation({
         kind: "rent_payment",
         method: "POST",
@@ -376,7 +404,11 @@ export function listLateFees(accessToken: string, leaseId: number) {
 }
 
 /** Montant toujours saisi à la main — jamais un barème automatique. */
-export function applyLateFee(accessToken: string, leaseId: number, input: { amount: number; appliedAt: string; reason?: string }) {
+export function applyLateFee(
+  accessToken: string,
+  leaseId: number,
+  input: { amount: number; appliedAt: string; reason?: string; idempotencyKey?: string },
+) {
   return apiFetch<{ lateFeeId: number }>(`/api/leases/${leaseId}/late-fees`, {
     method: "POST",
     accessToken,
@@ -389,7 +421,7 @@ export function applyLateFee(accessToken: string, leaseId: number, input: { amou
 export function payOpeningDebt(
   accessToken: string,
   leaseId: number,
-  input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string },
+  input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string; idempotencyKey?: string },
 ) {
   return apiFetch<{ paymentId: number; remaining: number }>(`/api/leases/${leaseId}/opening-debt/payments`, {
     method: "POST",

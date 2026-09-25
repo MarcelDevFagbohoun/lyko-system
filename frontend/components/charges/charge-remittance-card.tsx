@@ -7,6 +7,7 @@ import { cancelChargeRemittance, createChargeRemittance, type OwnerChargeRemitta
 import type { ChargeAccount, MainPaymentMethod } from "@/lib/api/charges";
 import { formatFcfa } from "@/lib/utils";
 import { useToast } from "@/lib/toast/toast-context";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
@@ -60,6 +61,7 @@ export function ChargeRemittanceCard({
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const idem = useIdempotencyKey();
 
   const methodLabel = METHODS.find((m) => m.value === method)?.label ?? method;
 
@@ -101,7 +103,9 @@ export function ChargeRemittanceCard({
         paymentMethod: method,
         ...(label.trim() ? { periodLabel: label.trim() } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        idempotencyKey: idem.key,
       });
+      idem.renew();
       reset();
       onChanged();
       toast.success(`Reversement de ${formatFcfa(paid)} enregistré pour ${ownerName}.`);

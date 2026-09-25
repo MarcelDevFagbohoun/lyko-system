@@ -186,8 +186,8 @@ async function getRecetteProprietaire(tenantId, propertyId, yearMonth) {
  * l'ensemble des Biens d'un propriétaire, pas seulement ceux visibles par
  * un agent restreint.
  */
-async function getEscrowBalances(tenantId) {
-  const [paymentRows] = await pool.query(
+async function getEscrowBalances(tenantId, db = pool) {
+  const [paymentRows] = await db.query(
     `SELECT p.owner_id, rp.covers_month AS ym, SUM(rp.amount) AS total
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
@@ -197,7 +197,7 @@ async function getEscrowBalances(tenantId) {
      GROUP BY p.owner_id, rp.covers_month`,
     { tenantId },
   );
-  const [expenseRows] = await pool.query(
+  const [expenseRows] = await db.query(
     `SELECT p.owner_id, DATE_FORMAT(e.expense_date, '%Y-%m') AS ym, SUM(e.amount) AS total
      FROM expenses e
      JOIN properties p ON p.id = e.property_id
@@ -205,12 +205,12 @@ async function getEscrowBalances(tenantId) {
      GROUP BY p.owner_id, ym`,
     { tenantId },
   );
-  const [rateRows] = await pool.query(
+  const [rateRows] = await db.query(
     `SELECT owner_id, rate, starts_on, ends_on FROM owner_commission_rates
      WHERE tenant_id = :tenantId ORDER BY owner_id, starts_on`,
     { tenantId },
   );
-  const [payoutRows] = await pool.query(
+  const [payoutRows] = await db.query(
     `SELECT owner_id, COALESCE(SUM(amount), 0) AS total FROM owner_payouts WHERE tenant_id = :tenantId GROUP BY owner_id`,
     { tenantId },
   );
@@ -334,8 +334,11 @@ async function getOwnersWithoutCommissionRate(tenantId) {
  * jamais un simple avertissement contournable — voir routes/owners.js
  * `POST /:id/payouts`.
  */
-async function assertPayoutWithinBalance(tenantId, ownerId, amount) {
-  const balances = await getEscrowBalances(tenantId);
+async function assertPayoutWithinBalance(tenantId, ownerId, amount, db = pool) {
+  // `db` : la connexion de la transaction du versement, une fois la fiche du propriétaire VERROUILLÉE —
+  // le solde est alors lu après tout versement concurrent déjà validé, jamais avant (sinon deux versements
+  // simultanés, chacun inférieur au solde, pouvaient le dépasser ensemble).
+  const balances = await getEscrowBalances(tenantId, db);
   const balance = balances.get(ownerId)?.balance ?? 0;
   if (amount > balance) {
     throw new ApiError(400, `Le montant dépasse le solde séquestre réellement détenu pour ce propriétaire (${balance} FCFA)`);

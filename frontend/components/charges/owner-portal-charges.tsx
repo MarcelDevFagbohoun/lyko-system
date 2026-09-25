@@ -71,7 +71,7 @@ export function OwnerPortalCharges({ token, charges }: { token: string; charges:
             )}
 
             {t.pendingPaymentCount > 0 && (
-              <div className="flex items-start gap-2 rounded-lg border border-warning-border bg-warning/10 px-3 py-2.5 text-body-sm text-warning-fg">
+              <div className="flex items-start gap-2 rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5 text-body-sm text-warning-fg">
                 <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                 <span>
                   {t.pendingPaymentCount} facture{t.pendingPaymentCount > 1 ? "s" : ""} de la SONEB/SBEE ({formatFcfa(t.pendingInvoiceAmount)})

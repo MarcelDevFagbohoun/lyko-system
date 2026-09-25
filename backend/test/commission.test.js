@@ -255,3 +255,74 @@ test('assertPayoutWithinBalance — rejette un reversement qui dépasse le solde
   await pool.query('DELETE FROM owners WHERE id = :o', { o: ownerId });
 });
 
+
+test('assertPayoutWithinBalance — verrou + vérification DANS la transaction : trois versements simultanés de 30 000 sur un solde de 50 000, un seul passe', async () => {
+  // Avant : le solde était lu HORS transaction ; deux versements simultanés, chacun inférieur au solde,
+  // passaient ensemble la vérification et le dépassaient (solde séquestre négatif).
+  const [owner] = await pool.query('INSERT INTO owners (tenant_id, name, created_by) VALUES (:t, :n, :by)', {
+    t: fx.tenantId,
+    n: 'Propriétaire Test Concurrence',
+    by: fx.dgId,
+  });
+  const ownerId = owner.insertId;
+  const [property] = await pool.query(
+    'INSERT INTO properties (tenant_id, code, owner_id, created_by) VALUES (:t, :code, :o, :by)',
+    { t: fx.tenantId, code: 'CONC-001', o: ownerId, by: fx.dgId },
+  );
+  const [unit] = await pool.query(
+    "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'CONC-U1', 'studio', 'loue', 50000, :by)",
+    { t: fx.tenantId, p: property.insertId, by: fx.dgId },
+  );
+  const [renter] = await pool.query(
+    "INSERT INTO renters (tenant_id, first_name, last_name, phone, created_by) VALUES (:t, 'Conc', 'Test', :phone, :by)",
+    { t: fx.tenantId, phone: `09${Math.floor(Math.random() * 100000000)}`, by: fx.dgId },
+  );
+  const [lease] = await pool.query(
+    "INSERT INTO leases (tenant_id, renter_id, unit_id, start_date, monthly_rent, rent_due_day, deposit_amount, status, created_by) VALUES (:t, :r, :u, '2026-05-01', 50000, 5, 0, 'active', :by)",
+    { t: fx.tenantId, r: renter.insertId, u: unit.insertId, by: fx.dgId },
+  );
+  await pool.query(
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-05', 50000, 'especes', '2026-05-05', :by)`,
+    { t: fx.tenantId, l: lease.insertId, by: fx.dgId },
+  ); // solde réel détenu : 50 000 (aucun taux → 0 % de commission)
+
+  // Reproduit la séquence de la route : transaction → verrou de la fiche → vérification sur LA connexion → insertion.
+  async function attempt(amount) {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :t FOR UPDATE', { id: ownerId, t: fx.tenantId });
+      await assertPayoutWithinBalance(fx.tenantId, ownerId, amount, conn);
+      await conn.query(
+        `INSERT INTO owner_payouts (tenant_id, owner_id, amount, period_label, paid_at, payment_method, recorded_by)
+         VALUES (:t, :o, :amount, 'Concurrence', '2026-05-20', 'virement', :by)`,
+        { t: fx.tenantId, o: ownerId, amount, by: fx.dgId },
+      );
+      await conn.commit();
+      return 'ok';
+    } catch (err) {
+      await conn.rollback().catch(() => {});
+      return err instanceof ApiError ? err.status : `erreur : ${err.message}`;
+    } finally {
+      conn.release();
+    }
+  }
+
+  const results = await Promise.all([attempt(30000), attempt(30000), attempt(30000)]);
+  assert.equal(results.filter((r) => r === 'ok').length, 1, `un seul versement doit passer, obtenu ${JSON.stringify(results)}`);
+  assert.equal(results.filter((r) => r === 400).length, 2, 'les deux autres sont refusés (400)');
+
+  const balances = await getEscrowBalances(fx.tenantId);
+  const b = balances.get(ownerId);
+  assert.equal(b.totalPayouts, 30000);
+  assert.equal(b.balance, 20000, 'le solde n\'est jamais négatif');
+
+  await pool.query('DELETE FROM owner_payouts WHERE owner_id = :o', { o: ownerId });
+  await pool.query('DELETE FROM rent_payments WHERE lease_id = :l', { l: lease.insertId });
+  await pool.query('DELETE FROM leases WHERE id = :l', { l: lease.insertId });
+  await pool.query('DELETE FROM renters WHERE id = :r', { r: renter.insertId });
+  await pool.query('DELETE FROM property_units WHERE id = :u', { u: unit.insertId });
+  await pool.query('DELETE FROM properties WHERE id = :p', { p: property.insertId });
+  await pool.query('DELETE FROM owners WHERE id = :o', { o: ownerId });
+});

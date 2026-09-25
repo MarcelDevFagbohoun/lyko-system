@@ -522,7 +522,7 @@ function BillingReportSection({ zones }: { zones: InspectionZone[] }) {
   const total = billedItems.reduce((sum, { item }) => sum + item.deduction, 0);
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-danger-border bg-danger-bg/40 p-4">
+    <div className="flex flex-col gap-3 rounded-lg border border-danger-border bg-danger-bg p-4">
       <h3 className="font-label-lg text-ink">Rapport de facturation</h3>
       <div className="flex flex-col gap-2">
         {billedItems.map(({ zoneLabel, item }) => (

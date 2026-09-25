@@ -4459,3 +4459,247 @@ PDF employé et portail, plafond de 5 téléchargements, code de vérification, 
 verrou de période) ; parcours navigateur réel de chaque écran ; `pdftotext`/`pdftoppm` sur les
 PDF. `tsc`/`eslint` propres. **Bug trouvé par les tests** : la flèche « → » n'existe pas dans
 l'alphabet des polices PDF standard (caractères parasites) — remplacée par « de … à … ».
+
+## Étape 32 — Lecture par mois des paiements et des charges
+
+🟢 Validé (2026-09-25).
+
+**Besoin** : « arriver vite à comprendre les choses » — les paiements et les charges étaient de
+longues listes plates triées par date (seul le Journal des dépenses était regroupé, par jour).
+
+**Ce qui a été fait** (frontend uniquement, aucun changement de données)
+- Brique commune : `lib/group-by-month.ts` (regroupement du plus récent au plus ancien, date
+  absente ou invalide rangée en dernier, aucun élément perdu) et `components/ui/month-group.tsx`
+  (en-tête de mois repliable avec bilan et état, « Tout déplier / Tout replier », élision
+  « Loyer d'août »). Jusqu'à 3 mois tout est déplié ; au-delà, seuls le mois le plus récent et le
+  mois en cours le sont. Le choix de l'utilisateur survit au rechargement de la liste.
+- **Comptabilité** : « Paiements des locataires » regroupés par MOIS DE LOYER concerné (un paiement
+  d'octobre qui couvre novembre apparaît sous novembre) ; « Versements aux propriétaires » par mois
+  de règlement.
+- **Fiche locataire** : registre des paiements par mois de loyer, avec l'état de chaque mois face au
+  loyer (Payé, ou Partiel · reste X et « 50 000 / 75 000 ») ; charges SONEB/SBEE par mois avec
+  « reste » ou « tout réglé ».
+- **Page Charges** : factures regroupées par mois de la période facturée, avec total facturé,
+  reste dû et état du mois.
+
+**Bug corrigé au passage** : « Payé jusqu'à … » (fiche locataire et portail du locataire) prenait
+le dernier mois ayant reçu AU MOINS UN paiement : un mois seulement entamé, ou payé après un trou,
+s'affichait comme payé. C'est maintenant le dernier mois réellement soldé de façon consécutive
+(`computeArrears`, test dédié).
+
+**Tests** : logique de regroupement vérifiée sur les cas limites ; suite backend 149/149 ;
+navigateur réel sur les trois écrans (dont un mois partiel, l'élision et le repli/dépli) ;
+`tsc`/`eslint` propres.
+
+**Suite** : la frise des 12 mois par locataire (étape 33) et l'encadré « Ce mois-ci » (étape 34)
+sont faits.
+
+## Étape 33 — Frise des 12 mois par locataire
+
+🟢 Validé (2026-09-25).
+
+**Besoin** : voir « qui est à jour ? » sans lire un tableau.
+
+**Ce qui a été fait**
+- **Calcul côté serveur** (`buildRentStrip`, `services/rentTracking.js`) : l'état de CHAQUE mois d'une
+  fenêtre de 12 mois (8 passés, le mois en cours, 3 à venir), calculé mois par mois — jamais déduit
+  de la seule prochaine échéance, donc un mois payé après un trou ou seulement entamé reste lisible.
+  États : payé, partiel (avec `late` si l'échéance est passée), en retard, à payer, à venir, avant le
+  suivi (le bail existait avant Lyko System : rien n'est réclamé), hors bail. Suit la convention du
+  bail (avance / à terme échu) et le même point de départ de suivi que `computeArrears` (helper
+  commun `baselineMonthOf`). Un test vérifie la cohérence avec `computeArrears` (même prochaine
+  échéance, même verdict de retard, dans les deux conventions).
+- **Affichage** (`components/renters/rent-strip.tsx`) : cases colorées avec forme ou icône en plus de
+  la couleur (coche, alerte, horloge) ; un mois partiel est une **jauge** remplie au prorata du payé ;
+  au clic sur un mois, une phrase dit tout (« Partiel : 50 000 payés sur 75 000, reste 25 000 —
+  échéance le 5 janvier 2027 ») ; info-bulle au survol ; légende. Version complète sur la fiche
+  locataire et sur **le portail du locataire** (il voit ses propres 12 mois) ; version compacte
+  (pastilles) dans une nouvelle colonne « 12 mois » de la liste des locataires.
+- Exposée par `GET /api/renters` (par locataire), `GET /api/renters/:id` (bail actif) et le portail.
+
+**Tests** : 7 tests de la frise (fenêtre sur changement d'année, avance / terme échu, suivi tardif,
+bail commencé ou terminé en cours de fenêtre, paiements d'avance, cumul, cohérence avec
+`computeArrears`) — suite backend **156/156** ; navigateur réel sur la fiche (12 cases, détail au
+clic), la liste (5 frises) et le portail ; `tsc`/`eslint` propres.
+
+## Étape 34 — Encadré « Ce mois-ci » (Comptabilité et Charges)
+
+🟢 Validé (2026-09-25).
+
+**Besoin** : savoir en une seconde où en est le mois — combien est attendu, combien est encaissé,
+combien reste, et si le reste est déjà en retard.
+
+**Ce qui a été fait**
+- **Comptabilité — « Loyers {mois} »** : attendu, encaissé (avec le pourcentage), reste à encaisser
+  dont la part déjà en retard ; barre en trois segments (encaissé / en retard / pas encore dû) ;
+  décompte des baux (payés, partiels, en retard, à venir) et lien vers les baux en retard.
+  Suit le mois choisi dans la page ; le badge « Ce mois-ci » n'apparaît que sur le mois en cours.
+  `GET /api/accounting/rent-month?month=` (permission `comptabilite`, portée « Biens gérés »).
+- **Charges — « Charges {mois} »** : facturé / réglé / reste sur les factures émises dans le mois,
+  barre réglé / reste, règlements reçus dans le mois (toutes factures) et ce qui reste dû sur les
+  mois précédents. `GET /api/charges/month-summary?month=`.
+- **Une seule règle** : `rentMonthState` (état d'un mois pour un bail) est partagée par la frise des
+  12 mois, l'encadré et — via `summarizeRentMonth` — les totaux. Un bail n'entre dans l'attendu
+  que si le mois le concerne (ni hors bail, ni antérieur au suivi, ni entré « à jour » ce mois-là).
+  Invariant testé : attendu = encaissé + reste.
+
+**Tests** : 3 tests de l'agrégat (mélange de baux, mois futur / vide / surpaiement, cohérence avec la
+frise) — suite backend **159/159** ; recoupement à la main en SQL sur le cabinet de test (410 000
+attendus, 335 000 encaissés, 75 000 en retard ; charges 67 000 / 35 000 / 32 000) ; navigateur réel
+(mois courant, futur, sans bail, badge) ; `tsc`/`eslint` propres.
+
+## Étape 35 — Payer le reste d'un mois partiel
+
+🟢 Validé (2026-09-25).
+
+**Question posée** : « est-ce possible de payer le reste des paiements partiels ? »
+
+**État constaté** : côté serveur, oui depuis la correction A1 (`allocateRentPayment` complète d'abord le
+reliquat du mois entamé, puis les mois suivants ; une quittance par mois touché) — vérifié en réel :
+25 000 payés sur un décembre à 50 000/75 000 le soldent, le prochain mois dû passe à janvier. Mais
+l'écran ne suivait pas : l'aperçu ignorait ce qui était déjà payé (il annonçait « paiement partiel »
+au lieu de « solde ») et le montant proposé était le loyer entier.
+
+**Ce qui a été fait** (frontend uniquement)
+- `previewRentAllocation` reprend exactement la règle du serveur (reliquat d'abord) : vérifié sur
+  20 012 cas aléatoires et limites contre `allocateRentPayment` — 0 écart.
+- **Fiche locataire** : bandeau « {mois} n'est payé qu'en partie : X sur Y — il reste Z » avec un
+  bouton « Payer le reste (Z) » qui ouvre le formulaire avec le bon montant ; le bouton habituel
+  « Enregistrer un paiement » propose aussi le reste ; l'aperçu dit « Solde {mois} : … qui complètent
+  les … déjà payés », ou « il restera … » si le montant ne suffit pas, ou détaille le solde puis
+  l'avance sur le mois suivant.
+- **Portail du locataire** : bandeau « il vous reste Z à régler pour ce mois » et, si le paiement en
+  ligne (KKiaPay) est activé, le bouton propose le reste (« Payer le reste (Z) en ligne ») au lieu d'un
+  loyer entier. Non testé de bout en bout : KKiaPay n'est pas activé sur le cabinet de test.
+
+**Constaté, non modifié** : le message de relance WhatsApp (fiche, Relances, Mes tâches) parle
+toujours du loyer entier même si une partie est déjà payée.
+
+**Tests** : parcours navigateur réel (bandeau, montant par défaut, quatre aperçus, paiement du reste,
+disparition du bandeau, frise et groupe du mois passés à « Payé », bandeau du portail) ; `tsc`/`eslint`
+propres.
+
+## Étape 36 — Fin des faux « paiement identique » (clé d'idempotence)
+
+🟢 Validé (2026-09-25).
+
+**Problème signalé** : après un paiement partiel, payer le reste aussitôt (même mode, même jour)
+affichait « Un paiement identique vient d'être enregistré » ; il fallait changer le mode de paiement.
+
+**Cause** : la garde anti-doublon comparait le mois, la date et le mode de paiement dans les 2
+dernières minutes — mais PAS le montant. Le reste d'un mois partiel tombe sur le même mois : refusé à
+tort. Elle aurait aussi bloqué deux moitiés égales voulues.
+
+**Correctif**
+- **Clé d'idempotence** (voie normale) : le navigateur joint une clé unique à chaque envoi du
+  formulaire (générée à l'ouverture, renouvelée après chaque paiement enregistré). Le serveur la
+  consomme dans la MÊME transaction que le paiement (`services/paymentGuards.js`, table
+  `request_idempotency_keys`, migration `064`) : même clé = un seul paiement ; clés différentes = jamais
+  confondus, quels que soient montant, date et mode. Une clé n'est consommée que si le paiement est
+  enregistré (réessayer après une erreur reste possible).
+- **File hors-ligne** : la même clé suit le paiement mis en attente ; si la réponse s'était perdue alors
+  que le serveur avait tout enregistré, le rejeu est reconnu (409 `duplicate_request`) et traité comme
+  réussi au lieu d'être signalé en échec, sans doubler le paiement.
+- **Envoi sans clé** (ancien client, script) : l'heuristique est conservée mais compare désormais aussi
+  le MONTANT de la première écriture qui serait créée.
+
+**Règlements de charges SONEB/SBEE** : même correctif (`POST /api/charges/:id/payments`, portée
+`charge_payment`, clé jointe par la page Charges). Sa garde héritée comparait déjà le montant mais
+refusait deux acomptes égaux voulus dans les 2 minutes. Vérifié : deux acomptes égaux à la suite
+(API et page Charges), clé rejouée (409), trois envois simultanés (un seul), sur-règlement refusé puis
+réessai avec la même clé accepté.
+
+**Tous les enregistrements d'argent** (demande de l'utilisateur) : la même clé est maintenant
+jointe et consommée dans la transaction pour les dépenses (formulaire multipart), les immobilisations,
+les versements de loyer aux propriétaires, les reversements de charges, les règlements d'impayés à
+l'entrée et les pénalités de retard — avec un schéma partagé (`validators/idempotency.js`) et un hook
+côté écran (`lib/use-idempotency-key.ts`, clé renouvelée après chaque enregistrement réussi : un
+formulaire resté monté sert à plusieurs opérations distinctes). Une portée par type d'opération
+(`expense`, `fixed_asset`, `owner_payout`, `charge_remittance`, `opening_debt_payment`, `late_fee`) : la
+même clé ne peut pas entrer en conflit entre deux types. Vérifié en base pour chaque route (clé
+rejouée = une seule ligne ; deux clés différentes = deux lignes) et dans le navigateur (deux dépenses
+identiques, deux reversements identiques à la suite).
+Non concernés (état-dépendants, un second envoi est déjà refusé par l'état) : règlement d'une dépense
+à crédit, règlement et amortissement d'une immobilisation.
+
+**Limite** : les clés d'idempotence ne sont pas purgées (une ligne par opération, du même ordre de
+grandeur que les opérations elles-mêmes).
+
+**Tests** : 4 tests de la garde (clé unique, annulation avec la transaction, 3 réclamations
+simultanées, comparaison mois/date/mode/montant, dont le cas signalé) — suite backend 163/163 ;
+scénarios API réels (le cas signalé sans clé, clé rejouée, clé prime sur le contenu, 3 envois
+simultanés, deux moitiés égales voulues, doublon strict sans clé, échec puis réessai, clé mal formée) ;
+navigateur réel : partiel puis reste, puis deux moitiés égales, sans aucune erreur ; `tsc`/`eslint` propres.
+
+## Étape 37 — Versements aux propriétaires : solde vérifié sous verrou
+
+🟢 Validé (2026-09-25).
+
+**Défaut** (résidu de l'audit A2) : `POST /api/owners/:id/payouts` vérifiait le solde séquestre HORS
+transaction et sans verrou. Deux versements simultanés, chacun inférieur au solde, passaient tous
+deux la vérification et le dépassaient. Reproduit avant correction : 3 versements simultanés de
+30 000 sur un solde de 50 000 → 3 acceptés, solde final −40 000 (dépassement à chaque essai sur 8).
+
+**Correctif** : dans la transaction, la fiche du propriétaire est verrouillée (`FOR UPDATE`), la clé
+d'idempotence est réclamée, puis `assertPayoutWithinBalance(…, conn)` lit le solde sur la connexion de
+la transaction — donc après tout versement concurrent déjà validé. `getEscrowBalances` accepte une
+connexion (`db`, défaut : le pool, autres appelants inchangés). Même schéma que les reversements de
+charges.
+
+**Tests** : test de concurrence (`test/commission.test.js`, 3 versements simultanés → un seul passe,
+solde jamais négatif) — suite backend **164/164** ; sur la route réelle : 3 versements simultanés de
+60 % du solde → 201/400/400, solde final = solde − un versement, « un franc de plus » refusé,
+« exactement le solde » accepté.
+
+## Étape 38 — Interface colorée : une couleur par cadre
+
+🟢 Validé visuellement (2026-09-25) — Frontend uniquement, aucune donnée touchée.
+
+**Demande** : « que l'interface soit jolie — pour les div parent, ajoute des couleurs en background ».
+Les cartes étaient toutes blanches sur un fond quasi blanc (#F8FAFC) : la page paraissait plate.
+
+**Principe** : une teinte douce par module, appliquée automatiquement, sans modifier les ~150 cartes
+une à une.
+- `tailwind.config.ts` : fond de page `canvas` légèrement bleuté (#F3F6FB) + nouveaux jetons
+  `tint-{blue,violet,teal,amber,rose,slate}` (fond + liseré). Ces teintes sont **décoratives** : elles
+  n'empruntent pas les couleurs de statut (vert = payé, rouge = retard…), qui gardent leur sens.
+- `components/ui/card.tsx` : `Card` accepte `tone` ; sans `tone`, elle reprend la teinte du module en
+  cours (contexte React `CardToneContext`). Une carte teintée remet le contexte à blanc pour ses
+  enfants : une carte imbriquée reste blanche et se détache de son parent coloré. Un `className`
+  explicite (`bg-success/5`…) l'emporte toujours (les registres de Comptabilité gardent leurs couleurs).
+- `app/espace/layout.tsx` : la teinte vient du **cadre** de la page (`lib/module-theme.ts`, voir la révision ci-dessous).
+- `components/ui/table.tsx` : un tableau posé directement sur la page prend le liseré et l'en-tête de la
+  teinte du module ; dans une carte teintée il garde la charte neutre. Fond de tableau blanc explicite.
+- Portails : locataire = vert d'eau, propriétaire = violet (`CardToneProvider` sur le `<main>` commun).
+- 6 encarts d'alerte posés DANS des cartes (`bg-warning/10`, `bg-danger-bg/40`…) sont passés en fond
+  plein : un fond semi-transparent se mélangeait à la teinte du parent (mauvais rose sur violet).
+
+**Vérifié** : captures avant/après sur 14 écrans (tableau de bord, biens, fiche bien, propriétaires,
+fiche propriétaire, locataires, relances, plaintes, point des charges, paramètres, comptabilité, deux
+portails) ; `tsc` et `eslint` propres ; pages publiques (accueil, connexion, inscription, vérifier,
+payer, portail) toujours en 200.
+
+**Point d'attention** : Tailwind (dev) ne recharge pas la VALEUR d'un jeton existant (`canvas`) à chaud —
+redémarrer `next dev` après l'avoir modifié ; les nouveaux jetons, eux, sont pris à chaud.
+
+**Révision — « chaque couleur doit exprimer son cadre »** : la première version réutilisait les
+mêmes teintes pour des modules sans rapport (bleu pour Biens, Charges et Tableau de bord ; ardoise
+pour presque tout le reste). Règle retenue : **une couleur = un cadre = une rubrique du menu**, jamais
+partagée. Source unique : `lib/module-theme.ts` (`CADRES`, `cadreForPath`), lue par le layout ET le menu.
+
+| Cadre (rubrique du menu) | Couleur | Ce qu'elle exprime |
+|---|---|---|
+| Vue d'ensemble | bleu | l'identité Lyko, le regard d'ensemble |
+| Patrimoine (Biens, Propriétaires, Locataires) | violet | ce que l'on gère |
+| Opérations (Plaintes, Relances, Tâches) | orange | l'action au quotidien |
+| Finances (Comptabilité, Comptabilité avancée, Charges) | cyan | l'argent qui circule (et l'eau/l'électricité) |
+| Administration (Employés, Journal, Historique, Réglages, Mon compte) | ardoise | le fonctionnement du cabinet |
+
+La couleur apparaît partout au même endroit : pastille + titre de rubrique du menu (infobulle = sens de
+la couleur), icônes et entrée active du menu, filet de 4 px en haut de page, fond des cartes et en-têtes
+de tableaux. Sur les pages transverses, chaque carte prend le cadre de **ce dont elle parle** : sur le
+tableau de bord, les alertes charges sont cyan, « Plaintes en cours » et « Mes tâches » orange, les
+tuiles de démarrage violet (bien/locataire) ou ardoise (employé) ; portail locataire = cyan (loyers,
+charges), portail propriétaire = violet. Le vert/ambre/rouge de STATUT reste réservé au sens (payé,
+attention, retard) : Comptabilité n'est plus ardoise mais cyan, précisément parce que le cyan est loin du
+vert de « encaissé ».

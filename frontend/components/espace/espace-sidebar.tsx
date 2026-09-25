@@ -30,10 +30,11 @@ import { LykoLogo } from "@/components/brand/logo";
 import { ConnectionIndicator } from "@/components/system/connection-indicator";
 import { startQueueAutoSync } from "@/lib/offline/queue";
 import { Badge } from "@/components/ui/badge";
+import { CADRES, type Cadre } from "@/lib/module-theme";
 import { cn } from "@/lib/utils";
 
 type NavItem = { href: string; label: string; icon: typeof LayoutDashboard };
-type NavGroup = { title: string; items: NavItem[] };
+type NavGroup = { cadre: Cadre; items: NavItem[] };
 
 /**
  * Menu vertical de l'espace connecté — remplace l'ancien en-tête horizontal
@@ -76,13 +77,13 @@ export function EspaceSidebar() {
   const canAccountingAdvanced = isDg || user.permissions.includes("comptabilite_avancee");
   const canCharges = isDg || user.permissions.includes("charges");
 
-  const groups: NavGroup[] = [
+  const rawGroups: { cadre: Cadre; items: (NavItem | false)[] }[] = [
     {
-      title: "Vue d'ensemble",
+      cadre: "apercu",
       items: [isDg && { href: "/espace/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard }],
     },
     {
-      title: "Patrimoine",
+      cadre: "patrimoine",
       items: [
         (canLocataires || canProprietaires) && { href: "/espace/biens", label: "Nos biens", icon: Building2 },
         { href: "/espace/proprietaires", label: "Propriétaires", icon: Landmark },
@@ -90,7 +91,7 @@ export function EspaceSidebar() {
       ],
     },
     {
-      title: "Opérations",
+      cadre: "operations",
       items: [
         canPlaintes && { href: "/espace/plaintes", label: "Plaintes", icon: MessageSquareWarning },
         (canLocataires || canAccounting) && { href: "/espace/relances", label: "Relances", icon: BellRing },
@@ -98,7 +99,7 @@ export function EspaceSidebar() {
       ],
     },
     {
-      title: "Finances",
+      cadre: "finances",
       items: [
         canAccounting && { href: "/espace/comptabilite", label: "Comptabilité", icon: Wallet },
         canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité avancée", icon: Calculator },
@@ -106,14 +107,15 @@ export function EspaceSidebar() {
       ],
     },
     {
-      title: "Administration",
+      cadre: "administration",
       items: [
         isDg && { href: "/espace/employes", label: "Employés", icon: Briefcase },
         isDg && { href: "/espace/journal", label: "Journal", icon: History },
         !isDg && { href: "/espace/historique", label: "Historique", icon: Clock },
       ],
     },
-  ]
+  ];
+  const groups: NavGroup[] = rawGroups
     .map((g) => ({ ...g, items: g.items.filter((i): i is NavItem => !!i) }))
     .filter((g) => g.items.length > 0);
 
@@ -150,43 +152,45 @@ export function EspaceSidebar() {
 
   const navContent = (
     <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Navigation principale">
-      {groups.map((group) => (
-        <div key={group.title} className="mb-5 last:mb-0">
-          <p className="mb-1.5 px-2.5 font-label-sm uppercase tracking-wider text-ink-faint">{group.title}</p>
-          <div className="flex flex-col gap-0.5">
-            {group.items.map((item) => {
-              const active = isActive(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "group relative flex items-center gap-3 rounded-lg px-2.5 py-2.5 font-label-md transition-all duration-150 ease-out",
-                    active
-                      ? "bg-primary-bg text-primary"
-                      : "text-ink-soft hover:translate-x-0.5 hover:bg-surface-muted hover:text-ink",
-                  )}
-                >
-                  {active && (
-                    <span
-                      className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-brand-gradient"
-                      aria-hidden
-                    />
-                  )}
-                  <item.icon
-                    size={18}
+      {groups.map((group) => {
+        // Chaque rubrique porte la couleur de son cadre (voir `lib/module-theme.ts`) : pastille + titre,
+        // icônes, entrée active — la même que le fond des pages de la rubrique.
+        const cadre = CADRES[group.cadre];
+        return (
+          <div key={group.cadre} className="mb-5 last:mb-0">
+            <p title={cadre.meaning} className="mb-1.5 flex items-center gap-2 px-2.5 font-label-sm uppercase tracking-wider text-ink-faint">
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", cadre.solid)} aria-hidden />
+              {cadre.label}
+            </p>
+            <div className="flex flex-col gap-0.5">
+              {group.items.map((item) => {
+                const active = isActive(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
                     className={cn(
-                      "shrink-0 transition-colors",
-                      active ? "text-primary" : "text-ink-muted group-hover:text-ink",
+                      "group relative flex items-center gap-3 rounded-lg px-2.5 py-2.5 font-label-md transition-all duration-150 ease-out",
+                      active
+                        ? cn(cadre.soft, "text-ink")
+                        : "text-ink-soft hover:translate-x-0.5 hover:bg-surface-muted hover:text-ink",
                     )}
-                  />
-                  <span className="truncate">{item.label}</span>
-                </Link>
-              );
-            })}
+                  >
+                    {active && (
+                      <span
+                        className={cn("absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full", cadre.solid)}
+                        aria-hidden
+                      />
+                    )}
+                    <item.icon size={18} className={cn("shrink-0 transition-colors", cadre.text, !active && "opacity-70 group-hover:opacity-100")} />
+                    <span className="truncate">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </nav>
   );
 
@@ -207,10 +211,10 @@ export function EspaceSidebar() {
           href="/espace/mon-compte"
           className={cn(
             "flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 font-label-md transition-colors",
-            isActive("/espace/mon-compte") ? "bg-primary-bg text-primary" : "text-ink-soft hover:bg-surface-muted hover:text-ink",
+            isActive("/espace/mon-compte") ? cn(CADRES.administration.soft, "text-ink") : "text-ink-soft hover:bg-surface-muted hover:text-ink",
           )}
         >
-          <Stamp size={16} className="shrink-0" />
+          <Stamp size={16} className={cn("shrink-0", CADRES.administration.text)} />
           Mon compte
         </Link>
         {isDg && (
@@ -218,10 +222,10 @@ export function EspaceSidebar() {
             href="/espace/parametres"
             className={cn(
               "flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 font-label-md transition-colors",
-              isActive("/espace/parametres") ? "bg-primary-bg text-primary" : "text-ink-soft hover:bg-surface-muted hover:text-ink",
+              isActive("/espace/parametres") ? cn(CADRES.administration.soft, "text-ink") : "text-ink-soft hover:bg-surface-muted hover:text-ink",
             )}
           >
-            <Settings size={16} className="shrink-0" />
+            <Settings size={16} className={cn("shrink-0", CADRES.administration.text)} />
             Réglages
           </Link>
         )}

@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api/client";
 import { formatFcfa } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
+import { RentStrip } from "@/components/renters/rent-strip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
@@ -97,6 +98,7 @@ function LocatairesContent() {
                 <TableHead>Locataire</TableHead>
                 <TableHead>Bien</TableHead>
                 <TableHead className="text-right">Loyer</TableHead>
+                <TableHead>12 mois</TableHead>
                 <TableHead className="text-center">Statut</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </tr>
@@ -126,6 +128,9 @@ function LocatairesContent() {
                   <TableAmount>
                     {r.activeLease ? formatFcfa(r.activeLease.monthlyRent) : "—"}
                   </TableAmount>
+                  <TableCell>
+                    <RentStrip months={r.rentStrip} variant="compact" />
+                  </TableCell>
                   <TableCell className="text-center">
                     <StatutBadge renter={r} />
                   </TableCell>

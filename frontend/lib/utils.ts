@@ -127,19 +127,59 @@ export function monthLabelFr(yearMonth: string): string {
  * (`backend/src/services/rentTracking.js`). Sert uniquement à l'aperçu affiché
  * dans le formulaire ; le serveur reste la source de vérité.
  */
-export function previewRentAllocation(startMonth: string, monthlyRent: number, amount: number) {
+export function previewRentAllocation(startMonth: string, monthlyRent: number, amount: number, alreadyPaidForStartMonth = 0) {
   const rent = Math.max(0, Math.round(monthlyRent));
-  const total = Math.max(0, Math.round(amount));
-  const fullMonths = rent > 0 ? Math.floor(total / rent) : 0;
-  const partialAmount = rent > 0 ? total % rent : total;
-  const items: { coversMonth: string; amount: number; isPartial: boolean }[] = [];
+  let remaining = Math.max(0, Math.round(amount));
+  const paidBefore = Math.max(0, Math.round(alreadyPaidForStartMonth));
+  const items: { coversMonth: string; amount: number; isPartial: boolean; completes: boolean }[] = [];
   let month = startMonth;
+
+  if (rent > 0) {
+    // Un mois déjà entamé se COMPLÈTE d'abord (miroir de `allocateRentPayment`, audit A1) : on ne repart
+    // jamais de zéro sur ce mois-là.
+    const shortfall = Math.max(0, rent - paidBefore);
+    if (shortfall > 0) {
+      const toApply = Math.min(remaining, shortfall);
+      if (toApply > 0) {
+        items.push({ coversMonth: month, amount: toApply, isPartial: toApply < shortfall, completes: paidBefore > 0 && toApply >= shortfall });
+        remaining -= toApply;
+      }
+      if (toApply < shortfall) return summarizeAllocation(items);
+      month = addMonth(month);
+    }
+  }
+
+  const fullMonths = rent > 0 ? Math.floor(remaining / rent) : 0;
+  const partialAmount = rent > 0 ? remaining % rent : remaining;
   for (let i = 0; i < fullMonths; i += 1) {
-    items.push({ coversMonth: month, amount: rent, isPartial: false });
+    items.push({ coversMonth: month, amount: rent, isPartial: false, completes: false });
     month = addMonth(month);
   }
-  if (partialAmount > 0) items.push({ coversMonth: month, amount: partialAmount, isPartial: true });
-  return { fullMonths, partialAmount, monthsCovered: items.length, items };
+  if (partialAmount > 0) items.push({ coversMonth: month, amount: partialAmount, isPartial: true, completes: false });
+  return summarizeAllocation(items);
+}
+
+function summarizeAllocation(items: { coversMonth: string; amount: number; isPartial: boolean; completes: boolean }[]) {
+  const partial = items.find((it) => it.isPartial);
+  return {
+    fullMonths: items.filter((it) => !it.isPartial).length,
+    partialAmount: partial ? partial.amount : 0,
+    monthsCovered: items.length,
+    items,
+  };
+}
+
+/**
+ * Clé d'idempotence d'un envoi de formulaire (étape 36) : unique, générée quand le formulaire
+ * s'ouvre et renouvelée après chaque succès. Le serveur la consomme dans la transaction du
+ * paiement : deux envois de même clé = un seul paiement. `crypto.randomUUID` exige un contexte
+ * sécurisé (HTTPS ou localhost) — repli sur `getRandomValues` sinon.
+ */
+export function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export function formatDateLabel(isoDate: string): string {

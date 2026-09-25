@@ -35,7 +35,7 @@ import { generateLeasePaymentLink } from "@/lib/api/paymentLinks";
 import { PaymentLinkCard } from "@/components/payments/payment-link-card";
 import { UTILITY_TYPE_LABELS, CHARGE_STATUS_LABELS } from "@/lib/constants/charges";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
-import { formatFcfa, buildRentReminderMessage, buildReceiptMessage, previewRentAllocation, monthLabelFr, formatLateDuration } from "@/lib/utils";
+import { formatFcfa, buildRentReminderMessage, buildReceiptMessage, previewRentAllocation, monthLabelFr, formatLateDuration, newIdempotencyKey } from "@/lib/utils";
 import { PROPERTY_TYPE_LABELS } from "@/lib/constants/properties";
 import { useToast } from "@/lib/toast/toast-context";
 import { RequireAuth } from "@/components/auth/require-auth";
@@ -43,6 +43,10 @@ import { DocumentDownloadStatus } from "@/components/documents/document-download
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
 import { Attribution } from "@/components/ui/attribution";
 import { Badge } from "@/components/ui/badge";
+import { MonthGroupsToolbar, MonthHeaderRow, countLabel, useMonthGroups } from "@/components/ui/month-group";
+import { RentStrip } from "@/components/renters/rent-strip";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
+import { groupByMonth, sumBy } from "@/lib/group-by-month";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
@@ -722,6 +726,13 @@ function LeaseCard({
           />
         </div>
 
+        {lease.rentStrip && (
+          <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+            <span className="font-label-sm uppercase tracking-wider text-ink-muted">Les 12 mois en un coup d&apos;œil</span>
+            <RentStrip months={lease.rentStrip} variant="full" />
+          </div>
+        )}
+
         {(lease.unit.sonebMeterNumber || lease.unit.sbeeMeterNumber) && (
           <div className="flex flex-wrap gap-4 text-body-xs text-ink-muted">
             {lease.unit.sonebMeterNumber && <span>Compteur SONEB : {lease.unit.sonebMeterNumber}</span>}
@@ -930,24 +941,38 @@ function ChargesSection({
       ) : charges.length === 0 ? (
         <p className="text-body-sm text-ink-muted">Aucune charge SONEB/SBEE enregistrée pour ce bail.</p>
       ) : (
-        <div className="flex flex-col gap-2">
-          {charges.map((c) => (
-            <Link
-              key={c.id}
-              href="/espace/charges"
-              className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 hover:bg-surface-muted"
-            >
-              <div>
-                <p className="font-label-sm text-ink">
-                  {UTILITY_TYPE_LABELS[c.utilityType]} — {c.periodStart} → {c.periodEnd}
-                </p>
-                <p className="text-body-xs text-ink-muted">{formatFcfa(c.amount)} · facturé le {c.billedAt}</p>
+        <div className="flex flex-col gap-4">
+          {groupByMonth(charges, (c) => c.periodStart).map((g) => {
+            const remaining = sumBy(g.items, (c) => c.remainingAmount);
+            return (
+              <div key={g.month || "sans-date"} className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-1">
+                  <span className="font-label-md capitalize text-ink">{g.month ? monthLabelFr(g.month) : "Sans date"}</span>
+                  <span className="text-body-xs text-ink-muted">
+                    {countLabel(g.items.length, "facture")} · {formatFcfa(sumBy(g.items, (c) => c.amount))}
+                    {remaining > 0 ? ` · reste ${formatFcfa(remaining)}` : " · tout réglé"}
+                  </span>
+                </div>
+                {g.items.map((c) => (
+                  <Link
+                    key={c.id}
+                    href="/espace/charges"
+                    className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 hover:bg-surface-muted"
+                  >
+                    <div>
+                      <p className="font-label-sm text-ink">
+                        {UTILITY_TYPE_LABELS[c.utilityType]} — {c.periodStart} → {c.periodEnd}
+                      </p>
+                      <p className="text-body-xs text-ink-muted">{formatFcfa(c.amount)} · facturé le {c.billedAt}</p>
+                    </div>
+                    <Badge variant={c.status === "payee" ? "success" : c.status === "partiellement_payee" ? "info" : "warning"}>
+                      {CHARGE_STATUS_LABELS[c.status]}
+                    </Badge>
+                  </Link>
+                ))}
               </div>
-              <Badge variant={c.status === "payee" ? "success" : c.status === "partiellement_payee" ? "info" : "warning"}>
-                {CHARGE_STATUS_LABELS[c.status]}
-              </Badge>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -1028,6 +1053,7 @@ function OpeningDebtSection({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
+  const idem = useIdempotencyKey();
 
   if (lease.openingDebtAmount <= 0) return null;
 
@@ -1042,7 +1068,9 @@ function OpeningDebtSection({
         paymentMethod: method,
         paidAt,
         notes: notes.trim() || undefined,
+        idempotencyKey: idem.key,
       });
+      idem.renew();
       setOpen(false);
       setNotes("");
       toast.success("Impayés à l'entrée réglés (partiellement ou totalement).");
@@ -1172,6 +1200,9 @@ function BalanceSnapshotsSection({ leaseId, accessToken }: { leaseId: number; ac
   );
 }
 
+// Regroupement par mois de loyer concerné (fonction de module : stable entre les rendus).
+const leasePaymentMonth = (p: Lease["payments"][number]) => p.coversMonth;
+
 function PaymentRegister({
   lease,
   renterFirstName,
@@ -1200,15 +1231,29 @@ function PaymentRegister({
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Clé d'idempotence de l'envoi en cours : renouvelée après chaque paiement enregistré, conservée si
+  // l'envoi échoue (réessayer avec la même clé est sans risque : une clé n'est consommée que si le
+  // paiement est enregistré). Deux paiements voulus ont donc toujours deux clés différentes.
+  const [idempotencyKey, setIdempotencyKey] = React.useState(() => newIdempotencyKey());
   // Quittance générée par le dernier paiement, prête à envoyer par WhatsApp —
   // le lien de partage est demandé automatiquement dès l'enregistrement
   // réussi, sans action supplémentaire du personnel.
   const [justPaid, setJustPaid] = React.useState<{ paymentId: number; coversMonth: string; amount: number; shareUrl: string | null } | null>(null);
   const toast = useToast();
+  const paymentGroups = useMonthGroups(lease.payments, leasePaymentMonth);
 
   // Mois de départ = prochain mois dû (le serveur enchaîne les mois suivants selon le montant).
   const startMonth = lease.arrears?.nextDueMonth ?? new Date().toISOString().slice(0, 7);
-  const alloc = previewRentAllocation(startMonth, lease.monthlyRent, Number(amount) || 0);
+  // Un mois déjà entamé (paiement partiel) se COMPLÈTE d'abord : on propose donc le reste, pas un loyer entier.
+  const alreadyPaid = lease.arrears?.paidForNextDueMonth ?? 0;
+  const partialRemaining = alreadyPaid > 0 ? Math.max(0, lease.monthlyRent - alreadyPaid) : 0;
+  const alloc = previewRentAllocation(startMonth, lease.monthlyRent, Number(amount) || 0, alreadyPaid);
+
+  function openPaymentForm(defaultAmount: number) {
+    setAmount(String(defaultAmount));
+    setError(null);
+    setOpen(true);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -1221,7 +1266,9 @@ function PaymentRegister({
         paymentMethod: method,
         paidAt,
         notes: notes.trim() || undefined,
+        idempotencyKey,
       });
+      setIdempotencyKey(newIdempotencyKey());
       setOpen(false);
       setNotes("");
       if (result.queued) {
@@ -1261,12 +1308,32 @@ function PaymentRegister({
       <div className="flex items-center justify-between">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Registre des paiements</span>
         {canManage && (
-          <Button variant="success" size="sm" onClick={() => setOpen((v) => !v)}>
+          <Button
+            variant="success"
+            size="sm"
+            onClick={() => (open ? setOpen(false) : openPaymentForm(partialRemaining > 0 ? partialRemaining : lease.monthlyRent))}
+          >
             <Receipt size={14} />
             {open ? "Fermer" : "Enregistrer un paiement"}
           </Button>
         )}
       </div>
+
+      {partialRemaining > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning-border bg-warning-bg px-4 py-3">
+          <p className="text-body-sm text-warning-fg">
+            <span className="font-label-md capitalize">{monthLabelFr(startMonth)}</span> n&apos;est payé qu&apos;en partie :{" "}
+            {formatFcfa(alreadyPaid)} sur {formatFcfa(lease.monthlyRent)} — il reste{" "}
+            <span className="font-label-md">{formatFcfa(partialRemaining)}</span>.
+          </p>
+          {canManage && !open && (
+            <Button variant="success" onClick={() => openPaymentForm(partialRemaining)}>
+              <Receipt size={14} />
+              Payer le reste ({formatFcfa(partialRemaining)})
+            </Button>
+          )}
+        </div>
+      )}
 
       {justPaid && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-success-border bg-success-bg px-4 py-3">
@@ -1310,21 +1377,32 @@ function PaymentRegister({
             label="Montant reçu (FCFA)"
             htmlFor="amount"
             required
-            hint={`Loyer mensuel : ${formatFcfa(lease.monthlyRent)}. Saisissez plusieurs mois d'un coup, ex. ${formatFcfa(lease.monthlyRent * 3)} = 3 mois.`}
+            hint={
+              partialRemaining > 0
+                ? `Reste à payer pour ${monthLabelFr(startMonth)} : ${formatFcfa(partialRemaining)}. Au-delà, l'excédent couvre les mois suivants.`
+                : `Loyer mensuel : ${formatFcfa(lease.monthlyRent)}. Saisissez plusieurs mois d'un coup, ex. ${formatFcfa(lease.monthlyRent * 3)} = 3 mois.`
+            }
           >
             <Input id="amount" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
           </Field>
 
           {Number(amount) > 0 && alloc.monthsCovered > 0 && (
             <div className="rounded-lg border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink-soft">
-              {alloc.monthsCovered === 1 && !alloc.items[0].isPartial && (
+              {alloc.monthsCovered === 1 && alloc.items[0].completes && (
+                <>
+                  Solde <span className="font-label-md text-ink">{monthLabelFr(alloc.items[0].coversMonth)}</span> :{" "}
+                  {formatFcfa(alloc.items[0].amount)} qui complètent les {formatFcfa(alreadyPaid)} déjà payés — le mois sera
+                  entièrement réglé. 1 quittance.
+                </>
+              )}
+              {alloc.monthsCovered === 1 && !alloc.items[0].isPartial && !alloc.items[0].completes && (
                 <>Couvre <span className="font-label-md text-ink">{monthLabelFr(alloc.items[0].coversMonth)}</span> — 1 quittance.</>
               )}
               {alloc.monthsCovered === 1 && alloc.items[0].isPartial && (
                 <>
-                  Paiement partiel de <span className="font-label-md text-ink">{formatFcfa(alloc.partialAmount)}</span> sur{" "}
-                  {monthLabelFr(alloc.items[0].coversMonth)} — il restera {formatFcfa(lease.monthlyRent - alloc.partialAmount)}{" "}
-                  dû ce mois-là. 1 quittance.
+                  Paiement partiel de <span className="font-label-md text-ink">{formatFcfa(alloc.items[0].amount)}</span> sur{" "}
+                  {monthLabelFr(alloc.items[0].coversMonth)} — il restera{" "}
+                  {formatFcfa(lease.monthlyRent - alreadyPaid - alloc.items[0].amount)} dû ce mois-là. 1 quittance.
                 </>
               )}
               {alloc.monthsCovered > 1 && (
@@ -1334,6 +1412,7 @@ function PaymentRegister({
                     <span key={it.coversMonth}>
                       {i > 0 && ", "}
                       {monthLabelFr(it.coversMonth)}
+                      {it.completes && ` (solde de ${formatFcfa(it.amount)})`}
                       {it.isPartial && ` (${formatFcfa(it.amount)}, avance partielle)`}
                     </span>
                   ))}
@@ -1373,61 +1452,92 @@ function PaymentRegister({
       {lease.payments.length === 0 ? (
         <p className="text-body-sm text-ink-muted">Aucun paiement enregistré pour ce bail.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <tr>
-              <TableHead>Période</TableHead>
-              <TableHead className="text-right">Montant</TableHead>
-              <TableHead>Mode</TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead>Enregistré par</TableHead>
-              <TableHead className="text-right">Quittance</TableHead>
-            </tr>
-          </TableHeader>
-          <TableBody>
-            {lease.payments.map((p) => (
-              <TableRow key={p.id}>
-                <TableCell>{p.coversMonth}</TableCell>
-                <TableAmount>{formatFcfa(p.amount)}</TableAmount>
-                <TableCell className="text-ink-soft">{p.paymentMethodLabel}</TableCell>
-                <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
-                <TableCell className="text-ink-soft">
-                  {p.recordedBy ? `${p.recordedBy.name} (${p.recordedBy.roleLabel})` : "—"}
-                </TableCell>
-                <TableCell className="text-right">
-                  {p.receipt && canManage && (
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => accessToken && openAuthenticatedPdf(receiptPdfPath(lease.id, p.id), accessToken)}
-                        className="inline-flex items-center gap-1 font-label-sm text-primary hover:underline"
-                      >
-                        <FileText size={14} />
-                        {p.receipt.number}
-                      </button>
-                      <DocumentDownloadStatus
-                        documentType="quittance"
-                        referenceId={p.id}
-                        accessToken={accessToken}
-                        isDg={isDg}
-                      />
-                      <ResendReceiptButton
-                        leaseId={lease.id}
-                        paymentId={p.id}
-                        coversMonth={p.coversMonth}
-                        amount={p.amount}
-                        renterFirstName={renterFirstName}
-                        renterPhone={renterPhone}
-                        companyName={tenant?.companyName}
-                        accessToken={accessToken}
-                      />
-                    </div>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="flex flex-col gap-2">
+          <MonthGroupsToolbar count={paymentGroups.groups.length} allOpen={paymentGroups.allOpen} onSetAll={paymentGroups.setAll} />
+          <Table>
+            <TableHeader>
+              <tr>
+                <TableHead className="text-right">Montant</TableHead>
+                <TableHead>Mode</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Enregistré par</TableHead>
+                <TableHead className="text-right">Quittance</TableHead>
+              </tr>
+            </TableHeader>
+            {paymentGroups.groups.map((g, i) => {
+              const open = paymentGroups.isOpen(g.month, i);
+              const paid = sumBy(g.items, (p) => p.amount);
+              const settled = paid >= lease.monthlyRent;
+              return (
+                <TableBody key={g.month || "sans-date"}>
+                  <MonthHeaderRow
+                    colSpan={5}
+                    noun="Loyer"
+                    month={g.month}
+                    open={open}
+                    onToggle={() => paymentGroups.toggle(g.month, i)}
+                    badge={
+                      settled ? (
+                        <Badge variant="success">Payé</Badge>
+                      ) : (
+                        <Badge variant="warning">Partiel · reste {formatFcfa(lease.monthlyRent - paid)}</Badge>
+                      )
+                    }
+                    summary={
+                      <>
+                        {countLabel(g.items.length, "paiement")} ·{" "}
+                        <span className="tabular font-label-md text-ink">
+                          {formatFcfa(paid)} / {formatFcfa(lease.monthlyRent)}
+                        </span>
+                      </>
+                    }
+                  />
+                  {open &&
+                    g.items.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableAmount>{formatFcfa(p.amount)}</TableAmount>
+                        <TableCell className="text-ink-soft">{p.paymentMethodLabel}</TableCell>
+                        <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
+                        <TableCell className="text-ink-soft">
+                          {p.recordedBy ? `${p.recordedBy.name} (${p.recordedBy.roleLabel})` : "—"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {p.receipt && canManage && (
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => accessToken && openAuthenticatedPdf(receiptPdfPath(lease.id, p.id), accessToken)}
+                                className="inline-flex items-center gap-1 font-label-sm text-primary hover:underline"
+                              >
+                                <FileText size={14} />
+                                {p.receipt.number}
+                              </button>
+                              <DocumentDownloadStatus
+                                documentType="quittance"
+                                referenceId={p.id}
+                                accessToken={accessToken}
+                                isDg={isDg}
+                              />
+                              <ResendReceiptButton
+                                leaseId={lease.id}
+                                paymentId={p.id}
+                                coversMonth={p.coversMonth}
+                                amount={p.amount}
+                                renterFirstName={renterFirstName}
+                                renterPhone={renterPhone}
+                                companyName={tenant?.companyName}
+                                accessToken={accessToken}
+                              />
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              );
+            })}
+          </Table>
+        </div>
       )}
     </div>
   );
