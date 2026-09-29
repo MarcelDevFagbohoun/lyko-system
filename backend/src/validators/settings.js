@@ -19,24 +19,6 @@ const updateSettingsSchema = z.object({
   dgTitle: roleTitleField('dg'),
   comptableTitle: roleTitleField('comptable'),
   agentTitle: roleTitleField('agent'),
-  // 50000 caractères : très large marge pour un contrat de bail complet
-  // rédigé par N'IMPORTE QUELLE entreprise cliente, pas seulement le court
-  // paragraphe d'attestation par défaut. La colonne est `MEDIUMTEXT`
-  // (jusqu'à 16 Mo, migration 024) : cette limite est purement une garde-
-  // fou raisonnable côté formulaire, jamais une contrainte technique de la
-  // base qui pourrait resurgir plus tard.
-  contractTemplate: z
-    .string()
-    .trim()
-    .max(50000, 'Trop long (50 000 caractères max)')
-    .optional()
-    .or(z.literal(''))
-    // Un texte collé depuis Word/Google Docs porte souvent des fins de ligne
-    // "\r\n" : PDFKit les dessine comme un caractère visible (glyphe « Ð »)
-    // au lieu d'un simple retour à la ligne. Normalisé dès l'enregistrement
-    // pour que la valeur stockée soit déjà propre (en plus du filet de
-    // sécurité côté génération PDF, `services/pdf.js`).
-    .transform((v) => (v ? v.replace(/\r\n?/g, '\n') : null)),
 
   // Paiement en ligne (KKiaPay) — désactivé par défaut, chaque entreprise
   // choisit. Clé publique : texte visible (embarquée côté client), envoyée
@@ -65,6 +47,25 @@ const updateSettingsSchema = z.object({
   // Convention de paiement du loyer par défaut (avance/terme échu) — pré-
   // remplit chaque nouveau bail (demande directe de l'utilisateur, 2026-09-24).
   defaultRentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),
+
+  // Prorata d'entrée par défaut (étape 42, demande directe de l'utilisateur, 2026-09-28) — pré-rempli
+  // à la création d'un bail, ajustable bail par bail. Défaut 'aucun' (comportement historique inchangé).
+  defaultEntryProration: z.enum(['aucun', 'prorata'], { errorMap: () => ({ message: "Choix du prorata d'entrée par défaut invalide" }) }).optional(),
+
+  // Cautions supplémentaires (étape 43, demande directe de l'utilisateur, 2026-09-28) — SBEE/SONEB/
+  // peinture, chacune optionnelle et désactivée par défaut (voir constants/leaseDeposits.js).
+  depositSbeeEnabled: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+  depositSonebEnabled: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+  depositPeintureEnabled: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
 });
 
 module.exports = { updateSettingsSchema };

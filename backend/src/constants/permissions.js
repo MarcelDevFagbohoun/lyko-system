@@ -25,6 +25,9 @@ const PERMISSIONS = [
   // d'exercice, extourne). Un profil « Secrétaire » a `comptabilite` sans
   // `comptabilite_avancee` ; un profil « Comptable » a les deux.
   { key: 'comptabilite_avancee', label: 'Comptabilité avancée (SYSCOHADA)' },
+  // Assistant IA (chat Claude). Ne s'applique que si la direction a activé l'assistant pour
+  // l'entreprise (Réglages) ; jamais pré-cochée à la création d'un employé.
+  { key: 'assistant', label: 'Assistant IA' },
 ];
 
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);

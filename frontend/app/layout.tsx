@@ -15,11 +15,19 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Lyko System : gestion d'entreprises immobilières & juridiques",
+    default: "Lyko System : la gestion locative pensée pour le Bénin",
     template: "%s · Lyko System",
   },
   description:
-    "Plateforme multi-tenant de gestion locative : locataires, propriétaires, contrats, paiements, réclamations, comptabilité et charges.",
+    "Logiciel de gestion locative pour cabinets et agences immobilières au Bénin : loyers, charges SONEB/SBEE, relances WhatsApp, quittances, relevés propriétaires et comptabilité SYSCOHADA.",
+  openGraph: {
+    type: "website",
+    locale: "fr_BJ",
+    siteName: "Lyko System",
+    title: "Lyko System : la gestion locative pensée pour le Bénin",
+    description:
+      "Encaissez à temps, rendez des comptes justes à vos propriétaires : loyers, charges SONEB/SBEE, quittances et comptabilité SYSCOHADA.",
+  },
   manifest: "/manifest.webmanifest",
   applicationName: "Lyko System",
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Lyko System" },

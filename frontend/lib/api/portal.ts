@@ -58,12 +58,17 @@ export type PortalDashboard = {
     designationLabel: string;
     monthlyRent: number;
     startDate: string;
+    /** Le contrat de bail a été signé par les deux parties (étape 46) — sinon rien à télécharger. */
+    hasSignedContract: boolean;
   } | null;
   arrears: PortalArrears | null;
   /** Ses 12 mois de loyer, mois par mois (null sans bail actif). */
   rentStrip: RentStripMonth[] | null;
   payments: PortalPayment[];
   unpaidCharges: PortalUnpaidCharge[];
+  /** Dernier bail, actif OU terminé (étape 48) — états des lieux signés, consultables même après la
+   * fin du bail (contrairement à `activeLease` ci-dessus, restreint volontairement au bail en cours). */
+  lastLease: { id: number; hasSignedMoveIn: boolean; hasSignedMoveOut: boolean } | null;
 };
 
 export function getPortalDashboard(token: string) {
@@ -92,8 +97,17 @@ export function portalReceiptPdfUrl(token: string, paymentId: number) {
   return `${API_URL}/api/portal/${token}/payments/${paymentId}/receipt.pdf`;
 }
 
-export function portalCertificatePdfUrl(token: string) {
-  return `${API_URL}/api/portal/${token}/certificate.pdf`;
+/** Contrat de bail signé (étape 46) — 404 tant qu'il n'a pas été signé par les deux parties. */
+export function portalContractPdfUrl(token: string) {
+  return `${API_URL}/api/portal/${token}/contract.pdf`;
+}
+
+/** États des lieux signés (étape 48) — accessibles même après la fin du bail, voir `lastLease` ci-dessus. */
+export function portalMoveInReportPdfUrl(token: string) {
+  return `${API_URL}/api/portal/${token}/move-in-report.pdf`;
+}
+export function portalMoveOutReportPdfUrl(token: string) {
+  return `${API_URL}/api/portal/${token}/move-out-report.pdf`;
 }
 
 export type PortalComplaintInput = {

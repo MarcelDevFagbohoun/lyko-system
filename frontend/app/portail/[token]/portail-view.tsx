@@ -2,13 +2,15 @@
 
 import * as React from "react";
 import { useParams } from "next/navigation";
-import { FileCheck2, FileText, AlertTriangle, CheckCircle2, Droplets } from "lucide-react";
+import { FileCheck2, FileText, ClipboardCheck, AlertTriangle, CheckCircle2, Droplets } from "lucide-react";
 import { API_URL, ApiError } from "@/lib/api/client";
 import {
   getPortalDashboard,
   submitPortalComplaint,
   portalReceiptPdfUrl,
-  portalCertificatePdfUrl,
+  portalContractPdfUrl,
+  portalMoveInReportPdfUrl,
+  portalMoveOutReportPdfUrl,
   verifyPortalRentPayment,
   verifyPortalChargePayment,
   type PortalDashboard,
@@ -83,7 +85,7 @@ export function PortailView() {
     );
   }
 
-  const { tenant, renter, activeLease, arrears, rentStrip, payments, unpaidCharges } = dashboard;
+  const { tenant, renter, activeLease, arrears, rentStrip, payments, unpaidCharges, lastLease } = dashboard;
   const canPayOnline = tenant.kkiapayEnabled && !!tenant.kkiapayPublicKey;
   // Un mois déjà entamé se complète : le locataire paie le RESTE, pas un loyer entier.
   const partialRemaining =
@@ -99,7 +101,7 @@ export function PortailView() {
           <p className="text-body-sm text-ink-muted">Votre espace personnel, mis à jour en temps réel.</p>
         </div>
 
-        {!activeLease ? (
+        {!activeLease && !lastLease?.hasSignedMoveIn && !lastLease?.hasSignedMoveOut ? (
           <Card>
             <CardContent className="py-6 text-center text-body-sm text-ink-muted">
               Aucun bail actif n&apos;est associé à ce lien pour le moment.
@@ -107,6 +109,50 @@ export function PortailView() {
           </Card>
         ) : (
           <>
+            {!activeLease && (
+              <Card>
+                <CardContent className="py-6 text-center text-body-sm text-ink-muted">
+                  Aucun bail actif n&apos;est associé à ce lien pour le moment.
+                </CardContent>
+              </Card>
+            )}
+
+            {lastLease && (lastLease.hasSignedMoveIn || lastLease.hasSignedMoveOut) && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <ClipboardCheck size={18} className="text-primary" />
+                    <CardTitle>Mes états des lieux</CardTitle>
+                  </div>
+                  <CardDescription>Les documents que vous avez signés restent consultables ici.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap items-center gap-3">
+                  {lastLease.hasSignedMoveIn && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => window.open(portalMoveInReportPdfUrl(token), "_blank", "noopener,noreferrer")}
+                    >
+                      <FileCheck2 size={16} />
+                      État des lieux d&apos;entrée
+                    </Button>
+                  )}
+                  {lastLease.hasSignedMoveOut && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => window.open(portalMoveOutReportPdfUrl(token), "_blank", "noopener,noreferrer")}
+                    >
+                      <FileCheck2 size={16} />
+                      PV de sortie & décompte de caution
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {activeLease && (
+            <>
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between gap-2">
@@ -150,14 +196,16 @@ export function PortailView() {
                 )}
 
                 <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => window.open(portalCertificatePdfUrl(token), "_blank", "noopener,noreferrer")}
-                  >
-                    <FileCheck2 size={16} />
-                    Télécharger mon attestation de loyer
-                  </Button>
+                  {activeLease.hasSignedContract && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => window.open(portalContractPdfUrl(token), "_blank", "noopener,noreferrer")}
+                    >
+                      <FileCheck2 size={16} />
+                      Télécharger mon contrat de bail
+                    </Button>
+                  )}
                   {canPayOnline && (
                     <PayNowButton
                       amount={partialRemaining > 0 ? partialRemaining : activeLease.monthlyRent}
@@ -259,6 +307,8 @@ export function PortailView() {
             </Card>
 
             <ComplaintForm token={token} />
+            </>
+            )}
           </>
         )}
       </div>

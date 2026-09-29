@@ -30,9 +30,13 @@ export function InspectionReadOnly({ zones, showDeductions }: { zones: Inspectio
                       ))}
                     </ul>
                   )}
-                  {item.photoUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={`${API_URL}${item.photoUrl}`} alt={item.label} className="mt-1 h-20 w-20 rounded border border-border object-cover" />
+                  {item.photoUrls.length > 0 && (
+                    <div className="mt-1 flex gap-1.5">
+                      {item.photoUrls.map((url) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img key={url} src={`${API_URL}${url}`} alt={item.label} className="h-20 w-20 rounded border border-border object-cover" />
+                      ))}
+                    </div>
                   )}
                 </div>
                 <div className="flex flex-col items-end gap-1">

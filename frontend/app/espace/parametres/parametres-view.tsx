@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Stamp, PenTool, RotateCcw, CreditCard, ExternalLink, Landmark, PlayCircle, PauseCircle, Loader2, Receipt, Plus, Pencil, Trash2, X } from "lucide-react";
+import { ArrowLeft, Sparkles, Stamp, PenTool, CreditCard, ExternalLink, Landmark, PlayCircle, PauseCircle, Loader2, Receipt, Plus, Pencil, Trash2, X } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, API_URL } from "@/lib/api/client";
 import { getSettings, updateSettings, type TenantSettings } from "@/lib/api/settings";
@@ -28,10 +28,11 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
-
-// Miroir de la limite serveur (`validators/settings.js`) : affiché en direct
-// pendant la saisie plutôt que découvert seulement à l'enregistrement.
-const CONTRACT_TEMPLATE_MAX = 50000;
+import {
+  fetchAssistantSettings,
+  saveAssistantSettings,
+  type AssistantSettings,
+} from "@/lib/api/assistant";
 
 export function ParametresView() {
   return (
@@ -46,7 +47,6 @@ function ParametresContent() {
   const [settings, setSettings] = React.useState<TenantSettings | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
 
-  const [template, setTemplate] = React.useState("");
   const [stampFile, setStampFile] = React.useState<File | null>(null);
   const [stampPreview, setStampPreview] = React.useState<string | null>(null);
   const [signatureFile, setSignatureFile] = React.useState<File | null>(null);
@@ -60,6 +60,10 @@ function ParametresContent() {
   const [kkiapayPrivateKey, setKkiapayPrivateKey] = React.useState("");
   const [kkiapaySecretKey, setKkiapaySecretKey] = React.useState("");
   const [defaultRentTiming, setDefaultRentTiming] = React.useState<RentTiming>("avance");
+  const [defaultEntryProration, setDefaultEntryProration] = React.useState<"aucun" | "prorata">("aucun");
+  const [depositSbeeEnabled, setDepositSbeeEnabled] = React.useState(false);
+  const [depositSonebEnabled, setDepositSonebEnabled] = React.useState(false);
+  const [depositPeintureEnabled, setDepositPeintureEnabled] = React.useState(false);
 
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
@@ -70,7 +74,6 @@ function ParametresContent() {
     getSettings(accessToken)
       .then((res) => {
         setSettings(res.settings);
-        setTemplate(res.settings.contractTemplate ?? "");
         setDgTitle(res.settings.roleTitles.dg);
         setComptableTitle(res.settings.roleTitles.comptable);
         setAgentTitle(res.settings.roleTitles.agent);
@@ -78,6 +81,10 @@ function ParametresContent() {
         setKkiapaySandbox(res.settings.kkiapaySandbox);
         setKkiapayPublicKey(res.settings.kkiapayPublicKey ?? "");
         setDefaultRentTiming(res.settings.defaultRentTiming);
+        setDefaultEntryProration(res.settings.defaultEntryProration);
+        setDepositSbeeEnabled(res.settings.depositSbeeEnabled);
+        setDepositSonebEnabled(res.settings.depositSonebEnabled);
+        setDepositPeintureEnabled(res.settings.depositPeintureEnabled);
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Impossible de charger les paramètres."));
   }, [accessToken]);
@@ -109,7 +116,6 @@ function ParametresContent() {
     setError(null);
     try {
       const res = await updateSettings(accessToken, {
-        contractTemplate: template,
         stamp: stampFile ?? undefined,
         signature: signatureFile ?? undefined,
         dgTitle,
@@ -121,6 +127,10 @@ function ParametresContent() {
         kkiapayPrivateKey,
         kkiapaySecretKey,
         defaultRentTiming,
+        defaultEntryProration,
+        depositSbeeEnabled,
+        depositSonebEnabled,
+        depositPeintureEnabled,
       });
       setSettings(res.settings);
       setStampFile(null);
@@ -135,18 +145,10 @@ function ParametresContent() {
       // l'enregistrement, qui a déjà réussi côté serveur à ce stade.
       refreshUser().catch(() => {});
     } catch (err) {
-      // Le message générique de l'API ("Formulaire invalide") ne dit pas
-      // CE QUI est invalide (ex. texte trop long) : afficher le détail du
-      // champ concerné quand il existe, plutôt que de laisser deviner.
-      const detail = err instanceof ApiError ? err.details?.contractTemplate?.[0] : undefined;
-      setError(detail ?? (err instanceof ApiError ? err.message : "Impossible d'enregistrer les paramètres."));
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer les paramètres.");
     } finally {
       setSaving(false);
     }
-  }
-
-  function resetToDefault() {
-    if (settings) setTemplate("");
   }
 
   if (loadError) {
@@ -184,7 +186,7 @@ function ParametresContent() {
         <div>
           <h1 className="font-display text-headline-xl text-ink">Paramètres</h1>
           <p className="text-body-md text-ink-soft">
-            Personnalisez le contrat/l&apos;attestation de loyer généré pour vos locataires.
+            Personnalisez les documents générés pour vos locataires (contrat de bail, quittances).
           </p>
         </div>
 
@@ -194,6 +196,8 @@ function ParametresContent() {
         <AdvancedAccountingSection accessToken={accessToken} />
 
         <InspectionCatalogSection accessToken={accessToken} />
+
+        <AssistantSection accessToken={accessToken} />
 
         <form onSubmit={handleSave} className="flex flex-col gap-6">
           {error && (
@@ -282,43 +286,67 @@ function ParametresContent() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Modèle de l&apos;attestation de loyer</CardTitle>
+              <CardTitle>Prorata d&apos;entrée</CardTitle>
               <CardDescription>
-                Rédigez votre propre texte de contrat. La date est toujours ajoutée
-                automatiquement au moment de la génération — inutile de la saisir.
+                Un locataire qui entre en cours de mois — après l&apos;échéance habituelle — peut régler,
+                à la signature, les jours réellement occupés (loyer ÷ 30 × jours). Appartient au
+                propriétaire (compte séquestre), pas au cabinet. Réglage par défaut, modifiable bail par
+                bail à la création.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Field label="Par défaut" htmlFor="defaultEntryProration">
+                <select
+                  id="defaultEntryProration"
+                  value={defaultEntryProration}
+                  onChange={(e) => setDefaultEntryProration(e.target.value as "aucun" | "prorata")}
+                  className="h-[38px] w-full max-w-md rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <option value="aucun">Ne rien facturer (comportement actuel)</option>
+                  <option value="prorata">Facturer le prorata d&apos;entrée</option>
+                </select>
+              </Field>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Cautions supplémentaires</CardTitle>
+              <CardDescription>
+                En plus de la caution de loyer, activez ici les cautions optionnelles que vous
+                demandez à vos locataires. SBEE/SONEB garantissent les impayés de charges (réglés
+                réellement à la sortie), peinture couvre les frais de remise en état. Montant
+                toujours saisi à la main, restituable, chacune affichée séparément.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
-              <div className="flex flex-wrap gap-1.5">
-                {settings.placeholders.map((p) => (
-                  <Badge key={p.key} variant="info" className="cursor-default" title={p.label}>
-                    {`{{${p.key}}}`}
-                  </Badge>
-                ))}
-              </div>
-              <Field
-                label="Texte du contrat"
-                htmlFor="template"
-                hint="Laissez vide pour utiliser le modèle par défaut de Lyko System."
-              >
-                <textarea
-                  id="template"
-                  value={template}
-                  onChange={(e) => setTemplate(e.target.value)}
-                  placeholder={settings.defaultContractTemplate}
-                  rows={18}
-                  className="w-full rounded border border-border-strong bg-surface px-3 py-2 font-mono text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={depositSbeeEnabled}
+                  onChange={(e) => setDepositSbeeEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
                 />
-              </Field>
-              <p className={`text-right text-body-xs ${template.length > CONTRACT_TEMPLATE_MAX ? "text-danger-fg" : "text-ink-muted"}`}>
-                {template.length.toLocaleString("fr-FR")} / {CONTRACT_TEMPLATE_MAX.toLocaleString("fr-FR")} caractères
-              </p>
-              {template && (
-                <Button type="button" variant="ghost" size="sm" onClick={resetToDefault} className="w-fit">
-                  <RotateCcw size={14} />
-                  Réinitialiser au modèle par défaut
-                </Button>
-              )}
+                <span className="font-label-md text-ink">Caution SBEE (électricité)</span>
+              </label>
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={depositSonebEnabled}
+                  onChange={(e) => setDepositSonebEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                />
+                <span className="font-label-md text-ink">Caution SONEB (eau)</span>
+              </label>
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={depositPeintureEnabled}
+                  onChange={(e) => setDepositPeintureEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                />
+                <span className="font-label-md text-ink">Caution peinture</span>
+              </label>
             </CardContent>
           </Card>
 
@@ -326,7 +354,7 @@ function ParametresContent() {
             <Card>
               <CardHeader>
                 <CardTitle>Cachet de l&apos;entreprise</CardTitle>
-                <CardDescription>Apposé automatiquement sur l&apos;attestation générée.</CardDescription>
+                <CardDescription>Apposé automatiquement sur le contrat de bail et la quittance générés.</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col items-center gap-3">
                 <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
@@ -892,5 +920,137 @@ function SuspendButton({ accessToken, onChanged }: { accessToken: string | null;
       {loading ? <Loader2 size={14} className="animate-spin" /> : <PauseCircle size={14} />}
       Suspendre
     </Button>
+  );
+}
+
+// ── Assistant IA (chat Claude) ─────────────────────────────────────────────
+// Désactivé par défaut pour chaque entreprise : ce que l'on écrit à l'assistant est envoyé à un
+// fournisseur externe (Anthropic). L'activation exige donc une confirmation explicite, datée et
+// attribuée à la direction. L'accès par employé se règle ensuite dans sa fiche (case « Assistant IA »).
+function AssistantSection({ accessToken }: { accessToken: string | null }) {
+  const [settings, setSettings] = React.useState<AssistantSettings | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = React.useState(false);
+  const [quota, setQuota] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const toast = useToast();
+
+  const load = React.useCallback(() => {
+    if (!accessToken) return;
+    fetchAssistantSettings(accessToken)
+      .then((s) => {
+        setSettings(s);
+        setQuota(String(s.usage.quota));
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les réglages de l'assistant."));
+  }, [accessToken]);
+
+  React.useEffect(() => load(), [load]);
+
+  async function apply(input: { enabled: boolean; acknowledge?: boolean; monthlyQuota?: number }, successMessage: string) {
+    if (!accessToken) return;
+    setBusy(true);
+    try {
+      await saveAssistantSettings(accessToken, input);
+      toast.success(successMessage);
+      setAcknowledged(false);
+      load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Enregistrement impossible.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error) return <p className="text-body-sm text-danger-fg">{error}</p>;
+  if (!settings) {
+    return (
+      <Card>
+        <CardContent className="py-4">
+          <p className="text-body-sm text-ink-muted">Chargement des réglages de l&apos;assistant…</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const parsedQuota = Number(quota);
+  const quotaValid = quota !== "" && Number.isInteger(parsedQuota) && parsedQuota >= 0 && parsedQuota <= 100000;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Sparkles size={18} className="text-primary" />
+          <CardTitle>Assistant IA</CardTitle>
+        </div>
+        <CardDescription>
+          Un assistant de discussion (Claude) qui guide vos employés dans la plateforme et répond à leurs questions de gestion locative.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={settings.enabled ? "success" : "neutral"}>{settings.enabled ? "Activé" : "Désactivé"}</Badge>
+          <span className="text-body-sm text-ink-soft">
+            {settings.usage.used} / {settings.usage.quota} messages utilisés ce mois-ci
+          </span>
+        </div>
+
+        {!settings.keyConfigured && (
+          <p className="rounded-lg border border-warning-border bg-warning-bg px-3 py-2 text-body-sm text-warning-fg">
+            Aucune clé API n&apos;est configurée sur ce serveur : l&apos;assistant ne sera pas disponible tant que l&apos;administrateur technique ne l&apos;a pas renseignée.
+          </p>
+        )}
+
+        {!settings.enabled ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-3 text-body-sm text-ink-soft">
+            <p className="font-label-md text-ink">À lire avant d&apos;activer</p>
+            <ul className="ml-5 list-disc space-y-1">
+              <li>
+                Les messages écrits à l&apos;assistant sont envoyés à <strong>Anthropic</strong>, le fournisseur de l&apos;intelligence artificielle, pour produire les réponses.
+              </li>
+              <li>
+                Dans cette première version, l&apos;assistant <strong>n&apos;a pas accès aux données de votre cabinet</strong> (locataires, loyers, montants, propriétaires). Seuls sont transmis le texte des questions, le nom d&apos;usage et la fonction que chaque employé indique lui-même à l&apos;assistant (mémorisés jusqu&apos;à ce qu&apos;il les efface), son rôle, et le nom de votre entreprise.
+              </li>
+              <li>Demandez à vos employés de ne pas saisir d&apos;informations personnelles sensibles dans la discussion.</li>
+              <li>
+                Les conversations sont privées à chaque employé, conservées {settings.retentionDays} jours puis supprimées ; chacun peut les supprimer à tout moment.
+              </li>
+              <li>Les réponses peuvent contenir des erreurs : elles ne remplacent ni un expert-comptable ni un juriste.</li>
+            </ul>
+            <label className="flex items-start gap-2 text-ink">
+              <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} className="mt-1 h-4 w-4" />
+              <span>J&apos;ai lu ces informations et j&apos;autorise l&apos;activation de l&apos;assistant pour mon entreprise.</span>
+            </label>
+            <div>
+              <Button disabled={!acknowledged || busy} onClick={() => apply({ enabled: true, acknowledge: true }, "Assistant activé.")}>
+                {busy ? "Activation…" : "Activer l'assistant"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="text-body-sm text-ink-soft">
+              Autorisez ensuite chaque employé depuis sa fiche (case « Assistant IA ») : la direction y a toujours accès.
+              {settings.consentAt && <> Activé le {new Date(settings.consentAt).toLocaleDateString("fr-FR")}.</>}
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Quota mensuel (messages)" htmlFor="assistant-quota">
+                <Input id="assistant-quota" type="number" min={0} max={100000} value={quota} onChange={(e) => setQuota(e.target.value)} className="w-40" />
+              </Field>
+              <Button
+                variant="secondary"
+                disabled={busy || !quotaValid || parsedQuota === settings.usage.quota}
+                onClick={() => apply({ enabled: true, monthlyQuota: parsedQuota }, "Quota enregistré.")}
+              >
+                Enregistrer le quota
+              </Button>
+              <Button variant="danger" disabled={busy} onClick={() => apply({ enabled: false }, "Assistant désactivé.")}>
+                Désactiver
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -13,6 +13,7 @@ const ownerRoutes = require('./owners');
 const complaintRoutes = require('./complaints');
 const accountingRoutes = require('./accounting');
 const chargeRoutes = require('./charges');
+const assistantRoutes = require('./assistant');
 const utilityReadingRoutes = require('./utilityReadings');
 const dashboardRoutes = require('./dashboard');
 const portalRoutes = require('./portal');
@@ -52,6 +53,7 @@ router.use('/inspection-catalog', inspectionCatalogRoutes);
 router.use('/complaints', complaintRoutes);
 router.use('/accounting', accountingRoutes);
 router.use('/charges', chargeRoutes);
+router.use('/assistant', assistantRoutes);
 // Portail locataire (lien secret, pas de compte employé) : `/portal/:token/*`.
 // DOIT être monté avant `utilityReadingRoutes` ci-dessous : ce dernier n'a pas
 // de préfixe (monté à la racine de /api) et exige `requireAuth` dès son entrée,

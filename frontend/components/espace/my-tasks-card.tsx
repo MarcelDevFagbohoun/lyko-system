@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Gauge,
   Receipt,
+  PiggyBank,
   CalendarClock,
   CheckCircle2,
   ListTodo,
@@ -18,7 +19,7 @@ import {
 import { useAuth } from "@/lib/auth/auth-context";
 import { getMyTasks, type MyTasks } from "@/lib/api/tasks";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
-import { formatFcfa, formatTaskDueLabel, buildRentReminderMessage, cn } from "@/lib/utils";
+import { formatFcfa, formatDateLabel, formatTaskDueLabel, buildRentReminderMessage, cn } from "@/lib/utils";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -83,7 +84,10 @@ export function MyTasksCard() {
         tasks.agent.draftInspections.length
       : 0) +
     (tasks.accountant
-      ? tasks.accountant.pendingBatches.length + tasks.accountant.expensesWithoutReceipt.length + (monthClosable ? 1 : 0)
+      ? tasks.accountant.pendingBatches.length +
+        tasks.accountant.expensesWithoutReceipt.length +
+        tasks.accountant.pendingDepositRegularizations.length +
+        (monthClosable ? 1 : 0)
       : 0);
 
   const assignedTone: Tone = tasks.assignedTasks.some((t) => {
@@ -221,6 +225,23 @@ export function MyTasksCard() {
               <CategoryCard icon={<Receipt size={14} />} title="Dépenses sans justificatif" tone="warning" count={tasks.accountant.expensesWithoutReceipt.length} href="/espace/comptabilite">
                 {tasks.accountant.expensesWithoutReceipt.slice(0, 4).map((e) => (
                   <Row key={e.id} label={e.label} detail={e.expenseDate} badge={<Badge variant="neutral">{formatFcfa(e.amount)}</Badge>} />
+                ))}
+              </CategoryCard>
+
+              <CategoryCard
+                icon={<PiggyBank size={14} />}
+                title="Cautions à régulariser"
+                tone="warning"
+                count={tasks.accountant.pendingDepositRegularizations.length}
+              >
+                {tasks.accountant.pendingDepositRegularizations.slice(0, 4).map((d) => (
+                  <Row
+                    key={d.leaseId}
+                    href={`/espace/locataires/${d.renterId}/sortie?leaseId=${d.leaseId}`}
+                    label={d.renterName}
+                    detail={`Sortie finalisée le ${formatDateLabel(d.finalizedAt.slice(0, 10))}`}
+                    badge={<Badge variant="danger">{formatFcfa(d.totalDeductions)}</Badge>}
+                  />
                 ))}
               </CategoryCard>
 

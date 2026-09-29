@@ -33,6 +33,50 @@ function toIsoDateString(d) {
 }
 
 /**
+ * Prorata d'entrée (étape 42, demande directe de l'utilisateur, 2026-09-28) — un locataire qui entre
+ * en cours de mois (ex. le 25 septembre, échéance le 5) n'a pas vécu tout le mois : sans ce calcul, le
+ * cycle mensuel classique le facturerait pour tout le mois, ou (à l'inverse, via `upToDateAtOnboarding`)
+ * ne lui facturerait RIEN pour les jours réellement occupés avant la première échéance normale — dans
+ * les deux cas, le propriétaire perd de l'argent ou le locataire paie plus que ce qu'il doit.
+ *
+ * Décisions explicites de l'utilisateur :
+ *   - diviseur FORFAITAIRE de 30 jours (jamais les jours réels du mois — montant identique quel que
+ *     soit le mois d'entrée, plus simple à expliquer qu'un prorata calendaire) ;
+ *   - le montant appartient au PROPRIÉTAIRE (même traitement qu'un loyer : commission du cabinet
+ *     prélevée dessus, reste au propriétaire — voir `dette_initiale_encaissee`, un précédent déjà en
+ *     place pour un « loyer dû mais réglé hors du cycle mensuel normal ») ;
+ *   - libellé « Prorata d'entrée » sur les documents.
+ *
+ * Payé à la signature (comme la caution et les frais d'agence), jamais différé à la première
+ * échéance : ça ne touche donc JAMAIS `computeArrears`/`allocateRentPayment` (déjà audités) — c'est un
+ * montant à part, une seule fois, indépendant du cycle mensuel qui démarre ensuite normalement.
+ */
+
+/**
+ * Première échéance normale à partir de `startDate` INCLUS : la prochaine date portant le jour
+ * `rentDueDay`. Une entrée exactement LE jour d'échéance ne produit aucun prorata (0 jour) — c'est le
+ * cas normal, pas un cas limite à traiter à part.
+ */
+function firstRegularDueDate(startDate, rentDueDay) {
+  const [y, m] = startDate.split('-').map(Number);
+  const sameMonth = toIsoDateString(new Date(Date.UTC(y, m - 1, rentDueDay)));
+  const dueDate = sameMonth >= startDate ? sameMonth : toIsoDateString(new Date(Date.UTC(y, m, rentDueDay)));
+  return dueDate;
+}
+
+/**
+ * `{ days, amount, dueDate }` — `days` = nombre de jours occupés avant la première échéance normale
+ * (intervalle [startDate, dueDate[, jamais négatif) ; `amount` = loyer mensuel × jours ÷ 30, arrondi au
+ * franc. `monthlyRent` à 0 ou absent → prorata nul (bail sans loyer, cas théorique, jamais d'erreur).
+ */
+function computeEntryProrata({ startDate, monthlyRent, rentDueDay }) {
+  const dueDate = firstRegularDueDate(startDate, rentDueDay);
+  const days = Math.round((new Date(`${dueDate}T00:00:00Z`) - new Date(`${startDate}T00:00:00Z`)) / 86_400_000);
+  const amount = monthlyRent > 0 ? Math.round((Number(monthlyRent) * days) / 30) : 0;
+  return { days, amount, dueDate };
+}
+
+/**
  * Premier mois réellement SUIVI pour un bail : le mois du début du bail, ou
  * celui de son enregistrement sur la plateforme s'il est postérieur (le suivi
  * ne remonte jamais avant Lyko System) ; un locataire entré « à jour » démarre le
@@ -273,6 +317,22 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   );
   const openingDebtPaidByLease = new Map(openingDebtPaid.map((r) => [r.lease_id, Number(r.paid)]));
 
+  // Pénalités de retard non réglées (étape 44bis) — même principe que la dette initiale ci-dessus :
+  // solde restant = montants appliqués moins ce qui a déjà été réglé, sommé par bail (un bail peut avoir
+  // plusieurs pénalités, chacune payable indépendamment — voir `late_fee_payments`).
+  const [lateFeesApplied] = await pool.query(
+    `SELECT lease_id, SUM(amount) AS applied FROM late_fees WHERE lease_id IN (${placeholders}) GROUP BY lease_id`,
+    leaseIds,
+  );
+  const [lateFeesPaid] = await pool.query(
+    `SELECT lf.lease_id, SUM(lfp.amount) AS paid
+     FROM late_fee_payments lfp JOIN late_fees lf ON lf.id = lfp.late_fee_id
+     WHERE lf.lease_id IN (${placeholders}) GROUP BY lf.lease_id`,
+    leaseIds,
+  );
+  const lateFeesAppliedByLease = new Map(lateFeesApplied.map((r) => [r.lease_id, Number(r.applied)]));
+  const lateFeesPaidByLease = new Map(lateFeesPaid.map((r) => [r.lease_id, Number(r.paid)]));
+
   const currentMonth = new Date().toISOString().slice(0, 7);
   const results = [];
   for (const lease of activeLeases) {
@@ -287,11 +347,12 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
       payments: paymentsByLease.get(lease.id) || [],
     });
     const openingDebtRemaining = Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0);
-    // Un bail peut devoir de l'argent pour DEUX raisons indépendantes : du
-    // loyer en retard (calculé au jour près) ET/OU un reliquat de dette
-    // initiale jamais soldé (onboarding) — l'un n'empêche jamais l'autre
-    // d'apparaître dans la liste de relance.
-    if (arrears.status === 'late' || openingDebtRemaining > 0) {
+    const lateFeesRemaining = (lateFeesAppliedByLease.get(lease.id) || 0) - (lateFeesPaidByLease.get(lease.id) || 0);
+    // Un bail peut devoir de l'argent pour TROIS raisons indépendantes : du
+    // loyer en retard (calculé au jour près), un reliquat de dette initiale
+    // jamais soldé (onboarding), et/ou une pénalité de retard non réglée —
+    // aucune n'empêche les autres d'apparaître dans la liste de relance.
+    if (arrears.status === 'late' || openingDebtRemaining > 0 || lateFeesRemaining > 0) {
       const unpaidMonths = arrears.status === 'late' ? Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth)) : 0;
       // Audit comptable, anomalie A1 : le mois en cours (`nextDueMonth`)
       // peut déjà être partiellement réglé (`paidForNextDueMonth`) — ne
@@ -310,7 +371,8 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
         daysLate: arrears.daysLate,
         unpaidMonths,
         openingDebtRemaining,
-        amountOwed: rentOwed + openingDebtRemaining,
+        lateFeesRemaining,
+        amountOwed: rentOwed + openingDebtRemaining + lateFeesRemaining,
       });
     }
   }
@@ -644,4 +706,6 @@ module.exports = {
   listPortfolioArrears,
   listPredictiveLateAlerts,
   snapshotLeaseBalances,
+  firstRegularDueDate,
+  computeEntryProrata,
 };

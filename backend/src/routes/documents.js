@@ -17,7 +17,7 @@ const logger = require('../utils/logger');
 const router = Router();
 router.use(requireAuth);
 
-const DOCUMENT_TYPES = ['quittance', 'attestation', 'releve_proprietaire', 'carnet_charges'];
+const DOCUMENT_TYPES = ['quittance', 'contrat', 'releve_proprietaire', 'carnet_charges', 'etat_lieux_entree', 'etat_lieux_sortie'];
 
 /**
  * Vérifie que `referenceId` désigne bien une ligne de CE tenant pour ce type
@@ -32,7 +32,9 @@ async function assertReferenceBelongsToTenant(tenantId, documentType, referenceI
        WHERE rp.id = :referenceId AND l.tenant_id = :tenantId AND rp.deleted_at IS NULL LIMIT 1`,
       { referenceId, tenantId },
     );
-  } else if (documentType === 'attestation') {
+  } else if (documentType === 'contrat' || documentType === 'etat_lieux_entree' || documentType === 'etat_lieux_sortie') {
+    // Référence = un bail (comme 'contrat') — l'état des lieux, entrée comme
+    // sortie, se rattache toujours au bail, jamais au locataire directement.
     [rows] = await pool.query('SELECT id FROM leases WHERE id = :referenceId AND tenant_id = :tenantId LIMIT 1', {
       referenceId,
       tenantId,

@@ -367,6 +367,9 @@ function ArrearsRow({
           {a.openingDebtRemaining > 0 && (
             <div className="text-warning-fg">Impayés à l&apos;entrée : {formatFcfa(a.openingDebtRemaining)}</div>
           )}
+          {a.lateFeesRemaining > 0 && (
+            <div className="text-warning-fg">Pénalité(s) non réglée(s) : {formatFcfa(a.lateFeesRemaining)}</div>
+          )}
         </TableCell>
         <TableCell className="text-ink-soft">{formatDateLabel(a.dueDate)}</TableCell>
         <TableCell className="text-right">

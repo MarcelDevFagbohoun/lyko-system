@@ -136,6 +136,15 @@ function ComptabiliteContent() {
 
   React.useEffect(() => load(), [load]);
 
+  // Lien "Dépenses" du menu (`#depenses`) : la navigation native vers l'ancre échoue souvent, la section
+  // n'existant pas encore dans le DOM au moment où le navigateur essaie de défiler (chargement encore en
+  // cours) — retenté ici une fois les dépenses effectivement affichées.
+  React.useEffect(() => {
+    if (expenses === null) return;
+    if (window.location.hash !== '#depenses') return;
+    document.getElementById('depenses')?.scrollIntoView({ block: 'start' });
+  }, [expenses]);
+
   const isClosed = dashboard?.isClosed ?? false;
 
   // Regroupe le journal par jour de SAISIE (préfixe de `createdAt`, pas
@@ -497,7 +506,7 @@ function ComptabiliteContent() {
           </CardContent>
         </Card>
 
-        <Card className="border-warning-border bg-warning/5">
+        <Card id="depenses" className="border-warning-border bg-warning/5">
           <CardHeader>
             <CardTitle>Journal des dépenses</CardTitle>
             <CardDescription>

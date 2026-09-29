@@ -88,7 +88,15 @@ export type CommissionRate = {
  * déjà déduite) moins les versements déjà effectués — ce que le cabinet
  * détient ACTUELLEMENT pour son compte.
  */
-export type EscrowBalance = { totalCollected: number; totalPayouts: number; balance: number };
+export type EscrowBalance = {
+  totalCollected: number;
+  totalPayouts: number;
+  balance: number;
+  /** Détail de ce qui compose la recette nette cumulée (étape 42), montants BRUTS avant commission :
+   * loyers, dette initiale réglée, prorata d'entrée — les deux derniers appartiennent au propriétaire
+   * au même titre qu'un loyer. */
+  breakdown: { rent: number; openingDebt: number; prorata: number; expenses: number };
+};
 
 export function getOwner(accessToken: string, id: number) {
   return apiFetch<{

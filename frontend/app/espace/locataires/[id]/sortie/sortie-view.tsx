@@ -13,11 +13,15 @@ import {
   uploadInspectionItemPhoto,
   deleteInspectionItemPhoto,
   finalizeMoveOutReport,
+  reopenMoveOutReport,
+  markMoveOutGlRegularized,
   moveOutReportPdfPath,
   type Lease,
   type MoveOutReport,
   type InspectionZone,
   type PaymentMethod,
+  type AdditionalDepositType,
+  type AdditionalDeposit,
 } from "@/lib/api/renters";
 import { listCatalogItems, type CatalogItem } from "@/lib/api/inspectionCatalog";
 import { compareInspectionReports, type ItemComparison } from "@/lib/inspection-comparison";
@@ -28,6 +32,7 @@ import { InspectionForm } from "@/components/inspections/inspection-form";
 import { InspectionReadOnly } from "@/components/inspections/inspection-readonly";
 import { FinalizeSection } from "@/components/inspections/finalize-section";
 import { SignatureBlock } from "@/components/inspections/signature-block";
+import { ReopenReportButton } from "@/components/inspections/reopen-button";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -110,7 +115,7 @@ function SortieContent() {
         </Link>
 
         {report?.status === "finalized" ? (
-          <FinalizedView lease={lease} report={report} />
+          <FinalizedView leaseId={leaseId} lease={lease} report={report} accessToken={accessToken} onReportChange={setReport} />
         ) : report ? (
           <DraftEditor
             leaseId={leaseId}
@@ -206,6 +211,29 @@ function DraftEditor({
   const [catalog, setCatalog] = React.useState<CatalogItem[]>([]);
   const toast = useToast();
 
+  // Cautions supplémentaires (étape 43) — celles encore détenues sur ce bail (SBEE/SONEB réglées
+  // automatiquement à la sortie sur les charges impayées, peinture retenue manuellement ci-dessous).
+  const heldAdditionalDeposits = React.useMemo(
+    () => lease.additionalDeposits.filter((d) => d.status === "held"),
+    [lease.additionalDeposits],
+  );
+  const peintureDeposit = heldAdditionalDeposits.find((d) => d.type === "peinture");
+  const [peintureAmount, setPeintureAmount] = React.useState(
+    report.peintureDeductionAmount ? String(report.peintureDeductionAmount) : "",
+  );
+  const [peintureNote, setPeintureNote] = React.useState(report.peintureDeductionNote ?? "");
+  const [additionalDepositRefundMethods, setAdditionalDepositRefundMethods] = React.useState<
+    Partial<Record<AdditionalDepositType, string>>
+  >({});
+
+  // Dépassement de la retenue peinture au-delà de SA PROPRE caution — reporté sur la caution de LOYER
+  // (décision explicite de l'utilisateur, étape 43), calculable côté client car on connaît déjà le
+  // montant de la caution peinture (contrairement à SBEE/SONEB, dont le solde impayé réel n'est connu
+  // que côté serveur au moment de la sortie).
+  const peintureDeduction = peintureDeposit ? Math.min(Number(peintureAmount) || 0, peintureDeposit.amount) : 0;
+  const peintureOverflow = peintureDeposit ? Math.max(0, (Number(peintureAmount) || 0) - peintureDeposit.amount) : 0;
+  const peintureReturned = peintureDeposit ? peintureDeposit.amount - peintureDeduction : 0;
+
   React.useEffect(() => {
     if (!accessToken) return;
     listCatalogItems(accessToken).then((res) => setCatalog(res.items)).catch(() => {
@@ -225,7 +253,9 @@ function DraftEditor({
 
   const itemsTotal = zones.reduce((sum, z) => sum + z.items.reduce((s, it) => s + it.deduction, 0), 0);
   const otherTotal = Number(otherAmount) || 0;
-  const totalDeductions = itemsTotal + otherTotal;
+  // Le dépassement de la retenue peinture (au-delà de SA propre caution) s'ajoute aux retenues de la
+  // caution de LOYER — décision explicite de l'utilisateur, même calcul que la route de finalisation.
+  const totalDeductions = itemsTotal + otherTotal + peintureOverflow;
   const netRefund = Math.max(0, report.depositAmount - totalDeductions);
 
   async function persist() {
@@ -235,6 +265,8 @@ function DraftEditor({
       generalNotes: generalNotes.trim() || undefined,
       otherDeductionsAmount: otherTotal || undefined,
       otherDeductionsNote: otherNote.trim() || undefined,
+      peintureDeductionAmount: Number(peintureAmount) || undefined,
+      peintureDeductionNote: peintureNote.trim() || undefined,
     });
     onReportChange(res.report);
     setZones(res.report.zones);
@@ -267,10 +299,10 @@ function DraftEditor({
     }
   }
 
-  async function handleDeletePhoto(zoneKey: string, itemKey: string) {
+  async function handleDeletePhoto(zoneKey: string, itemKey: string, photoIndex: number) {
     if (!accessToken) return;
     try {
-      const res = await deleteInspectionItemPhoto(accessToken, "move-out", leaseId, zoneKey, itemKey);
+      const res = await deleteInspectionItemPhoto(accessToken, "move-out", leaseId, zoneKey, itemKey, photoIndex);
       onReportChange(res.report as MoveOutReport);
       setZones(res.report.zones);
       toast.info("Photo retirée.");
@@ -279,10 +311,16 @@ function DraftEditor({
     }
   }
 
-  async function handleFinalize(tenantSignature: Blob, agentSignature: Blob) {
+  async function handleFinalize(tenantSignature: Blob, agentSignature: Blob, tenantReserves: string) {
     if (!accessToken) return;
     if (netRefund > 0 && !refundPaymentMethod) {
       setFinalizeError("Indiquez comment la caution sera restituée avant de finaliser.");
+      return;
+    }
+    // SBEE/SONEB : le solde impayé réel n'est connu que côté serveur (vérifié à nouveau là-bas) — mais
+    // la retenue peinture est calculable ici, donc vérifiée avant tout envoi comme la caution ci-dessus.
+    if (peintureReturned > 0 && !additionalDepositRefundMethods.peinture) {
+      setFinalizeError("Indiquez comment la caution peinture sera restituée avant de finaliser.");
       return;
     }
     setFinalizing(true);
@@ -297,10 +335,17 @@ function DraftEditor({
         tenantSignature,
         agentSignature,
         netRefund > 0 ? (refundPaymentMethod as Exclude<PaymentMethod, "kkiapay">) : undefined,
+        additionalDepositRefundMethods as Partial<Record<AdditionalDepositType, Exclude<PaymentMethod, "kkiapay">>>,
+        tenantReserves || undefined,
       );
       onReportChange(res.report);
       toast.success("Sortie finalisée — bail terminé, unité libérée.");
       if (res.depositAccountingNote) toast.info(res.depositAccountingNote);
+      for (const d of res.additionalDeposits.filter((dep) => dep.status === "returned")) {
+        toast.info(
+          `${d.typeLabel} : ${d.deductionAmount > 0 ? `${formatFcfa(d.deductionAmount)} retenu, ` : ""}${formatFcfa(d.returnedAmount ?? 0)} à restituer.`,
+        );
+      }
       onFinalized();
     } catch (err) {
       setFinalizeError(err instanceof ApiError ? err.message : "Impossible de finaliser la sortie.");
@@ -356,6 +401,89 @@ function DraftEditor({
           </div>
         </div>
 
+        {heldAdditionalDeposits.length > 0 && (
+          <div className="flex flex-col gap-4 border-t border-border pt-4">
+            <span className="font-label-sm uppercase tracking-wider text-ink-muted">Cautions supplémentaires</span>
+            {heldAdditionalDeposits.map((d) =>
+              d.type === "peinture" ? (
+                <div key="peinture" className="flex flex-col gap-3 rounded-lg border border-border-subtle p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-label-sm text-ink">{d.typeLabel}</span>
+                    <span className="tabular text-body-sm text-ink-muted">{formatFcfa(d.amount)} détenue</span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label="Retenue (FCFA)" htmlFor="peintureAmount" hint="Plafonnée à cette caution — le dépassement s'ajoute à la caution de loyer">
+                      <Input
+                        id="peintureAmount"
+                        inputMode="numeric"
+                        value={peintureAmount}
+                        onChange={(e) => setPeintureAmount(e.target.value.replace(/\D/g, ""))}
+                      />
+                    </Field>
+                    <Field label="Motif" htmlFor="peintureNote">
+                      <Input id="peintureNote" value={peintureNote} onChange={(e) => setPeintureNote(e.target.value)} />
+                    </Field>
+                  </div>
+                  {peintureOverflow > 0 && (
+                    <p className="text-body-xs text-warning-fg">
+                      Dépassement de {formatFcfa(peintureOverflow)} ajouté aux retenues de la caution de loyer ci-dessus.
+                    </p>
+                  )}
+                  {peintureReturned > 0 && (
+                    <Field label="Restituée par" htmlFor="peintureRefundMethod" required>
+                      <select
+                        id="peintureRefundMethod"
+                        value={additionalDepositRefundMethods.peinture ?? ""}
+                        onChange={(e) =>
+                          setAdditionalDepositRefundMethods((m) => ({ ...m, peinture: e.target.value }))
+                        }
+                        className="h-[38px] w-full max-w-xs rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        <option value="" disabled>
+                          Choisir…
+                        </option>
+                        {REFUND_PAYMENT_METHODS.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                </div>
+              ) : (
+                <div key={d.type} className="flex flex-col gap-3 rounded-lg border border-border-subtle p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-label-sm text-ink">{d.typeLabel}</span>
+                    <span className="tabular text-body-sm text-ink-muted">{formatFcfa(d.amount)} détenue</span>
+                  </div>
+                  <p className="text-body-xs text-ink-muted">
+                    Réglera automatiquement les charges {d.type === "sbee" ? "SBEE" : "SONEB"} impayées de ce
+                    locataire à la finalisation ; le reste, s&apos;il y en a, sera à restituer.
+                  </p>
+                  <Field label="Restituée par (si un reste)" htmlFor={`refundMethod-${d.type}`}>
+                    <select
+                      id={`refundMethod-${d.type}`}
+                      value={additionalDepositRefundMethods[d.type] ?? ""}
+                      onChange={(e) =>
+                        setAdditionalDepositRefundMethods((m) => ({ ...m, [d.type]: e.target.value }))
+                      }
+                      className="h-[38px] w-full max-w-xs rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <option value="">Choisir…</option>
+                      {REFUND_PAYMENT_METHODS.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              ),
+            )}
+          </div>
+        )}
+
         <div className="flex flex-col gap-2">
           <label className="font-label-sm text-ink-soft">Notes générales (optionnel)</label>
           <textarea
@@ -407,7 +535,40 @@ function DraftEditor({
   );
 }
 
-function FinalizedView({ lease, report }: { lease: Lease; report: MoveOutReport }) {
+function FinalizedView({
+  leaseId,
+  lease,
+  report,
+  accessToken,
+  onReportChange,
+}: {
+  leaseId: number;
+  lease: Lease;
+  report: MoveOutReport;
+  accessToken: string | null;
+  onReportChange: (report: MoveOutReport) => void;
+}) {
+  const { user } = useAuth();
+  const [regularizing, setRegularizing] = React.useState(false);
+  const canRegularize = user?.role === "dg" || (user?.permissions.includes("comptabilite") ?? false);
+
+  async function handleReopen(reason: string) {
+    if (!accessToken) return;
+    const res = await reopenMoveOutReport(accessToken, leaseId, reason);
+    onReportChange(res.report);
+  }
+
+  async function handleMarkRegularized() {
+    if (!accessToken) return;
+    setRegularizing(true);
+    try {
+      const res = await markMoveOutGlRegularized(accessToken, leaseId);
+      onReportChange(res.report);
+    } finally {
+      setRegularizing(false);
+    }
+  }
+
   return (
     <Card className="max-w-3xl">
       <CardHeader>
@@ -418,7 +579,10 @@ function FinalizedView({ lease, report }: { lease: Lease; report: MoveOutReport 
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
-        <DownloadPvButton leaseId={lease.id} />
+        <div className="flex flex-wrap items-center gap-3">
+          <DownloadPvButton leaseId={lease.id} />
+          {user?.role === "dg" && <ReopenReportButton onReopen={handleReopen} />}
+        </div>
 
         {lease.moveInReport && <ComparisonSection moveIn={lease.moveInReport} moveOut={report} />}
 
@@ -433,10 +597,26 @@ function FinalizedView({ lease, report }: { lease: Lease; report: MoveOutReport 
           </div>
         )}
 
+        {lease.additionalDeposits.length > 0 && (
+          <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+            <span className="font-label-sm uppercase tracking-wider text-ink-muted">Cautions supplémentaires</span>
+            {lease.additionalDeposits.map((d) => (
+              <AdditionalDepositSummaryRow key={d.type} deposit={d} />
+            ))}
+          </div>
+        )}
+
         {report.generalNotes && (
           <div className="rounded-lg border border-border bg-surface-muted p-3">
             <p className="font-label-sm text-ink-muted">Notes générales</p>
             <p className="text-body-sm text-ink">{report.generalNotes}</p>
+          </div>
+        )}
+
+        {report.tenantReserves && (
+          <div className="rounded-lg border border-warning-border bg-warning-bg p-3">
+            <p className="font-label-sm text-warning-fg">Réserves du locataire</p>
+            <p className="text-body-sm text-ink">{report.tenantReserves}</p>
           </div>
         )}
 
@@ -447,7 +627,49 @@ function FinalizedView({ lease, report }: { lease: Lease; report: MoveOutReport 
             <span className="font-label-md text-ink">Net à restituer</span>
             <span className="tabular font-currency-table text-headline-sm text-primary">{formatFcfa(report.netRefund)}</span>
           </div>
+          {report.refundPaymentMethod && (
+            <SummaryRow
+              label="Réglé par"
+              value={REFUND_PAYMENT_METHODS.find((m) => m.value === report.refundPaymentMethod)?.label ?? report.refundPaymentMethod}
+            />
+          )}
         </div>
+
+        {report.totalDeductions > 0 && (
+          <div
+            className={cn(
+              "flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between",
+              report.glRegularizedAt ? "border-success-border bg-success-bg" : "border-warning-border bg-warning-bg",
+            )}
+          >
+            {report.glRegularizedAt ? (
+              <p className="text-body-sm text-success-fg">
+                Retenue régularisée en comptabilité le {new Date(report.glRegularizedAt).toLocaleDateString("fr-FR")}
+                {report.glRegularizedBy && ` par ${report.glRegularizedBy.name} (${report.glRegularizedBy.roleLabel})`}.
+              </p>
+            ) : (
+              <>
+                <p className="text-body-sm text-warning-fg">
+                  Caution avec retenue : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture
+                  diverse (le sort comptable d&apos;une retenue n&apos;est pas encore automatisé).
+                </p>
+                {canRegularize && (
+                  <Button type="button" variant="warning" size="sm" onClick={handleMarkRegularized} disabled={regularizing}>
+                    {regularizing ? "…" : "Marquer réglé"}
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {report.reopenedAt && (
+          <p className="text-body-xs text-ink-muted">
+            Corrigée le {new Date(report.reopenedAt).toLocaleDateString("fr-FR")}
+            {report.reopenedBy && ` par ${report.reopenedBy.name} (${report.reopenedBy.roleLabel})`}
+            {report.reopenReason && ` — motif : ${report.reopenReason}`}.
+          </p>
+        )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} />
@@ -596,6 +818,21 @@ function DownloadPvButton({ leaseId }: { leaseId: number }) {
       <FileDown size={16} />
       Télécharger le PV de sortie
     </Button>
+  );
+}
+
+function AdditionalDepositSummaryRow({ deposit }: { deposit: AdditionalDeposit }) {
+  return (
+    <div className="flex flex-col gap-0.5 rounded-lg border border-border-subtle px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-body-sm text-ink">{deposit.typeLabel}</span>
+        <span className="tabular text-body-sm text-ink">{formatFcfa(deposit.amount)}</span>
+      </div>
+      <span className="text-body-xs text-ink-muted">
+        {deposit.deductionAmount > 0 ? `${formatFcfa(deposit.deductionAmount)} retenu${deposit.deductionNote ? ` (${deposit.deductionNote})` : ""} · ` : "Aucune retenue · "}
+        {deposit.returnedAmount ? `${formatFcfa(deposit.returnedAmount)} restitué` : "Rien à restituer"}
+      </span>
+    </div>
   );
 }
 

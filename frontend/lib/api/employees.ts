@@ -7,7 +7,9 @@ export type PermissionKey =
   | "plaintes"
   | "comptabilite"
   | "charges"
-  | "documents_juridiques";
+  | "documents_juridiques"
+  | "comptabilite_avancee"
+  | "assistant";
 
 export type EmployeeRole = "comptable" | "agent";
 

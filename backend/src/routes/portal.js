@@ -1,6 +1,6 @@
 'use strict';
 
-// Portail locataire (lecture de ses paiements/quittances/attestation +
+// Portail locataire (lecture de ses paiements/quittances/contrat +
 // signalement d'incident) — sans compte, sans mot de passe : l'accès se fait
 // par un lien secret unique (`requirePortalToken`, voir middleware/portalAuth.js).
 // Jamais de `requireAuth` employé ici — ce routeur n'est monté sous AUCUNE
@@ -14,7 +14,13 @@ const { requirePortalToken } = require('../middleware/portalAuth');
 const { portalComplaintSchema } = require('../validators/portal');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { computeArrears, buildRentStrip } = require('../services/rentTracking');
-const { streamReceiptPdf, streamCertificatePdf } = require('../services/pdf');
+const { streamReceiptPdf, streamLeaseContractPdf, streamMoveInPdf, streamMoveOutPdf } = require('../services/pdf');
+const { loadContractRow, toPublicContract } = require('../services/leaseContract');
+const {
+  normalizeStoredItems,
+  toPublicInspectionReport,
+  toPublicMoveOutReport,
+} = require('../services/inspection');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 const { verifyAndRecordKkiapay } = require('../services/paymentVerification');
 const logger = require('../utils/logger');
@@ -60,6 +66,40 @@ async function loadActivePortalLease(tenantId, renterId) {
   );
   if (!rows[0]) throw new ApiError(404, 'Aucun bail actif');
   return rows[0];
+}
+
+/**
+ * Charge le DERNIER bail du locataire (actif OU terminé) — étape 48 : la
+ * dérogation étroite à la restriction ci-dessus (voir son commentaire), pour
+ * les deux seules routes qui en ont besoin, à l'entrée ET à la sortie, un
+ * état des lieux signé reste consultable même après la fin du bail — jamais
+ * l'historique complet de plusieurs baux, juste le plus récent.
+ */
+async function loadLastPortalLease(tenantId, renterId) {
+  const [rows] = await pool.query(
+    `SELECT l.*, u.code AS unit_code, u.designation, u.designation_custom, p.address AS property_address
+     FROM leases l
+     JOIN property_units u ON u.id = l.unit_id
+     JOIN properties p ON p.id = u.property_id
+     WHERE l.renter_id = :renterId AND l.tenant_id = :tenantId
+     ORDER BY l.start_date DESC LIMIT 1`,
+    { renterId, tenantId },
+  );
+  if (!rows[0]) throw new ApiError(404, 'Aucun bail pour ce locataire');
+  return rows[0];
+}
+
+/** Même forme que `loadInspectionReportRow` de routes/leases.js (dupliquée
+ * volontairement — pas de module partagé entre les deux routeurs). */
+async function loadPortalInspectionReport(reportsTable, leaseId) {
+  const [rows] = await pool.query(
+    `SELECT t.*, fu.first_name AS finalizer_first_name, fu.last_name AS finalizer_last_name, fu.role AS finalizer_role
+     FROM ${reportsTable} t
+     LEFT JOIN users fu ON fu.id = t.finalized_by
+     WHERE t.lease_id = :leaseId LIMIT 1`,
+    { leaseId },
+  );
+  return rows[0] ?? null;
 }
 
 async function nextComplaintCode(tenantId) {
@@ -157,6 +197,25 @@ router.get('/:token', async (req, res, next) => {
       }));
     }
 
+    // Dernier bail (actif ou terminé) — état des lieux signés, consultables
+    // même après la fin du bail (étape 48), voir `loadLastPortalLease`.
+    const [lastLeaseRows] = await pool.query(
+      `SELECT id, status FROM leases WHERE renter_id = :renterId AND tenant_id = :tenantId ORDER BY start_date DESC LIMIT 1`,
+      { renterId, tenantId },
+    );
+    let lastLease = null;
+    if (lastLeaseRows[0]) {
+      const [[moveIn]] = await pool.query(
+        "SELECT id FROM move_in_reports WHERE lease_id = :leaseId AND status = 'finalized' LIMIT 1",
+        { leaseId: lastLeaseRows[0].id },
+      );
+      const [[moveOut]] = await pool.query(
+        "SELECT id FROM move_out_reports WHERE lease_id = :leaseId AND status = 'finalized' LIMIT 1",
+        { leaseId: lastLeaseRows[0].id },
+      );
+      lastLease = { id: lastLeaseRows[0].id, hasSignedMoveIn: !!moveIn, hasSignedMoveOut: !!moveOut };
+    }
+
     res.json({
       tenant: {
         // Sert uniquement à construire la référence interne posée dans le
@@ -180,12 +239,22 @@ router.get('/:token', async (req, res, next) => {
             designationLabel: unitDesignationLabel(activeLease),
             monthlyRent: Number(activeLease.monthly_rent),
             startDate: isoDate(activeLease.start_date),
+            // Contrat de bail (étape 46) — le bouton de téléchargement n'a de sens que s'il a
+            // effectivement été signé par les deux parties (jamais un brouillon depuis le portail public).
+            hasSignedContract: await (async () => {
+              const [[c]] = await pool.query(
+                "SELECT status FROM lease_contracts WHERE lease_id = :leaseId AND status = 'finalized' LIMIT 1",
+                { leaseId: activeLease.id },
+              );
+              return !!c;
+            })(),
           }
         : null,
       arrears,
       rentStrip,
       payments,
       unpaidCharges,
+      lastLease,
     });
   } catch (err) {
     next(err);
@@ -225,7 +294,7 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
     const issuance = await getOrCreateIssuance(tenantId, 'quittance', paymentId);
     await registerDownload(issuance);
 
-    // Même résolution du libellé de l'unité que /certificate.pdf ci-dessous
+    // Même résolution du libellé de l'unité que /contract.pdf ci-dessous
     // (`lease` ne porte que `designation`/`designation_custom` bruts, pas de
     // libellé déjà résolu — sans ça, la mention « au titre du loyer de » de
     // la quittance affichait « undefined »).
@@ -245,13 +314,18 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
   }
 });
 
-// GET /api/portal/:token/certificate.pdf — son attestation de loyer (bail actif).
-router.get('/:token/certificate.pdf', async (req, res, next) => {
+// GET /api/portal/:token/contract.pdf — son contrat de bail, une fois signé par les deux parties
+// (jamais un brouillon non signé depuis le portail public).
+router.get('/:token/contract.pdf', async (req, res, next) => {
   try {
     const { id: renterId, tenantId } = req.portalRenter;
     const lease = await loadActivePortalLease(tenantId, renterId);
 
-    const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: renterId });
+    const contractRow = await loadContractRow(tenantId, lease.id);
+    if (!contractRow || contractRow.status !== 'finalized') {
+      throw new ApiError(404, "Le contrat de ce bail n'a pas encore été signé par les deux parties.");
+    }
+
     const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
     // Pas d'employé "signataire" particulier depuis le portail : le DG de
     // l'entreprise signe par défaut (toujours exactement un par tenant).
@@ -261,18 +335,84 @@ router.get('/:token/certificate.pdf', async (req, res, next) => {
     );
     const issuer = dgRows[0] || { first_name: tenantRows[0]?.company_name ?? 'Le cabinet', last_name: '' };
 
-    // Une attestation par BAIL (pas par génération — le contenu peut différer
-    // d'un jour à l'autre, seule compte la limite d'usage du document).
-    const issuance = await getOrCreateIssuance(tenantId, 'attestation', lease.id);
+    // Un contrat par BAIL (pas par génération) — même principe que l'ancienne attestation.
+    const issuance = await getOrCreateIssuance(tenantId, 'contrat', lease.id);
     await registerDownload(issuance);
 
-    const label = unitDesignationLabel(lease);
-    streamCertificatePdf(res, {
+    streamLeaseContractPdf(res, {
+      tenant: tenantRows[0],
+      // `snapshot` est une colonne JSON — déjà un objet JS natif (voir la même note dans leases.js).
+      data: contractRow.snapshot,
+      contract: toPublicContract(contractRow),
+      issuer,
+      leaseId: lease.id,
+      verificationCode: issuance.verification_code,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portal/:token/move-in-report.pdf — son état des lieux d'entrée,
+// une fois signé (étape 48 : jusqu'ici invisible du portail — le locataire
+// signait ce document sans jamais pouvoir le revoir lui-même).
+router.get('/:token/move-in-report.pdf', async (req, res, next) => {
+  try {
+    const { id: renterId, tenantId } = req.portalRenter;
+    const lease = await loadLastPortalLease(tenantId, renterId);
+
+    const row = await loadPortalInspectionReport('move_in_reports', lease.id);
+    if (!row || row.status !== 'finalized') {
+      throw new ApiError(404, "L'état des lieux d'entrée de ce bail n'a pas encore été signé.");
+    }
+
+    const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: renterId });
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+
+    const issuance = await getOrCreateIssuance(tenantId, 'etat_lieux_entree', lease.id);
+    await registerDownload(issuance);
+
+    streamMoveInPdf(res, {
       tenant: tenantRows[0],
       renter: renterRows[0],
-      property: { label, address: lease.property_address },
+      property: lease,
       lease,
-      issuer,
+      report: toPublicInspectionReport(row),
+      verificationCode: issuance.verification_code,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portal/:token/move-out-report.pdf — son PV de sortie, une fois
+// signé — accessible même après la fin du bail (voir `loadLastPortalLease`).
+router.get('/:token/move-out-report.pdf', async (req, res, next) => {
+  try {
+    const { id: renterId, tenantId } = req.portalRenter;
+    const lease = await loadLastPortalLease(tenantId, renterId);
+
+    const row = await loadPortalInspectionReport('move_out_reports', lease.id);
+    if (!row || row.status !== 'finalized') {
+      throw new ApiError(404, "L'état des lieux de sortie de ce bail n'a pas encore été signé.");
+    }
+
+    const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: renterId });
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    const moveInRow = await loadPortalInspectionReport('move_in_reports', lease.id);
+    const moveInZones = moveInRow ? normalizeStoredItems(moveInRow.items) : [];
+
+    const issuance = await getOrCreateIssuance(tenantId, 'etat_lieux_sortie', lease.id);
+    await registerDownload(issuance);
+
+    streamMoveOutPdf(res, {
+      tenant: tenantRows[0],
+      renter: renterRows[0],
+      property: lease,
+      lease,
+      report: toPublicMoveOutReport(row),
+      moveInZones,
+      additionalDeposits: [],
       verificationCode: issuance.verification_code,
     });
   } catch (err) {

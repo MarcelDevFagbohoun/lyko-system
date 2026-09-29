@@ -12,6 +12,7 @@ import {
   ListTodo,
   Wallet,
   Receipt,
+  Banknote,
   Calculator,
   BellRing,
   Briefcase,
@@ -102,6 +103,7 @@ export function EspaceSidebar() {
       cadre: "finances",
       items: [
         canAccounting && { href: "/espace/comptabilite", label: "Comptabilité", icon: Wallet },
+        canAccounting && { href: "/espace/comptabilite#depenses", label: "Dépenses", icon: Banknote },
         canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité avancée", icon: Calculator },
         canCharges && { href: "/espace/charges", label: "Charges", icon: Receipt },
       ],
@@ -158,8 +160,7 @@ export function EspaceSidebar() {
         const cadre = CADRES[group.cadre];
         return (
           <div key={group.cadre} className="mb-5 last:mb-0">
-            <p title={cadre.meaning} className="mb-1.5 flex items-center gap-2 px-2.5 font-label-sm uppercase tracking-wider text-ink-faint">
-              <span className={cn("h-2 w-2 shrink-0 rounded-full", cadre.solid)} aria-hidden />
+            <p title={cadre.meaning} className="mb-1.5 px-2.5 font-label-sm uppercase tracking-wider text-ink-faint">
               {cadre.label}
             </p>
             <div className="flex flex-col gap-0.5">
@@ -197,9 +198,18 @@ export function EspaceSidebar() {
   const footer = (
     <div className="border-t border-border p-3 pb-4">
       <div className="flex items-center gap-2.5 px-1 py-1.5">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-body-sm font-semibold text-white">
-          {initials}
-        </span>
+        {user.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`${API_URL}${user.avatarUrl}`}
+            alt=""
+            className="h-9 w-9 shrink-0 rounded-full object-cover"
+          />
+        ) : (
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-body-sm font-semibold text-white">
+            {initials}
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <p className="truncate font-label-md text-ink">{user.firstName} {user.lastName}</p>
           <Badge variant="primary" className="mt-0.5">{tenant?.roleTitles?.[user.role] ?? ROLE_LABELS[user.role] ?? user.role}</Badge>

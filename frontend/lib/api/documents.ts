@@ -1,11 +1,17 @@
 import { apiFetch } from "./client";
 
 /**
- * Suivi des téléchargements de quittance/attestation/relevé propriétaire
+ * Suivi des téléchargements de quittance/contrat de bail/relevé propriétaire
  * (étape 29) — consultation/réinitialisation côté espace employé, et
  * vérification publique par code (sans compte).
  */
-export type DocumentType = "quittance" | "attestation" | "releve_proprietaire" | "carnet_charges";
+export type DocumentType =
+  | "quittance"
+  | "contrat"
+  | "releve_proprietaire"
+  | "carnet_charges"
+  | "etat_lieux_entree"
+  | "etat_lieux_sortie";
 
 export type DocumentIssuanceStatus = {
   downloadCount: number;

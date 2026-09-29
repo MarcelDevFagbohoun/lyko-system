@@ -125,8 +125,13 @@ router.get('/:token', async (req, res, next) => {
         recetteNette: acc.recetteNette + r.recetteNette,
         commissionCabinet: acc.commissionCabinet + r.commissionCabinet,
         partProprietaire: acc.partProprietaire + r.partProprietaire,
+        breakdown: {
+          rent: acc.breakdown.rent + r.breakdown.rent,
+          openingDebt: acc.breakdown.openingDebt + r.breakdown.openingDebt,
+          prorata: acc.breakdown.prorata + r.breakdown.prorata,
+        },
       }),
-      { totalPayments: 0, totalExpenses: 0, recetteNette: 0, commissionCabinet: 0, partProprietaire: 0 },
+      { totalPayments: 0, totalExpenses: 0, recetteNette: 0, commissionCabinet: 0, partProprietaire: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0 } },
     );
 
     const [payoutRows] = await pool.query(

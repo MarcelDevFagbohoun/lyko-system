@@ -2,20 +2,20 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Stamp, PenTool } from "lucide-react";
+import { ArrowLeft, Stamp, PenTool, User as UserIcon, Camera, Phone, KeyRound, ChevronRight } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, API_URL } from "@/lib/api/client";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 
 /**
- * Cachet/signature personnels de l'employé connecté (comptable, agent ou
- * DG) — demande directe de l'utilisateur : sur une quittance, ce doit être
- * le cachet de celui qui a réellement encaissé le paiement, pas seulement
- * celui de l'entreprise (Réglages, DG uniquement). Tant qu'un employé n'a
- * pas téléversé les siens, la quittance retombe sur ceux de l'entreprise —
- * rien ne change pour lui.
+ * Mon compte (étape 47) : identité (photo, nom, poste, téléphone), cachet/
+ * signature personnels apposés sur les quittances des paiements encaissés
+ * par l'employé lui-même (à défaut, ceux de l'entreprise s'appliquent —
+ * Réglages, DG uniquement), et accès volontaire au changement de mot de
+ * passe (jusqu'ici uniquement forcé à la première connexion).
  */
 export function MonCompteView() {
   return (
@@ -25,47 +25,59 @@ export function MonCompteView() {
   );
 }
 
+function useImagePicker() {
+  const [file, setFile] = React.useState<File | null>(null);
+  const [preview, setPreview] = React.useState<string | null>(null);
+
+  const handleChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0] ?? null;
+    setFile(picked);
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return picked ? URL.createObjectURL(picked) : null;
+    });
+    e.target.value = "";
+  }, []);
+
+  const reset = React.useCallback(() => {
+    setFile(null);
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, []);
+
+  return { file, preview, handleChange, reset };
+}
+
 function MonCompteContent() {
-  const { user, updateMySignature } = useAuth();
-  const [stampFile, setStampFile] = React.useState<File | null>(null);
-  const [stampPreview, setStampPreview] = React.useState<string | null>(null);
-  const [signatureFile, setSignatureFile] = React.useState<File | null>(null);
-  const [signaturePreview, setSignaturePreview] = React.useState<string | null>(null);
+  const { user, tenant, updateMyProfile } = useAuth();
+  const avatar = useImagePicker();
+  const stamp = useImagePicker();
+  const signature = useImagePicker();
 
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  function handleStampChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setStampFile(file);
-    setStampPreview((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return file ? URL.createObjectURL(file) : null;
-    });
-  }
-  function handleSignatureChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setSignatureFile(file);
-    setSignaturePreview((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return file ? URL.createObjectURL(file) : null;
-    });
-  }
-
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!stampFile && !signatureFile) return;
+    if (!avatar.file && !stamp.file && !signature.file) return;
     setSaving(true);
     setSaved(false);
     setError(null);
     try {
-      await updateMySignature({ stamp: stampFile ?? undefined, signature: signatureFile ?? undefined });
-      setStampFile(null);
-      setSignatureFile(null);
+      await updateMyProfile({
+        avatar: avatar.file ?? undefined,
+        stamp: stamp.file ?? undefined,
+        signature: signature.file ?? undefined,
+      });
+      avatar.reset();
+      stamp.reset();
+      signature.reset();
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer le cachet/la signature.");
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer les modifications.");
     } finally {
       setSaving(false);
     }
@@ -79,8 +91,11 @@ function MonCompteContent() {
     );
   }
 
-  const currentStamp = stampPreview ?? (user.stampUrl ? `${API_URL}${user.stampUrl}` : null);
-  const currentSignature = signaturePreview ?? (user.signatureUrl ? `${API_URL}${user.signatureUrl}` : null);
+  const currentAvatar = avatar.preview ?? (user.avatarUrl ? `${API_URL}${user.avatarUrl}` : null);
+  const currentStamp = stamp.preview ?? (user.stampUrl ? `${API_URL}${user.stampUrl}` : null);
+  const currentSignature = signature.preview ?? (user.signatureUrl ? `${API_URL}${user.signatureUrl}` : null);
+  const roleLabel = tenant?.roleTitles[user.role] ?? user.role;
+  const hasChanges = !!(avatar.file || stamp.file || signature.file);
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -92,11 +107,7 @@ function MonCompteContent() {
 
         <div>
           <h1 className="font-display text-headline-xl text-ink">Mon compte</h1>
-          <p className="text-body-md text-ink-soft">
-            Votre cachet et votre signature personnels, apposés sur les quittances des paiements que
-            vous enregistrez vous-même. Tant que vous n&apos;en avez pas téléversé, celles-ci utilisent
-            le cachet et la signature de l&apos;entreprise.
-          </p>
+          <p className="text-body-md text-ink-soft">Votre identité, votre cachet et votre signature, et l&apos;accès à votre mot de passe.</p>
         </div>
 
         <form onSubmit={handleSave} className="flex flex-col gap-6">
@@ -107,9 +118,38 @@ function MonCompteContent() {
           )}
           {saved && (
             <div className="rounded-lg border border-success-border bg-success-bg px-3 py-2 text-body-sm text-success-fg">
-              Cachet/signature enregistrés.
+              Modifications enregistrées.
             </div>
           )}
+
+          <Card>
+            <CardContent className="flex flex-col items-center gap-4 py-6 text-center sm:flex-row sm:items-center sm:text-left">
+              <div className="relative shrink-0">
+                <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border border-border bg-surface-muted">
+                  {currentAvatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={currentAvatar} alt="Photo de profil" className="h-full w-full object-cover" />
+                  ) : (
+                    <UserIcon size={36} className="text-ink-faint" />
+                  )}
+                </div>
+                <label className="absolute -bottom-1 -right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-ink-soft shadow-sm hover:text-primary">
+                  <Camera size={16} />
+                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={avatar.handleChange} className="hidden" />
+                </label>
+              </div>
+              <div className="flex flex-col items-center gap-1.5 sm:items-start">
+                <h2 className="font-display text-headline-md text-ink">
+                  {user.firstName} {user.lastName}
+                </h2>
+                <Badge variant="primary">{roleLabel}</Badge>
+                <div className="flex items-center gap-1.5 text-body-sm text-ink-soft">
+                  <Phone size={14} />
+                  {user.phone}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             <Card>
@@ -128,7 +168,7 @@ function MonCompteContent() {
                 </div>
                 <label className="cursor-pointer font-label-sm text-primary hover:underline">
                   {currentStamp ? "Remplacer mon cachet" : "Téléverser mon cachet"}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleStampChange} className="hidden" />
+                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={stamp.handleChange} className="hidden" />
                 </label>
               </CardContent>
             </Card>
@@ -149,7 +189,7 @@ function MonCompteContent() {
                 </div>
                 <label className="cursor-pointer font-label-sm text-primary hover:underline">
                   {currentSignature ? "Remplacer ma signature" : "Téléverser ma signature"}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleSignatureChange} className="hidden" />
+                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={signature.handleChange} className="hidden" />
                 </label>
               </CardContent>
             </Card>
@@ -157,12 +197,31 @@ function MonCompteContent() {
 
           <Card>
             <CardFooter className="justify-end">
-              <Button type="submit" size="lg" disabled={saving || (!stampFile && !signatureFile)}>
+              <Button type="submit" size="lg" disabled={saving || !hasChanges}>
                 {saving ? "Enregistrement…" : "Enregistrer"}
               </Button>
             </CardFooter>
           </Card>
         </form>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Sécurité</CardTitle>
+            <CardDescription>Le mot de passe utilisé pour vous connecter à votre espace.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link
+              href="/changer-mot-de-passe"
+              className="flex items-center justify-between rounded-lg border border-border bg-surface-muted px-4 py-3 text-body-sm text-ink hover:bg-surface"
+            >
+              <span className="flex items-center gap-2">
+                <KeyRound size={16} className="text-ink-soft" />
+                Changer mon mot de passe
+              </span>
+              <ChevronRight size={16} className="text-ink-faint" />
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

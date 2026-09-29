@@ -17,6 +17,8 @@ export type AuthUser = {
   // que cet employé encaisse lui-même) — voir /espace/mon-compte.
   stampUrl: string | null;
   signatureUrl: string | null;
+  // Photo de profil — purement visuelle dans l'app, jamais sur un document PDF.
+  avatarUrl: string | null;
 };
 
 export type RoleTitles = { dg: string; comptable: string; agent: string };
@@ -38,6 +40,13 @@ export type AuthTenant = {
   // Convention de paiement du loyer par défaut (avance/terme échu) — pré-
   // remplit le formulaire de création de bail (réglable dans Paramètres).
   defaultRentTiming: "avance" | "terme_echu";
+  // Prorata d'entrée par défaut (étape 42) — même raisonnement que `defaultRentTiming` ci-dessus.
+  defaultEntryProration: "aucun" | "prorata";
+  // Cautions supplémentaires activées (étape 43) — même raisonnement : lisible par tout employé qui
+  // crée un bail, réglable par le DG dans Paramètres.
+  depositSbeeEnabled: boolean;
+  depositSonebEnabled: boolean;
+  depositPeintureEnabled: boolean;
 };
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
@@ -55,7 +64,7 @@ type AuthContextValue = AuthState & {
   register: (formData: FormData) => Promise<void>;
   logout: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string, confirmNewPassword: string) => Promise<void>;
-  updateMySignature: (input: { stamp?: File; signature?: File }) => Promise<void>;
+  updateMyProfile: (input: { avatar?: File; stamp?: File; signature?: File }) => Promise<void>;
   refreshUser: () => Promise<void>;
 };
 
@@ -165,12 +174,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [refreshUser],
   );
 
-  const updateMySignature = React.useCallback(
-    async (input: { stamp?: File; signature?: File }) => {
+  const updateMyProfile = React.useCallback(
+    async (input: { avatar?: File; stamp?: File; signature?: File }) => {
       const fd = new FormData();
+      if (input.avatar) fd.append("avatar", input.avatar);
       if (input.stamp) fd.append("stamp", input.stamp);
       if (input.signature) fd.append("signature", input.signature);
-      await apiFetch("/api/auth/my-signature", {
+      await apiFetch("/api/auth/my-profile", {
         method: "PATCH",
         accessToken: accessTokenRef.current ?? undefined,
         body: fd,
@@ -181,8 +191,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = React.useMemo<AuthContextValue>(
-    () => ({ ...state, login, loginEmployee, register, logout, changePassword, updateMySignature, refreshUser }),
-    [state, login, loginEmployee, register, logout, changePassword, updateMySignature, refreshUser],
+    () => ({ ...state, login, loginEmployee, register, logout, changePassword, updateMyProfile, refreshUser }),
+    [state, login, loginEmployee, register, logout, changePassword, updateMyProfile, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -4,7 +4,7 @@
 // paiement) — public, sans compte ni portail : le token dans l'URL est le
 // seul secret, comme le portail locataire ou un lien de paiement. Scope
 // actuel : quittance uniquement (demande explicite de l'utilisateur) —
-// l'attestation/le relevé propriétaire restent réservés au portail pour
+// le contrat/le relevé propriétaire restent réservés au portail pour
 // l'instant.
 
 const { Router } = require('express');

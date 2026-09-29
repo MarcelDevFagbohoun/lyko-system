@@ -104,7 +104,8 @@ export type InspectionItem = {
   custom: boolean;
   condition: InspectionCondition | null;
   comment: string | null;
-  photoUrl: string | null;
+  /** Jusqu'à 3 photos par élément (étape 48) — remplace l'ancien `photoUrl` (singulier). */
+  photoUrls: string[];
   /** Recalculé côté serveur à partir de `billing.lines` dès qu'il y en a au moins une. */
   deduction: number;
   /** `null` = pas de facturation détaillée (montant libre dans `deduction`, saisie historique). */
@@ -119,11 +120,17 @@ export type InspectionReport = {
   conductedAt: string;
   zones: InspectionZone[];
   generalNotes: string | null;
+  /** Notée par l'agent à l'oral au moment de la signature (étape 48) — jamais un accès en écriture du locataire. */
+  tenantReserves: string | null;
   finalizedAt: string | null;
   tenantSignatureUrl: string | null;
   agentSignatureUrl: string | null;
   conductedBy: Actor;
   finalizedBy: Actor;
+  /** Réouverture pour correction (étape 48, DG uniquement) — dernier événement seulement. */
+  reopenedAt: string | null;
+  reopenedBy: Actor;
+  reopenReason: string | null;
 };
 
 export type MoveInReport = InspectionReport;
@@ -132,9 +139,16 @@ export type MoveInReport = InspectionReport;
 export type MoveOutReport = InspectionReport & {
   otherDeductionsAmount: number;
   otherDeductionsNote: string | null;
+  /** Retenue sur la caution peinture (étape 43) — distincte de la caution de loyer ci-dessus. */
+  peintureDeductionAmount: number;
+  peintureDeductionNote: string | null;
   depositAmount: number;
   totalDeductions: number;
   netRefund: number;
+  /** Bug corrigé (étape 48) : stocké et exigé depuis toujours, jamais renvoyé jusqu'ici. */
+  refundPaymentMethod: Exclude<PaymentMethod, "kkiapay"> | null;
+  glRegularizedAt: string | null;
+  glRegularizedBy: Actor;
 };
 
 /** Règlement (total ou partiel) des impayés existants d'un bail à l'entrée. */
@@ -146,6 +160,22 @@ export type OpeningDebtPayment = {
   paidAt: string;
   notes: string | null;
   recordedBy: Actor;
+};
+
+/** Cautions supplémentaires (étape 43) — SBEE/SONEB (garantie contre les impayés de charges) et peinture. */
+export type AdditionalDepositType = "sbee" | "soneb" | "peinture";
+export type AdditionalDeposit = {
+  type: AdditionalDepositType;
+  typeLabel: string;
+  amount: number;
+  status: "held" | "returned";
+  receivedAt: string | null;
+  receivedMethod: PaymentMethod | null;
+  returnedAt: string | null;
+  returnedAmount: number | null;
+  returnedMethod: PaymentMethod | null;
+  deductionAmount: number;
+  deductionNote: string | null;
 };
 
 export type Lease = {
@@ -167,6 +197,15 @@ export type Lease = {
   entryFeeAmount: number;
   entryFeeReceivedAt: string | null;
   entryFeeReceivedMethod: PaymentMethod | null;
+  /** Prorata d'entrée (étape 42) — appartient au propriétaire (compte séquestre), distinct des frais d'agence ci-dessus (100 % cabinet). */
+  entryProration: "aucun" | "prorata";
+  entryProrataAmount: number;
+  entryProrataDays: number | null;
+  entryProrataDueDate: string | null;
+  entryProrataReceivedAt: string | null;
+  entryProrataReceivedMethod: PaymentMethod | null;
+  /** Cautions supplémentaires (étape 43) — uniquement les types activés par l'entreprise et effectivement demandés à ce bail. */
+  additionalDeposits: AdditionalDeposit[];
   rentDueDay: number;
   rentTiming: RentTiming;
   startDate: string;
@@ -231,6 +270,16 @@ export type CreateRenterInput = {
   // `recordEntryFeeReceived`) — génère la contrepartie comptable (706).
   entryFeePaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
   entryFeePaidAt?: string;
+  /**
+   * Prorata d'entrée (étape 42) : 'aucun' (rien facturé, comportement historique) ou 'prorata' (jours
+   * occupés avant la première échéance normale, appartient au propriétaire). Optionnel — si omis, le
+   * serveur retombe sur le réglage par défaut de l'entreprise. Le MONTANT n'est jamais envoyé ici : il
+   * est toujours recalculé par le serveur à partir de `startDate`/`monthlyRent`/`rentDueDay`.
+   */
+  entryProration?: "aucun" | "prorata";
+  // Requis côté serveur seulement si le prorata calculé est > 0 (voir routes/renters.js `recordEntryProrataReceived`).
+  entryProrataPaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
+  entryProrataPaidAt?: string;
   rentDueDay: number;
   /** Optionnel — si omis, le serveur retombe sur le réglage par défaut de l'entreprise (Paramètres). */
   rentTiming?: RentTiming;
@@ -239,6 +288,13 @@ export type CreateRenterInput = {
   openingDebtAmount?: number;
   /** Onboarding : locataire déjà en place mais SANS aucun impayé — évite un faux retard depuis une date d'entrée ancienne. */
   upToDateAtOnboarding?: boolean;
+  /**
+   * Cautions supplémentaires (étape 43) — un type non activé par l'entreprise envoyé quand même est
+   * simplement ignoré côté serveur. Mode de règlement requis seulement si le montant est > 0.
+   */
+  additionalDeposits?: Partial<
+    Record<AdditionalDepositType, { amount: number; paymentMethod?: Exclude<PaymentMethod, "kkiapay">; paidAt?: string }>
+  >;
 };
 
 export function createRenter(accessToken: string, input: CreateRenterInput) {
@@ -246,7 +302,14 @@ export function createRenter(accessToken: string, input: CreateRenterInput) {
   // (étape 13, idée n°2) — renvoyé une seule fois ici, comme un mot de passe
   // temporaire ; il faudra passer par `generatePortalLink` (régénérer) pour
   // en obtenir un nouveau si celui-ci est perdu.
-  return apiFetch<{ renterId: number; leaseId: number; unitId: number; portalLink: { token: string; path: string } }>(
+  return apiFetch<{
+    renterId: number;
+    leaseId: number;
+    unitId: number;
+    entryProrata: { proration: "aucun" | "prorata"; amount: number; days: number; dueDate: string };
+    additionalDeposits: AdditionalDeposit[];
+    portalLink: { token: string; path: string };
+  }>(
     "/api/renters",
     {
       method: "POST",
@@ -280,7 +343,12 @@ export type CreateLeaseInput = Omit<
 >;
 
 export function createLease(accessToken: string, renterId: number, input: CreateLeaseInput) {
-  return apiFetch<{ leaseId: number; unitId: number }>(`/api/renters/${renterId}/leases`, {
+  return apiFetch<{
+    leaseId: number;
+    unitId: number;
+    entryProrata: { proration: "aucun" | "prorata"; amount: number; days: number; dueDate: string };
+    additionalDeposits: AdditionalDeposit[];
+  }>(`/api/renters/${renterId}/leases`, {
     method: "POST",
     accessToken,
     headers: { "Content-Type": "application/json" },
@@ -397,6 +465,10 @@ export type LateFee = {
   reason: string | null;
   appliedBy: Actor;
   createdAt: string;
+  /** Suivi de règlement (étape 44bis) — une pénalité peut être réglée totalement ou partiellement. */
+  paid: number;
+  remaining: number;
+  status: "impayee" | "partielle" | "payee";
 };
 
 export function listLateFees(accessToken: string, leaseId: number) {
@@ -410,6 +482,21 @@ export function applyLateFee(
   input: { amount: number; appliedAt: string; reason?: string; idempotencyKey?: string },
 ) {
   return apiFetch<{ lateFeeId: number }>(`/api/leases/${leaseId}/late-fees`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Règle (total ou partiel) une pénalité de retard déjà appliquée (étape 44bis). */
+export function payLateFee(
+  accessToken: string,
+  leaseId: number,
+  lateFeeId: number,
+  input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string; idempotencyKey?: string },
+) {
+  return apiFetch<{ paymentId: number; remaining: number }>(`/api/leases/${leaseId}/late-fees/${lateFeeId}/payments`, {
     method: "POST",
     accessToken,
     headers: { "Content-Type": "application/json" },
@@ -457,8 +544,75 @@ export function receiptShareUrl(token: string) {
   return `${API_URL}/api/recu/${token}`;
 }
 
-export function certificatePdfPath(renterId: number) {
-  return `/api/renters/${renterId}/certificate.pdf`;
+// Contrat de bail (étape 46) — remplace l'ancienne attestation de loyer. Document structuré par
+// articles, calculés depuis les données du bail (jamais saisis à la main, seules les conditions
+// particulières le sont), signé par les deux parties. Même cycle brouillon → finalisation que les
+// états des lieux.
+export type AdditionalDepositSummary = { type: AdditionalDepositType; typeLabel: string; amount: number };
+export type LeaseContractData = {
+  renter: { firstName: string; lastName: string; phone: string };
+  owner: { name: string; phone: string; address: string | null };
+  property: { code: string; address: string | null; typeLabel: string };
+  unit: { code: string; designationLabel: string; furnished: boolean; sonebMeterNumber: string | null; sbeeMeterNumber: string | null };
+  lease: {
+    startDate: string;
+    monthlyRent: number;
+    rentDueDay: number;
+    rentTiming: RentTiming;
+    rentTimingLabel: string;
+    depositAmount: number;
+    entryFeeAmount: number;
+  };
+  additionalDeposits: AdditionalDepositSummary[];
+  particularConditions: string | null;
+};
+export type LeaseContract = {
+  id: number;
+  status: "draft" | "finalized";
+  particularConditions: string | null;
+  tenantSignatureUrl: string | null;
+  agentSignatureUrl: string | null;
+  finalizedAt: string | null;
+  finalizedBy: Actor | null;
+  createdBy: Actor;
+  createdAt: string;
+};
+
+export function getContract(accessToken: string, leaseId: number) {
+  return apiFetch<{ contract: LeaseContract | null; preview: LeaseContractData }>(`/api/leases/${leaseId}/contract`, {
+    accessToken,
+  });
+}
+
+export function startContract(accessToken: string, leaseId: number) {
+  return apiFetch<{ contract: LeaseContract; preview: LeaseContractData }>(`/api/leases/${leaseId}/contract`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+export function updateContract(accessToken: string, leaseId: number, particularConditions: string) {
+  return apiFetch<{ contract: LeaseContract; preview: LeaseContractData }>(`/api/leases/${leaseId}/contract`, {
+    method: "PATCH",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ particularConditions }),
+  });
+}
+
+export function finalizeContract(accessToken: string, leaseId: number, tenantSignature: Blob, agentSignature: Blob) {
+  const fd = new FormData();
+  fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
+  fd.append("agentSignature", agentSignature, "signature-agent.png");
+  return apiFetch<{ contract: LeaseContract; preview: LeaseContractData }>(`/api/leases/${leaseId}/contract/finalize`, {
+    method: "POST",
+    accessToken,
+    body: fd,
+  });
+}
+
+export function contractPdfPath(leaseId: number) {
+  return `/api/leases/${leaseId}/contract.pdf`;
 }
 
 // État des lieux (étape 13, idée n°9 : refonte par zones) — cycle
@@ -499,10 +653,17 @@ export function updateMoveInReport(accessToken: string, leaseId: number, input: 
   });
 }
 
-export function finalizeMoveInReport(accessToken: string, leaseId: number, tenantSignature: Blob, agentSignature: Blob) {
+export function finalizeMoveInReport(
+  accessToken: string,
+  leaseId: number,
+  tenantSignature: Blob,
+  agentSignature: Blob,
+  tenantReserves?: string,
+) {
   const fd = new FormData();
   fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
   fd.append("agentSignature", agentSignature, "signature-agent.png");
+  if (tenantReserves) fd.append("tenantReserves", tenantReserves);
   return apiFetch<{ report: MoveInReport }>(`${inspectionReportPath("move-in", leaseId)}/finalize`, {
     method: "POST",
     accessToken,
@@ -510,8 +671,26 @@ export function finalizeMoveInReport(accessToken: string, leaseId: number, tenan
   });
 }
 
+/**
+ * Réouverture d'une fiche finalisée (étape 48, DG uniquement) — motif
+ * obligatoire, tracé au journal d'activité. Invalide les deux signatures
+ * existantes : il faudra resigner avant de refinaliser.
+ */
+export function reopenMoveInReport(accessToken: string, leaseId: number, reason: string) {
+  return apiFetch<{ report: MoveInReport }>(`${inspectionReportPath("move-in", leaseId)}/reopen`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function moveInReportPdfPath(leaseId: number) {
+  return `/api/leases/${leaseId}/move-in-report.pdf`;
+}
+
 export function getMoveOutReport(accessToken: string, leaseId: number) {
-  return apiFetch<{ report: MoveOutReport | null; arrears: Arrears | null }>(
+  return apiFetch<{ report: MoveOutReport | null; arrears: Arrears | null; additionalDeposits: AdditionalDeposit[] }>(
     inspectionReportPath("move-out", leaseId),
     { accessToken },
   );
@@ -530,21 +709,29 @@ export function startMoveOutReport(accessToken: string, leaseId: number, conduct
 export type UpdateMoveOutDraftInput = UpdateInspectionDraftInput & {
   otherDeductionsAmount?: number;
   otherDeductionsNote?: string;
+  /** Retenue sur la caution peinture (étape 43) — plafonnée à SA PROPRE caution, jamais mêlée à `otherDeductionsAmount`. */
+  peintureDeductionAmount?: number;
+  peintureDeductionNote?: string;
 };
 
 export function updateMoveOutReport(accessToken: string, leaseId: number, input: UpdateMoveOutDraftInput) {
-  return apiFetch<{ report: MoveOutReport }>(inspectionReportPath("move-out", leaseId), {
-    method: "PATCH",
-    accessToken,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  return apiFetch<{ report: MoveOutReport; additionalDeposits: AdditionalDeposit[] }>(
+    inspectionReportPath("move-out", leaseId),
+    {
+      method: "PATCH",
+      accessToken,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 /**
  * `refundPaymentMethod` : requis côté serveur seulement s'il reste
  * effectivement quelque chose à reverser (`netRefund > 0`) — génère la
  * contrepartie comptable de la restitution (voir routes/leases.js).
+ * `additionalDepositRefundMethods` : un mode par caution supplémentaire encore détenue (étape 43),
+ * requis côté serveur seulement pour celles dont il reste effectivement une part à rendre.
  */
 export function finalizeMoveOutReport(
   accessToken: string,
@@ -552,12 +739,18 @@ export function finalizeMoveOutReport(
   tenantSignature: Blob,
   agentSignature: Blob,
   refundPaymentMethod?: Exclude<PaymentMethod, "kkiapay">,
+  additionalDepositRefundMethods?: Partial<Record<AdditionalDepositType, Exclude<PaymentMethod, "kkiapay">>>,
+  tenantReserves?: string,
 ) {
   const fd = new FormData();
   fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
   fd.append("agentSignature", agentSignature, "signature-agent.png");
   if (refundPaymentMethod) fd.append("refundPaymentMethod", refundPaymentMethod);
-  return apiFetch<{ report: MoveOutReport; depositAccountingNote: string | null }>(
+  if (additionalDepositRefundMethods?.sbee) fd.append("refundMethodSbee", additionalDepositRefundMethods.sbee);
+  if (additionalDepositRefundMethods?.soneb) fd.append("refundMethodSoneb", additionalDepositRefundMethods.soneb);
+  if (additionalDepositRefundMethods?.peinture) fd.append("refundMethodPeinture", additionalDepositRefundMethods.peinture);
+  if (tenantReserves) fd.append("tenantReserves", tenantReserves);
+  return apiFetch<{ report: MoveOutReport; depositAccountingNote: string | null; additionalDeposits: AdditionalDeposit[] }>(
     `${inspectionReportPath("move-out", leaseId)}/finalize`,
     {
       method: "POST",
@@ -567,7 +760,25 @@ export function finalizeMoveOutReport(
   );
 }
 
-/** Photo d'un élément (entrée ou sortie) — remplace la précédente le cas échéant. */
+/** Réouverture (étape 48) — voir `reopenMoveInReport` ci-dessus, même principe, mais ne défait
+ * jamais les effets déjà survenus (bail terminé, unité libérée, cautions réglées) — seul le
+ * contenu de la fiche redevient modifiable (voir routes/leases.js). */
+export function reopenMoveOutReport(accessToken: string, leaseId: number, reason: string) {
+  return apiFetch<{ report: MoveOutReport; additionalDeposits: AdditionalDeposit[] }>(
+    `${inspectionReportPath("move-out", leaseId)}/reopen`,
+    { method: "POST", accessToken, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) },
+  );
+}
+
+/** Marque comme réglée (à la main, en comptabilité) une restitution de caution avec retenue. */
+export function markMoveOutGlRegularized(accessToken: string, leaseId: number) {
+  return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/gl-regularized`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
+/** Photo d'un élément (entrée ou sortie) — jusqu'à 3 par élément (étape 48), s'ajoute aux existantes. */
 export function uploadInspectionItemPhoto(
   accessToken: string,
   kind: InspectionReportKind,
@@ -584,15 +795,17 @@ export function uploadInspectionItemPhoto(
   );
 }
 
+/** `photoIndex` : position dans `item.photoUrls` (0 à 2) — plus de photo unique implicite. */
 export function deleteInspectionItemPhoto(
   accessToken: string,
   kind: InspectionReportKind,
   leaseId: number,
   zoneKey: string,
   itemKey: string,
+  photoIndex: number,
 ) {
   return apiFetch<{ report: InspectionReport }>(
-    `${inspectionReportPath(kind, leaseId)}/items/${zoneKey}/${itemKey}/photo`,
+    `${inspectionReportPath(kind, leaseId)}/items/${zoneKey}/${itemKey}/photo/${photoIndex}`,
     { method: "DELETE", accessToken },
   );
 }

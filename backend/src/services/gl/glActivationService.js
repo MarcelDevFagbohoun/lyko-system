@@ -28,6 +28,7 @@ const {
   FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
 } = require('../../constants/glOperationTypes');
 const { logGlAudit } = require('./glAuditService');
+const { ADDITIONAL_DEPOSIT_LABELS } = require('../../constants/leaseDeposits');
 
 function isoDate(d) {
   if (!d) return null;
@@ -51,6 +52,10 @@ async function findEarliestOperationDate(conn, tenantId) {
        UNION ALL SELECT MIN(acquisition_date) FROM fixed_assets WHERE tenant_id = :tenantId
        UNION ALL SELECT MIN(paid_at) FROM lease_opening_debt_payments WHERE tenant_id = :tenantId
        UNION ALL SELECT MIN(entry_fee_received_at) FROM leases WHERE tenant_id = :tenantId
+       UNION ALL SELECT MIN(entry_prorata_received_at) FROM leases WHERE tenant_id = :tenantId
+       UNION ALL SELECT MIN(received_at) FROM lease_deposits WHERE tenant_id = :tenantId
+       UNION ALL SELECT MIN(applied_at) FROM late_fees WHERE tenant_id = :tenantId
+       UNION ALL SELECT MIN(paid_at) FROM late_fee_payments WHERE tenant_id = :tenantId
      ) t`,
     { tenantId },
   );
@@ -363,6 +368,32 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
     });
   }
 
+  // Règlements de pénalités de retard (étape 44bis) — table RÉELLE distincte de `late_fees` ci-dessus
+  // (l'application et le règlement d'une même pénalité ne partagent donc jamais de `source_id`
+  // identique par accident), même principe que `lease_opening_debt_payments`/`rent_payments`.
+  const [lateFeePayments] = await pool.query(
+    `SELECT lfp.id, lfp.amount, lfp.payment_method, lfp.paid_at, lfp.recorded_by, lf.lease_id, r.first_name, r.last_name
+     FROM late_fee_payments lfp
+     JOIN late_fees lf ON lf.id = lfp.late_fee_id
+     JOIN leases l ON l.id = lf.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     WHERE lfp.tenant_id = :tenantId AND lfp.paid_at >= :fromDate`,
+    { tenantId, fromDate },
+  );
+  for (const p of lateFeePayments) {
+    operations.push({
+      sourceTable: 'late_fee_payments',
+      sourceId: p.id,
+      operationType: 'penalite_retard_encaissee',
+      entryDate: isoDate(p.paid_at),
+      amount: Number(p.amount),
+      paymentMethod: p.payment_method,
+      narrationVars: { locataire: `${p.first_name} ${p.last_name}` },
+      createdBy: p.recorded_by ?? createdBy,
+      context: { leaseId: p.lease_id },
+    });
+  }
+
   // Cautions — uniquement celles dont la réception/restitution a été
   // EXPLICITEMENT enregistrée (`deposit_received_at`/`refund_payment_method`,
   // colonnes ajoutées avec ce branchement) : jamais de date/mode DEVINÉ pour
@@ -412,6 +443,82 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
       narrationVars: { locataire: `${f.first_name} ${f.last_name}` },
       createdBy,
       context: {},
+    });
+  }
+
+  // Prorata d'entrée (étape 42) — même principe que les frais d'agence ci-dessus (uniquement ceux
+  // EXPLICITEMENT enregistrés, `entry_prorata_received_at` non NULL), `sourceTable` DIFFÉRENT
+  // ('lease_entry_prorata', jamais 'leases' ni 'lease_entry_fees') pour ne jamais se faire ignorer par
+  // le dédoublonnage de `backfillOne` si une caution ou des frais d'agence existent sur le même bail.
+  const [prorataReceived] = await pool.query(
+    `SELECT l.id, l.entry_prorata_amount, l.entry_prorata_received_at, l.entry_prorata_received_method,
+            r.first_name, r.last_name
+     FROM leases l JOIN renters r ON r.id = l.renter_id
+     WHERE l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL AND l.entry_prorata_received_at >= :fromDate`,
+    { tenantId, fromDate },
+  );
+  for (const p of prorataReceived) {
+    operations.push({
+      sourceTable: 'lease_entry_prorata',
+      sourceId: p.id,
+      operationType: 'prorata_entree_encaisse',
+      entryDate: isoDate(p.entry_prorata_received_at),
+      amount: Number(p.entry_prorata_amount),
+      paymentMethod: p.entry_prorata_received_method,
+      narrationVars: { locataire: `${p.first_name} ${p.last_name}` },
+      createdBy,
+      context: { leaseId: p.id },
+    });
+  }
+
+  // Cautions supplémentaires (étape 43, SBEE/SONEB/peinture) — même principe : uniquement celles
+  // EXPLICITEMENT enregistrées (`received_at`/`returned_at` non NULL), `sourceTable` DIFFÉRENT
+  // ('lease_deposits', jamais 'leases') pour ne jamais se faire ignorer par le dédoublonnage.
+  const [additionalDepositsReceived] = await pool.query(
+    `SELECT ld.id, ld.type, ld.amount, ld.received_at, ld.received_method, l.id AS lease_id,
+            r.first_name, r.last_name
+     FROM lease_deposits ld JOIN leases l ON l.id = ld.lease_id JOIN renters r ON r.id = l.renter_id
+     WHERE ld.tenant_id = :tenantId AND ld.received_at IS NOT NULL AND ld.received_at >= :fromDate`,
+    { tenantId, fromDate },
+  );
+  for (const d of additionalDepositsReceived) {
+    operations.push({
+      sourceTable: 'lease_deposits',
+      sourceId: d.id,
+      operationType: 'caution_supplementaire_recue',
+      entryDate: isoDate(d.received_at),
+      amount: Number(d.amount),
+      paymentMethod: d.received_method,
+      narrationVars: { type: ADDITIONAL_DEPOSIT_LABELS[d.type], locataire: `${d.first_name} ${d.last_name}` },
+      createdBy,
+      context: { leaseId: d.lease_id },
+    });
+  }
+  const [additionalDepositsReturned] = await pool.query(
+    `SELECT ld.id, ld.type, ld.returned_amount, ld.returned_method, ld.returned_at, l.id AS lease_id,
+            r.first_name, r.last_name
+     FROM lease_deposits ld JOIN leases l ON l.id = ld.lease_id JOIN renters r ON r.id = l.renter_id
+     WHERE ld.tenant_id = :tenantId AND ld.status = 'returned' AND ld.returned_amount > 0
+       AND ld.returned_method IS NOT NULL AND ld.returned_at >= :fromDate`,
+    { tenantId, fromDate },
+  );
+  for (const d of additionalDepositsReturned) {
+    operations.push({
+      // Label SYNTHÉTIQUE distinct de 'lease_deposits' ci-dessus, jamais une vraie table (même principe
+      // que 'lease_entry_fees'/'lease_entry_prorata' ailleurs) : `backfillOne` dédoublonne par
+      // (source_table, source_id) SEUL, sans regarder `operation_type` — la réception et la
+      // restitution de la MÊME ligne partagent le même id, et `source_id` est un entier réel en base
+      // (jamais une chaîne du type "12-returned", qui serait tronquée en "12" par MySQL). Même label
+      // utilisé par l'écriture posée en temps réel (`services/leaseDeposits.js` `finalizeAdditionalDeposits`).
+      sourceTable: 'lease_deposits_return',
+      sourceId: d.id,
+      operationType: 'caution_supplementaire_restituee',
+      entryDate: isoDate(d.returned_at),
+      amount: Number(d.returned_amount),
+      paymentMethod: d.returned_method,
+      narrationVars: { type: ADDITIONAL_DEPOSIT_LABELS[d.type], locataire: `${d.first_name} ${d.last_name}` },
+      createdBy,
+      context: { leaseId: d.lease_id },
     });
   }
 

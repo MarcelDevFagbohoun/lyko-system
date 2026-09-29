@@ -47,10 +47,20 @@ export type ExpenseWithoutReceiptTask = {
   expenseDate: string;
 };
 
+/** Restitution de caution avec retenue jamais comptabilisée (étape 48) — voir aussi le tableau de bord DG. */
+export type PendingDepositRegularizationTask = {
+  leaseId: number;
+  renterId: number;
+  renterName: string;
+  totalDeductions: number;
+  finalizedAt: string;
+};
+
 export type AccountantTasks = {
   pendingBatches: PendingBatchTask[];
   expensesWithoutReceipt: ExpenseWithoutReceiptTask[];
   currentMonthClosability: { period: string; isClosable: boolean } | null;
+  pendingDepositRegularizations: PendingDepositRegularizationTask[];
 };
 
 export type AssignedTaskSummary = {

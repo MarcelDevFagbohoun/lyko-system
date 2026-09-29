@@ -36,7 +36,7 @@ const { notifyDg } = require('../services/gl/glNotificationService');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
 const { assertPeriodOpen, isPeriodClosed, getPeriodClosability } = require('../services/accountingPeriods');
 const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, summarizeRentMonth } = require('../services/rentTracking');
-const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate } = require('../services/commission');
+const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate, getCabinetRevenue } = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
 const { resolvePropertyScope } = require('../services/scope');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
@@ -908,6 +908,7 @@ async function computeAccountingDashboard(user, { from, to }) {
       daysLate: a.daysLate,
       unpaidMonths: a.unpaidMonths,
       openingDebtRemaining: a.openingDebtRemaining,
+      lateFeesRemaining: a.lateFeesRemaining,
       amountOwed: a.amountOwed,
     }));
     const tenantArrearsTotal = portfolioArrears.reduce((sum, a) => sum + a.amountOwed, 0);
@@ -934,7 +935,7 @@ async function computeAccountingDashboard(user, { from, to }) {
     const allOwnerIds = new Set([...escrowBalances.keys(), ...unpaidOpeningDebtByOwner.keys()]);
     const escrowByOwner = [...allOwnerIds]
       .map((ownerId) => {
-        const b = escrowBalances.get(ownerId) ?? { totalCollected: 0, totalPayouts: 0, balance: 0 };
+        const b = escrowBalances.get(ownerId) ?? { totalCollected: 0, totalPayouts: 0, balance: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } };
         return {
           ownerId,
           ownerName: ownerNameById.get(ownerId) ?? 'Propriétaire',
@@ -946,6 +947,13 @@ async function computeAccountingDashboard(user, { from, to }) {
       .sort((a, b) => b.balance - a.balance);
     const escrowTotal = escrowByOwner.reduce((sum, b) => sum + b.balance, 0);
     const openingDebtUnpaidTotal = escrowByOwner.reduce((sum, b) => sum + b.openingDebtUnpaid, 0);
+
+    // Recette nette du CABINET lui-même (étape 44, demande explicite de l'utilisateur) — TOUJOURS par
+    // mois (comme la recette nette d'un Bien, `getRecetteNetteMaison`), jamais par plage arbitraire :
+    // `null` si la période demandée ne correspond pas exactement à un seul mois calendaire (ex. export
+    // sur une plage personnalisée dans Comptabilité), plutôt que d'afficher un chiffre à cheval sur
+    // plusieurs mois qui n'aurait pas le même sens que la carte du tableau de bord.
+    const cabinetRevenue = from.slice(0, 7) === to.slice(0, 7) ? await getCabinetRevenue(user.tenantId, from.slice(0, 7)) : null;
 
     const rentCollected = Number(rentRow.total);
     const ownerPayouts = Number(payoutRow.total);
@@ -1022,6 +1030,7 @@ async function computeAccountingDashboard(user, { from, to }) {
       // borné à `period.from/to` (contrairement à `totals` ci-dessus).
       escrow: { total: escrowTotal, openingDebtUnpaidTotal, byOwner: escrowByOwner },
       ownersWithoutCommissionRate,
+      cabinetRevenue,
     };
 }
 
@@ -1701,4 +1710,7 @@ router.get('/deleted-entries', requireRole('dg'), async (req, res, next) => {
   }
 });
 
+// `computeAccountingDashboard` est aussi réutilisé tel quel par l'assistant IA (étape B, outil
+// `bilan_comptable_du_mois`, voir services/assistant/tools.js) — un seul calcul, jamais dupliqué.
 module.exports = router;
+module.exports.computeAccountingDashboard = computeAccountingDashboard;

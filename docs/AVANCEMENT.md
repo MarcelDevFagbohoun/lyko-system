@@ -4703,3 +4703,706 @@ tuiles de démarrage violet (bien/locataire) ou ardoise (employé) ; portail loc
 charges), portail propriétaire = violet. Le vert/ambre/rouge de STATUT reste réservé au sens (payé,
 attention, retard) : Comptabilité n'est plus ardoise mais cyan, précisément parce que le cyan est loin du
 vert de « encaissé ».
+
+## Étape 39 — Refonte de la page d'accueil (contenu marketing)
+
+🟢 Validé visuellement (2026-09-25), ordinateur et téléphone (390 px), aucun débordement horizontal.
+Frontend uniquement. **Décisions de l'utilisateur : ni tarifs, ni témoignages.**
+
+**Constat de départ** : la page (5 sections) listait des modules au lieu de vendre des bénéfices et
+contenait des affirmations inexactes — « factures SONEB, SBEE et **ordures** » (non géré), « saisie hors
+connexion (paiement, **dépense, fiche locataire**) » (seuls le paiement de loyer et la plainte sont
+mis en file), et « entreprises immobilières **et juridiques** » (aucune fonction juridique).
+
+**Nouveau parcours** (`app/page.tsx`) : héros orienté bénéfice → « Conçu pour le Bénin » (FCFA, SONEB/SBEE,
+Mobile Money via KKiaPay, WhatsApp, plan SYSCOHADA) → avant/après → un espace par métier (direction, agents,
+comptabilité, propriétaires, locataires) → vitrine des charges SONEB/SBEE avec aperçu construit avec les vrais
+composants (chiffres fictifs, badge « Exemple ») → argent et comptabilité → sécurité/traçabilité/fiabilité →
+comment ça marche → FAQ (10 questions, `<details>` natifs) → appel à l'action. En-tête et pied de page refaits.
+
+**Règle éditoriale** : chaque phrase correspond à une fonction construite (vérifiée dans ce fichier et le code).
+Volontairement ABSENT : l'IRF (règle marquée « hypothèse #10 — À VALIDER », jamais confirmée par un expert-
+comptable), toute promesse de « conformité » légale, les sauvegardes/HTTPS (déploiement 12b pas encore validé),
+Quick Immo (en cours de retrait), prix, notes, témoignages, logos.
+
+**Technique** : `SectionHeading` sans `cn()` (tailwind-merge supprimait `text-headline-xl` dès qu'une couleur
+`text-*` était présente — même défaut que l'étape 24) ; boutons sur fond bleu avec `!text-white` pour la même
+raison ; métadonnées corrigées (`layout.tsx`, `manifest.webmanifest`, Open Graph `fr_BJ`) ; données structurées
+JSON-LD (`SoftwareApplication` + `FAQPage`, sans prix ni note).
+
+**Contact** : `components/marketing/contact.ts` lit `NEXT_PUBLIC_CONTACT_WHATSAPP` et `NEXT_PUBLIC_CONTACT_EMAIL`
+(documentées dans `.env.example`). Vides = aucun bouton de contact, jamais de faux numéro.
+
+**Reste à faire** : renseigner ces deux variables ; pages légales (mentions légales, confidentialité,
+conditions) — contenu à fournir par l'utilisateur, la règle béninoise n'étant pas confirmée ; vraies captures
+d'écran issues d'un cabinet de démonstration si souhaité.
+
+## Étape 40 — Assistant IA (chat Claude), étape A : fondations + aide sur la plateforme
+
+🟡 Codé et testé avec un FAUX client (aucun appel réseau, aucune dépense) — **jamais encore essayé sur le vrai
+modèle : il manque la clé API** (voir « Reste à faire »). Modèle retenu par l'utilisateur : **Claude Sonnet 5**
+(`claude-sonnet-5`, réglage `AI_MODEL`).
+
+**Demande** : un chat IA intégré qui aide les utilisateurs, conseille, analyse leur entreprise et propose des
+solutions. Plan validé en trois étapes : **A** (celle-ci : fondations + aide sur la plateforme, SANS données du
+cabinet) → **B** (outils de LECTURE réutilisant les services existants + « Analyse mon entreprise ») → **C**
+(briefing hebdomadaire, brouillons de relances WhatsApp). Défauts retenus faute de réponse contraire :
+activation par la direction, lecture seule, historique serveur supprimable, quota 300 messages/mois.
+
+**Backend** (`backend/src/services/assistant/`, `routes/assistant.js`, migration `065_ai_assistant.sql`,
+SDK `@anthropic-ai/sdk`) :
+- `client.js` : SEUL point qui touche au SDK et à la clé (jamais loggée, jamais renvoyée au front) ;
+  sans clé, l'assistant est « non configuré » et le reste de la plateforme est inchangé.
+- `systemPrompt.js` + `knowledge.js` : consigne en deux blocs — règles + plan de la plateforme (stable, mis en
+  cache côté API) et contexte (prénom, rôle, modules, pages accessibles, date) APRÈS le point de cache. Consignes :
+  ne pas inventer, dire « je ne suis pas sûr » sur le droit/la fiscalité/SYSCOHADA, ne rien exécuter, liens
+  internes seulement. Le nom d'entreprise et le prénom (saisis par des humains) sont réduits à une ligne courte.
+- `access.js` : entreprise et utilisateur relus en base à partir du JETON ; activation par le cabinet,
+  permission `assistant` (la direction y a toujours accès), compte actif, clé, quota mensuel.
+- `chat.js` : flux continu (SSE), une seule réponse en cours par utilisateur, échange enregistré seulement une
+  fois la réponse complète, annulation du navigateur comptée dans le quota (sinon contournement), erreurs du SDK
+  traduites en messages présentables (jamais le texte brut de l'API), `refusal` et `max_tokens` gérés.
+- Tables : `assistant_conversations` (PRIVÉES à leur auteur, pas même visibles de la direction, supprimables pour
+  de bon, purge après `AI_RETENTION_DAYS` = 90 j), `assistant_messages`, `assistant_usage` (compteurs de jetons
+  uniquement — jamais le texte — pour mesurer le coût réel), colonnes `tenants.assistant_*` (activé, quota,
+  consentement daté et attribué). Désactivé par défaut pour TOUS les cabinets.
+- Routes `/api/assistant` : `status`, `settings` (GET/PUT, direction ; l'activation exige une confirmation
+  explicite), `chat` (SSE, limité à 12 messages/minute/utilisateur), `conversations` (liste/lecture/suppression).
+- Nouvelle permission `assistant` dans le catalogue (jamais pré-cochée).
+
+**Frontend** : bouton flottant + panneau (plein écran sur téléphone) monté dans `app/espace/layout.tsx`, visible
+seulement si `/status` dit « utilisable » ; suggestions, réponse en flux, arrêt, historique, suppression ; carte
+« Assistant IA » dans Réglages avec l'information à lire et la case de confirmation. **Rendu volontairement
+restreint** (`lib/safe-markdown.ts`) : paragraphes, listes, gras, code, et liens vers `/espace/...` uniquement —
+images, liens externes et HTML restent du texte inerte (une image ou un lien pourraient faire fuir des données).
+
+**Vérifié** : 24 tests dédiés (droits, désactivation, isolation entre employés et entre entreprises, quota,
+consigne envoyée, aucun paramètre retiré pour ce modèle, identifiant opaque, erreurs, annulation, route SSE,
+réglages) — suite backend **188/188** ; `tsc`/`eslint` propres ; test de l'analyseur Markdown (liens externes,
+`javascript:`, images, HTML, chemins piégés) ; navigateur réel (ordinateur et 390 px) avec le vrai backend et un
+faux modèle : activation depuis Réglages, flux, un seul lien interne rendu, erreur qui rend le texte au champ,
+historique et suppression. Le cabinet de test a été remis à zéro ; KIko Store est inchangé.
+
+**Complément (2026-09-25) — mémoire du profil** : demande « l'assistant demande le nom et le titre, il mémorise pour
+toujours ». Prise de connaissance **scriptée et déterministe** (pas de dépendance au modèle, aucun jeton dépensé) :
+à la première ouverture sans profil, l'assistant demande « comment dois-je vous appeler ? » (puce pré-remplie avec le
+prénom du compte, ou réponse libre), puis « quelle est votre fonction ? » (puces : titre du poste du compte,
+Directeur/Directrice, Gestionnaire, Comptable, Agent immobilier ; « Plus tard » pour passer). Table
+`assistant_profiles` (migration `066`), un profil PRIVÉ par utilisateur, conservé **sans limite de durée** — la purge
+des conversations ne le touche pas — jusqu'à ce que la personne le modifie ou l'efface (icône profil du panneau :
+« Mon profil », « Oublier mon profil »). Routes `PUT/DELETE /api/assistant/profile` ; `GET /status` renvoie le profil
+(`null` = jamais renseigné) et de quoi pré-remplir. Le nom d'usage et la fonction sont normalisés (une ligne, longueur
+bornée, sans caractère de contrôle) puis injectés dans le bloc dynamique de la consigne — libellés, jamais
+instructions — et la consigne demande d'adapter le ton à la fonction (direction : priorités et décisions ; agent :
+gestes concrets ; comptable : rigueur et périodes). Texte de consentement des Réglages mis à jour (nom d'usage et
+fonction transmis, mémorisés jusqu'à effacement). Ajout d'une « méthode de conseil » à la consigne (recommandation
+d'abord, 2 à 4 actions priorisées, une question de précision si la demande est floue, distinguer ce qui est su de ce
+qui est supposé) — **non évaluée sur le vrai modèle**.
+Vérifié : 8 tests de plus (32 dédiés, suite backend 196) ; navigateur réel : demande du nom en réponse libre, fonction par
+puce, mémorisation confirmée après rechargement complet de la page (« Bonjour Marcel »), modification, oubli.
+
+## Étape 41 — Assistant IA, étape B : outils de lecture (« un vrai conseiller-analyste »)
+
+🟡 Codé et testé avec un FAUX client (aucun appel réseau, aucune dépense), y compris un aller-retour
+d'outil complet vérifié en navigateur réel sur le cabinet de test — **jamais encore essayé sur le vrai
+modèle**. Décision de l'utilisateur sur la confidentialité (proposée avec pseudonymisation en option,
+tranchée explicitement) : **noms réels**, jamais d'alias.
+
+**Principe** : le modèle ne touche JAMAIS la base de données. Il appelle un OUTIL par son nom (protocole
+standard « tool use » de l'API Claude) ; notre code exécute le calcul de confiance déjà utilisé par les
+écrans existants (mêmes services), et seul le RÉSULTAT (JSON borné) lui est renvoyé. La consigne système
+interdit d'énoncer un chiffre qui ne vient pas d'un résultat d'outil.
+
+**`services/assistant/tools.js`** (nouveau) — 6 outils, réutilisant les services déjà en place :
+- `locataires_en_retard` (`listPortfolioArrears`), `charges_impayees` (même requête que le centre de
+  relance des charges), `plaintes_ouvertes` (permission `plaintes`), `bilan_comptable_du_mois`
+  (`computeAccountingDashboard`, exporté depuis `routes/accounting.js` pour l'occasion — un seul calcul,
+  jamais dupliqué), `soldes_proprietaires` (`getEscrowBalances`, `getOwnersWithoutCommissionRate` —
+  volontairement JAMAIS scopé agent, comme partout ailleurs où ce calcul est déjà utilisé),
+  `point_des_charges` (`getUtilityPoint`).
+- Chaque outil est gardé par les MÊMES permissions que l'écran correspondant (`hasAny`), et respecte la
+  portée « Biens gérés » d'un agent restreint (`resolvePropertyScope`, calculée une fois par tour) —
+  jamais un accès plus large via l'assistant que via l'interface. La direction a toujours tous les outils.
+- Chaque résultat est BORNÉ (compteurs exacts + un nombre de lignes plafonné et réglable par le modèle,
+  `limite`, plafond dur 20) — jamais un déversement de toute la base.
+- `runTool` revérifie les droits une seconde fois (jamais fait confiance au seul filtrage de la liste
+  proposée) ; un outil refusé ou halluciné renvoie `{ erreur: … }`, jamais une exception qui casserait le
+  tour — et ce sentinel est traduit en `is_error: true` dans le `tool_result` envoyé au modèle, pour qu'il
+  n'insiste pas.
+
+**`services/assistant/chat.js`** — boucle de tours d'outils (jusqu'à 4 allers-retours, plafond de sécurité
+`MAX_TOOL_ROUNDS`) : à chaque tour, si le modèle répond `stop_reason: 'tool_use'`, on exécute (en
+parallèle) tous les appels demandés, on renvoie les `tool_result` (avec le bon `tool_use_id`), et on
+reboucle — jusqu'à une vraie réponse texte ou au plafond. Le libellé de statut envoyé au front pendant
+l'exécution nomme l'outil en français (« Consultation des loyers en retard… »), jamais son nom technique.
+**La conversation enregistrée ne garde que la question et la réponse finale** — les allers-retours d'outils
+sont un espace de travail éphémère à ce tour, jamais persistés (le rechargement d'une conversation ne
+montre donc pas « comment » l'assistant a trouvé sa réponse, seulement le résultat ; limite connue de
+cette v1). Le nombre de MESSAGES compté dans le quota reste 1 par tour utilisateur, quel que soit le
+nombre d'allers-retours d'outils internes — mais les JETONS de chaque appel réel à l'API sont tous cumulés
+dans `assistant_usage` (coût réel). Piège corrigé en cours de route : le tableau `messages` envoyé au SDK
+ne doit jamais être muté en place après l'appel (`conversationMessages.push`) — un test qui inspectait
+`calls[i].params.messages` après coup voyait ses propres mutations, un vrai risque de confusion même en
+production ; corrigé en réaffectant `conversationMessages = [...conversationMessages, …]`.
+
+**`systemPrompt.js`** — remplace le renoncement absolu de l'étape A (« tu n'as PAS accès aux données de ce
+cabinet ») par une règle conditionnelle valable pour tous les utilisateurs sans dupliquer le bloc mis en
+cache : *si* des outils sont proposés, les utiliser pour toute question sur les données réelles et ne
+jamais inventer un chiffre ; *sinon*, le dire franchement et renvoyer vers la page. Un résultat d'outil
+(noms de locataires, titres de plainte…) est explicitement qualifié de DONNÉE, jamais d'instruction — même
+règle que le texte collé par l'utilisateur.
+
+**Vérifié** : 20 tests dédiés à `tools.js` (`test/assistantTools.test.js` — catalogue par permission,
+portée agent, tri, bornage, comptabilité jamais scopée, décomposition du point des charges) + 6 tests
+d'aller-retour réel dans `test/assistant.test.js` (aucun outil sans permission, outil halluciné sans
+crash, plafond des 4 tours avec jetons cumulés et un seul message de quota, la direction voit tout) — suite
+backend **220/220** ; `tsc`/`eslint` propres ; navigateur réel sur le cabinet de test (« Audit Comptable
+Test », tenant jetable) avec un faux modèle qui appelle RÉELLEMENT l'outil `locataires_en_retard` sur les
+vraies données de ce cabinet : réponse finale « 2 locataire(s), pour un total de 157000 FCFA. Le plus
+urgent : Dette Entree17105, 23 jours de retard » — cohérent avec les impayés déjà visibles sur les écrans
+habituels de ce même cabinet ; quota décrémenté d'un seul message malgré les deux appels réels à l'API.
+
+**Reste à faire** : les mêmes points que l'étape A (clé API, budget de test réel, vérification légale) —
+voir plus bas — s'appliquent aussi à l'étape B ; en plus : mesurer le coût réel d'un tour avec outil(s) sur
+le vrai modèle (hypothèse de travail non vérifiée : 2 à 3× un message simple) ; étape C (briefing hebdo,
+brouillons de relance WhatsApp) non commencée.
+
+**Reste à faire** : (1) mettre `ANTHROPIC_API_KEY` dans `backend/.env` puis faire approuver un petit budget de test
+sur le vrai modèle — à mesurer : coût réel par message (`assistant_usage`), et si le cache de la consigne se
+déclenche vraiment (`cache_read_tokens` > 0 ; la taille minimale cacheable dépend du modèle) ; (2) déploiement :
+rejouer la migration 065 ; Caddy reverse-proxy le flux sans réglage (pas de compression sur le domaine API) ;
+(3) vérifier les obligations légales sur les données personnelles avant activation chez un vrai cabinet (règle
+béninoise non confirmée) ; (4) étape B.
+
+## Étape 42 — Prorata d'entrée + dette initiale réglée dans le compte séquestre
+
+🟢 Validé en navigateur réel sur le cabinet de test (« Audit Comptable Test »), y compris un piège de
+déploiement réel découvert et corrigé en cours de route. **Décisions explicites de l'utilisateur** :
+diviseur forfaitaire de 30 jours, le montant appartient au propriétaire, libellé « Prorata d'entrée »,
+réglage par défaut laissé à « aucun » (comportement historique inchangé) — configurable par entreprise.
+Deuxième demande explicite, en cours de discussion : « lorsqu'un impayé est payé, on doit aussi l'ajouter
+dans le compte séquestre, en le notifiant, avec le détail visible dans le compte séquestre ».
+
+**Le problème d'origine** : un locataire qui entre en cours de mois (ex. le 25 septembre, échéance le 5)
+n'était facturé ni pour les jours réellement occupés (option « rien facturer », déjà possible via la case
+« à jour à l'entrée ») ni de façon proportionnelle — aucune des deux options n'existait proprement.
+**Bug lié, découvert en creusant** : un bail dont le jour d'entrée tombe APRÈS le jour d'échéance de son
+propre mois apparaissait immédiatement « en retard » dès sa création (l'échéance comparée était déjà
+dans le passé) — indépendant du prorata, potentiellement déjà présent sur de vrais baux.
+
+### Calcul (`services/rentTracking.js`, nouveau)
+- `firstRegularDueDate(startDate, rentDueDay)` : la prochaine date portant le jour d'échéance, à partir de
+  `startDate` INCLUS — une entrée exactement le jour d'échéance donne 0 jour de prorata (cas normal).
+- `computeEntryProrata({ startDate, monthlyRent, rentDueDay })` : jours occupés avant cette échéance ×
+  loyer ÷ **30** (forfaitaire, jamais les jours réels du mois — décision explicite), arrondi au franc.
+  Miroir exact côté front, `previewEntryProrata` (`lib/utils.ts`), vérifié identique par un test dédié —
+  sert uniquement à l'aperçu instantané du formulaire, le serveur reste seul à calculer le montant stocké.
+
+### Modèle et flux (migration `067_entry_prorata.sql`)
+- `leases.entry_proration` ('aucun'/'prorata'), `entry_prorata_amount/_days/_due_date` (toujours calculés
+  par le SERVEUR, jamais transmis par le client), `entry_prorata_received_at/_received_method`.
+- `tenants.default_entry_proration` (Réglages, DG) — défaut 'aucun', repris à la création d'un bail comme
+  `default_rent_timing`, exposé via `toPublicTenant` (les 3 appelants dans `auth.js`) car un simple agent
+  doit pouvoir le lire à la création d'un bail, pas seulement le DG.
+- Payé à la signature, comme la caution et les frais d'agence (`recordEntryProrataReceived`,
+  `routes/renters.js`, dans les DEUX routes de création de bail) — jamais différé à la première échéance :
+  ne touche donc JAMAIS `computeArrears`/`allocateRentPayment` (déjà audités).
+- Nouveau type d'écriture GL `prorata_entree_encaisse` (`constants/glOperationTypes.js`,
+  `seedGeneralLedger.js`) — MÊME répartition qu'un loyer normal (commission + reste au propriétaire),
+  exactement comme `dette_initiale_encaissee` (précédent déjà en place) — jamais comme les frais d'agence
+  (100 % cabinet). Backfill historique ajouté dans `glActivationService.js` (comme pour la caution/les
+  frais d'agence) pour un tenant qui activerait la comptabilité avancée APRÈS avoir déjà encaissé des
+  prorata.
+
+### Compte séquestre — les deux sources désormais comptées (`services/commission.js`)
+**Avant cette étape**, `getEscrowBalances`/`getRecetteNetteMaison` ne lisaient QUE `rent_payments` : la part
+RÉGLÉE d'une dette initiale (`lease_opening_debt_payments`, étape antérieure) n'entrait dans AUCUN total
+« argent détenu pour ce propriétaire » — un vrai manque, différent du choix délibéré de garder la partie
+NON réglée séparée (`getUnpaidOpeningDebtByOwner`, toujours à part). Les deux fonctions lisent maintenant
+TROIS sources (loyers, dette initiale réglée, prorata d'entrée), groupées par mois de RÈGLEMENT effectif
+pour les deux dernières (elles n'ont pas de mois de loyer propre) — même traitement de commission que les
+loyers. Un `breakdown` (`{ rent, openingDebt, prorata, expenses }`, montants BRUTS avant commission) est
+renvoyé partout où le solde l'est (fiche propriétaire, tableau de bord comptable, portail propriétaire)
+pour que « les détails se retrouvent dans le compte séquestre », pas seulement un total opaque.
+
+**Frontend** : fiche propriétaire — nouvelle section « Dont, avant commission » sous le compte séquestre,
+listant loyers/dette initiale/prorata/dépenses (les postes à 0 restent masqués sauf loyers). Formulaire de
+création de bail — bloc dédié dès qu'une entrée décalée est détectée (aperçu jours/montant, choix radio
+« ne rien facturer » / « facturer le prorata », mode + date de règlement si prorata > 0, case « faire
+démarrer le cycle normal à la prochaine échéance » **cochée automatiquement** dans ce cas précis — jamais
+pour l'onboarding historique, qui reste une décision manuelle de l'agent). Le panneau de succès affiche le
+montant et le nombre de jours ajoutés au compte séquestre. Réglages — nouvelle carte « Prorata d'entrée »
+(réglage par défaut). Toast enrichi sur le règlement d'une dette initiale, qui mentionne désormais
+explicitement son effet sur le compte séquestre (demande « notifier cela »).
+
+### Piège de déploiement réel trouvé en testant en direct
+Le cabinet de test avait DÉJÀ activé la comptabilité avancée avant l'ajout de la nouvelle règle GL —
+`genererEcriture` a levé une vraie erreur (« Aucune règle comptable active pour l'opération
+"prorata_entree_encaisse" ») exactement comme prévu par la mécanique de seed existante (`seed()` ne se
+rejoue jamais automatiquement pour un tenant déjà initialisé). Corrigé en rejouant `seed(tenantId)`
+manuellement sur le tenant de test (opération idempotente, sans effet sur les règles déjà validées par un
+comptable) — **la même opération sera nécessaire sur KIko Store (tenant 8, comptabilité avancée active)
+au déploiement**, à documenter dans les notes de mise en production, jamais faite sur ce tenant réel
+sans une demande explicite.
+
+**Vérifié** : 4 tests GL (`test/gl/entryProrata.test.js`, mêmes assertions que `entryFee.test.js`/
+`openingDebt.test.js`) + 6 tests unitaires (`computeEntryProrata`/`firstRegularDueDate`,
+`test/rentTracking.test.js`) + 3 tests d'intégration escrow/recette (`test/commission.test.js`) — suite
+backend **233/233** ; `tsc`/`eslint` propres ; miroir front/back vérifié identique (script ad hoc) ;
+navigateur réel de bout en bout sur le cabinet de test : création d'un bail entrant le 28/09 (échéance le
+5) avec choix « facturer le prorata » → aperçu exact (17 500 FCFA, 7 jours) → confirmation à la création →
+fiche propriétaire montrant le détail complet (loyers 758 000 + dette initiale réglée 43 000 + prorata
+17 500 − dépenses 12 000 = 806 500 FCFA de recette nette cumulée). Données de test nettoyées après
+vérification.
+
+**Reste à faire** : mesurer si l'utilisateur veut aussi le détail sur le relevé PDF propriétaire (pas
+encore fait — ce PDF ne montre aujourd'hui ni recette ni séquestre, seulement patrimoine + historique des
+versements, un chantier séparé) ; réappliquer `seed(8)` sur KIko Store au déploiement (ci-dessus) ;
+rejouer la migration 067.
+
+## Étape 43 — Cautions supplémentaires (SBEE, SONEB, peinture)
+
+Demande directe de l'utilisateur : en plus de la caution de loyer (déjà existante,
+`leases.deposit_amount`), jusqu'à 3 cautions optionnelles par entreprise — SBEE/SONEB (garantie contre
+les impayés de charges) et peinture (garantie contre les frais de remise en état) — chacune activable
+indépendamment, montant **toujours saisi à la main** (jamais suggéré), restituable, et « claires »
+(affichées séparément, jamais fondues dans la caution de loyer).
+
+Décisions explicites de l'utilisateur : (1) SBEE/SONEB sont une garantie contre les impayés de charges,
+pas un remboursement d'installation de compteur ; (2) un dépassement de la retenue peinture au-delà de
+SA PROPRE caution retombe sur la caution de LOYER ; (3) **un seul compte comptable** (165, celui de la
+caution de loyer) pour les trois types — le type se lit dans le libellé de l'écriture, pas dans un
+sous-compte séparé ; (4) le montant est toujours saisi manuellement, jamais suggéré/calculé.
+
+### Modèle de données (migration 068)
+- `tenants.deposit_{sbee,soneb,peinture}_enabled` — désactivées par défaut, chaque entreprise choisit
+  (Réglages, DG).
+- Nouvelle table `lease_deposits` (`type` ENUM sbee/soneb/peinture, `amount`, `status` held/returned,
+  `received_at/_method`, `returned_at/_amount/_method`, `deduction_amount/_note`) — une ligne par type
+  effectivement demandé à CE bail (un type non demandé ne laisse aucune ligne, jamais une ligne à 0).
+- `move_out_reports.peinture_deduction_amount/_note` — même principe que `other_deductions_amount/_note`
+  déjà existant, mais pour la retenue peinture spécifiquement (jamais mêlée aux autres retenues).
+
+### Service central (`services/leaseDeposits.js`, nouveau)
+- `recordAdditionalDeposits` — à la signature, une ligne + une écriture GL (`caution_supplementaire_recue`)
+  par type effectivement demandé et activé pour l'entreprise (un type non activé envoyé quand même est
+  ignoré silencieusement, jamais une erreur).
+- `settleUnpaidUtilityCharges`/`getUnpaidUtilityBalance` — à la sortie, SBEE/SONEB règlent RÉELLEMENT le
+  solde impayé du locataire en réutilisant `recordUtilityPayment` (déjà exporté par `routes/charges.js`,
+  même fonction que le règlement normal d'une charge) : les factures de ce locataire ne restent plus
+  impayées après coup, et le propriétaire reçoit ce qui a été recouvré comme n'importe quel autre
+  encaissement de charge — jamais une simple ligne comptable isolée.
+- `finalizeAdditionalDeposits`/`checkAdditionalDepositRefunds` — décompte de sortie : pré-vérifie (AVANT
+  toute écriture) qu'un mode de règlement est fourni pour toute caution dont il reste effectivement un
+  montant à rendre ; calcule le dépassement de la retenue peinture (plafonnée à sa propre caution) à
+  reporter sur la caution de loyer.
+- Nouveaux types d'écriture GL `caution_supplementaire_recue`/`_restituee` (compte 165 unique, décision
+  explicite ci-dessus), backfill historique ajouté dans `glActivationService.js`.
+
+### Piège corrigé avant même le premier test (dédoublonnage du rattrapage GL)
+`glActivationService.js` dédoublonne son rattrapage par **`(tenant_id, source_table, source_id)` SEUL**,
+sans regarder le type d'opération. Deux cautions différentes sur le même bail (ex. SBEE et SONEB)
+partageraient `leaseId` comme identifiant commun si on l'utilisait naïvement → la seconde serait ignorée
+à tort comme « déjà faite ». Corrigé en utilisant l'id de la ligne `lease_deposits` elle-même (unique par
+nature) comme `sourceId`, et un `sourceTable` synthétique différent pour la restitution
+(`'lease_deposits_return'`, jamais une vraie table — même précédent que `'lease_entry_fees'`/
+`'lease_entry_prorata'` ailleurs) pour que la réception et la restitution de la MÊME ligne ne se
+percutent jamais.
+
+### Piège de déploiement réel trouvé en testant en direct (même mécanique que l'étape 42)
+Le cabinet de test avait déjà activé la comptabilité avancée avant l'ajout des deux nouvelles règles GL —
+`genererEcriture` a levé une vraie erreur (« Aucune règle comptable active pour l'opération
+"caution_supplementaire_recue" »). Corrigé en rejouant `seed(tenantId)` manuellement sur le tenant de
+test — **la même opération sera nécessaire sur KIko Store (tenant 8) au déploiement**, jamais faite sur
+ce tenant réel sans une demande explicite.
+
+### Bug réel trouvé et corrigé pendant l'écriture du service
+`services/leaseDeposits.js` importait `UTILITY_TYPE_LABELS` depuis `constants/charges.js`, qui n'exporte
+que `UTILITY_TYPES` (tableau) — l'import valait `undefined` et aurait fait planter
+`settleUnpaidUtilityCharges` au premier règlement réel. Corrigé en dérivant la table de labels
+localement. Également corrigé une formulation redondante (« Caution Caution SBEE... reçue ») dans les
+deux modèles de narration GL (`{type}` porte déjà le libellé complet « Caution SBEE (électricité) »).
+
+### Frontend
+Réglages — nouvelle carte « Cautions supplémentaires » (3 cases à cocher). Création de bail (les deux
+routes) — section dédiée, un bloc par type ACTIVÉ pour l'entreprise, montant + mode de règlement + date ;
+panneau de succès mentionnant chaque caution enregistrée. Fiche locataire — carte « Cautions
+supplémentaires » séparée de la caution de loyer, une ligne par type avec son statut
+(conservée/restituée). État des lieux de sortie (brouillon) — section dédiée : SBEE/SONEB affichent un
+texte explicatif (règlement automatique des impayés à la sortie) + sélecteur de mode de restitution
+optionnel ; peinture a un champ de retenue manuel + motif + sélecteur de restitution requis si un reste
+est calculable côté client, avec avertissement du dépassement éventuel vers la caution de loyer. Fiche
+finalisée — chaque caution supplémentaire affichée avec sa retenue/restitution.
+
+**Vérifié** : 12 tests GL dédiés (`test/gl/leaseDeposits.test.js`) couvrant le compte 165 unique dans les
+deux sens, le règlement réel des charges impayées (couverture totale et partielle), le dépassement de la
+retenue peinture, le refus AVANT toute écriture d'un mode de règlement manquant, et — spécifiquement —
+le piège de dédoublonnage corrigé ci-dessus (réception + restitution de deux cautions sur un même bail,
+rejouées via le rattrapage, sans qu'aucune ne soit ignorée à tort) ; suite backend complète
+**245/245** ; `tsc`/`eslint` propres. Navigateur réel de bout en bout sur le cabinet de test : activation
+des 3 cases dans Réglages → création d'un bail avec une caution SBEE (15 000 FCFA, espèces) → écriture GL
+vérifiée en base (débit 571/crédit 165, narration propre) → fiche locataire affichant la carte dédiée
+(« Caution SBEE (électricité) — Conservée — 15 000 FCFA ») → démarrage du brouillon de sortie confirmant
+le rendu de la section (texte de règlement automatique + sélecteur de restitution). Décompte de sortie
+complet (remplissage de tous les postes de l'état des lieux) non rejoué en direct — logique déjà couverte
+de façon exhaustive par les 12 tests GL ci-dessus. Données de test nettoyées après vérification (cases
+Réglages laissées activées, comportement normal d'un réglage d'entreprise plutôt qu'une donnée de test).
+
+**Reste à faire** : réappliquer `seed(8)` sur KIko Store au déploiement (ci-dessus, jamais fait sans
+demande explicite) ; rejouer la migration 068 ; construire le relevé PDF propriétaire (recette + compte
+séquestre), demandé par l'utilisateur mais explicitement mis en attente derrière cette étape.
+
+## Étape 44 — Recette nette du cabinet + menu « Dépenses »
+
+Demande directe de l'utilisateur : le module Dépenses existait déjà (catégorie, montant, mode de
+règlement, statut payée/à crédit, fournisseur, justificatif upload, comptabilisation GL par catégorie,
+permission `comptable`) mais restait noyé dans la page Comptabilité, invisible dans le menu — et surtout,
+**rien ne déduisait ces dépenses de fonctionnement du revenu propre du cabinet** : seule une recette nette
+*par Bien/propriétaire* existait (`getRecetteNetteMaison`), rien au niveau de l'entreprise globale.
+
+Décisions tranchées avec l'utilisateur (3 questions) : la nouvelle recette apparaît sur le **Tableau de
+bord** existant (pas une page séparée) ; calculée **par mois calendaire**, comme la recette des
+propriétaires ; le lien « Dépenses » du menu reste la **même page** Comptabilité (ancre directe vers le
+journal), rien à dupliquer.
+
+### Nouvelle fonction `getCabinetRevenue(tenantId, yearMonth)` (`services/commission.js`)
+Revenu du cabinet lui-même pour un mois, tous propriétaires confondus — 4 requêtes agrégées (jamais une
+boucle par Bien, même discipline que `getEscrowBalances`) :
+- **Commission** : recette nette de CHAQUE Bien (loyers + dette initiale réglée + prorata − dépenses DE
+  CE BIEN) × taux en vigueur ce mois-là pour son propriétaire, sommée sur tous les propriétaires.
+- **Frais d'agence à l'entrée** (100 % cabinet, déjà existant).
+- **Moins les dépenses de FONCTIONNEMENT** (`expenses.property_id IS NULL`) — jamais celles facturées à
+  un Bien (déjà déduites côté propriétaire, sinon compté deux fois).
+- **Pénalités de retard volontairement EXCLUES** pour l'instant : `late_fees.applied_at` n'est qu'une
+  date d'application, aucun encaissement réel n'est tracé (pas de table `late_fee_payments`) — les
+  inclure surestimerait le revenu réel. Choix de jugement documenté dans le code, jamais inventé une
+  fausse certitude ; à ajouter le jour où un vrai suivi de règlement existera.
+
+Branché dans `computeAccountingDashboard` (nouveau champ `cabinetRevenue`, `null` si la période demandée
+ne correspond pas exactement à un seul mois calendaire) — jamais confondu avec `netCashFlow` existant,
+qui est une trésorerie brute (loyer encaissé moins versé), pas la commission réellement gagnée ce mois.
+
+### Frontend
+Tableau de bord — nouvelle carte « Recette nette du cabinet (mois) » avec le détail (commission + frais
+d'agence − dépenses), jamais un chiffre opaque. Barre latérale — nouvelle entrée « Dépenses » dans
+FINANCES, pointant vers `/espace/comptabilite#depenses` (ancre HTML vers le Journal des dépenses déjà
+existant, aucune page dupliquée). Piège trouvé et corrigé en testant en direct : la navigation native vers
+une ancre échouait silencieusement (la section n'existe pas encore dans le DOM au moment où le navigateur
+tente de défiler, chargement encore en cours) — corrigé par un effet qui retente le défilement une fois
+les données du journal effectivement chargées.
+
+**Vérifié** : 2 tests dédiés (`test/commission.test.js`, commission sommée sur deux propriétaires à des
+taux différents + frais d'agence − dépenses de fonctionnement, en excluant explicitement une dépense
+facturée à un Bien) — suite backend complète **247/247** ; `tsc`/`eslint` propres ; navigateur réel de
+bout en bout sur le cabinet de test : carte du tableau de bord affichant le détail exact
+(commission 20 000 + frais d'agence 0 − dépenses 15 431 = 4 569 FCFA), clic sur « Dépenses » dans le menu
+atterrissant directement sur le journal après correction du défilement.
+
+**Reste à faire** : décider si/quand inclure les pénalités de retard une fois un vrai suivi
+d'encaissement construit (hors périmètre de cette étape).
+
+## Étape 44bis — Suivi de règlement des pénalités de retard
+
+Demande directe de l'utilisateur, en revenant sur la limite documentée à l'étape 44 : une pénalité de
+retard (`late_fees`, migration 047) n'avait jusqu'ici aucun suivi de règlement — ni statut, ni date de
+paiement, une créance comptable (411) restant indéfiniment ouverte, sans que personne ne puisse dire si
+elle avait été payée. Comblé sur le même modèle que la dette initiale à l'entrée (`lease_opening_debt_payments`).
+
+### Modèle
+- Nouvelle table `late_fee_payments` (migration 069) — une pénalité peut être réglée en une ou plusieurs
+  fois (`late_fee_id`, jamais `lease_id` directement : un bail peut avoir plusieurs pénalités, chacune
+  réglée indépendamment).
+- Nouveau type d'écriture GL `penalite_retard_encaissee` — débite la trésorerie (mode de paiement),
+  crédite le MÊME compte 411 déjà ouvert par `penalite_retard` à l'application : solde la créance, ne
+  recrée JAMAIS le produit 707 (déjà comptabilisé, une pénalité reste reconnue en produit dès son
+  application — décision d'origine non remise en cause, seul le règlement était manquant).
+- `POST /api/leases/:leaseId/late-fees/:lateFeeId/payments` — même verrouillage/idempotence que le
+  règlement de la dette initiale ; `GET .../late-fees` renvoie désormais `paid`/`remaining`/`status`
+  (impayée/partielle/payée) par pénalité.
+- `listPortfolioArrears` (relances/impayés) — une pénalité non réglée compte désormais comme une
+  troisième raison de retard (avec le loyer et la dette initiale), sans empêcher les deux autres.
+- `getCabinetRevenue` (étape 44) — les pénalités RÉELLEMENT réglées (`paid_at`, jamais `applied_at`)
+  entrent maintenant dans la recette nette du cabinet, remplaçant l'exclusion documentée à l'étape 44.
+- Backfill historique (`glActivationService.js`) ajouté pour les deux nouveaux cas (application déjà
+  couverte, règlement nouveau) — deux tables réelles distinctes, aucun risque de collision de
+  dédoublonnage (contrairement au piège des cautions supplémentaires, étape 43).
+
+### Frontend
+Fiche locataire — chaque pénalité affiche son statut (badge impayée/partielle/payée) et, si un reste est
+dû, un formulaire de règlement (montant, mode, date, note) identique dans l'esprit à celui des impayés à
+l'entrée. Relances — nouvelle ligne « Pénalité(s) non réglée(s) » à côté des impayés à l'entrée. Tableau
+de bord — le détail de la recette nette du cabinet inclut désormais les pénalités réglées.
+
+**Vérifié** : 3 tests GL dédiés (`test/gl/lateFeePayments.test.js` : écriture de règlement correcte,
+`listPortfolioArrears` réduit puis retire le bail, rattrapage historique sans collision) + 2 tests
+`commission.test.js` (recette du cabinet mise à jour au mois de RÈGLEMENT, jamais celui d'application) —
+suite backend complète **251/251** ; `tsc`/`eslint` propres. Navigateur/API réel de bout en bout sur le
+cabinet de test : pénalité de 5 000 FCFA appliquée, réglée en deux fois (2 000 puis 3 000) — statut
+passant impayée → partielle → payée à chaque étape, écritures GL vérifiées en base (411 correctement
+soldé, jamais de second crédit 707), recette nette du cabinet passée de 4 569 à 6 569 FCFA après le
+premier règlement, bail disparaissant des impayés une fois la pénalité intégralement réglée. Données de
+test nettoyées après vérification.
+
+## Étape 45 — Refonte design de la quittance de loyer (modèle facture pro)
+
+Demande directe de l'utilisateur, avec un exemple visuel de facture professionnelle en référence
+(logo+société / gros titre+date sur une ligne, bloc expéditeur/destinataire, tableau à en-tête colorée,
+total dans une barre pleine couleur, note, ligne de remerciement, pied à plusieurs colonnes). Précision
+importante obtenue en clarifiant : c'est la QUITTANCE (`streamReceiptPdf`) qui est visée, pas une
+« facture » — aucun document de ce nom n'existe dans le logiciel.
+
+Deux décisions tranchées avec l'utilisateur avant de coder (le modèle utilise des informations que
+l'entreprise n'a pas en base) :
+1. Le bloc « adresse du cabinet » du modèle reste RCCM/IFU/téléphone (aucune adresse en base, pas de
+   nouveau champ ajouté).
+2. Le bloc « informations de paiement » (coordonnées bancaires, sans objet sur une preuve de paiement
+   déjà reçu) est remplacé par le cachet/signature déjà existant, réorganisé en colonne à côté du
+   contact — jamais une donnée inventée.
+
+### Ce qui change dans `streamReceiptPdf` (`services/pdf.js`)
+En-tête entièrement reconstruit (n'utilise plus `drawHeader` générique pour ce document précis) : logo +
+nom du cabinet à gauche, titre « QUITTANCE » + date sur la MÊME ligne à droite (au lieu du titre seul à
+gauche et des méta-informations en petit à droite avant) ; une seconde ligne CABINET (RCCM/IFU/téléphone)
+/ À L'ATTENTION DE (locataire + bien loué) reprend la structure adresse-expéditeur/destinataire du
+modèle. Tableau des lignes désormais à **en-tête plein fond bleu marine, texte blanc** (au lieu d'un
+simple texte gris) — colonnes réordonnées Description/P.U./Mois/Montant pour coller au modèle. Total mis
+en évidence dans une **barre pleine couleur** (texte blanc), remplaçant l'ancien panneau à fond clair.
+Nouveau bloc « Note » (reprend la phrase de certification déjà existante) et ligne « Merci pour votre
+confiance. » avant le pied de page. Pied à deux colonnes (Une question ? / Cachet & signature) au lieu
+d'un simple bloc signature empilé — comble l'espace vide en bas de page sans rien inventer.
+
+**Vérifié** : suite backend complète **251/251** (aucun test ne dépend du rendu exact du PDF) ; rendu
+réel généré directement (script ad hoc appelant `streamReceiptPdf` avec les données d'un vrai paiement du
+cabinet de test) ET via la vraie route API (`GET /api/leases/:leaseId/payments/:paymentId/receipt.pdf`,
+HTTP 200, PDF valide) — comparé visuellement au modèle fourni par l'utilisateur, structure fidèle
+(logo+titre+date, bloc expéditeur/destinataire, tableau à en-tête colorée, barre de total colorée, pied
+à deux colonnes).
+
+**Reste à faire** : les autres documents (attestation, PV de sortie, relevé propriétaire, carnet de
+charges) gardent leur design actuel — cette refonte est volontairement scopée à la seule quittance, pas
+demandée ailleurs.
+
+**Complément demandé juste après** : la date sous le titre affiche désormais aussi l'HEURE de
+délivrance — `receipts.issued_at` (horodatage réel de la création de CETTE quittance), jamais
+`payment.paid_at` (juste un jour, sans heure, et un concept différent : le loyer a pu être réglé un
+jour, la quittance émise à un autre moment). Nouvelle fonction `formatTimeHm(date)`, même piège que
+`frontend/lib/utils.ts` `formatTimeOfDay` : le pool MySQL étiquette les horodatages en UTC alors qu'ils
+sont déjà en heure locale (WAT) — relit donc `getUTCHours`/`getUTCMinutes`, jamais la conversion locale
+du process Node. Vérifié : la valeur brute en base (`09:20:03`) correspond exactement à l'heure affichée
+sur le rendu réel, aucun décalage d'une heure.
+
+## Étape 46 — Attestation de loyer → Contrat de bail (remplacement complet)
+
+Demande directe de l'utilisateur : « attestaion loyer doit est changé contrat de loyer, et on refaire
+le design aussi trea professionnelle ». L'ancienne « attestation de loyer » était une simple lettre
+unilatérale (signature DG seule, texte libre `{{placeholder}}` personnalisable dans Réglages) — pas un
+vrai contrat. Trois décisions tranchées avec l'utilisateur avant de coder (choix « Recommandé » retenu
+dans les trois cas) :
+1. **Double signature** (locataire + agent), comme l'état des lieux — au lieu de la signature DG seule.
+2. **Document structuré par clauses** (articles numérotés calculés depuis les vraies données du bail),
+   au lieu du texte libre à `{{placeholder}}` personnalisable.
+3. **Remplacement complet partout** (même emplacement de bouton/route), pas un document additionnel en
+   parallèle de l'ancienne attestation.
+
+### Nouveau modèle : brouillon → finalisation (repris du système état des lieux)
+Nouvelle table `lease_contracts` (migration `070_lease_contracts.sql`) : `status
+ENUM('draft','finalized')`, `particular_conditions TEXT`, `snapshot JSON` (figé au moment de la
+signature — un contrat signé ne doit plus jamais recalculer son contenu depuis des données de bail
+possiblement modifiées après coup), `finalized_at/by`, `tenant_signature_path`/`agent_signature_path`.
+`document_issuances.document_type` : renommage ENUM `'attestation'` → `'contrat'` (migration en 3 temps
+sûre : élargir l'ENUM, `UPDATE` les lignes existantes, rétrécir l'ENUM). Nouveau service
+`services/leaseContract.js` (`buildContractData` — calcule les données réelles du bail incluant les
+cautions additionnelles de l'étape 43 ; `loadContractRow`/`toPublicContract`).
+
+**Décision de sécurité prise sans demander** : la colonne `tenants.contract_template` (ancien modèle
+texte libre) n'est PAS supprimée par la migration malgré son obsolescence totale — KIko Store (tenant
+réel, id 8) y a 4530 caractères réellement personnalisés par l'utilisateur ; colonne laissée inerte
+(plus lue par aucun code) plutôt que détruite irréversiblement.
+
+### PDF (`streamLeaseContractPdf`, remplace `streamCertificatePdf` dans `services/pdf.js`)
+9 articles numérotés (Parties / Objet / Durée / Loyer / Caution(s) / Obligations locataire /
+Obligations bailleur / Résiliation / Conditions particulières), bandeau d'avertissement « PROJET — NON
+SIGNÉ » affiché uniquement tant que `status !== 'finalized'`, blocs de signature côte à côte
+(locataire/agent). Nouvelles routes dans `leases.js` : `GET/POST/PATCH /:leaseId/contract`, `POST
+/:leaseId/contract/finalize` (upload des 2 signatures via `signaturesUpload`), `GET
+/:leaseId/contract.pdf`. Route portail `GET /:token/contract.pdf` (remplace `/certificate.pdf`,
+404 explicite si pas encore signé par les deux parties) ; `GET /:token` expose désormais
+`activeLease.hasSignedContract` pour n'afficher le bouton de téléchargement côté locataire qu'une fois
+le contrat réellement signé. Suppression complète : route `GET /:id/certificate.pdf` (renters.js),
+carte « Modèle de l'attestation de loyer » des Réglages, fichier `constants/contract.js`.
+
+**Frontend** : nouvelle page `locataires/[id]/contrat` (brouillon éditable → aperçu par article → double
+signature → PDF final), réutilise `FinalizeSection`/`SignatureBlock` de l'état des lieux sans
+modification. Bouton « Contrat de bail » sur la fiche locataire à l'emplacement exact de l'ancien
+bouton attestation.
+
+### Bugs trouvés et corrigés en vérifiant en direct
+- **`JSON.parse` sur une colonne déjà parsée** : `leases.js` et `portal.js` faisaient
+  `JSON.parse(contract.snapshot)`, mais mysql2 parse déjà automatiquement une colonne `JSON` en objet JS
+  à la lecture — `JSON.parse()` sur un objet le coerce en `"[object Object]"`, une chaîne invalide en
+  JSON (`SyntaxError`, HTTP 500). Corrigé en lisant directement `contract.snapshot` (l'écriture, elle,
+  fait bien `JSON.stringify()` — c'est la lecture seule qui doit ne jamais re-parser).
+- **Date mal formatée dans le PDF** : `.toString().slice(0,10)` sur un objet `Date` JS donne
+  `"Sun Sep 28 2026 ..."` et non une chaîne ISO, ce que `formatDateFr` (attend `YYYY-MM-DD`) ne peut pas
+  découper → « Rédigé le undefined undefined NaN » sur le PDF réel. Corrigé en `.toISOString().slice(0,10)`.
+
+### Nettoyage terminologique complémentaire
+Après le remplacement fonctionnel, un `grep -rin "attestation"` sur tout le dépôt a révélé plusieurs
+textes encore visibles par l'utilisateur (pas seulement des commentaires de code) qui mentionnaient
+encore l'ancienne « attestation » : description de la page Réglages, message de révélation du lien
+portail (page « nouveau locataire »), métadonnées SEO + texte de la page publique `/verifier`, deux
+cartes du contenu marketing de la landing page, et la base de connaissances de l'assistant IA (le texte
+que Claude peut réciter au personnel dans le chat). Tous mis à jour pour dire « contrat de bail ». Les
+mentions restantes du mot « attestation » dans le dépôt sont uniquement des commentaires de code
+expliquant l'historique de ce changement (étape 46) — aucune ne reste visible par un utilisateur final.
+
+**Vérifié** : suite backend **255/255** (dont les 4 nouveaux tests `leaseContract.test.js`) ; `tsc`/
+`eslint` frontend propres ; parcours complet en direct (Selenium + curl sur le cabinet de test) :
+création brouillon → aperçu avec vraies données de bail → édition conditions particulières →
+finalisation double signature → téléchargement PDF signé côté personnel ET côté portail locataire →
+compteur de téléchargements → vérification publique par code — les deux bugs ci-dessus trouvés et
+corrigés à cette occasion, pas avant.
+
+**Reste à faire** : aucune action de code en attente. KIko Store conserve son `contract_template` inerte
+(4530 caractères) sans qu'aucune action ne soit requise, sauf si l'utilisateur souhaite l'exporter ou le
+supprimer plus tard.
+
+## Étape 47 — Refonte de « Mon compte » + photo de profil
+
+Demande directe de l'utilisateur : « on va revoir le design de mon compte, permettre aux utilisateurs
+d'ajouter une photo de profil aussi ». La page existante n'affichait QUE le cachet/la signature
+personnels (aucun nom, téléphone, rôle, ni accès volontaire au changement de mot de passe — seulement
+forcé à la première connexion). Question de portée posée avant de coder, réponse « Recommandé » retenue
+: page complète (en-tête d'identité + cachet/signature redessinés + accès volontaire au mot de passe),
+plutôt qu'un simple ajout de carte photo sur la page inchangée.
+
+### Backend
+Nouvelle colonne `users.avatar_path` (migration `071_user_avatar.sql`) — purement visuelle dans l'app,
+jamais utilisée sur un document PDF (le cachet/la signature restent le seul mécanisme légal). Route
+`PATCH /api/auth/my-signature` renommée `PATCH /api/auth/my-profile` et élargie à un 3e champ `avatar`
+(un seul appel enregistre photo/cachet/signature ensemble, même dossier `uploads/tenants/<t>/employees/<u>/`,
+mêmes `assertUploadType`/`randomFileName` que l'existant — aucune nouvelle logique d'upload). `toPublicUser`
+expose désormais `avatarUrl`.
+
+### Frontend
+`mon-compte-view.tsx` entièrement redessiné : en-tête d'identité (photo cliquable avec bouton appareil
+photo superposé, nom, badge de poste via `tenant.roleTitles`, téléphone), cartes cachet/signature
+reprises à l'identique visuellement, et nouvelle carte « Sécurité » avec un lien vers
+`/changer-mot-de-passe`. Cette page existait déjà et gérait déjà le cas volontaire (texte différent selon
+`mustChangePassword`) mais n'était reliée nulle part — seul le flux forcé de première connexion y menait.
+Petite correction de cohérence trouvée au passage : `ChangePasswordForm` affichait toujours le label
+« Mot de passe actuel (temporaire) », qui n'a de sens que dans le flux forcé — rendu conditionnel à
+`user.mustChangePassword`.
+
+La photo remplace aussi les initiales dans le pied de la barre latérale (`espace-sidebar.tsx`) dès
+qu'elle existe — sinon l'utilisateur aurait pu se demander pourquoi sa photo n'apparaît nulle part
+ailleurs après l'avoir téléversée.
+
+**Vérifié** : suite backend 255/255 inchangée (aucun test ne couvrait cette route, comportement non
+régressif confirmé par la suite existante) ; `tsc`/`eslint` frontend propres ; parcours complet en direct
+(curl + Selenium sur le cabinet de test) : upload d'une photo test → apparaît sur la carte d'identité ET
+dans la barre latérale → accès volontaire à « Changer mon mot de passe » depuis Mon compte → label sans
+« (temporaire) » confirmé. Données de test nettoyées après vérification (photo supprimée en base et sur
+disque).
+
+**Reste à faire** : aucune action de code en attente.
+
+## Étape 48 — Audit complet des états des lieux (bug corrigé + 4 points faibles traités)
+
+Demande directe de l'utilisateur : « on va maintenant pencher sur les états des lieux, vérifie tout ce
+qui marche et qui ne marche pas, les points faibles et les solutions à apporter », suivie de « fait tout
+les point faibles ». Audit mené en explorant le code **et** en rejouant en direct (curl + Selenium) le
+parcours entrée→sortie complet sur le cabinet de test, avant toute correction — plusieurs points n'ont
+été confirmés qu'après avoir vu le comportement réel, pas seulement lu le code.
+
+### Bug réel trouvé et corrigé
+Le mode de règlement de la restitution de caution (`refund_payment_method`) était saisi, exigé côté
+serveur (`netRefund > 0`), et stocké en base — mais **jamais renvoyé par l'API**, ni affiché à l'écran,
+ni mentionné sur le PV de sortie signé par les deux parties. Un document légal annonçait « Net à
+restituer : X FCFA » sans jamais dire comment. Corrigé dans `toPublicMoveOutReport` (`services/inspection.js`),
+le type frontend, l'écran de sortie finalisée, et le PDF (`streamMoveOutPdf`, nouvelle ligne « Réglé
+par »). Régression couverte par 4 nouveaux tests dans `test/inspectionPdf.test.js`.
+
+### Les 4 points faibles traités (décisions arbitrées par l'utilisateur avant de coder)
+
+**1. Réouverture d'une fiche finalisée** (DG uniquement, motif obligatoire ≥10 caractères, tracé au
+journal d'activité) — nouvelles colonnes `reopened_at/by/reason` sur `move_in_reports`/`move_out_reports`
+(migration `072`). Invalide les deux signatures existantes (fichiers supprimés, il faut resigner).
+Pour la **sortie**, la réouverture ne défait **jamais** les effets déjà survenus (bail terminé, unité
+libérée, cautions supplémentaires réglées — des faits, pas des erreurs de saisie) : seul le contenu de
+la fiche redevient modifiable. Une écriture comptable « caution restituée » déjà postée est **extournée**
+(`extourneEcriture`, jamais modifiée/supprimée directement) à la réouverture ; la refinalisation
+réévalue et poste une nouvelle écriture si le nouveau calcul le justifie. Un drapeau interne
+(`report.reopened_at` déjà présent avant ce finalize précis) distingue une refinalisation d'une première
+finalisation pour ne **jamais** rejouer `UPDATE leases/property_units` ni `finalizeAdditionalDeposits`
+une seconde fois. Vérifié en direct de bout en bout : première finalisation avec dégât facturé → aucune
+écriture GL (retenue) → réouverture (rien à extourner) → correction (retire la facturation) →
+refinalisation → **une** écriture "caution restituée" postée → réouverture d'une fiche qui a cette fois
+une écriture → **extournée automatiquement** (confirmé en base : `status='extournee'` + nouvelle écriture
+miroir) → refinalisation → nouvelle écriture propre. Bail/unité jamais touchés une deuxième fois
+(confirmé : `end_date` inchangé après correction).
+
+**2. Réserves du locataire** — nouveau champ `tenant_reserves` (même migration), rempli par l'**agent**
+au moment de la signature (jamais un accès en écriture du locataire — décision de l'utilisateur), sur
+`FinalizeSection` (partagé entrée/sortie). Affiché en encadré distinct des notes générales, à l'écran et
+sur le PDF (`drawTenantReserves`).
+
+**3. Galerie de photos (jusqu'à 3 par élément, entrée et sortie)** — `item.photoUrl` (singulier) devient
+`item.photoUrls[]` (jusqu'à 3, plafonné côté serveur ET client) ; `normalizeStoredItems` migre à la
+lecture les anciennes fiches `photoUrl` sans jamais les réécrire (même principe que les anciennes
+conditions `bon/moyen/mauvais`). Upload : ajoute au tableau (400 si déjà 3). Suppression : nouvelle route
+`DELETE .../photo/:photoIndex` (position dans le tableau — l'ancienne route sans index n'avait de sens
+que pour une photo unique). Les photos apparaissent désormais aussi sur le PDF (elles n'y figuraient
+**jamais** avant cette étape, sur aucun des deux documents) — petites vignettes sous chaque élément.
+
+**4. Vue portefeuille sur le tableau de bord DG** — nouvelle section `inspections` dans
+`GET /api/dashboard/overview` : brouillons en attente (tous agents confondus, contrairement à « Mes
+tâches » scopée à l'agent connecté), sorties du mois, et cautions à régulariser (voir ci-dessous).
+
+### Corrections/ajouts faits sans redemander (mécaniques, ou découverts pendant l'audit)
+- **PDF de l'état des lieux d'entrée** : n'existait pas du tout avant cette étape (seule la sortie
+  s'exportait). Nouvelle fonction `streamMoveInPdf`, qui partage désormais `drawInspectionZones`/
+  `drawTenantReserves`/`drawSignatureBlock`/`drawReopenedNotice` avec `streamMoveOutPdf` (refactor —
+  évite ~100 lignes dupliquées). Nouvelle route `GET /:leaseId/move-in-report.pdf`.
+- **Aucun code de vérification sur les PV** (découvert en corrigeant le point précédent) : ni le PV de
+  sortie ni le nouveau PDF d'entrée n'appelaient `getOrCreateIssuance`/`drawFooter({verificationCode})` —
+  contrairement à la quittance et au contrat de bail. Corrigé des deux côtés (personnel : code généré,
+  téléchargements illimités par conception ; portail : `registerDownload` avec le plafond de 5). Nouveau
+  couple de types `document_issuances.document_type` : `etat_lieux_entree`/`etat_lieux_sortie`
+  (migration `074`, jamais détourné `contrat`/`carnet_charges` qui désignent autre chose).
+- **Restitution de caution avec retenue jamais comptabilisée** : déjà signalé par un message ponctuel à
+  la finalisation (facile à manquer, jamais revu ensuite). Nouvelles colonnes `gl_regularized_at/by`
+  (migration `073`) + nouvelle route `POST .../gl-regularized` (comptabilité ou DG) pour la marquer
+  réglée. Reste visible dans « Mes tâches » (comptable — `components/espace/my-tasks-card.tsx`, nouvelle
+  carte « Cautions à régulariser ») et sur le tableau de bord DG tant que personne ne l'a marquée réglée.
+  Fonction extraite dans `services/inspection.js` (`listPendingDepositRegularizations`), partagée par les
+  deux routes plutôt que dupliquée.
+- **Portail locataire** : n'exposait **aucun** contenu d'état des lieux (ni entrée ni sortie), alors que
+  le locataire les a physiquement signés. Le portail restreint volontairement l'accès au bail *actif*
+  uniquement (décision v1 déjà documentée dans le code) — or le PV de sortie n'existe qu'une fois le bail
+  *terminé*. Dérogation étroite et ciblée : nouveau `loadLastPortalLease` (dernier bail, actif OU
+  terminé — jamais l'historique complet), utilisé **seulement** par les 2 nouvelles routes
+  `GET /:token/move-in-report.pdf` et `/move-out-report.pdf` ; le reste du portail (paiements, charges,
+  contrat) continue de n'utiliser que le bail actif, comportement inchangé.
+- Info-bulles sur les boutons BE/ME/SR (`title=`) — le libellé complet n'apparaissait qu'après sélection,
+  jamais avant.
+
+### Correction d'une erreur de cette même étape
+Une première version de cet audit affirmait que « Mes tâches » (comptable/agent) n'était consommée par
+aucune page frontend, faute d'avoir grepé `getMyTasks` sous `app/` seulement — la carte existe bel et
+bien, sous `components/espace/my-tasks-card.tsx`, montée sur `/espace` pour tout non-DG (étape 18,
+2026-09-, déjà validée). Le rappel de régularisation de caution manquait seulement d'une carte dans ce
+composant déjà existant, ajoutée dans la foulée (ci-dessus) — aucune page n'a eu besoin d'être créée.
+Correction demandée directement par l'utilisateur après relecture de ce même compte-rendu.
+
+**Vérifié** : suite backend **265/265** (10 nouveaux tests purs + 4 nouveaux tests PDF) ; `tsc`/`eslint`
+frontend propres ; parcours complet en direct sur le cabinet de test (curl + Selenium) : entrée avec 3
+photos (plafond testé, refusé au 4e) + réserves → PDF d'entrée avec vignettes + encadré réserves + code
+de vérification → sortie avec dégât facturé → **bug du mode de règlement confirmé absent puis présent
+après correctif** → réouverture → correction → refinalisation → **écriture GL extournée puis reposée
+confirmée en base** → régularisation manuelle marquée réglée → disparition du tableau de bord confirmée.
+Données de test entièrement nettoyées (rapports, écritures GL, catalogue, fichiers). Non commité (branche
+`audit-comptable`).
+
+**Reste à faire** : aucune action de code en attente sur les 4 points traités. Construire la page « Mes
+tâches » (découverte pendant l'audit, hors périmètre) reste optionnel, à la demande de l'utilisateur.

@@ -2,10 +2,11 @@
 
 const { INSPECTION_ZONES, LEGACY_CONDITION_TO_NEW, INSPECTION_CONDITION_RANK } = require('../constants/inspection');
 const { toActor } = require('../utils/actor');
+const { pool } = require('../config/db');
 
 /** Élément vide (nouvelle zone/nouvel élément, ou remise à zéro pour la sortie). */
 function emptyItem(key, label, custom = false) {
-  return { key, label, custom, condition: null, comment: null, photoUrl: null, deduction: 0 };
+  return { key, label, custom, condition: null, comment: null, photoUrls: [], deduction: 0 };
 }
 
 /** Copie profonde des zones standards (nouvelle fiche d'entrée, ou de sortie sans fiche d'entrée). */
@@ -53,7 +54,17 @@ function slugifyLegacyLabel(label) {
  * conditions `bon/moyen/mauvais`). Ces anciennes fiches ne sont JAMAIS
  * réécrites : uniquement normalisées à l'affichage, dans un unique « zone »
  * synthétique qui les regroupe.
+ *
+ * `photoUrls` (étape 48, galerie jusqu'à 3 photos) remplace l'ancien champ
+ * `photoUrl` (singulier) — une fiche déjà stockée avec l'ancienne forme est
+ * remontée en tableau à un seul élément, jamais réécrite en base pour autant
+ * (même principe que la compatibilité des anciennes conditions ci-dessus).
  */
+function normalizePhotoUrls(item) {
+  if (Array.isArray(item.photoUrls)) return item.photoUrls;
+  return item.photoUrl ? [item.photoUrl] : [];
+}
+
 function normalizeStoredItems(rawItems) {
   if (Array.isArray(rawItems)) {
     return [
@@ -67,13 +78,17 @@ function normalizeStoredItems(rawItems) {
           custom: true,
           condition: LEGACY_CONDITION_TO_NEW[it.condition] ?? null,
           comment: it.comment ?? null,
-          photoUrl: null,
+          photoUrls: [],
           deduction: Number(it.deduction || 0),
         })),
       },
     ];
   }
-  return rawItems?.zones ?? [];
+  const zones = rawItems?.zones ?? [];
+  return zones.map((zone) => ({
+    ...zone,
+    items: zone.items.map((item) => ({ ...item, photoUrls: normalizePhotoUrls(item) })),
+  }));
 }
 
 /** `{zone, item}` du poste ciblé, ou `null` si la zone/l'élément n'existe pas dans cette fiche. */
@@ -169,11 +184,20 @@ function toPublicInspectionReport(row) {
     conductedAt: isoDate(row.conducted_at),
     zones: normalizeStoredItems(row.items),
     generalNotes: row.general_notes,
+    // Réserves du locataire (étape 48) — notées par l'agent avant finalisation,
+    // jamais un accès en écriture du locataire lui-même (voir docs/AVANCEMENT.md).
+    tenantReserves: row.tenant_reserves,
     finalizedAt: isoDateTime(row.finalized_at),
     tenantSignatureUrl: row.tenant_signature_path ? `/uploads/${row.tenant_signature_path}` : null,
     agentSignatureUrl: row.agent_signature_path ? `/uploads/${row.agent_signature_path}` : null,
     conductedBy: toActor(row.conductor_first_name, row.conductor_last_name, row.conductor_role),
     finalizedBy: toActor(row.finalizer_first_name, row.finalizer_last_name, row.finalizer_role),
+    // Réouverture (étape 48, correction DG) — historique de la DERNIÈRE
+    // réouverture seulement (pas un journal multi-événements, voir
+    // `services/activity.js` pour le journal complet du cabinet).
+    reopenedAt: isoDateTime(row.reopened_at),
+    reopenedBy: toActor(row.reopener_first_name, row.reopener_last_name, row.reopener_role),
+    reopenReason: row.reopen_reason,
   };
 }
 
@@ -185,14 +209,58 @@ function toPublicMoveOutReport(row) {
     ...base,
     otherDeductionsAmount: Number(row.other_deductions_amount),
     otherDeductionsNote: row.other_deductions_note,
+    // Caution peinture (étape 43) — distincte de la caution de loyer ci-dessus, voir
+    // services/leaseDeposits.js. Le dépassement éventuel est déjà inclus dans `totalDeductions`/
+    // `netRefund` ci-dessous (calculé par la route au moment de la finalisation).
+    peintureDeductionAmount: Number(row.peinture_deduction_amount),
+    peintureDeductionNote: row.peinture_deduction_note,
     depositAmount: Number(row.deposit_amount),
     totalDeductions: Number(row.total_deductions),
     netRefund: Number(row.net_refund),
+    // Bug corrigé (audit étape 48) : stocké et exigé à la finalisation depuis
+    // toujours, mais jamais renvoyé côté API jusqu'ici — ni affiché à l'écran,
+    // ni sur le PV. Un PV signé annonçant un remboursement sans jamais dire
+    // comment il est réglé.
+    refundPaymentMethod: row.refund_payment_method,
+    // Régularisation comptable manuelle d'une caution avec retenue (étape 48)
+    // — voir routes/tasks.js « Mes tâches » et routes/leases.js POST .../gl-regularized.
+    glRegularizedAt: isoDateTime(row.gl_regularized_at),
+    glRegularizedBy: toActor(row.regularizer_first_name, row.regularizer_last_name, row.regularizer_role),
   };
+}
+
+/**
+ * Restitutions de caution avec retenue jamais comptabilisées (étape 48,
+ * audit) — voir routes/leases.js POST .../finalize (aucune écriture postée
+ * dès qu'il y a une retenue, le sort comptable n'étant pas tranché) et
+ * routes/tasks.js/dashboard.js (les deux surfaces qui l'affichent : le
+ * comptable dans « Mes tâches », le DG sur son tableau de bord). Reste
+ * présent tant que personne ne l'a marqué réglé (`gl_regularized_at`).
+ */
+async function listPendingDepositRegularizations(tenantId) {
+  const [rows] = await pool.query(
+    `SELECT mo.lease_id, mo.total_deductions, mo.finalized_at, r.id AS renter_id, r.first_name, r.last_name
+     FROM move_out_reports mo
+     JOIN leases l ON l.id = mo.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     WHERE mo.tenant_id = :tenantId AND mo.status = 'finalized'
+       AND mo.total_deductions > 0 AND mo.gl_regularized_at IS NULL
+     ORDER BY mo.finalized_at ASC
+     LIMIT 20`,
+    { tenantId },
+  );
+  return rows.map((r) => ({
+    leaseId: r.lease_id,
+    renterId: r.renter_id,
+    renterName: `${r.first_name} ${r.last_name}`,
+    totalDeductions: Number(r.total_deductions),
+    finalizedAt: r.finalized_at,
+  }));
 }
 
 module.exports = {
   INSPECTION_CONDITION_RANK,
+  listPendingDepositRegularizations,
   cloneMasterZones,
   cloneZonesFrom,
   normalizeStoredItems,

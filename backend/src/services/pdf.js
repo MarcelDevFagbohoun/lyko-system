@@ -3,7 +3,6 @@
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
-const { DEFAULT_CONTRACT_TEMPLATE, renderContractTemplateSegments } = require('../constants/contract');
 const { EXPENSE_CATEGORIES } = require('../constants/expenses');
 const { UTILITY_TYPES } = require('../constants/charges');
 const { resolveRoleLabels } = require('../constants/roles');
@@ -74,73 +73,6 @@ function normalizeLineBreaks(text) {
   return typeof text === 'string' ? text.replace(/\r\n?/g, '\n') : text;
 }
 
-/**
- * Dessine des segments `{ text, bold }` (voir `renderContractTemplateSegments`)
- * comme un texte enrichi : les portions en gras s'enchaînent sur la même
- * ligne que le texte autour (API « continued » de PDFKit), pour un rendu
- * fluide qui se retourne à la ligne normalement au lieu d'un bloc par valeur.
- *
- * PDFKit ne repositionne PAS correctement le retour à la ligne EXPLICITE
- * ("\n") à l'intérieur d'un enchaînement « continued » (le texte qui suit
- * hérite du décalage horizontal où le segment précédent s'est arrêté, au
- * lieu de revenir à la marge) — seul le retour à la ligne AUTOMATIQUE (mot
- * trop long pour la largeur) se positionne bien dans un enchaînement. D'où
- * la découpe en lignes ci-dessous : chaque ligne du texte source referme son
- * propre enchaînement avant de passer à la suivante, qui repart alors bien
- * de la marge de gauche.
- */
-// Une ligne « Article N — Titre » (convention déjà suivie par les modèles de
-// bail rédigés par les DG, ex. celui de KIko Store) : détectée pour lui
-// donner un traitement de titre de section au lieu de se fondre dans le
-// texte juridique courant. Une ligne qui ne suit pas cette convention (un
-// modèle personnalisé sans cette structure) n'est simplement jamais détectée
-// — aucun risque de mal interpréter un texte libre quelconque.
-const ARTICLE_HEADING_RE = /^article\s+\d+\b/i;
-
-function drawRichText(doc, segments, { width, lineGap = 0 } = {}) {
-  const lines = [[]];
-  for (const segment of segments) {
-    segment.text.split('\n').forEach((part, i) => {
-      if (i > 0) lines.push([]);
-      if (part.length > 0) lines[lines.length - 1].push({ text: part, bold: segment.bold, mono: segment.mono });
-    });
-  }
-
-  // `x` explicite (marge gauche du bloc) sur le premier appel de chaque
-  // ligne : PDFKit ne lit `x`/`y` que comme arguments positionnels, jamais
-  // comme clé de l'objet options — sans ce positionnement explicite, la
-  // ligne démarre où le curseur du document a été laissé par l'appelant
-  // (ex. une valeur alignée à droite juste avant), le paragraphe se
-  // retrouve décalé et sort de la page avant sa fin. Déjà constaté : du
-  // texte du bail disparaissait en plein milieu d'une phrase alors qu'il
-  // était bien présent dans les données.
-  lines.forEach((runs) => {
-    if (runs.length === 0) {
-      doc.font(FONT_SANS).text('', 50, doc.y, { width, lineGap });
-      return;
-    }
-    // Titre d'article : une ligne composée d'un seul segment de texte brut
-    // (aucun {{placeholder}} substitué dedans) commençant par « Article N ».
-    const isHeading = runs.length === 1 && !runs[0].bold && !runs[0].mono && ARTICLE_HEADING_RE.test(runs[0].text.trim());
-    if (isHeading) {
-      doc.moveDown(0.6);
-      doc.font(FONT_SANS_BOLD).fontSize(11.5).fillColor(PRIMARY).text(runs[0].text.trim(), 50, doc.y, { width, lineGap: 2 });
-      doc.moveDown(0.3);
-      return;
-    }
-    runs.forEach((run, i) => {
-      doc.font(run.mono ? FONT_MONO_BOLD : run.bold ? FONT_SANS_BOLD : FONT_SANS);
-      doc.fontSize(11).fillColor(INK);
-      const continued = i < runs.length - 1;
-      if (i === 0) {
-        doc.text(run.text, 50, doc.y, { width, lineGap, continued });
-      } else {
-        doc.text(run.text, { continued });
-      }
-    });
-  });
-}
-
 // Les requêtes appelantes aliasent parfois les colonnes du bien joint en
 // `property_label`/`property_address`, parfois en `label`/`address` : on
 // accepte les deux pour ne pas dépendre d'une convention SQL précise.
@@ -164,6 +96,20 @@ function formatDateFr(isoDate) {
 function formatDateSlash(isoDate) {
   const [y, m, d] = isoDate.split('-').map(Number);
   return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+}
+
+/**
+ * Heure d'un horodatage serveur (`DATETIME`, ex. `receipts.issued_at`) au
+ * format « HH:MM » — MÊME piège que `frontend/lib/utils.ts` `formatTimeOfDay` :
+ * le pool MySQL (`timezone: 'Z'`) étiquette ces horodatages en UTC alors
+ * qu'ils sont déjà en heure locale (WAT) ; on relit donc les heures/minutes
+ * en UTC (`getUTCHours`/`getUTCMinutes`) plutôt que la conversion locale du
+ * process Node, sous peine d'un décalage à l'affichage.
+ */
+function formatTimeHm(date) {
+  const h = String(date.getUTCHours()).padStart(2, '0');
+  const m = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
 }
 
 // `toLocaleString('fr-FR')` insère une espace fine insécable (U+202F) comme
@@ -325,15 +271,23 @@ function drawPanelRow(doc, label, value, x, y, { labelWidth = 280, valueWidth = 
 }
 
 /**
- * Quittance de loyer (un paiement = une quittance). Refonte demandée par
- * l'utilisateur (référence : un reçu FedaPay/MTN Mobile Money) : bloc
- * d'identité à gauche, informations du reçu en libellés à droite, bloc
- * « Payé par », tableau (Description/Nombre de mois/P.U./Montant) avec une
- * ligne total mise en évidence.
+ * Quittance de loyer (un paiement = une quittance). Deuxième refonte demandée
+ * par l'utilisateur, référence cette fois un modèle de facture professionnel
+ * (logo+société / gros titre+date sur la même ligne, bloc identité/bloc
+ * destinataire, tableau à en-tête colorée, total mis en évidence dans une
+ * barre pleine couleur, note, ligne de remerciement). Adapté au fait qu'une
+ * quittance certifie un paiement DÉJÀ reçu (pas une facture à régler) :
+ * aucun sous-total/TVA/remise (n'existe pas pour un loyer au Bénin), et
+ * aucun bloc « comment payer » (sans objet ici) — remplacé par le
+ * cachet/signature déjà existant. Décisions explicites de l'utilisateur :
+ * le bloc « adresse du cabinet » du modèle reste RCCM/IFU/téléphone (aucune
+ * adresse en base), le bloc « informations de paiement » devient le
+ * cachet/signature (aucune coordonnée bancaire en base, et sans objet sur
+ * une preuve de paiement déjà réglé).
  *
  * `issuer` : l'employé qui a réellement encaissé ce paiement précis
  * (`rent_payments.recorded_by`) — son cachet/sa signature/son nom sont
- * apposés s'il les a téléversés (`/api/auth/my-signature`), sinon on retombe
+ * apposés s'il les a téléversés (`/api/auth/my-profile`), sinon on retombe
  * sur ceux de l'entreprise (`tenant.stamp_path`/`signature_path`), comme
  * avant cette fonctionnalité.
  */
@@ -343,86 +297,113 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
   res.setHeader('Content-Disposition', `inline; filename="${receipt.receipt_number}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant);
-
-  // --- Titre (gauche) + informations du reçu, en libellés (droite) ---
-  const topY = doc.y;
-  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('QUITTANCE', 50, topY, { width: 250 });
-  doc.font(FONT_SANS).fontSize(10).fillColor(MUTED).text('Loyer', 50, doc.y);
-
-  const metaX = 335;
-  let metaY = topY + 3;
-  const metaRows = [
-    ['N° reçu', receipt.receipt_number, true],
-    ['Date', formatDateFr(payment.paid_at.toISOString().slice(0, 10)), true],
-    ['Moyen de paiement', PAYMENT_METHOD_LABELS[payment.payment_method] ?? payment.payment_method, false],
-  ];
-  for (const [label, value, mono] of metaRows) {
-    doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text(label, metaX, metaY, { width: 210, align: 'right' });
-    metaY += 11;
-    doc
-      .font(mono ? FONT_MONO_BOLD : FONT_SANS_BOLD)
-      .fontSize(10)
-      .fillColor(INK)
-      .text(value, metaX, metaY, { width: 210, align: 'right' });
-    metaY += 17;
+  // --- Ligne 1 : logo + société (gauche) / gros titre + date (droite), sur la même ligne. ---
+  doc.rect(0, 0, doc.page.width, 5).fill(PRIMARY);
+  const topY = 40;
+  let leftX = 50;
+  if (tenant.logo_path) {
+    const logoFile = path.join(UPLOADS_ROOT, tenant.logo_path);
+    if (fs.existsSync(logoFile)) {
+      try {
+        doc.image(logoFile, 50, topY, { fit: [42, 42] });
+        leftX = 102;
+      } catch {
+        // Logo illisible : on continue sans image.
+      }
+    }
   }
+  doc.font(FONT_SANS_BOLD).fontSize(15).fillColor(INK).text(tenant.company_name, leftX, topY + 4, { width: 230 });
 
-  let y = Math.max(doc.y, metaY) + 15;
+  doc.font(FONT_SANS_BOLD).fontSize(24).fillColor(PRIMARY).text('QUITTANCE', 315, topY - 4, { width: 230, align: 'right' });
+  // Date ET heure de DÉLIVRANCE de cette quittance précise (`receipts.issued_at`, horodatage réel de sa
+  // création) — jamais la date du paiement (`payment.paid_at`, un simple jour sans heure, un concept
+  // différent : le paiement a pu être réglé un jour, la quittance émise à un autre moment).
+  doc
+    .font(FONT_MONO_BOLD)
+    .fontSize(10)
+    .fillColor(INK_SOFT)
+    .text(
+      `${formatDateFr(receipt.issued_at.toISOString().slice(0, 10))} à ${formatTimeHm(receipt.issued_at)}`,
+      315,
+      doc.y + 2,
+      { width: 230, align: 'right' },
+    );
 
-  // --- Payé par ---
-  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('PAYÉ PAR', 50, y, { characterSpacing: 0.6 });
+  // --- Ligne 2 : coordonnées du cabinet (gauche) / destinataire (droite). ---
+  let y = Math.max(topY + 42, doc.y) + 16;
+  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('CABINET', 50, y, { characterSpacing: 0.6 });
+  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('À L’ATTENTION DE', 315, y, { width: 230, align: 'right', characterSpacing: 0.6 });
   y += 13;
-  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(INK).text(`${renter.first_name} ${renter.last_name}`, 50, y);
-  y += 15;
-  doc.font(FONT_MONO).fontSize(9).fillColor(MUTED).text(renter.phone, 50, y);
-  y += 26;
+  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(`RCCM ${tenant.rccm}`, 50, y, { width: 230 });
+  doc.font(FONT_SANS_BOLD).fontSize(10.5).fillColor(INK).text(`${renter.first_name} ${renter.last_name}`, 315, y, { width: 230, align: 'right' });
+  y += 12;
+  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(`IFU ${tenant.ifu}`, 50, y, { width: 230 });
+  doc.font(FONT_MONO).fontSize(8.5).fillColor(MUTED).text(renter.phone, 315, y, { width: 230, align: 'right' });
+  y += 12;
+  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(tenant.contact_phone, 50, y, { width: 230 });
+  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(propertyLabel(property), 315, y, { width: 230, align: 'right' });
+  y += 24;
 
-  // --- Tableau : Description / Nombre de mois / P.U. / Montant ---
-  const colDesc = { x: 50, width: 225 };
-  const colMonths = { x: 275, width: 100 };
-  const colUnit = { x: 375, width: 85 };
-  const colAmount = { x: 460, width: 85 };
-
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED);
-  doc.text('DESCRIPTION', colDesc.x, y, { width: colDesc.width, characterSpacing: 0.3 });
-  doc.text('NOMBRE DE MOIS', colMonths.x, y, { width: colMonths.width, align: 'right', characterSpacing: 0.3 });
-  doc.text('P.U.', colUnit.x, y, { width: colUnit.width, align: 'right', characterSpacing: 0.3 });
-  doc.text('MONTANT', colAmount.x, y, { width: colAmount.width, align: 'right', characterSpacing: 0.3 });
-  y += 14;
   doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
-  y += 10;
+  y += 18;
+
+  // --- Meta (n° reçu, moyen de paiement) ---
+  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text('N° reçu ', 50, y, { continued: true });
+  doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(receipt.receipt_number, { continued: true });
+  doc.font(FONT_SANS).fillColor(MUTED).text('   ·   Réglé par ', { continued: true });
+  doc.font(FONT_SANS_BOLD).fillColor(INK_SOFT).text(PAYMENT_METHOD_LABELS[payment.payment_method] ?? payment.payment_method);
+  y = doc.y + 18;
+
+  // --- Tableau : en-tête pleine couleur (Description / P.U. / Mois / Montant). ---
+  const colDesc = { x: 60, width: 225 };
+  const colUnit = { x: 285, width: 85 };
+  const colMonths = { x: 375, width: 70 };
+  const colAmount = { x: 460, width: 75 };
+  const headerHeight = 24;
+  doc.rect(50, y, 495, headerHeight).fill(PRIMARY);
+  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor('#FFFFFF');
+  doc.text('DESCRIPTION', colDesc.x, y + 8, { width: colDesc.width, characterSpacing: 0.3 });
+  doc.text('P.U.', colUnit.x, y + 8, { width: colUnit.width, align: 'right', characterSpacing: 0.3 });
+  doc.text('MOIS', colMonths.x, y + 8, { width: colMonths.width, align: 'right', characterSpacing: 0.3 });
+  doc.text('MONTANT', colAmount.x, y + 8, { width: colAmount.width, align: 'right', characterSpacing: 0.3 });
+  y += headerHeight + 14;
 
   doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(`Loyer — ${formatMonthLabel(payment.covers_month)}`, colDesc.x, y, {
     width: colDesc.width,
   });
-  doc.font(FONT_MONO).fontSize(9.5).fillColor(INK).text('1', colMonths.x, y, { width: colMonths.width, align: 'right' });
   doc
     .font(FONT_MONO)
     .fontSize(9.5)
     .fillColor(INK)
     .text(formatFcfa(payment.amount), colUnit.x, y, { width: colUnit.width, align: 'right' });
+  doc.font(FONT_MONO).fontSize(9.5).fillColor(INK).text('1', colMonths.x, y, { width: colMonths.width, align: 'right' });
   doc
     .font(FONT_MONO_BOLD)
     .fontSize(9.5)
     .fillColor(INK)
     .text(formatFcfa(payment.amount), colAmount.x, y, { width: colAmount.width, align: 'right' });
-  y += 22;
+  y += 16;
+  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
+  y += 20;
 
-  const totalBoxHeight = 34;
-  drawPanel(doc, 275, y, 270, totalBoxHeight, { fill: PRIMARY_BG, stroke: PRIMARY_BORDER });
-  doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text('Montant payé', 290, y + 11, { width: 130 });
+  // --- Total : barre pleine couleur (jamais de sous-total/TVA/remise — sans objet pour un loyer). ---
+  const totalBoxHeight = 36;
+  doc.roundedRect(275, y, 270, totalBoxHeight, 6).fill(PRIMARY);
+  doc.font(FONT_SANS_BOLD).fontSize(10).fillColor('#FFFFFF').text('MONTANT PAYÉ', 290, y + 12, { width: 130 });
   doc
     .font(FONT_MONO_BOLD)
-    .fontSize(12)
-    .fillColor(PRIMARY)
-    .text(formatFcfa(payment.amount), 275, y + 9, { width: 255, align: 'right' });
-  y += totalBoxHeight + 25;
+    .fontSize(13)
+    .fillColor('#FFFFFF')
+    .text(formatFcfa(payment.amount), 275, y + 10, { width: 255, align: 'right' });
+  y += totalBoxHeight + 24;
 
+  // --- Note ---
+  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('NOTE', 50, y, { characterSpacing: 0.6 });
+  y += 13;
   doc
     .font(FONT_SANS)
     .fontSize(9)
-    .fillColor(INK)
+    .fillColor(INK_SOFT)
     .text(
       `Le cabinet ${tenant.company_name} certifie avoir reçu de ${renter.first_name} ${renter.last_name} ` +
         `la somme ci-dessus au titre du loyer de ${propertyLabel(property)}, pour la période mentionnée.`,
@@ -432,12 +413,22 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
     );
   y = doc.y + 20;
 
-  // --- Cachet / signature : ceux de l'employé qui a encaissé, sinon ceux de l'entreprise ---
+  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(PRIMARY).text('Merci pour votre confiance.', 50, y);
+  y = doc.y + 16;
+  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
+  y += 16;
+
+  // --- Pied à deux colonnes : contact (gauche) / cachet-signature (droite) — mêmes emplacements que
+  // les colonnes « Questions »/« Payment Info » du modèle, adaptées (voir décisions ci-dessus). ---
   const SIGNATURE_BLOCK_HEIGHT = 130;
   if (y + SIGNATURE_BLOCK_HEIGHT > doc.page.height - doc.page.margins.bottom) {
     doc.addPage();
     y = doc.y;
   }
+
+  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('UNE QUESTION ?', 50, y, { characterSpacing: 0.6 });
+  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('CACHET & SIGNATURE', 315, y, { characterSpacing: 0.6 });
+  doc.font(FONT_MONO_BOLD).fontSize(9.5).fillColor(INK).text(tenant.contact_phone, 50, y + 12);
 
   const signatureFile = issuer?.signature_path
     ? path.join(UPLOADS_ROOT, issuer.signature_path)
@@ -450,22 +441,23 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
       ? path.join(UPLOADS_ROOT, tenant.stamp_path)
       : null;
 
-  const signY = y + 12;
+  const signX = 315;
+  const signY = y + 16;
   let signatureDrawn = false;
   if (signatureFile && fs.existsSync(signatureFile)) {
     try {
-      doc.image(signatureFile, 50, signY, { fit: [130, 45] });
+      doc.image(signatureFile, signX, signY, { fit: [110, 40] });
       signatureDrawn = true;
     } catch {
       // Signature illisible : repli sur la ligne à signer ci-dessous.
     }
   }
   if (!signatureDrawn) {
-    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', 50, signY + 30);
+    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', signX, signY + 25);
   }
   if (stampFile && fs.existsSync(stampFile)) {
     try {
-      doc.opacity(0.9).image(stampFile, 200, signY - 15, { fit: [140, 140] }).opacity(1);
+      doc.opacity(0.9).image(stampFile, signX + 70, signY - 15, { fit: [100, 100] }).opacity(1);
     } catch {
       // Cachet illisible : on continue sans (pas bloquant pour la quittance).
     }
@@ -475,100 +467,198 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
       .font(FONT_SANS_BOLD)
       .fontSize(9)
       .fillColor(INK)
-      .text(`${issuer.first_name} ${issuer.last_name}`, 50, signY + 55);
+      .text(`${issuer.first_name} ${issuer.last_name}`, signX, signY + 50);
     doc
       .font(FONT_SANS)
       .fontSize(8)
       .fillColor(MUTED)
-      .text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 50, signY + 68);
+      .text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, signX, signY + 63);
   }
 
   drawFooter(doc, { verificationCode });
   doc.end();
 }
 
+/** « Article N — Titre », puis le corps — page neuve avant le titre s'il ne reste pas assez de place
+ * pour au moins amorcer le paragraphe (jamais un titre orphelin en bas de page). */
+function drawContractArticle(doc, number, title, body) {
+  if (doc.y > doc.page.height - doc.page.margins.bottom - 70) doc.addPage();
+  doc.font(FONT_SANS_BOLD).fontSize(11.5).fillColor(PRIMARY).text(`Article ${number} — ${title}`, 50, doc.y, { width: 495 });
+  doc.moveDown(0.35);
+  doc.font(FONT_SANS).fontSize(10).fillColor(INK).text(body, 50, doc.y, { width: 495, align: 'justify', lineGap: 2 });
+  doc.moveDown(1);
+}
+
 /**
- * Attestation de loyer (« lettre » justifiant la location en cours).
- * Le corps du texte utilise le modèle personnalisé de l'entreprise
- * (Paramètres → Attestation de loyer) s'il existe, sinon le modèle par
- * défaut — même moteur de substitution dans les deux cas. La date est
- * TOUJOURS celle du jour de génération (jamais saisie manuellement).
- * Cachet et signature, si téléversés dans les Paramètres, sont apposés
- * automatiquement près du bloc de signature.
+ * Contrat de bail (étape 46) — remplace l'ancienne attestation de loyer (lettre unilatérale à texte
+ * libre). Document structuré par articles, calculés depuis `data` (voir `services/leaseContract.js`
+ * `buildContractData` — LIVE en brouillon, figé dans `snapshot` une fois finalisé, mais EXACTEMENT la
+ * même forme dans les deux cas, donc le même rendu ici). Signé par les deux parties.
  */
-function streamCertificatePdf(res, { tenant, renter, property, lease, issuer, verificationCode }) {
+function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, verificationCode }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader(
-    'Content-Disposition',
-    `inline; filename="attestation-loyer-${renter.last_name}.pdf"`,
-  );
+  res.setHeader('Content-Disposition', `inline; filename="contrat-bail-${data.renter.lastName}.pdf"`);
   doc.pipe(res);
 
   drawHeader(doc, tenant);
 
-  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('ATTESTATION DE LOYER', 50, doc.y);
-  doc.moveDown(1.3);
+  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('CONTRAT DE BAIL', 50, doc.y);
+  drawMetaLine(doc, [
+    { text: 'Réf. ' },
+    { text: `BAIL-${String(leaseId).padStart(5, '0')}`, mono: true },
+    { text: contract.status === 'finalized' ? '  ·  Signé le ' : '  ·  Rédigé le ' },
+    {
+      text: formatDateFr((contract.status === 'finalized' ? contract.finalizedAt : contract.createdAt).toISOString().slice(0, 10)),
+      mono: true,
+    },
+  ]);
+  doc.moveDown(0.6);
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const startDateIso =
-    lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
+  if (contract.status !== 'finalized') {
+    doc
+      .font(FONT_SANS_BOLD)
+      .fontSize(9)
+      .fillColor(WARNING_FG)
+      .text('PROJET — NON SIGNÉ, à relire avant signature des deux parties.', 50, doc.y);
+    doc.moveDown(0.8);
+  }
 
-  // --- Récapitulatif : les faits essentiels en un coup d'œil, avant les
-  // pages de texte juridique qui suivent (même principe que le bloc
-  // « Locataire / Bien loué / Durée du bail » du PV de sortie).
+  // --- Récapitulatif : les faits essentiels en un coup d'œil. ---
   let y = doc.y;
-  y += drawRow(doc, 'Locataire', `${renter.first_name} ${renter.last_name}`, y);
+  y += drawRow(doc, 'Bailleur', data.owner.name, y);
+  y += drawRow(doc, 'Locataire', `${data.renter.firstName} ${data.renter.lastName}`, y);
   y += drawRow(
     doc,
     'Bien loué',
-    `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`,
+    `${data.property.code}${data.property.address ? ', ' + data.property.address : ''} — ${data.unit.designationLabel} (${data.unit.code})`,
     y,
   );
-  y += drawRow(doc, 'Loyer mensuel', formatFcfa(lease.monthly_rent), y, { mono: true });
-  y += drawRow(doc, "Date d'entrée dans les lieux", formatDateFr(startDateIso), y, { mono: true });
-  doc.y = y + 15;
+  y += drawRow(doc, 'Loyer mensuel', formatFcfa(data.lease.monthlyRent), y, { mono: true });
+  doc.y = y + 12;
+  doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
+  doc.moveDown(1);
 
-  const template = normalizeLineBreaks(tenant.contract_template) || DEFAULT_CONTRACT_TEMPLATE;
-  const segments = renderContractTemplateSegments(template, {
-    signataire: `${issuer.first_name} ${issuer.last_name}`,
-    entreprise: tenant.company_name,
-    rccm: tenant.rccm,
-    ifu: tenant.ifu,
-    locataire: `${renter.first_name} ${renter.last_name}`,
-    telephone: renter.phone,
-    bien: `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`,
-    date_entree: formatDateFr(startDateIso),
-    loyer: formatFcfa(lease.monthly_rent),
-    date: formatDateFr(todayIso),
-  });
+  const ownerAddressPart = data.owner.address ? `, domicilié à ${data.owner.address}` : '';
+  drawContractArticle(
+    doc,
+    1,
+    'Les parties',
+    `Entre les soussignés : d'une part, ${data.owner.name}${ownerAddressPart}, propriétaire du bien désigné ` +
+      `à l'article 2, représenté aux fins des présentes par le cabinet ${tenant.company_name} ` +
+      `(RCCM ${tenant.rccm}, IFU ${tenant.ifu}), ci-après dénommé « le Bailleur » ; et d'autre part, ` +
+      `${data.renter.firstName} ${data.renter.lastName}, joignable au ${data.renter.phone}, ci-après ` +
+      `dénommé « le Locataire ». Il a été convenu ce qui suit.`,
+  );
 
-  // Valeurs substituées (nom, RCCM, loyer…) en gras pour ressortir du texte
-  // juridique fixe autour.
-  doc.fontSize(11).fillColor(INK);
-  drawRichText(doc, segments, { width: 495, lineGap: 5 });
+  const meterParts = [];
+  if (data.unit.sonebMeterNumber) meterParts.push(`compteur SONEB n° ${data.unit.sonebMeterNumber}`);
+  if (data.unit.sbeeMeterNumber) meterParts.push(`compteur SBEE n° ${data.unit.sbeeMeterNumber}`);
+  drawContractArticle(
+    doc,
+    2,
+    'Objet du contrat',
+    `Le Bailleur donne à bail au Locataire, qui accepte, le bien désigné « ${data.unit.designationLabel} » ` +
+      `(${data.unit.code}) au sein de l'immeuble ${data.property.code} (${data.property.typeLabel})` +
+      `${data.property.address ? `, sis ${data.property.address}` : ''}, livré ${data.unit.furnished ? 'meublé' : 'non meublé'}` +
+      `${meterParts.length > 0 ? `, équipé des compteurs suivants : ${meterParts.join(', ')}` : ''}. Le Locataire déclare avoir ` +
+      `visité les lieux et les accepter en l'état constaté par l'état des lieux d'entrée établi séparément.`,
+  );
 
-  doc.moveDown(2.5);
+  drawContractArticle(
+    doc,
+    3,
+    'Durée et prise d’effet',
+    `Le présent bail prend effet le ${formatDateFr(data.lease.startDate)}, pour une durée indéterminée. ` +
+      `Chaque partie peut y mettre fin dans les conditions prévues à l'article 8 ci-après.`,
+  );
 
-  // Le bloc « Fait à…/Pour le cabinet/signature/cachet » ne doit jamais se
-  // couper entre deux pages (la signature d'un côté, le cachet de l'autre,
-  // à des kilomètres l'un de l'autre) — page neuve d'avance s'il ne reste
-  // pas assez de place pour l'ensemble sur la page en cours.
-  const SIGNATURE_BLOCK_HEIGHT = 220;
-  if (doc.y + SIGNATURE_BLOCK_HEIGHT > doc.page.height - doc.page.margins.bottom) {
-    doc.addPage();
+  drawContractArticle(
+    doc,
+    4,
+    'Loyer et modalités de paiement',
+    `Le loyer mensuel est fixé à ${formatFcfa(data.lease.monthlyRent)}, payable ${data.lease.rentTimingLabel.toLowerCase()}, ` +
+      `au plus tard le ${data.lease.rentDueDay} de chaque mois concerné.` +
+      (data.lease.entryFeeAmount > 0
+        ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)}, dus une seule fois à la signature, ` +
+          `restent intégralement acquis au cabinet et ne sont pas restituables.`
+        : ''),
+  );
+
+  const depositLines = [];
+  if (data.lease.depositAmount > 0) depositLines.push(`une caution de loyer de ${formatFcfa(data.lease.depositAmount)}`);
+  for (const d of data.additionalDeposits) depositLines.push(`une caution ${d.typeLabel} de ${formatFcfa(d.amount)}`);
+  drawContractArticle(
+    doc,
+    5,
+    'Caution(s)',
+    depositLines.length > 0
+      ? `Le Locataire verse, à la signature, ${depositLines.join(', ')}. Chaque caution est intégralement restituable ` +
+        `en fin de bail, déduction faite des dégradations et/ou impayés constatés à la sortie (état des lieux ` +
+        `contradictoire), dans les conditions détaillées sur le décompte remis au Locataire à cette occasion.`
+      : `Aucune caution n'est exigée à la signature du présent bail.`,
+  );
+
+  drawContractArticle(
+    doc,
+    6,
+    'Obligations du Locataire',
+    `Le Locataire s'engage à : payer le loyer et les charges aux échéances convenues ; occuper les lieux ` +
+      `personnellement et paisiblement, sans les sous-louer ni les céder sans l'accord écrit préalable du ` +
+      `Bailleur ; entretenir le logement et le rendre, à son départ, dans l'état constaté à son entrée, sauf ` +
+      `vétusté normale ; signaler sans délai toute dégradation ou panne constatée ; permettre l'accès au ` +
+      `logement pour toute visite ou réparation justifiée, sur préavis raisonnable.`,
+  );
+
+  drawContractArticle(
+    doc,
+    7,
+    'Obligations du Bailleur',
+    `Le Bailleur s'engage à : délivrer un logement décent et en bon état d'usage ; assurer la jouissance ` +
+      `paisible des lieux au Locataire ; prendre en charge les grosses réparations qui ne résultent pas d'un ` +
+      `défaut d'entretien du Locataire ; restituer la ou les cautions dans les conditions de l'article 5.`,
+  );
+
+  drawContractArticle(
+    doc,
+    8,
+    'Résiliation',
+    `Chaque partie peut résilier le présent bail moyennant un préavis raisonnable notifié par écrit à l'autre ` +
+      `partie. À la sortie du Locataire, un état des lieux contradictoire est établi ; le décompte de la ou des ` +
+      `cautions en découle, selon les conditions de l'article 5.`,
+  );
+
+  if (data.particularConditions && data.particularConditions.trim()) {
+    drawContractArticle(doc, 9, 'Conditions particulières', normalizeLineBreaks(data.particularConditions));
   }
 
-  doc.fontSize(11).fillColor(INK);
-  doc.font(FONT_SANS).text('Fait à Cotonou, le ', { continued: true });
-  doc.font(FONT_MONO_BOLD).text(formatDateFr(todayIso), { continued: true });
-  doc.font(FONT_SANS).text('.');
-  doc.moveDown(2);
-  doc.font(FONT_SANS_BOLD).fontSize(10).text('Pour le cabinet,');
+  // --- Signatures des deux parties, jamais coupées entre deux pages. ---
+  const SIGNATURE_BLOCK_HEIGHT = 150;
+  if (doc.y + SIGNATURE_BLOCK_HEIGHT > doc.page.height - doc.page.margins.bottom) doc.addPage();
+  doc.moveDown(0.5);
+  doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('Fait en deux exemplaires originaux, chacune des parties reconnaissant en avoir reçu un.', 50, doc.y, { width: 495 });
+  doc.moveDown(1.2);
 
-  // Cachet/signature du DG (signataire légal du bail) — repli sur ceux de
-  // l'entreprise s'il n'a pas téléversé les siens, même logique que la
-  // quittance (`/api/auth/my-signature`).
+  const sigTop = doc.y;
+  doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(MUTED).text('LE LOCATAIRE', 50, sigTop, { characterSpacing: 0.5 });
+  doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(MUTED).text('POUR LE BAILLEUR (LE CABINET)', 315, sigTop, { characterSpacing: 0.5 });
+
+  const tenantSigUrl = contract.tenantSignatureUrl;
+  const agentSigUrl = contract.agentSignatureUrl;
+  const sigImgY = sigTop + 16;
+  if (tenantSigUrl) {
+    const f = path.join(UPLOADS_ROOT, tenantSigUrl.replace(/^\/uploads\//, ''));
+    if (fs.existsSync(f)) {
+      try {
+        doc.image(f, 50, sigImgY, { fit: [200, 55] });
+      } catch {
+        // Signature illisible : on continue sans (page déjà valide sans elle).
+      }
+    }
+  } else {
+    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', 50, sigImgY + 30);
+  }
+
   const signatureFile = issuer?.signature_path
     ? path.join(UPLOADS_ROOT, issuer.signature_path)
     : tenant.signature_path
@@ -579,36 +669,34 @@ function streamCertificatePdf(res, { tenant, renter, property, lease, issuer, ve
     : tenant.stamp_path
       ? path.join(UPLOADS_ROOT, tenant.stamp_path)
       : null;
-
-  const signY = doc.y + 12;
-  let signatureDrawn = false;
-  if (signatureFile && fs.existsSync(signatureFile)) {
-    try {
-      doc.image(signatureFile, 50, signY, { fit: [130, 45] });
-      signatureDrawn = true;
-    } catch {
-      // Signature illisible : repli sur la ligne à signer ci-dessous.
+  if (agentSigUrl) {
+    const f = path.join(UPLOADS_ROOT, agentSigUrl.replace(/^\/uploads\//, ''));
+    if (fs.existsSync(f)) {
+      try {
+        doc.image(f, 315, sigImgY, { fit: [130, 45] });
+      } catch {
+        // Signature illisible : repli sur celle de l'entreprise ci-dessous.
+      }
     }
+  } else if (signatureFile && fs.existsSync(signatureFile)) {
+    try {
+      doc.image(signatureFile, 315, sigImgY, { fit: [130, 45] });
+    } catch {
+      // Signature illisible : ligne à signer par défaut.
+    }
+  } else {
+    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', 315, sigImgY + 30);
   }
-  if (!signatureDrawn) {
-    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', 50, signY + 30);
-  }
-
   if (stampFile && fs.existsSync(stampFile)) {
     try {
-      doc.opacity(0.9).image(stampFile, 200, signY - 15, { fit: [140, 140] }).opacity(1);
+      doc.opacity(0.9).image(stampFile, 400, sigImgY - 10, { fit: [100, 100] }).opacity(1);
     } catch {
-      // Cachet illisible : on continue sans (pas bloquant pour l'attestation).
+      // Cachet illisible : on continue sans (pas bloquant).
     }
   }
-
   if (issuer?.role) {
-    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(`${issuer.first_name} ${issuer.last_name}`, 50, signY + 55);
-    doc
-      .font(FONT_SANS)
-      .fontSize(8)
-      .fillColor(MUTED)
-      .text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 50, signY + 68);
+    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(`${issuer.first_name} ${issuer.last_name}`, 315, sigImgY + 55);
+    doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 315, sigImgY + 68);
   }
 
   drawFooter(doc, { verificationCode });
@@ -634,7 +722,125 @@ function uploadedFile(publicUrl) {
  * jamais la ligne SQL brute. Le rapport est figé à la finalisation (montants
  * stockés, jamais recalculés ici).
  */
-function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveInZones = [] }) {
+const ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS = {
+  especes: 'Espèces',
+  mobile_money: 'Mobile Money',
+  virement: 'Virement bancaire',
+  cheque: 'Chèque',
+};
+
+/**
+ * Grille zones/éléments partagée entre le PV d'entrée et celui de sortie
+ * (étape 48) — évite de dupliquer ~100 lignes entre les deux. `showBilling`
+ * (sortie uniquement) affiche la colonne de retenue et le détail des lignes
+ * de facturation ; `moveInConditionByKey` (sortie uniquement) permet
+ * d'expliquer la transition d'état ("Bon état -> Mauvais état"). Retourne le
+ * `y` après la dernière zone dessinée.
+ */
+function drawInspectionZones(doc, zones, y, { moveInConditionByKey = null, showBilling = false } = {}) {
+  const textWidth = showBilling ? 350 : 495;
+  for (const zone of zones) {
+    if (y > doc.page.height - doc.page.margins.bottom - 60) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+    doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(PRIMARY).text(zone.label.toUpperCase(), 50, y);
+    y = doc.y + 6;
+
+    for (const item of zone.items) {
+      if (y > doc.page.height - doc.page.margins.bottom - 40) {
+        doc.addPage();
+        y = doc.page.margins.top;
+      }
+      const conditionLabel = item.condition ? CONDITION_LABELS[item.condition] : 'Non renseigné';
+      const moveInCondition = moveInConditionByKey ? moveInConditionByKey.get(`${zone.key}::${item.key}`) ?? null : null;
+      const transition = compareCondition(moveInCondition, item.condition);
+      // "->" plutôt que le caractère "→" : hors de l'encodage standard des
+      // polices intégrées à PDFKit (Helvetica), qui l'affiche comme un
+      // glyphe cassé — même limite que documentée pour "Ð" (`\r` isolé)
+      // dans `normalizeLineBreaks`, ici propre au jeu de caractères de la police.
+      const conditionText =
+        transition === 'degraded'
+          ? `${CONDITION_LABELS[moveInCondition]} -> ${conditionLabel}`
+          : conditionLabel;
+      const line = `${item.label} — ${conditionText}`;
+      const h1 = doc.font(FONT_SANS).fontSize(9.5).heightOfString(line, { width: textWidth });
+      doc.font(FONT_SANS).fontSize(9.5).fillColor(item.condition ? CONDITION_COLORS[item.condition] : MUTED).text(line, 50, y, { width: textWidth });
+      if (showBilling) {
+        doc
+          .font(FONT_MONO_BOLD)
+          .fontSize(9.5)
+          .fillColor(item.deduction > 0 ? DANGER_FG : MUTED)
+          .text(item.deduction > 0 ? `- ${formatFcfa(item.deduction)}` : '—', 400, y, { width: 145, align: 'right' });
+      }
+      y += h1;
+      if (item.comment) {
+        const comment = normalizeLineBreaks(item.comment);
+        const h2 = doc.font(FONT_SANS).fontSize(8.5).heightOfString(comment, { width: textWidth });
+        doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(comment, 50, y, { width: textWidth });
+        y += h2;
+      }
+      // Détail de facturation (catalogue) : une sous-ligne par élément
+      // choisi, pour que le décompte soit lisible ligne par ligne, pas
+      // seulement un total par poste.
+      if (showBilling && item.billing?.lines?.length > 0) {
+        for (const l of item.billing.lines) {
+          const qtyText = l.quantity > 1 ? ` × ${l.quantity}` : '';
+          const billingLine = `• ${l.label}${qtyText}`;
+          const h3 = doc.font(FONT_SANS).fontSize(8.5).heightOfString(billingLine, { width: 300 });
+          doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(billingLine, 60, y, { width: 300 });
+          doc
+            .font(FONT_MONO)
+            .fontSize(8.5)
+            .fillColor(MUTED)
+            .text(formatFcfa(l.unitPrice * l.quantity), 400, y, { width: 145, align: 'right' });
+          y += h3;
+        }
+      }
+      // Photos (étape 48, jusqu'à 3 par élément) — preuve visuelle directement
+      // sur le PV, pas seulement consultable dans l'app.
+      if (item.photoUrls?.length > 0) {
+        if (y > doc.page.height - doc.page.margins.bottom - 55) {
+          doc.addPage();
+          y = doc.page.margins.top;
+        }
+        let px = 50;
+        for (const url of item.photoUrls) {
+          const file = uploadedFile(url);
+          doc.rect(px, y, 46, 46).strokeColor(BORDER).lineWidth(1).stroke();
+          try {
+            if (file && fs.existsSync(file)) doc.image(file, px + 1, y + 1, { fit: [44, 44] });
+          } catch {
+            // Photo illisible : on continue sans (pas bloquant pour le PV, même principe que les signatures).
+          }
+          px += 52;
+        }
+        y += 52;
+      }
+      y += 8;
+    }
+    y += 6;
+  }
+  return y;
+}
+
+/** Encadré "Réserves du locataire" (étape 48) — mis en avant, jamais mêlé aux notes générales. */
+function drawTenantReserves(doc, reserves, y) {
+  if (!reserves) return y;
+  if (y > doc.page.height - doc.page.margins.bottom - 60) {
+    doc.addPage();
+    y = doc.page.margins.top;
+  }
+  const text = normalizeLineBreaks(reserves);
+  const h = doc.font(FONT_SANS).fontSize(9).heightOfString(text, { width: 465 });
+  const boxHeight = h + 34;
+  drawPanel(doc, 50, y, 495, boxHeight, { fill: '#FEF3C7', stroke: '#FDE68A' });
+  doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(WARNING_FG).text('RÉSERVES DU LOCATAIRE', 65, y + 12);
+  doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(text, 65, y + 26, { width: 465 });
+  return y + boxHeight + 15;
+}
+
+function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveInZones = [], additionalDeposits = [], verificationCode }) {
   // zoneKey::itemKey -> condition à l'entrée, pour expliquer la transition
   // d'état ("Bon état → Mauvais état") à côté de chaque élément facturé.
   const moveInConditionByKey = new Map();
@@ -674,66 +880,7 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
 
   y += 15;
 
-  for (const zone of report.zones) {
-    if (y > doc.page.height - doc.page.margins.bottom - 60) {
-      doc.addPage();
-      y = doc.page.margins.top;
-    }
-    doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(PRIMARY).text(zone.label.toUpperCase(), 50, y);
-    y = doc.y + 6;
-
-    for (const item of zone.items) {
-      if (y > doc.page.height - doc.page.margins.bottom - 40) {
-        doc.addPage();
-        y = doc.page.margins.top;
-      }
-      const conditionLabel = item.condition ? CONDITION_LABELS[item.condition] : 'Non renseigné';
-      const moveInCondition = moveInConditionByKey.get(`${zone.key}::${item.key}`) ?? null;
-      const transition = compareCondition(moveInCondition, item.condition);
-      // "->" plutôt que le caractère "→" : hors de l'encodage standard des
-      // polices intégrées à PDFKit (Helvetica), qui l'affiche comme un
-      // glyphe cassé — même limite que documentée pour "Ð" (`\r` isolé)
-      // dans `normalizeLineBreaks`, ici propre au jeu de caractères de la police.
-      const conditionText =
-        transition === 'degraded'
-          ? `${CONDITION_LABELS[moveInCondition]} -> ${conditionLabel}`
-          : conditionLabel;
-      const line = `${item.label} — ${conditionText}`;
-      const h1 = doc.font(FONT_SANS).fontSize(9.5).heightOfString(line, { width: 350 });
-      doc.font(FONT_SANS).fontSize(9.5).fillColor(item.condition ? CONDITION_COLORS[item.condition] : MUTED).text(line, 50, y, { width: 350 });
-      doc
-        .font(FONT_MONO_BOLD)
-        .fontSize(9.5)
-        .fillColor(item.deduction > 0 ? DANGER_FG : MUTED)
-        .text(item.deduction > 0 ? `- ${formatFcfa(item.deduction)}` : '—', 400, y, { width: 145, align: 'right' });
-      y += h1;
-      if (item.comment) {
-        const comment = normalizeLineBreaks(item.comment);
-        const h2 = doc.font(FONT_SANS).fontSize(8.5).heightOfString(comment, { width: 350 });
-        doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(comment, 50, y, { width: 350 });
-        y += h2;
-      }
-      // Détail de facturation (catalogue) : une sous-ligne par élément
-      // choisi, pour que le décompte soit lisible ligne par ligne, pas
-      // seulement un total par poste.
-      if (item.billing?.lines?.length > 0) {
-        for (const l of item.billing.lines) {
-          const qtyText = l.quantity > 1 ? ` × ${l.quantity}` : '';
-          const billingLine = `• ${l.label}${qtyText}`;
-          const h3 = doc.font(FONT_SANS).fontSize(8.5).heightOfString(billingLine, { width: 300 });
-          doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(billingLine, 60, y, { width: 300 });
-          doc
-            .font(FONT_MONO)
-            .fontSize(8.5)
-            .fillColor(MUTED)
-            .text(formatFcfa(l.unitPrice * l.quantity), 400, y, { width: 145, align: 'right' });
-          y += h3;
-        }
-      }
-      y += 8;
-    }
-    y += 6;
-  }
+  y = drawInspectionZones(doc, report.zones, y, { moveInConditionByKey, showBilling: true });
 
   if (report.otherDeductionsAmount > 0) {
     const line = report.otherDeductionsNote || 'Autres retenues';
@@ -751,7 +898,13 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
     doc.addPage();
     y = doc.page.margins.top;
   }
-  const boxHeight = 90;
+  // Bug corrigé (audit étape 48) : le mode de règlement était saisi et exigé
+  // à la finalisation, mais n'apparaissait jusqu'ici NULLE PART — ni à
+  // l'écran, ni sur ce PV signé par les deux parties.
+  const refundMethodLabel = report.refundPaymentMethod
+    ? ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS[report.refundPaymentMethod] ?? report.refundPaymentMethod
+    : null;
+  const boxHeight = refundMethodLabel ? 112 : 90;
   drawPanel(doc, 50, y, 495, boxHeight);
   const boxY = y + 14;
   drawPanelRow(doc, 'Caution initiale', formatFcfa(report.depositAmount), 65, boxY, { labelWidth: 335, valueWidth: 130 });
@@ -767,15 +920,90 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
     .fontSize(16)
     .fillColor(PRIMARY)
     .text(formatFcfa(report.netRefund), 350, boxY + 46, { width: 180, align: 'right' });
+  if (refundMethodLabel) {
+    drawPanelRow(doc, 'Réglé par', refundMethodLabel, 65, boxY + 76, { labelWidth: 335, valueWidth: 130 });
+  }
 
   y += boxHeight + 25;
+
+  // Cautions supplémentaires (étape 43, SBEE/SONEB/peinture) — chacune distincte de la caution de
+  // loyer ci-dessus (compte 165 unique, mais des lignes SÉPARÉES sur ce PV pour rester claires, comme
+  // demandé par l'utilisateur), une ligne par caution encore concernée par cette sortie (restituée).
+  const returnedAdditionalDeposits = additionalDeposits.filter((d) => d.status === 'returned');
+  if (returnedAdditionalDeposits.length > 0) {
+    if (y > doc.page.height - doc.page.margins.bottom - 40) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+    doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(PRIMARY).text('CAUTIONS SUPPLÉMENTAIRES', 50, y);
+    y = doc.y + 8;
+    for (const d of returnedAdditionalDeposits) {
+      if (y > doc.page.height - doc.page.margins.bottom - 55) {
+        doc.addPage();
+        y = doc.page.margins.top;
+      }
+      const boxH = d.deductionAmount > 0 ? 66 : 46;
+      drawPanel(doc, 50, y, 495, boxH);
+      const by = y + 12;
+      drawPanelRow(doc, d.typeLabel, formatFcfa(d.amount), 65, by, { labelWidth: 335, valueWidth: 130 });
+      let ly = by + 20;
+      if (d.deductionAmount > 0) {
+        drawPanelRow(
+          doc,
+          d.deductionNote || 'Retenue',
+          `- ${formatFcfa(d.deductionAmount)}`,
+          65,
+          ly,
+          { labelWidth: 335, valueWidth: 130, valueColor: DANGER_FG },
+        );
+        ly += 20;
+      }
+      const methodLabel = d.returnedMethod ? ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS[d.returnedMethod] ?? d.returnedMethod : null;
+      const returnedLabel = methodLabel ? `Restitué au locataire (${methodLabel})` : 'Retenue intégrale — rien à restituer';
+      drawPanelRow(doc, returnedLabel, formatFcfa(d.returnedAmount ?? 0), 65, ly, {
+        labelWidth: 335,
+        valueWidth: 130,
+        valueColor: d.returnedAmount > 0 ? SUCCESS_FG : MUTED,
+      });
+      y += boxH + 10;
+    }
+    y += 10;
+  }
+
   if (report.generalNotes) {
     const h = doc.font(FONT_SANS).fontSize(9).heightOfString(normalizeLineBreaks(report.generalNotes), { width: 495 });
     doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(normalizeLineBreaks(report.generalNotes), 50, y, { width: 495 });
     y += h + 15;
   }
 
-  // Signatures (locataire + agent) — capturées à la finalisation de la fiche.
+  y = drawTenantReserves(doc, report.tenantReserves, y);
+  y = drawReopenedNotice(doc, report, y);
+  drawSignatureBlock(doc, report, y);
+
+  drawFooter(doc, { verificationCode });
+  doc.end();
+}
+
+/**
+ * Note discrète de traçabilité (étape 48) — si cette fiche a été rouverte
+ * puis corrigée, le document final le dit, sans reproduire le motif interne
+ * (réservé au journal du cabinet, voir services/activity.js) : la
+ * transparence envers le locataire s'arrête à « ceci a été corrigé », pas au
+ * détail du désaccord interne qui l'a motivé.
+ */
+function drawReopenedNotice(doc, report, y) {
+  if (!report.reopenedAt) return y;
+  if (y > doc.page.height - doc.page.margins.bottom - 20) {
+    doc.addPage();
+    y = doc.page.margins.top;
+  }
+  const text = `Document corrigé le ${formatDateFr(report.reopenedAt.slice(0, 10))} (motif enregistré au journal du cabinet).`;
+  doc.font(FONT_SANS).fontSize(8).fillColor(FAINT).text(text, 50, y, { width: 495 });
+  return y + 16;
+}
+
+/** Bloc de signatures (locataire + agent) — partagé entre le PV de sortie et celui d'entrée. */
+function drawSignatureBlock(doc, report, y) {
   const sigHeight = 110;
   if (y > doc.page.height - doc.page.margins.bottom - sigHeight) {
     doc.addPage();
@@ -795,8 +1023,58 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
   } catch {
     // Signature illisible : on continue sans (pas bloquant pour le PV).
   }
+  return sigImgY + 70;
+}
 
-  drawFooter(doc);
+/**
+ * État des lieux d'ENTRÉE, en PDF (étape 48 — n'existait pas avant : seule la
+ * sortie s'exportait, alors que le locataire signe les deux). Même grille
+ * zones/éléments que le PV de sortie, sans les colonnes de retenue/caution
+ * (`showBilling: false`) : à l'entrée, on CONSTATE un état, on ne facture
+ * rien.
+ */
+function streamMoveInPdf(res, { tenant, renter, property, lease, report, verificationCode }) {
+  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="etat-des-lieux-entree-${renter.last_name}.pdf"`);
+  doc.pipe(res);
+
+  drawHeader(doc, tenant);
+
+  doc.font(FONT_SANS_BOLD).fontSize(18).fillColor(PRIMARY).text("ÉTAT DES LIEUX D'ENTRÉE", 50, doc.y);
+  drawMetaLine(doc, [
+    { text: 'Réalisé le ' },
+    { text: formatDateFr(report.conductedAt), mono: true },
+  ]);
+
+  let y = doc.y + 20;
+  y += drawRow(doc, 'Locataire', `${renter.first_name} ${renter.last_name}`, y);
+  y += drawRow(
+    doc,
+    'Bien loué',
+    `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`,
+    y,
+  );
+  y += drawRow(doc, 'Date d’entrée', formatDateFr(isoDateOnly(lease.start_date)), y, { mono: true });
+
+  y += 15;
+  y = drawInspectionZones(doc, report.zones, y, { showBilling: false });
+
+  if (report.generalNotes) {
+    if (y > doc.page.height - doc.page.margins.bottom - 40) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+    const h = doc.font(FONT_SANS).fontSize(9).heightOfString(normalizeLineBreaks(report.generalNotes), { width: 495 });
+    doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(normalizeLineBreaks(report.generalNotes), 50, y, { width: 495 });
+    y += h + 15;
+  }
+
+  y = drawTenantReserves(doc, report.tenantReserves, y);
+  y = drawReopenedNotice(doc, report, y);
+  drawSignatureBlock(doc, report, y);
+
+  drawFooter(doc, { verificationCode });
   doc.end();
 }
 
@@ -1549,10 +1827,11 @@ function streamFinancialStatementsPdf(res, { tenant, fiscalYear, incomeStatement
 
 module.exports = {
   streamReceiptPdf,
-  streamCertificatePdf,
+  streamLeaseContractPdf,
   streamOwnerStatementPdf,
   streamUtilityCarnetPdf,
   streamMoveOutPdf,
+  streamMoveInPdf,
   streamFinancialStatementsPdf,
   streamAccountingReportPdf,
   formatFcfa,

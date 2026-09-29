@@ -3,9 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft, ClipboardList } from "lucide-react";
+import { ArrowLeft, ClipboardList, FileDown } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
   getRenter,
   startMoveInReport,
@@ -13,6 +13,8 @@ import {
   uploadInspectionItemPhoto,
   deleteInspectionItemPhoto,
   finalizeMoveInReport,
+  reopenMoveInReport,
+  moveInReportPdfPath,
   type Lease,
   type InspectionReport,
   type InspectionZone,
@@ -22,6 +24,7 @@ import { InspectionForm } from "@/components/inspections/inspection-form";
 import { InspectionReadOnly } from "@/components/inspections/inspection-readonly";
 import { FinalizeSection } from "@/components/inspections/finalize-section";
 import { SignatureBlock } from "@/components/inspections/signature-block";
+import { ReopenReportButton } from "@/components/inspections/reopen-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { useToast } from "@/lib/toast/toast-context";
@@ -94,7 +97,7 @@ function EtatDesLieuxContent() {
         {!report ? (
           <StartCard leaseId={leaseId} accessToken={accessToken} onStarted={setReport} />
         ) : report.status === "finalized" ? (
-          <FinalizedView lease={lease} report={report} />
+          <FinalizedView leaseId={leaseId} lease={lease} report={report} accessToken={accessToken} onReportChange={setReport} />
         ) : (
           <DraftEditor
             leaseId={leaseId}
@@ -204,10 +207,10 @@ function DraftEditor({
     }
   }
 
-  async function handleDeletePhoto(zoneKey: string, itemKey: string) {
+  async function handleDeletePhoto(zoneKey: string, itemKey: string, photoIndex: number) {
     if (!accessToken) return;
     try {
-      const res = await deleteInspectionItemPhoto(accessToken, "move-in", leaseId, zoneKey, itemKey);
+      const res = await deleteInspectionItemPhoto(accessToken, "move-in", leaseId, zoneKey, itemKey, photoIndex);
       onReportChange(res.report);
       setZones(res.report.zones);
       toast.info("Photo retirée.");
@@ -216,7 +219,7 @@ function DraftEditor({
     }
   }
 
-  async function handleFinalize(tenantSignature: Blob, agentSignature: Blob) {
+  async function handleFinalize(tenantSignature: Blob, agentSignature: Blob, tenantReserves: string) {
     if (!accessToken) return;
     // La finalisation exige les données déjà enregistrées côté serveur — on
     // sauvegarde silencieusement le brouillon courant juste avant, pour ne
@@ -225,7 +228,7 @@ function DraftEditor({
     setFinalizeError(null);
     try {
       await updateMoveInReport(accessToken, leaseId, { zones, generalNotes: generalNotes.trim() || undefined });
-      const res = await finalizeMoveInReport(accessToken, leaseId, tenantSignature, agentSignature);
+      const res = await finalizeMoveInReport(accessToken, leaseId, tenantSignature, agentSignature, tenantReserves || undefined);
       onReportChange(res.report);
       toast.success("État des lieux d'entrée finalisé et verrouillé.");
       onFinalized();
@@ -277,7 +280,27 @@ function DraftEditor({
   );
 }
 
-function FinalizedView({ lease, report }: { lease: Lease; report: InspectionReport }) {
+function FinalizedView({
+  leaseId,
+  lease,
+  report,
+  accessToken,
+  onReportChange,
+}: {
+  leaseId: number;
+  lease: Lease;
+  report: InspectionReport;
+  accessToken: string | null;
+  onReportChange: (report: InspectionReport) => void;
+}) {
+  const { user } = useAuth();
+
+  async function handleReopen(reason: string) {
+    if (!accessToken) return;
+    const res = await reopenMoveInReport(accessToken, leaseId, reason);
+    onReportChange(res.report);
+  }
+
   return (
     <Card className="max-w-3xl">
       <CardHeader>
@@ -297,6 +320,13 @@ function FinalizedView({ lease, report }: { lease: Lease; report: InspectionRepo
           </div>
         )}
 
+        {report.tenantReserves && (
+          <div className="rounded-lg border border-warning-border bg-warning-bg p-3">
+            <p className="font-label-sm text-warning-fg">Réserves du locataire</p>
+            <p className="text-body-sm text-ink">{report.tenantReserves}</p>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} />
           <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} />
@@ -307,6 +337,25 @@ function FinalizedView({ lease, report }: { lease: Lease; report: InspectionRepo
             {report.finalizedBy && ` par ${report.finalizedBy.name} (${report.finalizedBy.roleLabel})`}.
           </p>
         )}
+        {report.reopenedAt && (
+          <p className="text-body-xs text-ink-muted">
+            Corrigée le {new Date(report.reopenedAt).toLocaleDateString("fr-FR")}
+            {report.reopenedBy && ` par ${report.reopenedBy.name} (${report.reopenedBy.roleLabel})`}
+            {report.reopenReason && ` — motif : ${report.reopenReason}`}.
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => accessToken && openAuthenticatedPdf(moveInReportPdfPath(leaseId), accessToken)}
+          >
+            <FileDown size={16} />
+            Télécharger le PDF
+          </Button>
+          {user?.role === "dg" && <ReopenReportButton onReopen={handleReopen} />}
+        </div>
       </CardContent>
     </Card>
   );

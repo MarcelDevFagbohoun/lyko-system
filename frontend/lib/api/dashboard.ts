@@ -25,6 +25,22 @@ export type DashboardOverview = {
       renterName: string;
     }[];
   };
+  // Étape 48 (audit état des lieux) — vue portefeuille : brouillons laissés
+  // en plan (tous agents confondus) + sorties du mois + restitutions de
+  // caution avec retenue jamais comptabilisées, tant que personne ne les a
+  // marquées réglées (voir aussi « Mes tâches » côté comptable).
+  inspections: {
+    draftMoveInCount: number;
+    draftMoveOutCount: number;
+    moveOutsThisMonthCount: number;
+    pendingDepositRegularizations: {
+      leaseId: number;
+      renterId: number;
+      renterName: string;
+      totalDeductions: number;
+      finalizedAt: string;
+    }[];
+  };
 };
 
 export function getDashboardOverview(accessToken: string) {

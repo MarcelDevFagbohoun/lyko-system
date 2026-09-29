@@ -421,6 +421,35 @@ function EscrowBalanceCard({ escrow, openingDebtUnpaid }: { escrow: EscrowBalanc
             Ce propriétaire a reçu plus que sa recette nette cumulée réellement collectée — à vérifier.
           </p>
         )}
+        {/* Détail de ce qui compose la recette nette cumulée (étape 42, demande explicite de
+            l'utilisateur) — montants BRUTS, avant commission (contrairement aux chiffres ci-dessus). */}
+        <div className="mt-4 flex flex-col gap-1.5 border-t border-border pt-3 text-body-sm">
+          <p className="mb-0.5 font-label-sm uppercase tracking-wider text-ink-muted">
+            Dont, avant commission
+          </p>
+          <div className="flex items-center justify-between text-ink-soft">
+            <span>Loyers encaissés</span>
+            <span className="tabular">{formatFcfa(escrow.breakdown.rent)}</span>
+          </div>
+          {escrow.breakdown.openingDebt > 0 && (
+            <div className="flex items-center justify-between text-ink-soft">
+              <span>Dette initiale réglée</span>
+              <span className="tabular">{formatFcfa(escrow.breakdown.openingDebt)}</span>
+            </div>
+          )}
+          {escrow.breakdown.prorata > 0 && (
+            <div className="flex items-center justify-between text-ink-soft">
+              <span>Prorata d&apos;entrée</span>
+              <span className="tabular">{formatFcfa(escrow.breakdown.prorata)}</span>
+            </div>
+          )}
+          {escrow.breakdown.expenses > 0 && (
+            <div className="flex items-center justify-between text-ink-soft">
+              <span>Dépenses rattachées à ses Biens</span>
+              <span className="tabular">− {formatFcfa(escrow.breakdown.expenses)}</span>
+            </div>
+          )}
+        </div>
         {/* Ligne distincte, jamais mélangée aux chiffres ci-dessus (décision
             explicite de l'utilisateur) : de l'argent pas encore réellement
             collecté ne doit jamais se confondre avec le solde réel détenu. */}

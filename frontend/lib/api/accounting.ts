@@ -150,6 +150,8 @@ export type TenantArrearsEntry = {
   unpaidMonths: number;
   /** Reliquat d'impayés à l'entrée (onboarding) — distinct du retard de loyer, voir `unpaidMonths`. */
   openingDebtRemaining: number;
+  /** Pénalités de retard appliquées mais non réglées (étape 44bis) — distinct du loyer, voir `unpaidMonths`. */
+  lateFeesRemaining: number;
   amountOwed: number;
 };
 
@@ -209,6 +211,16 @@ export type AccountingDashboard = {
    * appliqué en silence sinon. Jamais borné à la période affichée.
    */
   ownersWithoutCommissionRate: { ownerId: number; ownerName: string; totalCollected: number }[];
+  /**
+   * Recette nette du CABINET lui-même (étape 44) — commission sur tous les propriétaires + frais
+   * d'agence, moins les dépenses de fonctionnement (jamais celles facturées à un Bien). Toujours par
+   * mois calendaire : `null` si `period.from`/`period.to` ne correspondent pas au même mois.
+   */
+  cabinetRevenue: {
+    yearMonth: string;
+    breakdown: { commission: number; entryFees: number; lateFees: number; expenses: number };
+    netCabinetIncome: number;
+  } | null;
 };
 
 export type EscrowByOwnerEntry = {
@@ -219,6 +231,8 @@ export type EscrowByOwnerEntry = {
   balance: number;
   /** Impayés de locataire(s) à l'entrée, non réglés, pour ce propriétaire — montant brut, jamais mélangé à `balance`. */
   openingDebtUnpaid: number;
+  /** Détail de `totalCollected` (étape 42) — voir sa fiche pour l'affichage complet. */
+  breakdown: { rent: number; openingDebt: number; prorata: number; expenses: number };
 };
 
 export function getDashboard(accessToken: string, from: string, to: string) {
@@ -360,6 +374,8 @@ export type PortfolioArrearsEntry = {
   unpaidMonths: number;
   /** Reliquat d'impayés à l'entrée (onboarding) — distinct du retard de loyer, voir `unpaidMonths`. */
   openingDebtRemaining: number;
+  /** Pénalités de retard appliquées mais non réglées (étape 44bis) — distinct du loyer, voir `unpaidMonths`. */
+  lateFeesRemaining: number;
   amountOwed: number;
 };
 

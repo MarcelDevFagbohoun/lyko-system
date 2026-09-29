@@ -9,7 +9,6 @@ const { ApiError } = require('../middleware/error');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { updateSettingsSchema } = require('../validators/settings');
 const { assertUploadType, randomFileName } = require('../utils/uploads');
-const { DEFAULT_CONTRACT_TEMPLATE, CONTRACT_PLACEHOLDERS } = require('../constants/contract');
 const { ROLE_TITLE_PRESETS, resolveRoleLabels } = require('../constants/roles');
 const { encryptSecret } = require('../utils/encryption');
 const logger = require('../utils/logger');
@@ -34,9 +33,6 @@ const upload = multer({
 
 function toPublicSettings(tenant) {
   return {
-    contractTemplate: tenant.contract_template,
-    defaultContractTemplate: DEFAULT_CONTRACT_TEMPLATE,
-    placeholders: CONTRACT_PLACEHOLDERS,
     stampUrl: tenant.stamp_path ? `/uploads/${tenant.stamp_path}` : null,
     signatureUrl: tenant.signature_path ? `/uploads/${tenant.signature_path}` : null,
     // Nom des 3 postes chez cette entreprise (Réglages) — menu déroulant
@@ -56,6 +52,14 @@ function toPublicSettings(tenant) {
     // Convention de paiement du loyer par défaut (avance/terme échu) —
     // pré-remplit chaque nouveau bail, voir constants/rentTiming.js.
     defaultRentTiming: tenant.default_rent_timing,
+    // Prorata d'entrée par défaut (étape 42) — pré-remplit chaque nouveau bail,
+    // voir services/rentTracking.js `computeEntryProrata`.
+    defaultEntryProration: tenant.default_entry_proration,
+    // Cautions supplémentaires (étape 43) — désactivées par défaut, chaque entreprise choisit
+    // indépendamment SBEE/SONEB/peinture (voir constants/leaseDeposits.js).
+    depositSbeeEnabled: !!tenant.deposit_sbee_enabled,
+    depositSonebEnabled: !!tenant.deposit_soneb_enabled,
+    depositPeintureEnabled: !!tenant.deposit_peinture_enabled,
   };
 }
 
@@ -88,10 +92,6 @@ router.patch(
       const fields = [];
       const params = { id: req.user.tenantId };
 
-      if (data.contractTemplate !== undefined) {
-        fields.push('contract_template = :contractTemplate');
-        params.contractTemplate = data.contractTemplate;
-      }
       if (data.dgTitle !== undefined) {
         fields.push('dg_title = :dgTitle');
         params.dgTitle = data.dgTitle;
@@ -146,6 +146,24 @@ router.patch(
       if (data.defaultRentTiming !== undefined) {
         fields.push('default_rent_timing = :defaultRentTiming');
         params.defaultRentTiming = data.defaultRentTiming;
+      }
+
+      if (data.defaultEntryProration !== undefined) {
+        fields.push('default_entry_proration = :defaultEntryProration');
+        params.defaultEntryProration = data.defaultEntryProration;
+      }
+
+      if (data.depositSbeeEnabled !== undefined) {
+        fields.push('deposit_sbee_enabled = :depositSbeeEnabled');
+        params.depositSbeeEnabled = data.depositSbeeEnabled;
+      }
+      if (data.depositSonebEnabled !== undefined) {
+        fields.push('deposit_soneb_enabled = :depositSonebEnabled');
+        params.depositSonebEnabled = data.depositSonebEnabled;
+      }
+      if (data.depositPeintureEnabled !== undefined) {
+        fields.push('deposit_peinture_enabled = :depositPeintureEnabled');
+        params.depositPeintureEnabled = data.depositPeintureEnabled;
       }
 
       const stampFile = req.files?.stamp?.[0];

@@ -122,6 +122,25 @@ export function monthLabelFr(yearMonth: string): string {
 }
 
 /**
+ * Prorata d'entrée (étape 42) — miroir exact de `computeEntryProrata`/`firstRegularDueDate` côté serveur
+ * (`backend/src/services/rentTracking.js`) : diviseur FORFAITAIRE de 30 jours, jamais les jours réels du
+ * mois. Sert uniquement à l'aperçu affiché dans le formulaire de création de bail ; le montant réellement
+ * enregistré reste TOUJOURS recalculé par le serveur, jamais transmis depuis cet aperçu.
+ */
+export function previewEntryProrata({ startDate, monthlyRent, rentDueDay }: { startDate: string; monthlyRent: number; rentDueDay: number }) {
+  if (!startDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !Number.isInteger(rentDueDay) || rentDueDay < 1 || rentDueDay > 28) {
+    return { days: 0, amount: 0, dueDate: startDate };
+  }
+  const [y, m] = startDate.split("-").map(Number);
+  const sameMonth = new Date(Date.UTC(y, m - 1, rentDueDay)).toISOString().slice(0, 10);
+  const dueDate = sameMonth >= startDate ? sameMonth : new Date(Date.UTC(y, m, rentDueDay)).toISOString().slice(0, 10);
+  const days = Math.round((new Date(`${dueDate}T00:00:00Z`).getTime() - new Date(`${startDate}T00:00:00Z`).getTime()) / 86_400_000);
+  const rent = Math.max(0, Number(monthlyRent) || 0);
+  const amount = rent > 0 ? Math.round((rent * days) / 30) : 0;
+  return { days, amount, dueDate };
+}
+
+/**
  * Répartition d'un montant sur des mois de loyer consécutifs à partir de
  * `startMonth` — miroir exact de `allocateRentPayment` côté serveur
  * (`backend/src/services/rentTracking.js`). Sert uniquement à l'aperçu affiché

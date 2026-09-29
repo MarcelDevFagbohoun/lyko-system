@@ -33,10 +33,12 @@ const inspectionItemSchema = z.object({
     .nullable()
     .default(null),
   comment: optionalText(500),
-  // Chemin déjà enregistré par POST .../photo — jamais fixé directement par
-  // le client à une valeur arbitraire de son choix (voir la route : elle
-  // ignore ce champ pour l'élément qu'elle vient de mettre à jour).
-  photoUrl: z.string().trim().max(500).nullable().optional(),
+  // Jusqu'à 3 photos par élément (étape 48) — chemins déjà enregistrés par
+  // POST .../photo, jamais fixés directement par le client à une valeur
+  // arbitraire de son choix (voir la route : elle ignore ce champ pour
+  // l'élément qu'elle vient de mettre à jour, elle ne fait qu'ajouter/retirer
+  // une entrée du tableau).
+  photoUrls: z.array(z.string().trim().max(500)).max(3).default([]),
   // Montant de retenue final. Si `billing.lines` est renseigné, ce montant
   // est RECALCULÉ côté serveur à partir des lignes (jamais celui envoyé par
   // le client) — voir `services/inspection.js` `computeItemDeduction`. Sans
@@ -68,6 +70,17 @@ const updateInspectionDraftSchema = z.object({
 const updateMoveOutDraftSchema = updateInspectionDraftSchema.extend({
   otherDeductionsAmount: amountSchema.default(0),
   otherDeductionsNote: optionalText(255),
+  // Caution peinture (étape 43) — même principe que les autres retenues ci-dessus, mais plafonnée
+  // séparément à SA PROPRE caution (voir services/leaseDeposits.js `finalizeAdditionalDeposits`),
+  // jamais mêlée à `otherDeductionsAmount` (caution de loyer).
+  peintureDeductionAmount: amountSchema.default(0),
+  peintureDeductionNote: optionalText(255),
+});
+
+// Réouverture d'une fiche finalisée (étape 48, DG uniquement) : motif
+// obligatoire, tracé au journal d'activité (`services/activity.js`).
+const reopenInspectionReportSchema = z.object({
+  reason: z.string().trim().min(10, 'Motif trop court (10 caractères minimum)').max(2000),
 });
 
 module.exports = {
@@ -75,4 +88,5 @@ module.exports = {
   startInspectionReportSchema,
   updateInspectionDraftSchema,
   updateMoveOutDraftSchema,
+  reopenInspectionReportSchema,
 };

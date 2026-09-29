@@ -18,6 +18,8 @@ const { getPermissions } = require('../services/permissions');
 const { resolvePropertyScope } = require('../services/scope');
 const { listPortfolioArrears, listPredictiveLateAlerts } = require('../services/rentTracking');
 const { getPeriodClosability, isPeriodClosed } = require('../services/accountingPeriods');
+const { isModuleActive } = require('../services/gl/glPostingService');
+const { listPendingDepositRegularizations } = require('../services/inspection');
 
 const router = Router();
 router.use(requireAuth);
@@ -184,15 +186,17 @@ router.get('/', async (req, res, next) => {
     let accountant = null;
     if (hasComptabilite) {
       const period = currentPeriod();
-      const [pendingBatches, expensesWithoutReceipt, alreadyClosed] = await Promise.all([
+      const glActive = await isModuleActive(pool, tenantId);
+      const [pendingBatches, expensesWithoutReceipt, alreadyClosed, pendingDepositRegularizations] = await Promise.all([
         listPendingBatches(tenantId),
         listExpensesWithoutReceipt(tenantId),
         isPeriodClosed(tenantId, `${period}-01`),
+        glActive ? listPendingDepositRegularizations(tenantId) : Promise.resolve([]),
       ]);
       const currentMonthClosability = alreadyClosed
         ? null
         : await getPeriodClosability(tenantId, period).then((c) => ({ period, isClosable: c.isClosable }));
-      accountant = { pendingBatches, expensesWithoutReceipt, currentMonthClosability };
+      accountant = { pendingBatches, expensesWithoutReceipt, currentMonthClosability, pendingDepositRegularizations };
     }
 
     const assignedTasks = await listAssignedTasksFor(tenantId, req.user.id);

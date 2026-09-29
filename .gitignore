@@ -23,6 +23,9 @@ coverage/
 !.vscode/extensions.json
 .idea/
 
+# Config locale de Claude Code (permissions, worktrees) — jamais partagée
+.claude/
+
 # Sauvegardes de production (deploy/backup-db.sh)
 backups/
 # Sauvegardes locales ponctuelles (dumps ad hoc, données réelles)

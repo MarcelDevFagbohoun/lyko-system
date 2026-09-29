@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ShieldCheck, WifiOff } from "lucide-react";
+import { ShieldCheck, Smartphone, WifiOff } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -39,17 +39,17 @@ export function Hero() {
 
       <div className="content-shell relative grid grid-cols-1 items-center gap-10 py-14 sm:py-20 lg:grid-cols-2 lg:gap-16">
         <div className="flex flex-col gap-6">
+          <Badge variant="primary" className="w-fit">
+            Gestion locative · Bénin
+          </Badge>
           <h1 className="font-display text-headline-2xl text-ink sm:text-[2.75rem] sm:leading-[1.1]">
-            Toute la gestion de votre entreprise, dans un seul espace sécurisé.
+            Encaissez à temps. Rendez des comptes justes à vos propriétaires.
           </h1>
-
           <p className="max-w-xl text-body-lg text-ink-soft">
-            Lyko System réunit vos locataires, propriétaires, contrats, paiements,
-            réclamations, comptabilité et charges au même endroit, avec des rôles
-            précis pour chaque employé et un fonctionnement qui résiste aux coupures
-            de connexion.
+            Lyko System est le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE, relances
+            WhatsApp, quittances, relevés propriétaires et comptabilité SYSCOHADA, dans un seul espace sécurisé pour toute
+            votre équipe.
           </p>
-
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link href="/inscription" className={buttonVariants({ variant: "primary", size: "lg" })}>
               Créer mon compte
@@ -58,29 +58,29 @@ export function Hero() {
               Se connecter
             </Link>
           </div>
-
-          <div className="flex flex-col gap-2 pt-2 text-body-sm text-ink-muted sm:flex-row sm:items-center sm:gap-6">
+          <div className="flex flex-col gap-2 pt-2 text-body-sm text-ink-muted sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
             <span className="inline-flex items-center gap-1.5">
               <ShieldCheck size={16} className="text-primary" />
               Espace cloisonné par entreprise
             </span>
             <span className="inline-flex items-center gap-1.5">
               <WifiOff size={16} className="text-primary" />
-              Fonctionne même hors connexion
+              Consultable même sans réseau
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Smartphone size={16} className="text-primary" />
+              Sur ordinateur, tablette et téléphone
             </span>
           </div>
         </div>
-
         {/* Aperçu produit — composants réels de la charte, pas une capture fictive */}
         <Card className="p-4 shadow-lg sm:p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <p className="font-label-sm uppercase tracking-wider text-ink-muted">Tableau de bord DG</p>
-              <p className="font-display text-headline-sm text-ink">Vue du jour</p>
+              <p className="font-label-sm uppercase tracking-wider text-ink-muted">Tableau de bord de la direction</p>
+              <p className="font-display text-headline-sm text-ink">Vue du jour · données fictives</p>
             </div>
-            <Badge variant="success" dot>
-              Synchronisé
-            </Badge>
+            <Badge variant="neutral">Exemple</Badge>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

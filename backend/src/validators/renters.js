@@ -4,6 +4,7 @@ const { z } = require('zod');
 const { phoneSchema, nameSchema } = require('./auth');
 const { RENT_TIMING_KEYS } = require('../constants/rentTiming');
 const { idempotencyKeySchema } = require('./idempotency');
+const { ADDITIONAL_DEPOSIT_TYPES } = require('../constants/leaseDeposits');
 
 const emailSchema = z
   .string()
@@ -78,6 +79,47 @@ function requireEntryFeeMethodWhenPositive(data, ctx) {
   }
 }
 
+// Prorata d'entrée (étape 42) : SEUL le choix de politique vient du client — le montant et le nombre
+// de jours sont TOUJOURS recalculés par le serveur (`computeEntryProrata`, à partir de `monthlyRent`/
+// `startDate`/`rentDueDay` déjà soumis dans la même requête), jamais transmis ni fait confiance côté
+// client. `entryProration` omis → retombe sur le réglage par défaut de l'entreprise (voir la route).
+const entryProrationFields = {
+  entryProration: z.enum(['aucun', 'prorata'], { errorMap: () => ({ message: "Choix du prorata d'entrée invalide" }) }).optional(),
+  entryProrataPaymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: "Mode de règlement du prorata d'entrée invalide" }) }).optional(),
+  entryProrataPaidAt: dateSchema.optional(),
+};
+
+// Cautions supplémentaires (étape 43, demande directe de l'utilisateur, 2026-09-28) — SBEE/SONEB/
+// peinture, chacune optionnelle et indépendante de la caution de loyer ci-dessus (voir
+// constants/leaseDeposits.js). Un type non activé pour l'entreprise, envoyé quand même, est
+// simplement ignoré par le service (`recordAdditionalDeposits`), jamais une erreur de validation ici :
+// la liste des types activés peut varier, ce n'est pas au client de la connaître à l'octet près.
+const additionalDepositEntrySchema = z.object({
+  amount: amountSchema,
+  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
+  paidAt: dateSchema.optional(),
+});
+const additionalDepositsFields = {
+  additionalDeposits: z
+    .object(Object.fromEntries(ADDITIONAL_DEPOSIT_TYPES.map((t) => [t.key, additionalDepositEntrySchema.optional()])))
+    .partial()
+    .optional(),
+};
+
+function requireAdditionalDepositMethodWhenPositive(data, ctx) {
+  if (!data.additionalDeposits) return;
+  for (const type of ADDITIONAL_DEPOSIT_TYPES) {
+    const entry = data.additionalDeposits[type.key];
+    if (entry && entry.amount > 0 && !entry.paymentMethod) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['additionalDeposits', type.key, 'paymentMethod'],
+        message: `Mode de règlement requis pour la caution ${type.label}`,
+      });
+    }
+  }
+}
+
 const createRenterSchema = z
   .object({
     firstName: nameSchema,
@@ -92,6 +134,8 @@ const createRenterSchema = z
     monthlyRent: amountSchema.refine((v) => v > 0, 'Le loyer doit être supérieur à 0').optional(),
     ...depositFields,
     ...entryFeeFields,
+    ...entryProrationFields,
+    ...additionalDepositsFields,
     rentDueDay: z.coerce.number().int().min(1).max(28).default(5),
     // Convention de paiement (avance/terme échu, demande directe de
     // l'utilisateur, 2026-09-24) : optionnel — si omis, la route retombe
@@ -111,7 +155,8 @@ const createRenterSchema = z
     upToDateAtOnboarding: z.coerce.boolean().default(false),
   })
   .superRefine(requireDepositMethodWhenDepositPositive)
-  .superRefine(requireEntryFeeMethodWhenPositive);
+  .superRefine(requireEntryFeeMethodWhenPositive)
+  .superRefine(requireAdditionalDepositMethodWhenPositive);
 
 // Nouveau bail pour un locataire déjà existant (renouvellement / changement
 // d'unité) — alimente l'historique des contrats.
@@ -121,6 +166,8 @@ const createLeaseSchema = z
     monthlyRent: amountSchema.refine((v) => v > 0, 'Le loyer doit être supérieur à 0').optional(),
     ...depositFields,
     ...entryFeeFields,
+    ...entryProrationFields,
+    ...additionalDepositsFields,
     rentDueDay: z.coerce.number().int().min(1).max(28).default(5),
     // Convention de paiement (avance/terme échu, demande directe de
     // l'utilisateur, 2026-09-24) : optionnel — si omis, la route retombe
@@ -131,7 +178,8 @@ const createLeaseSchema = z
     upToDateAtOnboarding: z.coerce.boolean().default(false),
   })
   .superRefine(requireDepositMethodWhenDepositPositive)
-  .superRefine(requireEntryFeeMethodWhenPositive);
+  .superRefine(requireEntryFeeMethodWhenPositive)
+  .superRefine(requireAdditionalDepositMethodWhenPositive);
 
 const updateRenterSchema = z.object({
   firstName: nameSchema.optional(),
@@ -161,6 +209,12 @@ const createPaymentSchema = z.object({
   idempotencyKey: idempotencyKeySchema,
 });
 
+// Conditions particulières du contrat de bail (étape 46) — seule partie personnalisable du contrat
+// (le reste est calculé automatiquement depuis les données du bail), par bail, jamais par entreprise.
+const updateContractSchema = z.object({
+  particularConditions: optionalText(4000),
+});
+
 // Annulation d'un paiement de loyer (audit comptable, anomalie A3) — même
 // principe que la suppression logique des dépenses/charges (validators/expenses.js) :
 // justification obligatoire, jamais un DELETE physique.
@@ -187,6 +241,16 @@ const createOpeningDebtPaymentSchema = z.object({
   idempotencyKey: idempotencyKeySchema,
 });
 
+// Règlement (total ou partiel) d'une pénalité de retard déjà appliquée (étape 44bis) — même principe
+// que la dette initiale ci-dessus, le serveur vérifie que le montant ne dépasse jamais le solde restant.
+const createLateFeePaymentSchema = z.object({
+  amount: amountSchema.refine((v) => v > 0, 'Le montant doit être supérieur à 0'),
+  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de paiement invalide' }) }),
+  paidAt: dateSchema,
+  notes: optionalText(255),
+  idempotencyKey: idempotencyKeySchema,
+});
+
 module.exports = {
   createRenterSchema,
   updateRenterSchema,
@@ -195,7 +259,9 @@ module.exports = {
   createPaymentSchema,
   deletePaymentReasonSchema,
   createLateFeeSchema,
+  createLateFeePaymentSchema,
   createOpeningDebtPaymentSchema,
+  updateContractSchema,
   PAYMENT_METHODS,
   // Primitives réutilisées par validators/inspections.js (états des lieux par zones).
   optionalText,

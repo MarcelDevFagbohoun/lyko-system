@@ -1,7 +1,7 @@
 'use strict';
 
 // Vérification publique d'authenticité (étape 29) : un tiers recevant une
-// quittance/attestation/relevé (banque, autre bailleur...) peut confirmer
+// quittance/contrat/relevé (banque, autre bailleur...) peut confirmer
 // que le document est réellement émis par Lyko System, sans compte ni accès
 // à l'espace connecté. Ne renvoie JAMAIS de montant ni de donnée sur le
 // locataire/propriétaire concerné — seulement de quoi confirmer
@@ -28,9 +28,11 @@ router.use(verifyLimiter);
 
 const DOCUMENT_TYPE_LABELS = {
   quittance: 'Quittance de loyer',
-  attestation: 'Attestation de location',
+  contrat: 'Contrat de bail',
   releve_proprietaire: 'Relevé propriétaire',
   carnet_charges: 'Carnet des charges SONEB/SBEE',
+  etat_lieux_entree: 'État des lieux d’entrée',
+  etat_lieux_sortie: 'État des lieux de sortie',
 };
 
 // GET /api/verify/:code

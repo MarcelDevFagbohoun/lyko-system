@@ -6,28 +6,37 @@ const multer = require('multer');
 const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-const { requireAuth, requirePermission, requireAnyPermission } = require('../middleware/auth');
+const { requireAuth, requireRole, requirePermission, requireAnyPermission } = require('../middleware/auth');
 const {
   createPaymentSchema,
   deletePaymentReasonSchema,
   endLeaseSchema,
   createLateFeeSchema,
+  createLateFeePaymentSchema,
   createOpeningDebtPaymentSchema,
+  updateContractSchema,
 } = require('../validators/renters');
 const {
   startInspectionReportSchema,
   updateInspectionDraftSchema,
   updateMoveOutDraftSchema,
+  reopenInspectionReportSchema,
 } = require('../validators/inspections');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { computeArrears, allocateRentPayment } = require('../services/rentTracking');
 const { claimIdempotencyKey, hasRecentIdenticalRentPayment, DUPLICATE_MESSAGE } = require('../services/paymentGuards');
-const { streamReceiptPdf, streamMoveOutPdf } = require('../services/pdf');
+const { streamReceiptPdf, streamMoveOutPdf, streamMoveInPdf, streamLeaseContractPdf } = require('../services/pdf');
+const { buildContractData, loadContractRow, toPublicContract } = require('../services/leaseContract');
 const { assertPeriodOpen } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
 const { getOrCreateIssuance, ensureShareToken } = require('../services/documentIssuance');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { extourneEcriture } = require('../services/gl/glReversalService');
+const {
+  listLeaseDeposits,
+  checkAdditionalDepositRefunds,
+  finalizeAdditionalDeposits,
+} = require('../services/leaseDeposits');
 const { toActor } = require('../utils/actor');
 const {
   cloneMasterZones,
@@ -53,6 +62,12 @@ router.use(requireAuth);
 
 const canLocataires = requirePermission('locataires');
 const canEtatsDesLieux = requirePermission('etats_des_lieux');
+// Réouverture d'une fiche finalisée (étape 48, correction) : DG uniquement —
+// même restriction que le catalogue de prix de dégradation.
+const canReopenInspection = requireRole('dg');
+// Marquer une régularisation comptable manuelle réglée : la comptabilité,
+// jamais un agent restreint aux locataires (n'a rien à voir avec le journal).
+const canRegularizeGl = requirePermission('comptabilite');
 // Paiements et quittances : agent (locataires) ET comptable (paiements/factures, section 5).
 const canPayments = requireAnyPermission('locataires', 'comptabilite');
 
@@ -100,15 +115,24 @@ const signaturesUpload = multer({
 
 const INSPECTION_REPORT_SELECT = `
   t.*, cu.first_name AS conductor_first_name, cu.last_name AS conductor_last_name, cu.role AS conductor_role,
-  fu.first_name AS finalizer_first_name, fu.last_name AS finalizer_last_name, fu.role AS finalizer_role
+  fu.first_name AS finalizer_first_name, fu.last_name AS finalizer_last_name, fu.role AS finalizer_role,
+  ru.first_name AS reopener_first_name, ru.last_name AS reopener_last_name, ru.role AS reopener_role
 `;
+
+// move_out_reports uniquement (colonnes absentes de move_in_reports) — la
+// jointure reste dans une clause à part pour ne pas casser move_in_reports.
+const MOVE_OUT_REGULARIZER_SELECT = `, gu.first_name AS regularizer_first_name, gu.last_name AS regularizer_last_name, gu.role AS regularizer_role`;
+const MOVE_OUT_REGULARIZER_JOIN = `LEFT JOIN users gu ON gu.id = t.gl_regularized_by`;
 
 /** `reportsTable` : toujours l'un des deux littéraux ci-dessous, jamais une valeur venue du client. */
 async function loadInspectionReportRow(conn, reportsTable, leaseId) {
+  const isMoveOut = reportsTable === 'move_out_reports';
   const [rows] = await conn.query(
-    `SELECT ${INSPECTION_REPORT_SELECT} FROM ${reportsTable} t
+    `SELECT ${INSPECTION_REPORT_SELECT}${isMoveOut ? MOVE_OUT_REGULARIZER_SELECT : ''} FROM ${reportsTable} t
      LEFT JOIN users cu ON cu.id = t.conducted_by
      LEFT JOIN users fu ON fu.id = t.finalized_by
+     LEFT JOIN users ru ON ru.id = t.reopened_by
+     ${isMoveOut ? MOVE_OUT_REGULARIZER_JOIN : ''}
      WHERE t.lease_id = :leaseId LIMIT 1`,
     { leaseId },
   );
@@ -119,6 +143,14 @@ function assertDraft(report, label) {
   if (!report) throw new ApiError(404, `Aucun ${label} pour ce bail`);
   if (report.status !== 'draft') {
     throw new ApiError(409, `Cette fiche est déjà finalisée et ne peut plus être modifiée.`);
+  }
+}
+
+/** Symétrique de `assertDraft` — pour les routes qui n'ont de sens QUE sur une fiche finalisée (réouverture, PDF). */
+function assertFinalized(report, label) {
+  if (!report) throw new ApiError(404, `Aucun ${label} pour ce bail`);
+  if (report.status !== 'finalized') {
+    throw new ApiError(400, `Cette fiche n'est pas encore finalisée.`);
   }
 }
 
@@ -496,7 +528,8 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
   }
 });
 
-// GET /api/leases/:leaseId/late-fees — pénalités déjà appliquées sur ce bail.
+// GET /api/leases/:leaseId/late-fees — pénalités déjà appliquées sur ce bail, avec leur solde de
+// règlement (étape 44bis : une pénalité peut désormais être réglée, totalement ou partiellement).
 router.get('/:leaseId/late-fees', canPayments, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
   if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
@@ -510,18 +543,135 @@ router.get('/:leaseId/late-fees', canPayments, async (req, res, next) => {
        WHERE lf.lease_id = :leaseId ORDER BY lf.applied_at DESC, lf.id DESC`,
       { leaseId },
     );
+    const lateFeeIds = rows.map((r) => r.id);
+    let paidById = new Map();
+    if (lateFeeIds.length > 0) {
+      const placeholders = lateFeeIds.map(() => '?').join(',');
+      const [paidRows] = await pool.query(
+        `SELECT late_fee_id, SUM(amount) AS paid FROM late_fee_payments WHERE late_fee_id IN (${placeholders}) GROUP BY late_fee_id`,
+        lateFeeIds,
+      );
+      paidById = new Map(paidRows.map((p) => [p.late_fee_id, Number(p.paid)]));
+    }
     res.json({
-      lateFees: rows.map((r) => ({
-        id: r.id,
-        amount: Number(r.amount),
-        appliedAt: r.applied_at instanceof Date ? r.applied_at.toISOString().slice(0, 10) : String(r.applied_at).slice(0, 10),
-        reason: r.reason,
-        appliedBy: toActor(r.first_name, r.last_name, r.role),
-        createdAt: r.created_at,
-      })),
+      lateFees: rows.map((r) => {
+        const amount = Number(r.amount);
+        const paid = paidById.get(r.id) ?? 0;
+        const remaining = amount - paid;
+        return {
+          id: r.id,
+          amount,
+          appliedAt: r.applied_at instanceof Date ? r.applied_at.toISOString().slice(0, 10) : String(r.applied_at).slice(0, 10),
+          reason: r.reason,
+          appliedBy: toActor(r.first_name, r.last_name, r.role),
+          createdAt: r.created_at,
+          paid,
+          remaining,
+          status: remaining <= 0 ? 'payee' : paid > 0 ? 'partielle' : 'impayee',
+        };
+      }),
     });
   } catch (err) {
     next(err);
+  }
+});
+
+/** Solde restant d'UNE pénalité (un bail peut en avoir plusieurs, réglées indépendamment). */
+async function getLateFeeRemaining(conn, tenantId, lateFee) {
+  const [rows] = await conn.query(
+    'SELECT COALESCE(SUM(amount), 0) AS paid FROM late_fee_payments WHERE late_fee_id = :lateFeeId AND tenant_id = :tenantId',
+    { lateFeeId: lateFee.id, tenantId },
+  );
+  return Number(lateFee.amount) - Number(rows[0].paid);
+}
+
+// POST /api/leases/:leaseId/late-fees/:lateFeeId/payments — régler (totalement ou partiellement) une
+// pénalité déjà appliquée (étape 44bis, demande directe de l'utilisateur : « revenons sur les
+// pénalités » — jusqu'ici aucun suivi de règlement n'existait, une créance appliquée restait affichée
+// indéfiniment sans qu'on puisse jamais dire si elle avait été payée). Si le module comptabilité avancée
+// est actif, génère `penalite_retard_encaissee` (solde la créance 411 déjà comptabilisée à
+// l'application, ne recrée JAMAIS le produit 707).
+router.post('/:leaseId/late-fees/:lateFeeId/payments', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  const lateFeeId = Number(req.params.lateFeeId);
+  if (!Number.isInteger(leaseId) || !Number.isInteger(lateFeeId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = createLateFeePaymentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
+    await assertPeriodOpen(req.user.tenantId, data.paidAt);
+
+    const [lateFeeRows] = await conn.query(
+      'SELECT * FROM late_fees WHERE id = :lateFeeId AND lease_id = :leaseId AND tenant_id = :tenantId LIMIT 1',
+      { lateFeeId, leaseId, tenantId: req.user.tenantId },
+    );
+    if (!lateFeeRows[0]) throw new ApiError(404, 'Pénalité introuvable');
+
+    const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id', {
+      id: lease.renter_id,
+    });
+    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
+
+    await conn.beginTransaction();
+
+    // Verrouille la pénalité : deux règlements simultanés ne doivent jamais pouvoir dépasser ensemble
+    // le solde restant (même principe que le règlement de la dette initiale ci-dessus).
+    await conn.query('SELECT id FROM late_fees WHERE id = :lateFeeId FOR UPDATE', { lateFeeId });
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'late_fee_payment', data.idempotencyKey);
+
+    const remaining = await getLateFeeRemaining(conn, req.user.tenantId, lateFeeRows[0]);
+    if (remaining <= 0) {
+      throw new ApiError(409, 'Cette pénalité est déjà intégralement réglée');
+    }
+    if (data.amount > remaining) {
+      throw new ApiError(400, `Le montant dépasse le solde restant (${remaining} FCFA)`);
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO late_fee_payments (tenant_id, late_fee_id, amount, payment_method, paid_at, notes, recorded_by)
+       VALUES (:tenantId, :lateFeeId, :amount, :method, :paidAt, :notes, :recordedBy)`,
+      {
+        tenantId: req.user.tenantId,
+        lateFeeId,
+        amount: data.amount,
+        method: data.paymentMethod,
+        paidAt: data.paidAt,
+        notes: data.notes,
+        recordedBy: req.user.id,
+      },
+    );
+    const paymentId = result.insertId;
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType: 'penalite_retard_encaissee',
+        entryDate: data.paidAt,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        narrationVars: { locataire: renterName },
+        sourceTable: 'late_fee_payments',
+        sourceId: paymentId,
+        createdBy: req.user.id,
+        context: { leaseId },
+      });
+    }
+
+    await conn.commit();
+    logger.info('Pénalité de retard réglée', { tenantId: req.user.tenantId, leaseId, lateFeeId, paymentId, amount: data.amount, by: req.user.id });
+    res.status(201).json({ paymentId, remaining: remaining - data.amount });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -905,16 +1055,19 @@ router.post(
       const zones = normalizeStoredItems(report.items);
       const found = findItem(zones, req.params.zoneKey, req.params.itemKey);
       if (!found) throw new ApiError(404, 'Élément introuvable sur cette fiche');
+      // Jusqu'à 3 photos par élément (étape 48) — on ajoute, on ne remplace
+      // plus jamais silencieusement une photo existante.
+      if (found.item.photoUrls.length >= 3) {
+        throw new ApiError(400, 'Maximum 3 photos par élément — supprimez-en une avant d’en ajouter une nouvelle.');
+      }
 
       const rel = await saveInspectionFile(req.user.tenantId, leaseId, req.file, 'photo', 'Photo');
-      const oldPath = found.item.photoUrl;
-      found.item.photoUrl = `/uploads/${rel}`;
+      found.item.photoUrls.push(`/uploads/${rel}`);
 
       await pool.query('UPDATE move_in_reports SET items = :items WHERE lease_id = :leaseId', {
         items: JSON.stringify({ zones }),
         leaseId,
       });
-      if (oldPath) await deleteInspectionFile(oldPath.replace(/^\/uploads\//, ''));
 
       const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
       res.json({ report: toPublicInspectionReport(row) });
@@ -924,9 +1077,11 @@ router.post(
   },
 );
 
-router.delete('/:leaseId/move-in-report/items/:zoneKey/:itemKey/photo', canEtatsDesLieux, async (req, res, next) => {
+router.delete('/:leaseId/move-in-report/items/:zoneKey/:itemKey/photo/:photoIndex', canEtatsDesLieux, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
+  const photoIndex = Number(req.params.photoIndex);
   if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+  if (!Number.isInteger(photoIndex) || photoIndex < 0) return next(new ApiError(400, 'Index de photo invalide'));
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
@@ -937,9 +1092,9 @@ router.delete('/:leaseId/move-in-report/items/:zoneKey/:itemKey/photo', canEtats
     const zones = normalizeStoredItems(report.items);
     const found = findItem(zones, req.params.zoneKey, req.params.itemKey);
     if (!found) throw new ApiError(404, 'Élément introuvable sur cette fiche');
+    if (photoIndex >= found.item.photoUrls.length) throw new ApiError(404, 'Photo introuvable');
 
-    const oldPath = found.item.photoUrl;
-    found.item.photoUrl = null;
+    const [oldPath] = found.item.photoUrls.splice(photoIndex, 1);
     await pool.query('UPDATE move_in_reports SET items = :items WHERE lease_id = :leaseId', {
       items: JSON.stringify({ zones }),
       leaseId,
@@ -986,13 +1141,21 @@ router.post(
 
       const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
       const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
+      // Réserves du locataire (étape 48) — notées par l'agent à l'oral au
+      // moment de la signature, si le locataire n'est pas d'accord sur un
+      // point précis ; jamais un accès en écriture du locataire lui-même.
+      const tenantReserves =
+        typeof req.body?.tenantReserves === 'string' && req.body.tenantReserves.trim()
+          ? req.body.tenantReserves.trim().slice(0, 2000)
+          : null;
 
       await pool.query(
         `UPDATE move_in_reports
          SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
-             tenant_signature_path = :tenantSig, agent_signature_path = :agentSig
+             tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
+             tenant_reserves = :tenantReserves
          WHERE lease_id = :leaseId`,
-        { by: req.user.id, tenantSig: tenantSignaturePath, agentSig: agentSignaturePath, leaseId },
+        { by: req.user.id, tenantSig: tenantSignaturePath, agentSig: agentSignaturePath, tenantReserves, leaseId },
       );
 
       logger.info('État des lieux d’entrée finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
@@ -1003,6 +1166,85 @@ router.post(
     }
   },
 );
+
+// POST /api/leases/:leaseId/move-in-report/reopen — DG uniquement, motif
+// obligatoire : rouvre une fiche finalisée pour corriger une erreur de
+// saisie. Invalide les deux signatures existantes (il faudra resigner avant
+// de refinaliser) — une signature engage sur un contenu précis, jamais sur
+// un contenu qui pourrait changer sans qu'elle le sache.
+router.post('/:leaseId/move-in-report/reopen', canReopenInspection, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = reopenInspectionReportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    await loadLease(pool, req.user.tenantId, leaseId, null);
+    const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    assertFinalized(report, 'état des lieux d’entrée');
+
+    await pool.query(
+      `UPDATE move_in_reports
+       SET status = 'draft', finalized_at = NULL, finalized_by = NULL,
+           tenant_signature_path = NULL, agent_signature_path = NULL,
+           reopened_at = NOW(), reopened_by = :by, reopen_reason = :reason
+       WHERE lease_id = :leaseId`,
+      { by: req.user.id, reason: parsed.data.reason, leaseId },
+    );
+    await deleteInspectionFile(report.tenant_signature_path);
+    await deleteInspectionFile(report.agent_signature_path);
+
+    logger.info('État des lieux d’entrée rouvert pour correction', {
+      tenantId: req.user.tenantId,
+      leaseId,
+      by: req.user.id,
+      reason: parsed.data.reason,
+    });
+    const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    res.json({ report: toPublicInspectionReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/leases/:leaseId/move-in-report.pdf — export PDF de l'état des
+// lieux d'entrée finalisé (n'existait pas avant l'étape 48 — seule la sortie
+// s'exportait, alors que le locataire signe les deux).
+router.get('/:leaseId/move-in-report.pdf', canEtatsDesLieux, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    if (!row) throw new ApiError(404, "Aucun état des lieux d'entrée pour ce bail");
+    if (row.status !== 'finalized') {
+      throw new ApiError(400, 'Cette fiche doit être finalisée (signée) avant de générer le PDF.');
+    }
+
+    const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: lease.renter_id });
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+    // Code de vérification (étape 29) — récupéré, jamais un téléchargement
+    // compté ici : côté personnel, les téléchargements restent illimités par
+    // conception (seul le portail public plafonne).
+    const issuance = await getOrCreateIssuance(req.user.tenantId, 'etat_lieux_entree', leaseId);
+
+    streamMoveInPdf(res, {
+      tenant: tenantRows[0],
+      renter: renterRows[0],
+      property: lease,
+      lease,
+      report: toPublicInspectionReport(row),
+      verificationCode: issuance.verification_code,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /api/leases/:leaseId/move-out-report — état des lieux de sortie (le cas
 // échéant) + arriérés en cours (contexte pour aider à chiffrer les retenues).
@@ -1032,7 +1274,8 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
       });
     }
 
-    res.json({ report: toPublicMoveOutReport(row), arrears });
+    const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId);
+    res.json({ report: toPublicMoveOutReport(row), arrears, additionalDeposits });
   } catch (err) {
     next(err);
   }
@@ -1117,6 +1360,7 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
       `UPDATE move_out_reports
        SET items = :items, general_notes = :notes,
            other_deductions_amount = :otherAmount, other_deductions_note = :otherNote,
+           peinture_deduction_amount = :peintureAmount, peinture_deduction_note = :peintureNote,
            total_deductions = :totalDeductions, net_refund = :netRefund
            ${data.conductedAt ? ', conducted_at = :conductedAt' : ''}
        WHERE lease_id = :leaseId`,
@@ -1125,6 +1369,8 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
         notes: data.generalNotes,
         otherAmount: data.otherDeductionsAmount,
         otherNote: data.otherDeductionsNote,
+        peintureAmount: data.peintureDeductionAmount,
+        peintureNote: data.peintureDeductionNote,
         totalDeductions,
         netRefund,
         conductedAt: data.conductedAt,
@@ -1133,7 +1379,8 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
     );
 
     const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
-    res.json({ report: toPublicMoveOutReport(row) });
+    const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId);
+    res.json({ report: toPublicMoveOutReport(row), additionalDeposits });
   } catch (err) {
     next(err);
   }
@@ -1158,16 +1405,17 @@ router.post(
       const zones = normalizeStoredItems(report.items);
       const found = findItem(zones, req.params.zoneKey, req.params.itemKey);
       if (!found) throw new ApiError(404, 'Élément introuvable sur cette fiche');
+      if (found.item.photoUrls.length >= 3) {
+        throw new ApiError(400, 'Maximum 3 photos par élément — supprimez-en une avant d’en ajouter une nouvelle.');
+      }
 
       const rel = await saveInspectionFile(req.user.tenantId, leaseId, req.file, 'photo', 'Photo');
-      const oldPath = found.item.photoUrl;
-      found.item.photoUrl = `/uploads/${rel}`;
+      found.item.photoUrls.push(`/uploads/${rel}`);
 
       await pool.query('UPDATE move_out_reports SET items = :items WHERE lease_id = :leaseId', {
         items: JSON.stringify({ zones }),
         leaseId,
       });
-      if (oldPath) await deleteInspectionFile(oldPath.replace(/^\/uploads\//, ''));
 
       const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
       res.json({ report: toPublicMoveOutReport(row) });
@@ -1177,9 +1425,11 @@ router.post(
   },
 );
 
-router.delete('/:leaseId/move-out-report/items/:zoneKey/:itemKey/photo', canEtatsDesLieux, async (req, res, next) => {
+router.delete('/:leaseId/move-out-report/items/:zoneKey/:itemKey/photo/:photoIndex', canEtatsDesLieux, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
+  const photoIndex = Number(req.params.photoIndex);
   if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+  if (!Number.isInteger(photoIndex) || photoIndex < 0) return next(new ApiError(400, 'Index de photo invalide'));
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
@@ -1190,9 +1440,9 @@ router.delete('/:leaseId/move-out-report/items/:zoneKey/:itemKey/photo', canEtat
     const zones = normalizeStoredItems(report.items);
     const found = findItem(zones, req.params.zoneKey, req.params.itemKey);
     if (!found) throw new ApiError(404, 'Élément introuvable sur cette fiche');
+    if (photoIndex >= found.item.photoUrls.length) throw new ApiError(404, 'Photo introuvable');
 
-    const oldPath = found.item.photoUrl;
-    found.item.photoUrl = null;
+    const [oldPath] = found.item.photoUrls.splice(photoIndex, 1);
     await pool.query('UPDATE move_out_reports SET items = :items WHERE lease_id = :leaseId', {
       items: JSON.stringify({ zones }),
       leaseId,
@@ -1233,7 +1483,12 @@ router.post(
       const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
       const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
       assertDraft(report, 'état des lieux de sortie');
-      if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
+      // Une fiche déjà rouverte une fois (étape 48, correction DG) a déjà
+      // terminé le bail et libéré l'unité lors de sa PREMIÈRE finalisation —
+      // on ne rejoue jamais ces effets de bord une seconde fois, seul le
+      // contenu de la fiche (grille, retenues, signatures) est corrigé.
+      const isCorrection = !!report.reopened_at;
+      if (!isCorrection && lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
 
       const zones = normalizeStoredItems(report.items);
       const missing = getMissingConditionLabels(zones);
@@ -1241,8 +1496,28 @@ router.post(
         throw new ApiError(400, `État manquant pour : ${missing.join(', ')}`);
       }
 
+      const REFUND_METHODS = ['especes', 'mobile_money', 'virement', 'cheque'];
+      const readRefundMethod = (field) => (REFUND_METHODS.includes(req.body?.[field]) ? req.body[field] : undefined);
+
+      // Cautions supplémentaires (étape 43) — vérifié TÔT (avant l'écriture des fichiers de signature
+      // sur disque ci-dessous), même principe que le mode de règlement de la caution de loyer plus bas :
+      // un mode manquant ne doit jamais laisser des fichiers orphelins ou un état à moitié traité.
+      // `peintureOverflow` (dépassement de la retenue peinture au-delà de SA PROPRE caution) s'ajoute
+      // aux retenues de la caution de LOYER (décision explicite de l'utilisateur, étape 43).
+      const additionalDepositRefundMethods = {
+        sbee: readRefundMethod('refundMethodSbee'),
+        soneb: readRefundMethod('refundMethodSoneb'),
+        peinture: readRefundMethod('refundMethodPeinture'),
+      };
+      const { peintureOverflow } = await checkAdditionalDepositRefunds(conn, {
+        tenantId: req.user.tenantId,
+        leaseId,
+        peintureDeductionAmount: Number(report.peinture_deduction_amount),
+        refundMethods: additionalDepositRefundMethods,
+      });
+
       const itemsDeductions = sumDeductions(zones);
-      const totalDeductions = itemsDeductions + Number(report.other_deductions_amount);
+      const totalDeductions = itemsDeductions + Number(report.other_deductions_amount) + peintureOverflow;
       const depositAmount = Number(report.deposit_amount);
       const netRefund = Math.max(0, depositAmount - totalDeductions);
 
@@ -1252,13 +1527,22 @@ router.post(
       // mouvement de trésorerie). Voir routes/renters.js `recordDepositReceived`
       // pour la réception — même principe, symétrique.
       const refundPaymentMethod = typeof req.body?.refundPaymentMethod === 'string' ? req.body.refundPaymentMethod : '';
-      const REFUND_METHODS = ['especes', 'mobile_money', 'virement', 'cheque'];
       if (netRefund > 0 && !REFUND_METHODS.includes(refundPaymentMethod)) {
         throw new ApiError(400, 'Mode de règlement requis pour la restitution de la caution');
       }
 
       const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
       const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
+      const tenantReserves =
+        typeof req.body?.tenantReserves === 'string' && req.body.tenantReserves.trim()
+          ? req.body.tenantReserves.trim().slice(0, 2000)
+          : null;
+
+      const [renterRows] = await conn.query(
+        'SELECT r.first_name, r.last_name FROM leases l JOIN renters r ON r.id = l.renter_id WHERE l.id = :leaseId LIMIT 1',
+        { leaseId },
+      );
+      const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
 
       await conn.beginTransaction();
 
@@ -1266,38 +1550,57 @@ router.post(
         `UPDATE move_out_reports
          SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
              tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
-             total_deductions = :totalDeductions, net_refund = :netRefund, refund_payment_method = :refundMethod
+             tenant_reserves = :tenantReserves,
+             total_deductions = :totalDeductions, net_refund = :netRefund, refund_payment_method = :refundMethod,
+             gl_regularized_at = NULL, gl_regularized_by = NULL
          WHERE lease_id = :leaseId`,
         {
           by: req.user.id,
           tenantSig: tenantSignaturePath,
           agentSig: agentSignaturePath,
+          tenantReserves,
           totalDeductions,
           netRefund,
           refundMethod: netRefund > 0 ? refundPaymentMethod : null,
           leaseId,
         },
       );
-      await conn.query(
-        "UPDATE leases SET status = 'ended', end_date = :endDate, deposit_status = 'returned' WHERE id = :id",
-        { endDate: report.conducted_at, id: leaseId },
-      );
-      await conn.query("UPDATE property_units SET status = 'libre' WHERE id = :id", { id: lease.unit_id });
+
+      let finalizedAdditionalDeposits;
+      if (!isCorrection) {
+        await conn.query(
+          "UPDATE leases SET status = 'ended', end_date = :endDate, deposit_status = 'returned' WHERE id = :id",
+          { endDate: report.conducted_at, id: leaseId },
+        );
+        await conn.query("UPDATE property_units SET status = 'libre' WHERE id = :id", { id: lease.unit_id });
+
+        // Cautions supplémentaires (étape 43) — décompte de sortie (SBEE/SONEB règlent le solde impayé
+        // réel, peinture applique la retenue saisie) DANS la même transaction que la sortie elle-même.
+        // Jamais rejoué sur une correction (`isCorrection`) : déjà réglé à la première finalisation.
+        await finalizeAdditionalDeposits(conn, {
+          tenantId: req.user.tenantId,
+          leaseId,
+          moveOutDate: report.conducted_at,
+          peintureDeductionAmount: Number(report.peinture_deduction_amount),
+          peintureDeductionNote: report.peinture_deduction_note,
+          refundMethods: additionalDepositRefundMethods,
+          renterName,
+          createdBy: req.user.id,
+        });
+      }
+      finalizedAdditionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId, conn);
 
       // Module comptabilité SYSCOHADA (nouveau) — restitution SIMPLE
       // uniquement (aucune retenue) : le sort comptable d'une retenue sur
       // caution (produit du cabinet ? compensation pour le propriétaire ?)
       // est un choix de jugement comptable non tranché (voir seed, règle
-      // `caution_restituee`) — jamais inventé ici. Avec retenue, la
-      // caution reste "à régulariser manuellement" (signalé dans la réponse).
+      // `caution_restituee`) — jamais inventé ici. Avec retenue, la caution
+      // reste "à régulariser manuellement" — désormais aussi signalée
+      // durablement dans « Mes tâches » (routes/tasks.js) tant que personne
+      // ne l'a marquée réglée, pas seulement dans cette réponse ponctuelle.
       let depositAccountingNote = null;
       if (await isModuleActive(conn, req.user.tenantId)) {
         if (totalDeductions === 0 && netRefund > 0) {
-          const [renterRows] = await conn.query(
-            'SELECT r.first_name, r.last_name FROM leases l JOIN renters r ON r.id = l.renter_id WHERE l.id = :leaseId LIMIT 1',
-            { leaseId },
-          );
-          const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
           await genererEcriture(conn, {
             tenantId: req.user.tenantId,
             operationType: 'caution_restituee',
@@ -1312,7 +1615,7 @@ router.post(
           });
         } else if (depositAmount > 0) {
           depositAccountingNote =
-            'Caution avec retenue : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d\'une retenue sur caution n\'est pas encore automatisé).';
+            'Caution avec retenue : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d\'une retenue sur caution n\'est pas encore automatisé). Ce rappel reste visible dans « Mes tâches » jusqu\'à ce qu\'il soit marqué réglé.';
         }
       }
 
@@ -1326,7 +1629,7 @@ router.post(
         by: req.user.id,
       });
       const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
-      res.json({ report: toPublicMoveOutReport(row), depositAccountingNote });
+      res.json({ report: toPublicMoveOutReport(row), depositAccountingNote, additionalDeposits: finalizedAdditionalDeposits });
     } catch (err) {
       await conn.rollback().catch(() => {});
       next(err);
@@ -1335,6 +1638,110 @@ router.post(
     }
   },
 );
+
+// POST /api/leases/:leaseId/move-out-report/reopen — DG uniquement, motif
+// obligatoire. Contrairement à l'entrée, la sortie a des effets de bord
+// déjà survenus (bail terminé, unité libérée, cautions supplémentaires
+// réglées) : la réouverture NE LES DÉFAIT PAS (ce sont des faits, pas des
+// erreurs de saisie) — seul le CONTENU de la fiche (grille, retenues,
+// signatures) redevient modifiable. Si une écriture "caution restituée"
+// avait été postée automatiquement, elle est extournée (jamais modifiée ni
+// supprimée directement) : la refinalisation en postera une nouvelle si le
+// nouveau calcul le justifie encore.
+router.post('/:leaseId/move-out-report/reopen', canReopenInspection, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = reopenInspectionReportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await loadLease(conn, req.user.tenantId, leaseId, null);
+    const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
+    assertFinalized(report, 'état des lieux de sortie');
+
+    await conn.beginTransaction();
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      const [[entry]] = await conn.query(
+        `SELECT id FROM gl_entries
+         WHERE tenant_id = :tenantId AND source_table = 'move_out_reports' AND source_id = :reportId AND status = 'validee'
+         LIMIT 1`,
+        { tenantId: req.user.tenantId, reportId: report.id },
+      );
+      if (entry) {
+        await extourneEcriture(conn, {
+          tenantId: req.user.tenantId,
+          entryId: entry.id,
+          entryDate: new Date().toISOString().slice(0, 10),
+          userId: req.user.id,
+          reason: `État des lieux de sortie rouvert pour correction : ${parsed.data.reason}`,
+        });
+      }
+    }
+
+    await conn.query(
+      `UPDATE move_out_reports
+       SET status = 'draft', finalized_at = NULL, finalized_by = NULL,
+           tenant_signature_path = NULL, agent_signature_path = NULL,
+           reopened_at = NOW(), reopened_by = :by, reopen_reason = :reason
+       WHERE lease_id = :leaseId`,
+      { by: req.user.id, reason: parsed.data.reason, leaseId },
+    );
+
+    await conn.commit();
+    await deleteInspectionFile(report.tenant_signature_path);
+    await deleteInspectionFile(report.agent_signature_path);
+
+    logger.info('État des lieux de sortie rouvert pour correction', {
+      tenantId: req.user.tenantId,
+      leaseId,
+      by: req.user.id,
+      reason: parsed.data.reason,
+    });
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId);
+    res.json({ report: toPublicMoveOutReport(row), additionalDeposits });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// POST /api/leases/:leaseId/move-out-report/gl-regularized — marque comme
+// réglée (à la main, dans Comptabilité → Journal → Écriture diverse) une
+// restitution de caution avec retenue, jamais comptabilisée automatiquement
+// (voir la finalisation ci-dessus). Fait disparaître le rappel de « Mes
+// tâches » (routes/tasks.js) — sans quoi il resterait affiché indéfiniment.
+router.post('/:leaseId/move-out-report/gl-regularized', canRegularizeGl, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    assertFinalized(report, 'état des lieux de sortie');
+    if (Number(report.total_deductions) <= 0) {
+      throw new ApiError(400, 'Cette sortie ne nécessite aucune régularisation manuelle.');
+    }
+
+    await pool.query(
+      `UPDATE move_out_reports SET gl_regularized_at = NOW(), gl_regularized_by = :by WHERE lease_id = :leaseId`,
+      { by: req.user.id, leaseId },
+    );
+
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    res.json({ report: toPublicMoveOutReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /api/leases/:leaseId/move-out-report.pdf — PV de sortie & décompte de caution.
 router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, next) => {
@@ -1362,6 +1769,8 @@ router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, n
     // par zones), le PV affiche simplement l'état de sortie, sans comparaison.
     const moveInRow = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
     const moveInZones = moveInRow ? normalizeStoredItems(moveInRow.items) : [];
+    const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId);
+    const issuance = await getOrCreateIssuance(req.user.tenantId, 'etat_lieux_sortie', leaseId);
 
     streamMoveOutPdf(res, {
       tenant: tenantRows[0],
@@ -1370,6 +1779,182 @@ router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, n
       lease,
       report: toPublicMoveOutReport(row),
       moveInZones,
+      additionalDeposits,
+      verificationCode: issuance.verification_code,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/leases/:leaseId/contract — contrat de bail (le cas échéant) + aperçu LIVE des données du
+// bail (toujours à jour tant qu'il n'est pas finalisé — voir services/leaseContract.js).
+router.get('/:leaseId/contract', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const row = await loadContractRow(req.user.tenantId, leaseId);
+    const preview = await buildContractData(req.user.tenantId, leaseId, {
+      particularConditions: row?.particular_conditions ?? null,
+    });
+    res.json({ contract: toPublicContract(row), preview });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/contract — démarre le BROUILLON du contrat (une fois par bail) ; les
+// articles n'ont rien à saisir (calculés depuis le bail), seules les conditions particulières le sont.
+router.post('/:leaseId/contract', canLocataires, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+
+    const [existing] = await pool.query('SELECT id FROM lease_contracts WHERE lease_id = :leaseId LIMIT 1', {
+      leaseId,
+    });
+    if (existing[0]) throw new ApiError(409, 'Un contrat existe déjà pour ce bail');
+
+    await pool.query(
+      `INSERT INTO lease_contracts (tenant_id, lease_id, status, created_by) VALUES (:tenantId, :leaseId, 'draft', :by)`,
+      { tenantId: req.user.tenantId, leaseId, by: req.user.id },
+    );
+
+    logger.info('Contrat de bail démarré (brouillon)', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+    const row = await loadContractRow(req.user.tenantId, leaseId);
+    const preview = await buildContractData(req.user.tenantId, leaseId, { particularConditions: null });
+    res.status(201).json({ contract: toPublicContract(row), preview });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/leases/:leaseId/contract — enregistre les conditions particulières (seul champ
+// personnalisable). Refusé une fois finalisé.
+router.patch('/:leaseId/contract', canLocataires, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = updateContractSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const contract = await loadContractRow(req.user.tenantId, leaseId);
+    assertDraft(contract, 'contrat de bail');
+
+    await pool.query('UPDATE lease_contracts SET particular_conditions = :text WHERE lease_id = :leaseId', {
+      text: parsed.data.particularConditions,
+      leaseId,
+    });
+
+    const row = await loadContractRow(req.user.tenantId, leaseId);
+    const preview = await buildContractData(req.user.tenantId, leaseId, {
+      particularConditions: row.particular_conditions,
+    });
+    res.json({ contract: toPublicContract(row), preview });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/contract/finalize — verrouille le contrat (signatures des deux parties) ;
+// fige les données du bail dans `snapshot` — un contrat déjà signé ne change plus jamais de contenu,
+// même si le bail est modifié ensuite (voir migration 070).
+router.post(
+  '/:leaseId/contract/finalize',
+  canLocataires,
+  signaturesUpload.fields([
+    { name: 'tenantSignature', maxCount: 1 },
+    { name: 'agentSignature', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    const leaseId = Number(req.params.leaseId);
+    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+    const tenantSignatureFile = req.files?.tenantSignature?.[0];
+    const agentSignatureFile = req.files?.agentSignature?.[0];
+    if (!tenantSignatureFile || !agentSignatureFile) {
+      return next(new ApiError(400, 'Signature du locataire et de l’agent requises'));
+    }
+
+    try {
+      const scopeAgentId = await resolvePropertyScope(req.user);
+      await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+      const contract = await loadContractRow(req.user.tenantId, leaseId);
+      assertDraft(contract, 'contrat de bail');
+
+      const snapshot = await buildContractData(req.user.tenantId, leaseId, {
+        particularConditions: contract.particular_conditions,
+      });
+
+      const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
+      const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
+
+      await pool.query(
+        `UPDATE lease_contracts
+         SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
+             tenant_signature_path = :tenantSig, agent_signature_path = :agentSig, snapshot = :snapshot
+         WHERE lease_id = :leaseId`,
+        {
+          by: req.user.id,
+          tenantSig: tenantSignaturePath,
+          agentSig: agentSignaturePath,
+          snapshot: JSON.stringify(snapshot),
+          leaseId,
+        },
+      );
+
+      logger.info('Contrat de bail finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+      const row = await loadContractRow(req.user.tenantId, leaseId);
+      res.json({ contract: toPublicContract(row), preview: snapshot });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /api/leases/:leaseId/contract.pdf — brouillon (aperçu LIVE, jamais signé) ou contrat finalisé
+// (données figées à la signature) — jamais de limite de téléchargement côté employé (par conception).
+router.get('/:leaseId/contract.pdf', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const contract = await loadContractRow(req.user.tenantId, leaseId);
+    if (!contract) throw new ApiError(404, 'Aucun contrat pour ce bail');
+
+    const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+    const [[dg]] = await pool.query(
+      "SELECT first_name, last_name, role, stamp_path, signature_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
+      { tenantId: req.user.tenantId },
+    );
+
+    // `snapshot` est une colonne JSON — le pilote mysql2 la relit déjà comme un objet JS natif, jamais
+    // une chaîne à parser (contrairement à un champ TEXT contenant du JSON) : `JSON.parse` planterait ici
+    // ("[object Object]" n'est pas un JSON valide).
+    const data =
+      contract.status === 'finalized'
+        ? contract.snapshot
+        : await buildContractData(req.user.tenantId, leaseId, { particularConditions: contract.particular_conditions });
+
+    streamLeaseContractPdf(res, {
+      tenant,
+      data,
+      contract: toPublicContract(contract),
+      issuer: dg || { first_name: tenant?.company_name ?? 'Le cabinet', last_name: '' },
+      leaseId: lease.id,
     });
   } catch (err) {
     next(err);

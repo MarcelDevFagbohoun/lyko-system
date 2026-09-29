@@ -10,9 +10,11 @@ import {
   AlertTriangle,
   Droplets,
   Scale,
+  PiggyBank,
   MessageCircleWarning,
   History,
   ArrowRight,
+  ClipboardCheck,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
@@ -116,6 +118,16 @@ function TableauDeBordContent() {
               tone={overview.propertiesCount > 0 ? "success" : "default"}
               trend={{ value: `${overview.ownersCount} propriétaire(s)`, direction: "flat" }}
             />
+            <StatCard
+              label="États des lieux en brouillon"
+              icon={<ClipboardCheck size={16} />}
+              value={overview.inspections.draftMoveInCount + overview.inspections.draftMoveOutCount}
+              tone={overview.inspections.draftMoveInCount + overview.inspections.draftMoveOutCount > 0 ? "warning" : "success"}
+              trend={{
+                value: `${overview.inspections.draftMoveInCount} entrée(s) · ${overview.inspections.draftMoveOutCount} sortie(s) · ${overview.inspections.moveOutsThisMonthCount} sortie(s) ce mois`,
+                direction: "flat",
+              }}
+            />
 
             {money && (
               <>
@@ -153,6 +165,18 @@ function TableauDeBordContent() {
                   tone={money.totals.netCashFlow >= 0 ? "success" : "danger"}
                   trend={{ value: "Encaissé, moins reversé et dépenses", direction: money.totals.netCashFlow >= 0 ? "up" : "down" }}
                 />
+                {money.cabinetRevenue && (
+                  <StatCard
+                    label="Recette nette du cabinet (mois)"
+                    icon={<PiggyBank size={16} />}
+                    value={formatFcfa(money.cabinetRevenue.netCabinetIncome)}
+                    tone={money.cabinetRevenue.netCabinetIncome >= 0 ? "success" : "danger"}
+                    trend={{
+                      value: `Commission ${formatFcfa(money.cabinetRevenue.breakdown.commission)} + frais d'agence ${formatFcfa(money.cabinetRevenue.breakdown.entryFees)} + pénalités ${formatFcfa(money.cabinetRevenue.breakdown.lateFees)} − dépenses ${formatFcfa(money.cabinetRevenue.breakdown.expenses)}`,
+                      direction: money.cabinetRevenue.netCabinetIncome >= 0 ? "up" : "down",
+                    }}
+                  />
+                )}
               </>
             )}
           </div>
@@ -213,6 +237,43 @@ function TableauDeBordContent() {
               </Link>
             </CardContent>
           </Card>
+
+          {overview && overview.inspections.pendingDepositRegularizations.length > 0 && (
+            <Card tone={CADRES.finances.tone} className="border-l-4 border-l-warning-strong">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-warning text-white">
+                      <PiggyBank size={14} />
+                    </span>
+                    <CardTitle>Cautions à régulariser</CardTitle>
+                  </div>
+                  <Badge variant="warning">{overview.inspections.pendingDepositRegularizations.length}</Badge>
+                </div>
+                <CardDescription>
+                  Sorties avec retenue sur caution, jamais comptabilisées (le sort comptable d&apos;une retenue
+                  n&apos;est pas automatisé).
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {overview.inspections.pendingDepositRegularizations.map((d) => (
+                  <Link
+                    key={d.leaseId}
+                    href={`/espace/locataires/${d.renterId}/sortie?leaseId=${d.leaseId}`}
+                    className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 hover:bg-surface-hover"
+                  >
+                    <div>
+                      <p className="font-label-md text-ink">{d.renterName}</p>
+                      <p className="text-body-xs text-ink-muted">
+                        Sortie finalisée le {new Date(d.finalizedAt).toLocaleDateString("fr-FR")}
+                      </p>
+                    </div>
+                    <span className="tabular text-body-sm text-danger-fg">{formatFcfa(d.totalDeductions)}</span>
+                  </Link>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

@@ -96,6 +96,8 @@ function toPublicUser(user, { permissions = [], mustChangePassword } = {}) {
     // dans Réglages (DG uniquement).
     stampUrl: user.stamp_path ? `/uploads/${user.stamp_path}` : null,
     signatureUrl: user.signature_path ? `/uploads/${user.signature_path}` : null,
+    // Photo de profil — purement visuelle dans l'app, jamais sur un document PDF.
+    avatarUrl: user.avatar_path ? `/uploads/${user.avatar_path}` : null,
   };
 }
 
@@ -121,6 +123,14 @@ function toPublicTenant(tenant) {
     // dans Paramètres, mais doit être lisible par TOUT employé qui crée un
     // bail (contrairement à `/api/settings`, réservé au DG).
     defaultRentTiming: tenant.default_rent_timing,
+    // Prorata d'entrée par défaut (étape 42) — même raisonnement que `defaultRentTiming` ci-dessus :
+    // lisible par tout employé qui crée un bail, réglable par le DG dans Paramètres.
+    defaultEntryProration: tenant.default_entry_proration,
+    // Cautions supplémentaires activées (étape 43) — même raisonnement : le formulaire de création de
+    // bail (tout employé) doit savoir lesquelles proposer, réglable par le DG dans Paramètres.
+    depositSbeeEnabled: !!tenant.deposit_sbee_enabled,
+    depositSonebEnabled: !!tenant.deposit_soneb_enabled,
+    depositPeintureEnabled: !!tenant.deposit_peinture_enabled,
   };
 }
 
@@ -144,6 +154,10 @@ async function respondWithSession(res, row) {
       agent_title: row.agent_title,
       kkiapay_enabled: row.kkiapay_enabled,
       default_rent_timing: row.default_rent_timing,
+      default_entry_proration: row.default_entry_proration,
+      deposit_sbee_enabled: row.deposit_sbee_enabled,
+      deposit_soneb_enabled: row.deposit_soneb_enabled,
+      deposit_peinture_enabled: row.deposit_peinture_enabled,
     }),
     accessToken,
   });
@@ -222,6 +236,10 @@ router.post('/register', registerLimiter, upload.single('logo'), async (req, res
       contact_phone: data.phone,
       logo_path: logoPath,
       default_rent_timing: 'avance', // valeur par défaut de la colonne, entreprise juste créée
+      default_entry_proration: 'aucun', // valeur par défaut de la colonne, entreprise juste créée
+      deposit_sbee_enabled: 0, // valeur par défaut de la colonne, entreprise juste créée
+      deposit_soneb_enabled: 0,
+      deposit_peinture_enabled: 0,
     };
 
     const { accessToken, refreshToken } = await issueSession(user);
@@ -251,7 +269,8 @@ router.post('/login', loginLimiter, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
+              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.phone = :phone LIMIT 1`,
       { phone },
@@ -294,7 +313,8 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
+              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.identifier = :identifier LIMIT 1`,
       { identifier },
@@ -391,7 +411,8 @@ router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
+              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = :id LIMIT 1`,
       { id: req.user.id },
@@ -412,6 +433,10 @@ router.get('/me', requireAuth, async (req, res, next) => {
         comptable_title: row.comptable_title,
         agent_title: row.agent_title,
         default_rent_timing: row.default_rent_timing,
+        default_entry_proration: row.default_entry_proration,
+        deposit_sbee_enabled: row.deposit_sbee_enabled,
+        deposit_soneb_enabled: row.deposit_soneb_enabled,
+        deposit_peinture_enabled: row.deposit_peinture_enabled,
       }),
     });
   } catch (err) {
@@ -450,22 +475,26 @@ router.post('/change-password', requireAuth, changePasswordLimiter, async (req, 
   }
 });
 
-// PATCH /api/auth/my-signature — cachet/signature personnels (n'importe quel
-// employé, pas seulement le DG : c'est celui qui encaisse un loyer qui doit
-// pouvoir y apposer les siens — voir services/pdf.js `streamReceiptPdf`).
-// À défaut, la quittance retombe sur le cachet/signature de l'entreprise.
+// PATCH /api/auth/my-profile — photo de profil, cachet et signature
+// personnels (n'importe quel employé, pas seulement le DG : c'est celui qui
+// encaisse un loyer qui doit pouvoir apposer son propre cachet/signature —
+// voir services/pdf.js `streamReceiptPdf`). À défaut, la quittance retombe
+// sur le cachet/signature de l'entreprise. La photo, elle, est purement
+// visuelle dans l'app — jamais sur un document PDF.
 router.patch(
-  '/my-signature',
+  '/my-profile',
   requireAuth,
   upload.fields([
+    { name: 'avatar', maxCount: 1 },
     { name: 'stamp', maxCount: 1 },
     { name: 'signature', maxCount: 1 },
   ]),
   async (req, res, next) => {
     try {
+      const avatarFile = req.files?.avatar?.[0];
       const stampFile = req.files?.stamp?.[0];
       const signatureFile = req.files?.signature?.[0];
-      if (!stampFile && !signatureFile) {
+      if (!avatarFile && !stampFile && !signatureFile) {
         throw new ApiError(400, 'Aucun fichier reçu');
       }
 
@@ -473,12 +502,20 @@ router.patch(
       const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}/employees/${req.user.id}`);
       await fs.mkdir(dir, { recursive: true });
       const [[current]] = await pool.query(
-        'SELECT stamp_path, signature_path FROM users WHERE id = :id LIMIT 1',
+        'SELECT avatar_path, stamp_path, signature_path FROM users WHERE id = :id LIMIT 1',
         { id: req.user.id },
       );
 
       const fields = [];
       const params = { id: req.user.id };
+      if (avatarFile) {
+        if (current?.avatar_path) oldPaths.push(current.avatar_path);
+        const ext = assertUploadType(avatarFile, { label: 'Photo de profil' });
+        const rel = `tenants/${req.user.tenantId}/employees/${req.user.id}/${randomFileName('avatar', ext)}`;
+        await fs.writeFile(path.join(UPLOADS_ROOT, rel), avatarFile.buffer);
+        fields.push('avatar_path = :avatarPath');
+        params.avatarPath = rel;
+      }
       if (stampFile) {
         if (current?.stamp_path) oldPaths.push(current.stamp_path);
         const ext = assertUploadType(stampFile, { label: 'Cachet' });
@@ -500,7 +537,7 @@ router.patch(
       await Promise.all(oldPaths.map((rel) => fs.unlink(path.join(UPLOADS_ROOT, rel)).catch(() => {})));
 
       const [rows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', { id: req.user.id });
-      logger.info('Cachet/signature personnels mis à jour', { tenantId: req.user.tenantId, userId: req.user.id });
+      logger.info('Profil personnel mis à jour (photo/cachet/signature)', { tenantId: req.user.tenantId, userId: req.user.id });
       res.json({ user: toPublicUser(rows[0]) });
     } catch (err) {
       next(err);

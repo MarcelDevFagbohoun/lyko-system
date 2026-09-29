@@ -84,6 +84,23 @@ const config = {
   // le serveur qui protège la base, pas une entreprise qui protège les
   // autres.
   secretsEncryptionKey: secret('SECRETS_ENCRYPTION_KEY'),
+
+  // Assistant IA (Claude) — voir services/assistant/. La clé API n'est jamais
+  // obligatoire : sans elle, l'assistant se déclare simplement « non configuré »
+  // et le reste de la plateforme fonctionne à l'identique. Jamais loggée, jamais
+  // renvoyée au front. Modèle réglable sans toucher au code (décision produit :
+  // Claude Sonnet 5 au départ).
+  ai: {
+    apiKey: process.env.ANTHROPIC_API_KEY || '',
+    model: process.env.AI_MODEL || 'claude-sonnet-5',
+    // low | medium | high | xhigh | max — profondeur de réflexion (et donc coût/latence).
+    effort: process.env.AI_EFFORT || 'low',
+    maxTokens: int('AI_MAX_TOKENS', 2048),
+    // Nombre de messages précédents renvoyés au modèle à chaque tour (l'API est sans mémoire).
+    historyMessages: int('AI_HISTORY_MESSAGES', 12),
+    // Conversations conservées au plus ce nombre de jours (purge opportuniste).
+    retentionDays: int('AI_RETENTION_DAYS', 90),
+  },
 };
 
 module.exports = config;

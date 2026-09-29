@@ -2,14 +2,9 @@ import { apiFetch } from "./client";
 import type { RoleTitles } from "@/lib/auth/auth-context";
 import type { RentTiming } from "./renters";
 
-export type ContractPlaceholder = { key: string; label: string };
-
 export type RoleTitlePresets = { dg: string[]; comptable: string[]; agent: string[] };
 
 export type TenantSettings = {
-  contractTemplate: string | null;
-  defaultContractTemplate: string;
-  placeholders: ContractPlaceholder[];
   stampUrl: string | null;
   signatureUrl: string | null;
   roleTitles: RoleTitles;
@@ -21,6 +16,12 @@ export type TenantSettings = {
   kkiapayConfigured: boolean;
   /** Pré-remplit la convention de paiement du loyer de chaque nouveau bail. */
   defaultRentTiming: RentTiming;
+  /** Pré-remplit le choix de prorata d'entrée de chaque nouveau bail (étape 42). */
+  defaultEntryProration: "aucun" | "prorata";
+  /** Cautions supplémentaires activées par cette entreprise (étape 43) — désactivées par défaut. */
+  depositSbeeEnabled: boolean;
+  depositSonebEnabled: boolean;
+  depositPeintureEnabled: boolean;
 };
 
 export function getSettings(accessToken: string) {
@@ -30,7 +31,6 @@ export function getSettings(accessToken: string) {
 export function updateSettings(
   accessToken: string,
   input: {
-    contractTemplate?: string;
     stamp?: File;
     signature?: File;
     dgTitle?: string;
@@ -42,10 +42,13 @@ export function updateSettings(
     kkiapayPrivateKey?: string;
     kkiapaySecretKey?: string;
     defaultRentTiming?: RentTiming;
+    defaultEntryProration?: "aucun" | "prorata";
+    depositSbeeEnabled?: boolean;
+    depositSonebEnabled?: boolean;
+    depositPeintureEnabled?: boolean;
   },
 ) {
   const fd = new FormData();
-  if (input.contractTemplate !== undefined) fd.append("contractTemplate", input.contractTemplate);
   if (input.stamp) fd.append("stamp", input.stamp);
   if (input.signature) fd.append("signature", input.signature);
   if (input.dgTitle !== undefined) fd.append("dgTitle", input.dgTitle);
@@ -60,6 +63,10 @@ export function updateSettings(
   if (input.kkiapayPrivateKey) fd.append("kkiapayPrivateKey", input.kkiapayPrivateKey);
   if (input.kkiapaySecretKey) fd.append("kkiapaySecretKey", input.kkiapaySecretKey);
   if (input.defaultRentTiming !== undefined) fd.append("defaultRentTiming", input.defaultRentTiming);
+  if (input.defaultEntryProration !== undefined) fd.append("defaultEntryProration", input.defaultEntryProration);
+  if (input.depositSbeeEnabled !== undefined) fd.append("depositSbeeEnabled", String(input.depositSbeeEnabled));
+  if (input.depositSonebEnabled !== undefined) fd.append("depositSonebEnabled", String(input.depositSonebEnabled));
+  if (input.depositPeintureEnabled !== undefined) fd.append("depositPeintureEnabled", String(input.depositPeintureEnabled));
 
   return apiFetch<{ settings: TenantSettings }>("/api/settings", {
     method: "PATCH",

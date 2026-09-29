@@ -129,6 +129,8 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
     complaintsResolved,
     moveIns,
     moveOuts,
+    moveInsReopened,
+    moveOutsReopened,
     periodsClosed,
     commissionRates,
     chargeRemittances,
@@ -237,6 +239,30 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = mo.finalized_by
        WHERE mo.tenant_id = :tenantId AND mo.status = 'finalized' ${f('mo.finalized_by')} ORDER BY mo.finalized_at DESC LIMIT :n`,
+      p,
+    ),
+    // Réouvertures (étape 48, correction DG) — fiches finalisées rouvertes
+    // pour corriger une erreur de saisie, motif obligatoire ; le motif lui-
+    // même reste dans `reopen_reason` (consultable sur la fiche), pas
+    // reproduit ici pour garder le journal lisible en une ligne.
+    pool.query(
+      `SELECT mi.id, mi.reopened_at AS created_at, r.first_name AS r_fn, r.last_name AS r_ln,
+              u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
+       FROM move_in_reports mi
+       JOIN leases l ON l.id = mi.lease_id
+       JOIN renters r ON r.id = l.renter_id
+       LEFT JOIN users u ON u.id = mi.reopened_by
+       WHERE mi.tenant_id = :tenantId AND mi.reopened_at IS NOT NULL ${f('mi.reopened_by')} ORDER BY mi.reopened_at DESC LIMIT :n`,
+      p,
+    ),
+    pool.query(
+      `SELECT mo.id, mo.reopened_at AS created_at, r.first_name AS r_fn, r.last_name AS r_ln,
+              u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
+       FROM move_out_reports mo
+       JOIN leases l ON l.id = mo.lease_id
+       JOIN renters r ON r.id = l.renter_id
+       LEFT JOIN users u ON u.id = mo.reopened_by
+       WHERE mo.tenant_id = :tenantId AND mo.reopened_at IS NOT NULL ${f('mo.reopened_by')} ORDER BY mo.reopened_at DESC LIMIT :n`,
       p,
     ),
     pool.query(
@@ -370,6 +396,18 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
     ...moveOuts[0].map((r) => ({
       type: 'move_out_conducted',
       label: `Sortie de locataire : ${r.r_fn} ${r.r_ln} — solde restitué ${Number(r.net_refund).toLocaleString('fr-FR')} FCFA`,
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
+      at: r.created_at,
+    })),
+    ...moveInsReopened[0].map((r) => ({
+      type: 'move_in_reopened',
+      label: `État des lieux d'entrée rouvert pour correction : ${r.r_fn} ${r.r_ln}`,
+      actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
+      at: r.created_at,
+    })),
+    ...moveOutsReopened[0].map((r) => ({
+      type: 'move_out_reopened',
+      label: `État des lieux de sortie rouvert pour correction : ${r.r_fn} ${r.r_ln}`,
       actor: toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),

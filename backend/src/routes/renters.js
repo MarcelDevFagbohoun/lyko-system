@@ -5,20 +5,21 @@ const fs = require('fs/promises');
 const path = require('path');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-const { requireAuth, requirePermission, requireAnyPermission } = require('../middleware/auth');
+const { requireAuth, requirePermission } = require('../middleware/auth');
 const {
   createRenterSchema,
   updateRenterSchema,
   createLeaseSchema,
 } = require('../validators/renters');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
-const { computeArrears, buildRentStrip } = require('../services/rentTracking');
-const { streamCertificatePdf } = require('../services/pdf');
+const { computeArrears, buildRentStrip, computeEntryProrata } = require('../services/rentTracking');
 const { toPublicInspectionReport, toPublicMoveOutReport } = require('../services/inspection');
 const { toActor } = require('../utils/actor');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { resolvePropertyScope, assertRenterInScope } = require('../services/scope');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
+const { recordAdditionalDeposits, listLeaseDeposits, toPublic: toPublicLeaseDeposit } = require('../services/leaseDeposits');
+const { ADDITIONAL_DEPOSIT_TYPE_KEYS } = require('../constants/leaseDeposits');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -129,6 +130,65 @@ async function resolveRentTiming(conn, tenantId, explicit) {
   return rows[0]?.default_rent_timing ?? 'avance';
 }
 
+/** Même principe que `resolveRentTiming`, pour le prorata d'entrée (étape 42, `tenants.default_entry_proration`, défaut 'aucun'). */
+async function resolveEntryProration(conn, tenantId, explicit) {
+  if (explicit) return explicit;
+  const [rows] = await conn.query('SELECT default_entry_proration FROM tenants WHERE id = :tenantId LIMIT 1', {
+    tenantId,
+  });
+  return rows[0]?.default_entry_proration ?? 'aucun';
+}
+
+/** `entries` (cautions supplémentaires soumises) avec `paidAt` par défaut = date de début du bail — même
+ * convention que la caution de loyer/les frais d'agence/le prorata ci-dessus. */
+function withDefaultPaidAt(entries, startDate) {
+  if (!entries) return entries;
+  return Object.fromEntries(
+    Object.entries(entries).map(([type, entry]) => [type, { ...entry, paidAt: entry.paidAt || startDate }]),
+  );
+}
+
+/** Types de cautions supplémentaires (SBEE/SONEB/peinture) activés par CETTE entreprise (étape 43). */
+async function loadDepositTogglesRow(conn, tenantId) {
+  const [rows] = await conn.query(
+    'SELECT deposit_sbee_enabled, deposit_soneb_enabled, deposit_peinture_enabled FROM tenants WHERE id = :tenantId LIMIT 1',
+    { tenantId },
+  );
+  return rows[0] ?? { deposit_sbee_enabled: 0, deposit_soneb_enabled: 0, deposit_peinture_enabled: 0 };
+}
+
+/**
+ * Prorata d'entrée réglé à la signature (étape 42) — même principe que
+ * `recordEntryFeeReceived` ci-dessus (trace réelle + contrepartie GL dans LA
+ * MÊME transaction), mais `sourceTable` DIFFÉRENT ('lease_entry_prorata',
+ * jamais 'leases' ni 'lease_entry_fees') pour ne jamais se faire ignorer par
+ * le dédoublonnage par (source_table, source_id) si une caution ou des frais
+ * d'agence existent déjà sur ce même bail.
+ */
+async function recordEntryProrataReceived(conn, { tenantId, leaseId, amount, paymentMethod, paidAt, renterName, createdBy }) {
+  if (!amount || amount <= 0 || !paymentMethod) return;
+
+  await conn.query(
+    'UPDATE leases SET entry_prorata_received_at = :paidAt, entry_prorata_received_method = :method WHERE id = :id',
+    { paidAt, method: paymentMethod, id: leaseId },
+  );
+
+  if (await isModuleActive(conn, tenantId)) {
+    await genererEcriture(conn, {
+      tenantId,
+      operationType: 'prorata_entree_encaisse',
+      entryDate: paidAt,
+      amount,
+      paymentMethod,
+      narrationVars: { locataire: renterName },
+      sourceTable: 'lease_entry_prorata',
+      sourceId: leaseId,
+      createdBy,
+      context: { leaseId },
+    });
+  }
+}
+
 /**
  * Marketplace : une Unité qui reçoit un nouveau bail n'est plus vacante —
  * son éventuelle annonce doit disparaître, pour ne jamais réafficher un
@@ -156,10 +216,6 @@ async function clearMarketplaceListing(conn, tenantId, unitId) {
 // router suffit déjà ; ce middleware ne fait donc rien de plus, mais reste
 // nommé pour documenter l'intention sur les routes qui l'utilisent.
 const canRead = (req, res, next) => next();
-// Document financier généré à la demande (attestation) : reste réservé à
-// qui gère la relation locataire ou à la comptabilité — une simple
-// consultation de fiche n'inclut pas la génération de documents officiels.
-const canReadDocs = requireAnyPermission('locataires', 'comptabilite');
 // Écriture (créer/modifier un locataire, ouvrir un bail) : réservé à qui gère
 // la relation locataire (agent/DG).
 const canManage = requirePermission('locataires');
@@ -197,6 +253,12 @@ function toPublicUnitSummary(row) {
   };
 }
 
+/** Cautions supplémentaires d'un bail (lignes brutes déjà groupées par l'appelant), dans l'ordre du catalogue. */
+function sortedAdditionalDeposits(rows) {
+  const byType = new Map((rows || []).map((r) => [r.type, r]));
+  return ADDITIONAL_DEPOSIT_TYPE_KEYS.map((key) => byType.get(key)).filter(Boolean).map(toPublicLeaseDeposit);
+}
+
 function toPublicLease(row) {
   return {
     id: row.lease_id ?? row.id,
@@ -208,6 +270,14 @@ function toPublicLease(row) {
     entryFeeAmount: Number(row.entry_fee_amount ?? 0),
     entryFeeReceivedAt: row.entry_fee_received_at ? isoDate(row.entry_fee_received_at) : null,
     entryFeeReceivedMethod: row.entry_fee_received_method ?? null,
+    // Prorata d'entrée (étape 42) — appartient au propriétaire (voir compte séquestre), distinct des
+    // frais d'agence ci-dessus (100 % cabinet).
+    entryProration: row.entry_proration ?? 'aucun',
+    entryProrataAmount: Number(row.entry_prorata_amount ?? 0),
+    entryProrataDays: row.entry_prorata_days ?? null,
+    entryProrataDueDate: row.entry_prorata_due_date ? isoDate(row.entry_prorata_due_date) : null,
+    entryProrataReceivedAt: row.entry_prorata_received_at ? isoDate(row.entry_prorata_received_at) : null,
+    entryProrataReceivedMethod: row.entry_prorata_received_method ?? null,
     rentDueDay: row.rent_due_day,
     rentTiming: row.rent_timing,
     startDate: isoDate(row.start_date),
@@ -252,6 +322,8 @@ const LEASE_UNIT_PROPERTY_SELECT = `
   l.id AS lease_id, l.monthly_rent AS lease_monthly_rent, l.deposit_amount,
   l.deposit_status, l.opening_debt_amount, l.up_to_date_at_onboarding,
   l.entry_fee_amount, l.entry_fee_received_at, l.entry_fee_received_method,
+  l.entry_proration, l.entry_prorata_amount, l.entry_prorata_days, l.entry_prorata_due_date,
+  l.entry_prorata_received_at, l.entry_prorata_received_method,
   l.rent_due_day, l.rent_timing, l.start_date, l.end_date, l.status AS lease_status,
   l.created_at AS lease_created_at,
   lu.first_name AS lease_creator_first_name, lu.last_name AS lease_creator_last_name, lu.role AS lease_creator_role,
@@ -386,9 +458,22 @@ router.get('/:id', canRead, async (req, res, next) => {
     let moveInByLease = new Map();
     let moveOutByLease = new Map();
     let openingDebtPaymentsByLease = new Map();
+    let additionalDepositsByLease = new Map();
 
     if (leaseIds.length > 0) {
       const placeholders = leaseIds.map(() => '?').join(',');
+
+      // Cautions supplémentaires (étape 43) — mêmes types que le catalogue (SBEE, SONEB, peinture),
+      // groupées par bail comme les autres listes ci-dessous (une seule requête pour tout l'historique
+      // du locataire, jamais N requêtes).
+      const [additionalDeposits] = await pool.query(
+        `SELECT * FROM lease_deposits WHERE lease_id IN (${placeholders})`,
+        leaseIds,
+      );
+      for (const d of additionalDeposits) {
+        if (!additionalDepositsByLease.has(d.lease_id)) additionalDepositsByLease.set(d.lease_id, []);
+        additionalDepositsByLease.get(d.lease_id).push(d);
+      }
 
       const [openingDebtPayments] = await pool.query(
         `SELECT lodp.*, pu.first_name AS recorder_first_name, pu.last_name AS recorder_last_name, pu.role AS recorder_role
@@ -474,6 +559,7 @@ router.get('/:id', canRead, async (req, res, next) => {
       return {
         ...lease,
         payments,
+        additionalDeposits: sortedAdditionalDeposits(additionalDepositsByLease.get(row.id)),
         arrears: isActive
           ? computeArrears({
               startDate: lease.startDate,
@@ -572,9 +658,15 @@ router.post('/', canManage, async (req, res, next) => {
 
     const rent = data.monthlyRent ?? Number(unit.monthly_rent);
     const rentTiming = await resolveRentTiming(conn, req.user.tenantId, data.rentTiming);
+    // Prorata d'entrée (étape 42) : jours + montant TOUJOURS calculés par le serveur, jamais transmis
+    // par le client. `days`/`dueDate` gardés même si la politique est 'aucun' (transparence/affichage) ;
+    // seul `entryProrataAmount` retombe à 0 pour ne rien facturer dans ce cas.
+    const entryProration = await resolveEntryProration(conn, req.user.tenantId, data.entryProration);
+    const prorata = computeEntryProrata({ startDate: data.startDate, monthlyRent: rent, rentDueDay: data.rentDueDay });
+    const entryProrataAmount = entryProration === 'prorata' ? prorata.amount : 0;
     const [leaseResult] = await conn.query(
-      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount)`,
+      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,
       {
         tenantId: req.user.tenantId,
         unitId: data.unitId,
@@ -588,6 +680,10 @@ router.post('/', canManage, async (req, res, next) => {
         openingDebtAmount: data.openingDebtAmount,
         upToDate: data.upToDateAtOnboarding ? 1 : 0,
         entryFeeAmount: data.entryFeeAmount,
+        entryProration,
+        entryProrataAmount,
+        entryProrataDays: prorata.days,
+        entryProrataDueDate: prorata.dueDate,
       },
     );
     const leaseId = leaseResult.insertId;
@@ -611,6 +707,26 @@ router.post('/', canManage, async (req, res, next) => {
       renterName: `${data.firstName} ${data.lastName}`,
       createdBy: req.user.id,
     });
+
+    await recordEntryProrataReceived(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      amount: entryProrataAmount,
+      paymentMethod: data.entryProrataPaymentMethod,
+      paidAt: data.entryProrataPaidAt || data.startDate,
+      renterName: `${data.firstName} ${data.lastName}`,
+      createdBy: req.user.id,
+    });
+
+    await recordAdditionalDeposits(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      renterName: `${data.firstName} ${data.lastName}`,
+      createdBy: req.user.id,
+      enabledTenantRow: await loadDepositTogglesRow(conn, req.user.tenantId),
+      entries: withDefaultPaidAt(data.additionalDeposits, data.startDate),
+    });
+    const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId, conn);
 
     await conn.query("UPDATE property_units SET status = 'loue' WHERE id = :unitId", { unitId: data.unitId });
     const clearedMarketplacePhotos = await clearMarketplaceListing(conn, req.user.tenantId, data.unitId);
@@ -637,6 +753,10 @@ router.post('/', canManage, async (req, res, next) => {
       renterId,
       leaseId,
       unitId: data.unitId,
+      // Détail du prorata d'entrée (étape 42) — pour que l'écran confirme précisément ce qui vient
+      // d'être ajouté au compte séquestre du propriétaire, jamais un simple « bail créé » muet.
+      entryProrata: { proration: entryProration, amount: entryProrataAmount, days: prorata.days, dueDate: prorata.dueDate },
+      additionalDeposits,
       portalLink: { token: portalToken, path: `/portail/${portalToken}` },
     });
   } catch (err) {
@@ -717,9 +837,12 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
 
     const rent = data.monthlyRent ?? Number(unit.monthly_rent);
     const rentTiming = await resolveRentTiming(conn, req.user.tenantId, data.rentTiming);
+    const entryProration = await resolveEntryProration(conn, req.user.tenantId, data.entryProration);
+    const prorata = computeEntryProrata({ startDate: data.startDate, monthlyRent: rent, rentDueDay: data.rentDueDay });
+    const entryProrataAmount = entryProration === 'prorata' ? prorata.amount : 0;
     const [leaseResult] = await conn.query(
-      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount)`,
+      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,
       {
         tenantId: req.user.tenantId,
         unitId: data.unitId,
@@ -733,6 +856,10 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
         openingDebtAmount: data.openingDebtAmount,
         upToDate: data.upToDateAtOnboarding ? 1 : 0,
         entryFeeAmount: data.entryFeeAmount,
+        entryProration,
+        entryProrataAmount,
+        entryProrataDays: prorata.days,
+        entryProrataDueDate: prorata.dueDate,
       },
     );
     const leaseId = leaseResult.insertId;
@@ -757,6 +884,26 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
       createdBy: req.user.id,
     });
 
+    await recordEntryProrataReceived(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      amount: entryProrataAmount,
+      paymentMethod: data.entryProrataPaymentMethod,
+      paidAt: data.entryProrataPaidAt || data.startDate,
+      renterName: `${existing[0].first_name} ${existing[0].last_name}`,
+      createdBy: req.user.id,
+    });
+
+    await recordAdditionalDeposits(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      renterName: `${existing[0].first_name} ${existing[0].last_name}`,
+      createdBy: req.user.id,
+      enabledTenantRow: await loadDepositTogglesRow(conn, req.user.tenantId),
+      entries: withDefaultPaidAt(data.additionalDeposits, data.startDate),
+    });
+    const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId, conn);
+
     await conn.query("UPDATE property_units SET status = 'loue' WHERE id = :unitId", { unitId: data.unitId });
     const clearedMarketplacePhotos = await clearMarketplaceListing(conn, req.user.tenantId, data.unitId);
 
@@ -765,7 +912,12 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
       await fs.unlink(path.join(UPLOADS_ROOT, rel)).catch(() => {});
     }
     logger.info('Nouveau bail', { tenantId: req.user.tenantId, renterId: id, leaseId, unitId: data.unitId, by: req.user.id });
-    res.status(201).json({ leaseId, unitId: data.unitId });
+    res.status(201).json({
+      leaseId,
+      unitId: data.unitId,
+      entryProrata: { proration: entryProration, amount: entryProrataAmount, days: prorata.days, dueDate: prorata.dueDate },
+      additionalDeposits,
+    });
   } catch (err) {
     await conn.rollback().catch(() => {});
     next(err);
@@ -774,63 +926,9 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
   }
 });
 
-// GET /api/renters/:id/certificate.pdf — attestation de loyer (bail actif).
-router.get('/:id/certificate.pdf', canReadDocs, async (req, res, next) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
-
-  try {
-    const scopeAgentId = await resolvePropertyScope(req.user);
-    await assertRenterInScope(req.user.tenantId, id, scopeAgentId);
-
-    const [renterRows] = await pool.query(
-      'SELECT * FROM renters WHERE id = :id AND tenant_id = :tenantId LIMIT 1',
-      { id, tenantId: req.user.tenantId },
-    );
-    if (!renterRows[0]) throw new ApiError(404, 'Locataire introuvable');
-
-    const [leaseRows] = await pool.query(
-      `SELECT l.*, u.code AS unit_code, u.designation, u.designation_custom,
-              p.address
-       FROM leases l
-       JOIN property_units u ON u.id = l.unit_id
-       JOIN properties p ON p.id = u.property_id
-       WHERE l.renter_id = :id AND l.tenant_id = :tenantId AND l.status = 'active'
-       ORDER BY l.start_date DESC LIMIT 1`,
-      { id, tenantId: req.user.tenantId },
-    );
-    if (!leaseRows[0]) throw new ApiError(404, 'Aucun bail actif pour ce locataire');
-
-    const unitRow = leaseRows[0];
-    const label = unitDesignationLabel(unitRow);
-
-    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', {
-      id: req.user.tenantId,
-    });
-    // Le signataire légal du bail est toujours le DG (représentant de
-    // l'entreprise), jamais l'employé qui clique sur « Télécharger » — un
-    // comptable ou un agent peut générer ce document sans en devenir le
-    // signataire (même résolution que /api/portal/:token/certificate.pdf).
-    const [issuerRows] = await pool.query(
-      "SELECT first_name, last_name, role, stamp_path, signature_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
-      { tenantId: req.user.tenantId },
-    );
-
-    streamCertificatePdf(res, {
-      tenant: tenantRows[0],
-      renter: renterRows[0],
-      property: { label, address: unitRow.address },
-      lease: leaseRows[0],
-      issuer: issuerRows[0] || { first_name: tenantRows[0]?.company_name ?? 'Le cabinet', last_name: '' },
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // POST /api/renters/:id/portal-link — (ré)génère le lien secret du portail
 // locataire (idée validée avec l'utilisateur : accès en lecture à ses
-// paiements/quittances/attestation + signalement d'incident, sans compte,
+// paiements/quittances/contrat + signalement d'incident, sans compte,
 // sans mot de passe). Un seul lien valide à la fois : régénérer révoque
 // immédiatement l'ancien. Le token en clair n'est renvoyé qu'ici, une seule
 // fois — seule son empreinte est conservée (voir `utils/tokens.js`).

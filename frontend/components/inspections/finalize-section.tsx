@@ -16,13 +16,14 @@ export function FinalizeSection({
   submitting,
   error,
 }: {
-  onFinalize: (tenantSignature: Blob, agentSignature: Blob) => void | Promise<void>;
+  onFinalize: (tenantSignature: Blob, agentSignature: Blob, tenantReserves: string) => void | Promise<void>;
   submitting: boolean;
   error: string | null;
 }) {
   const tenantPadRef = React.useRef<SignaturePadHandle | null>(null);
   const agentPadRef = React.useRef<SignaturePadHandle | null>(null);
   const [localError, setLocalError] = React.useState<string | null>(null);
+  const [tenantReserves, setTenantReserves] = React.useState("");
 
   async function handleFinalize() {
     const tenantPad = tenantPadRef.current;
@@ -37,7 +38,7 @@ export function FinalizeSection({
       setLocalError("Signature illisible, réessayez.");
       return;
     }
-    await onFinalize(tenantBlob, agentBlob);
+    await onFinalize(tenantBlob, agentBlob, tenantReserves.trim());
   }
 
   return (
@@ -50,6 +51,19 @@ export function FinalizeSection({
       </div>
 
       {(error || localError) && <p className="text-body-sm text-danger-fg">{error || localError}</p>}
+
+      <div className="flex flex-col gap-1.5">
+        <label className="font-label-sm text-ink-soft">
+          Réserves du locataire (optionnel — s&apos;il n&apos;est pas d&apos;accord sur un point précis)
+        </label>
+        <textarea
+          value={tenantReserves}
+          onChange={(e) => setTenantReserves(e.target.value)}
+          rows={2}
+          placeholder="Ex. Le locataire conteste l'état du carrelage de la chambre."
+          className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        />
+      </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <SignaturePad ref={tenantPadRef} label="Signature du locataire" />

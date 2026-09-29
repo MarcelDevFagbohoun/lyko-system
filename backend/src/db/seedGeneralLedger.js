@@ -204,6 +204,19 @@ const RULES = [
     ],
   },
   {
+    operation_type: 'prorata_entree_encaisse',
+    label: "Encaisser un prorata d'entrée",
+    journal: 'OD',
+    narration_template: "Prorata d'entrée — {locataire}",
+    note:
+      "Jours occupés avant la première échéance normale d'un bail qui démarre en cours de mois (étape 42, demande explicite de l'utilisateur, diviseur forfaitaire 30 jours — voir `services/rentTracking.js` computeEntryProrata). DÉCISION EXPLICITE DE L'UTILISATEUR : le montant appartient au propriétaire, mêmes lignes que `loyer_encaisse`/`dette_initiale_encaissee` (même répartition commission/propriétaire) — une règle distincte seulement pour garder une narration/un journal d'audit séparés d'un vrai loyer mensuel.",
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', account: '706', formula: 'pourcentage_variable', param: 'taux_commission_encaissement' },
+      { side: 'credit', role: 'tiers_proprietaire', formula: 'montant_moins_pourcentage', param: 'taux_commission_encaissement' },
+    ],
+  },
+  {
     operation_type: 'frais_agence_encaisse',
     label: "Encaisser des frais d'agence à l'entrée",
     journal: 'OD',
@@ -256,6 +269,29 @@ const RULES = [
     ],
   },
   {
+    operation_type: 'caution_supplementaire_recue',
+    label: 'Encaisser une caution supplémentaire (SBEE/SONEB/peinture)',
+    journal: 'OD',
+    narration_template: '{type} reçue — {locataire}',
+    note:
+      "Cautions optionnelles distinctes de la caution de loyer (`caution_recue` ci-dessus, jamais touchée) — SBEE/SONEB (garantie contre les impayés de charges) ou peinture (étape 43, demande explicite de l'utilisateur). DÉCISION EXPLICITE : MÊME compte que la caution de loyer (165) — le type se lit dans le libellé de l'écriture (`{type}`), pas dans un sous-compte séparé.",
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', account: '165', role: 'tiers_locataire_caution', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'caution_supplementaire_restituee',
+    label: 'Restituer une caution supplémentaire (SBEE/SONEB/peinture)',
+    journal: 'OD',
+    narration_template: '{type} restituée — {locataire}',
+    note: 'Symétrique de `caution_supplementaire_recue` — la part retenue (impayés de charges réglés, ou retenue peinture) ne génère PAS cette écriture, seule la part réellement rendue au locataire.',
+    lines: [
+      { side: 'debit', account: '165', role: 'tiers_locataire_caution', formula: 'montant_total' },
+      { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+    ],
+  },
+  {
     operation_type: 'reversement_proprietaire',
     label: 'Reverser à un propriétaire',
     journal: 'OD',
@@ -301,6 +337,18 @@ const RULES = [
     lines: [
       { side: 'debit', role: 'tiers_locataire', formula: 'montant_total' },
       { side: 'credit', account: '707', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'penalite_retard_encaissee',
+    label: "Encaisser le règlement d'une pénalité de retard",
+    journal: 'OD',
+    narration_template: 'Pénalité de retard réglée — {locataire}',
+    note:
+      "Étape 44bis, demande directe de l'utilisateur (« revenons sur les pénalités ») — jusqu'ici (`penalite_retard` ci-dessus) la créance restait indéfiniment en compte 411, sans aucun suivi de règlement. Symétrique : SOLDE la créance (411) déjà comptabilisée à l'application, ne recrée JAMAIS le produit 707 (déjà reconnu). Voir `late_fee_payments` (migration 069).",
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', role: 'tiers_locataire', formula: 'montant_total' },
     ],
   },
   {

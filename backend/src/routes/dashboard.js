@@ -12,9 +12,15 @@ const { Router } = require('express');
 const { pool } = require('../config/db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { listRecentActivity } = require('../services/activity');
+const { listPendingDepositRegularizations } = require('../services/inspection');
+const { isModuleActive } = require('../services/gl/glPostingService');
 
 const router = Router();
 router.use(requireAuth, requireRole('dg'));
+
+function currentMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
 
 const COMPLAINT_STATUS_LABELS = {
   ouverte: 'Ouverte',
@@ -68,6 +74,30 @@ router.get('/overview', async (req, res, next) => {
       { tenantId },
     );
 
+    // États des lieux (étape 48, audit) — vue portefeuille demandée : à la
+    // différence de « Mes tâches » (routes/tasks.js, scopée à l'agent
+    // connecté), ici c'est le cabinet ENTIER, tous agents confondus — c'est
+    // le DG qui doit voir si des brouillons traînent quelque part.
+    const [[{ n: draftMoveInCount }]] = await pool.query(
+      "SELECT COUNT(*) AS n FROM move_in_reports WHERE tenant_id = :tenantId AND status = 'draft'",
+      { tenantId },
+    );
+    const [[{ n: draftMoveOutCount }]] = await pool.query(
+      "SELECT COUNT(*) AS n FROM move_out_reports WHERE tenant_id = :tenantId AND status = 'draft'",
+      { tenantId },
+    );
+    const [[{ n: moveOutsThisMonthCount }]] = await pool.query(
+      `SELECT COUNT(*) AS n FROM move_out_reports
+       WHERE tenant_id = :tenantId AND status = 'finalized' AND finalized_at >= :monthStart`,
+      { tenantId, monthStart: `${currentMonth()}-01` },
+    );
+    // « Mes tâches » (comptable) affiche la même liste — présente aussi ici
+    // pour que le DG, qui a son propre tableau de bord séparé, ne la manque
+    // jamais (voir services/inspection.js).
+    const pendingDepositRegularizations = (await isModuleActive(pool, tenantId))
+      ? await listPendingDepositRegularizations(tenantId)
+      : [];
+
     const totalUnits = Number(unitStats.total);
     const occupiedUnits = Number(unitStats.occupied);
 
@@ -95,6 +125,12 @@ router.get('/overview', async (req, res, next) => {
           reportedAt: c.reported_at instanceof Date ? c.reported_at.toISOString().slice(0, 10) : c.reported_at,
           renterName: `${c.first_name} ${c.last_name}`,
         })),
+      },
+      inspections: {
+        draftMoveInCount: Number(draftMoveInCount),
+        draftMoveOutCount: Number(draftMoveOutCount),
+        moveOutsThisMonthCount: Number(moveOutsThisMonthCount),
+        pendingDepositRegularizations,
       },
     });
   } catch (err) {

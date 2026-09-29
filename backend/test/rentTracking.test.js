@@ -10,7 +10,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { computeArrears, allocateRentPayment, isPaymentLate, buildRentStrip, summarizeRentMonth } = require('../src/services/rentTracking');
+const {
+  computeArrears,
+  allocateRentPayment,
+  isPaymentLate,
+  buildRentStrip,
+  summarizeRentMonth,
+  firstRegularDueDate,
+  computeEntryProrata,
+} = require('../src/services/rentTracking');
 
 const TODAY = new Date('2026-09-22T00:00:00Z');
 
@@ -452,4 +460,45 @@ test('summarizeRentMonth — cohérent avec la frise : même état de chaque bai
     assert.equal(one.counts.late, septembre.late ? 1 : 0);
     assert.equal(one.remaining, septembre.remaining);
   }
+});
+
+// ───────────────────────────── prorata d'entrée (étape 42) ─────────────────────────────
+
+test("firstRegularDueDate : le jour d'échéance du mois d'entrée si pas encore passé, sinon celui du mois suivant", () => {
+  assert.equal(firstRegularDueDate('2026-09-02', 5), '2026-09-05', "entrée avant l'échéance du mois : reste dans le mois");
+  assert.equal(firstRegularDueDate('2026-09-05', 5), '2026-09-05', "entrée LE jour d'échéance : ce jour même (0 jour de prorata)");
+  assert.equal(firstRegularDueDate('2026-09-25', 5), '2026-10-05', "entrée après l'échéance du mois : mois suivant");
+  assert.equal(firstRegularDueDate('2026-01-31', 28), '2026-02-28', 'traverse une fin de mois plus courte sans erreur');
+  assert.equal(firstRegularDueDate('2026-12-25', 5), '2027-01-05', "traverse le changement d'année");
+});
+
+test("computeEntryProrata : jours + montant (loyer × jours ÷ 30, diviseur forfaitaire), jamais les jours réels du mois", () => {
+  // Entrée le 25 septembre, échéance le 5 → 10 jours (26..30 sept + 1..5 oct — le 5 est le début du cycle normal).
+  const a = computeEntryProrata({ startDate: '2026-09-25', monthlyRent: 60000, rentDueDay: 5 });
+  assert.deepEqual(a, { days: 10, amount: 20000, dueDate: '2026-10-05' }); // 60000 * 10 / 30 = 20000
+});
+
+test('computeEntryProrata : entrée le jour même de l’échéance → aucun prorata (0 jour, 0 FCFA)', () => {
+  const r = computeEntryProrata({ startDate: '2026-09-05', monthlyRent: 60000, rentDueDay: 5 });
+  assert.deepEqual(r, { days: 0, amount: 0, dueDate: '2026-09-05' });
+});
+
+test('computeEntryProrata : le diviseur est FORFAITAIRE (30), pas le nombre réel de jours du mois', () => {
+  // Entrée le 1er février (mois de 28 jours en 2026, non bissextile), échéance le 28 → 27 jours de prorata,
+  // mais on divise quand même par 30 (jamais par 28).
+  const r = computeEntryProrata({ startDate: '2026-02-01', monthlyRent: 30000, rentDueDay: 28 });
+  assert.equal(r.days, 27);
+  assert.equal(r.amount, Math.round((30000 * 27) / 30));
+  assert.equal(r.amount, 27000);
+});
+
+test('computeEntryProrata : montant arrondi au franc le plus proche', () => {
+  const r = computeEntryProrata({ startDate: '2026-09-28', monthlyRent: 50000, rentDueDay: 5 });
+  // 2026-09-28 -> 2026-10-05 = 7 jours ; 50000 * 7 / 30 = 11666.66… -> 11667.
+  assert.equal(r.days, 7);
+  assert.equal(r.amount, 11667);
+});
+
+test('computeEntryProrata : loyer nul ou absent → prorata nul, jamais une erreur', () => {
+  assert.deepEqual(computeEntryProrata({ startDate: '2026-09-25', monthlyRent: 0, rentDueDay: 5 }), { days: 10, amount: 0, dueDate: '2026-10-05' });
 });

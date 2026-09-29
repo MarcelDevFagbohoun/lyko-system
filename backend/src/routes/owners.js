@@ -52,7 +52,7 @@ router.use(requireAuth);
 // les locataires). `requireAuth` au niveau du router suffit déjà.
 const canRead = (req, res, next) => next();
 // Relevé PDF généré à la demande : reste réservé à qui gère la relation
-// propriétaire/locataire ou à la comptabilité, comme l'attestation de loyer.
+// propriétaire/locataire ou à la comptabilité, comme le contrat de bail.
 const canReadDocs = requireAnyPermission('proprietaires', 'comptabilite', 'locataires');
 // Créer/modifier une fiche propriétaire : propriétaires (module dédié) ou
 // locataires (création à la volée d'un propriétaire depuis le formulaire
@@ -272,7 +272,7 @@ router.get('/:id', canRead, async (req, res, next) => {
     // jamais scopé par agent (voir le commentaire de `getEscrowBalances`),
     // comme les versements/taux de commission ci-dessous sur cette même page.
     const escrowBalances = await getEscrowBalances(req.user.tenantId);
-    const escrow = escrowBalances.get(id) ?? { totalCollected: 0, totalPayouts: 0, balance: 0 };
+    const escrow = escrowBalances.get(id) ?? { totalCollected: 0, totalPayouts: 0, balance: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } };
     const unpaidOpeningDebtByOwner = await getUnpaidOpeningDebtByOwner(req.user.tenantId);
     // Charges SONEB/SBEE encaissées à reverser (étape 31) — solde de bout en
     // bout du propriétaire, jamais scopé par agent (comme le séquestre ci-dessus).
@@ -286,6 +286,9 @@ router.get('/:id', canRead, async (req, res, next) => {
         totalCollected: escrow.totalCollected,
         totalPayouts: escrow.totalPayouts,
         balance: escrow.balance,
+        // Détail de ce qui compose le solde (étape 42, demande explicite de l'utilisateur) : loyers,
+        // dette initiale réglée, prorata d'entrée — avant commission et dépenses, pour rester lisible.
+        breakdown: escrow.breakdown,
       },
       // Dette initiale des locataires non encore réglée — volontairement à
       // part du solde séquestre ci-dessus (voir `getUnpaidOpeningDebtByOwner`).

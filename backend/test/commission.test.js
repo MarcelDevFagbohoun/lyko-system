@@ -17,6 +17,9 @@ const {
   getEscrowBalances,
   getUnpaidOpeningDebtByOwner,
   getOwnersWithoutCommissionRate,
+  getRecetteNetteMaison,
+  getRecetteProprietaire,
+  getCabinetRevenue,
   pickRateValidAt,
   assertPayoutWithinBalance,
 } = require('../src/services/commission');
@@ -32,6 +35,7 @@ before(async () => {
 
 after(async () => {
   const p = { tenantId: fx.tenantId };
+  await pool.query('DELETE FROM lease_opening_debt_payments WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM rent_payments WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM receipts WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM expenses WHERE tenant_id = :tenantId', p);
@@ -325,4 +329,176 @@ test('assertPayoutWithinBalance — verrou + vérification DANS la transaction :
   await pool.query('DELETE FROM property_units WHERE id = :u', { u: unit.insertId });
   await pool.query('DELETE FROM properties WHERE id = :p', { p: property.insertId });
   await pool.query('DELETE FROM owners WHERE id = :o', { o: ownerId });
+});
+
+// ───────────────────────────── prorata d'entrée + dette initiale réglée (étape 42) ─────────────────────────────
+
+test("getEscrowBalances — la dette initiale réglée ET le prorata d'entrée comptent désormais dans le solde séquestre, même traitement qu'un loyer (commission déduite), détail exposé", async () => {
+  const before = await getEscrowBalances(fx.tenantId);
+  const baseline = before.get(fx.ownerId)?.balance ?? 0;
+
+  // Dette initiale réglée en mars : 40 000 FCFA. Jusqu'ici (avant l'étape 42), seul le RESTE dû
+  // apparaissait quelque part (`getUnpaidOpeningDebtByOwner`) — la part réglée n'entrait dans AUCUN
+  // total « argent détenu pour ce propriétaire ».
+  await pool.query(
+    `INSERT INTO lease_opening_debt_payments (tenant_id, lease_id, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, 40000, 'especes', '2026-03-10', :by)`,
+    { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
+  );
+  // Prorata d'entrée réglé le même mois : 15 000 FCFA (simule ce que la route de création de bail écrit).
+  await pool.query(
+    `UPDATE leases SET entry_proration = 'prorata', entry_prorata_amount = 15000, entry_prorata_days = 9,
+            entry_prorata_due_date = '2026-03-05', entry_prorata_received_at = '2026-03-10',
+            entry_prorata_received_method = 'especes'
+     WHERE id = :l`,
+    { l: fx.leaseId },
+  );
+
+  const balances = await getEscrowBalances(fx.tenantId);
+  const b = balances.get(fx.ownerId);
+  // (40 000 + 15 000) × 90 % (commission 10 %) = 49 500 de plus que le solde d'avant.
+  assert.equal(b.balance, baseline + 49500);
+  assert.equal(b.breakdown.openingDebt, 40000);
+  assert.equal(b.breakdown.prorata, 15000);
+});
+
+test("getEscrowBalances — un bail sans rien de réglé (prorata='aucun') n'ajoute strictement rien", async () => {
+  const [renter] = await pool.query(
+    "INSERT INTO renters (tenant_id, first_name, last_name, phone, created_by) VALUES (:t, 'Sans', 'Prorata', :phone, :by)",
+    { t: fx.tenantId, phone: `09${Math.floor(Math.random() * 100000000)}`, by: fx.dgId },
+  );
+  const [lease] = await pool.query(
+    "INSERT INTO leases (tenant_id, renter_id, unit_id, start_date, monthly_rent, rent_due_day, deposit_amount, status, created_by, entry_proration, entry_prorata_amount, entry_prorata_days) VALUES (:t, :r, :u, '2026-09-25', 60000, 5, 0, 'active', :by, 'aucun', 0, 10)",
+    { t: fx.tenantId, r: renter.insertId, u: fx.unitId, by: fx.dgId },
+  );
+  const before = await getEscrowBalances(fx.tenantId);
+  const after = await getEscrowBalances(fx.tenantId); // aucune écriture entre les deux lectures
+  assert.deepEqual(after.get(fx.ownerId), before.get(fx.ownerId));
+  await pool.query('DELETE FROM leases WHERE id = :id', { id: lease.insertId });
+  await pool.query('DELETE FROM renters WHERE id = :id', { id: renter.insertId });
+});
+
+test("getRecetteNetteMaison / getRecetteProprietaire — même mois, même détail (dette initiale + prorata inclus, commission appliquée)", async () => {
+  const r = await getRecetteNetteMaison(fx.tenantId, fx.propertyId, '2026-03');
+  assert.equal(r.breakdown.openingDebt, 40000);
+  assert.equal(r.breakdown.prorata, 15000);
+  assert.equal(r.totalPayments, 55000);
+  assert.equal(r.recetteNette, 55000);
+
+  const rp = await getRecetteProprietaire(fx.tenantId, fx.propertyId, '2026-03');
+  assert.equal(rp.commissionCabinet, 5500); // 10 % de 55 000
+  assert.equal(rp.partProprietaire, 49500);
+  assert.deepEqual(rp.breakdown, r.breakdown);
+});
+
+// ───────────────────────────── recette nette du cabinet (étape 44) ─────────────────────────────
+
+test("getCabinetRevenue — commission sommée sur TOUS les propriétaires + frais d'agence − dépenses de fonctionnement (jamais celles d'un Bien, déjà déduites côté propriétaire)", async () => {
+  // Propriétaire A = celui de la fixture (10 %) : loyer 100 000, une dépense DE CE BIEN de 10 000
+  // (déduite de SA recette nette avant commission — ne doit JAMAIS apparaître dans les dépenses du
+  // cabinet ci-dessous, sinon le même travaux serait compté deux fois).
+  await pool.query(
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-06', 100000, 'especes', '2026-06-05', :by)`,
+    { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
+  );
+  const [propertyExpense] = await pool.query(
+    `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, payment_method, recorded_by)
+     VALUES (:t, :p, 'entretien', 'Réparation Bien A', 10000, '2026-06-10', 'especes', :by)`,
+    { t: fx.tenantId, p: fx.propertyId, by: fx.dgId },
+  );
+  // Frais d'agence à l'entrée sur ce même bail, reçus le même mois : 100 % cabinet.
+  await pool.query(
+    `UPDATE leases SET entry_fee_amount = 20000, entry_fee_received_at = '2026-06-15', entry_fee_received_method = 'especes'
+     WHERE id = :l`,
+    { l: fx.leaseId },
+  );
+
+  // Propriétaire B, taux 20 %, un Bien distinct : loyer 50 000, aucune dépense.
+  const [ownerB] = await pool.query('INSERT INTO owners (tenant_id, name, created_by) VALUES (:t, :n, :by)', {
+    t: fx.tenantId, n: 'Propriétaire B (recette cabinet)', by: fx.dgId,
+  });
+  const [propertyB] = await pool.query(
+    'INSERT INTO properties (tenant_id, code, owner_id, created_by) VALUES (:t, :code, :o, :by)',
+    { t: fx.tenantId, code: 'CAB-B-001', o: ownerB.insertId, by: fx.dgId },
+  );
+  const [unitB] = await pool.query(
+    "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'CAB-B-U1', 'studio', 'loue', 50000, :by)",
+    { t: fx.tenantId, p: propertyB.insertId, by: fx.dgId },
+  );
+  const [renterB] = await pool.query(
+    "INSERT INTO renters (tenant_id, first_name, last_name, phone, created_by) VALUES (:t, 'Cabinet', 'Test B', :phone, :by)",
+    { t: fx.tenantId, phone: `06${Math.floor(Math.random() * 100000000)}`, by: fx.dgId },
+  );
+  const [leaseB] = await pool.query(
+    "INSERT INTO leases (tenant_id, renter_id, unit_id, start_date, monthly_rent, rent_due_day, deposit_amount, status, created_by) VALUES (:t, :r, :u, '2026-06-01', 50000, 5, 0, 'active', :by)",
+    { t: fx.tenantId, r: renterB.insertId, u: unitB.insertId, by: fx.dgId },
+  );
+  await pool.query(
+    `INSERT INTO owner_commission_rates (tenant_id, owner_id, rate, starts_on, set_by) VALUES (:t, :o, 20, '2026-01-01', :by)`,
+    { t: fx.tenantId, o: ownerB.insertId, by: fx.dgId },
+  );
+  await pool.query(
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-06', 50000, 'especes', '2026-06-05', :by)`,
+    { t: fx.tenantId, l: leaseB.insertId, by: fx.dgId },
+  );
+
+  // Dépense de FONCTIONNEMENT du cabinet (property_id NULL) le même mois : 15 000.
+  const [cabinetExpense] = await pool.query(
+    `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, payment_method, recorded_by)
+     VALUES (:t, NULL, 'loyer_bureau', 'Loyer du bureau', 15000, '2026-06-20', 'virement', :by)`,
+    { t: fx.tenantId, by: fx.dgId },
+  );
+
+  const rev = await getCabinetRevenue(fx.tenantId, '2026-06');
+  // A : (100000 - 10000) × 10 % = 9000. B : 50000 × 20 % = 10000. Total = 19000.
+  assert.equal(rev.breakdown.commission, 19000, 'commission sommée sur les deux propriétaires, jamais une boucle qui en oublierait un');
+  assert.equal(rev.breakdown.entryFees, 20000);
+  assert.equal(rev.breakdown.expenses, 15000, 'seule la dépense de fonctionnement (property_id NULL), jamais celle du Bien A (déjà déduite côté propriétaire)');
+  assert.equal(rev.netCabinetIncome, 19000 + 20000 - 15000);
+  assert.equal(rev.yearMonth, '2026-06');
+
+  // Nettoyage propre à ce test (fx est réutilisé par les tests suivants).
+  await pool.query('DELETE FROM rent_payments WHERE lease_id IN (:l1, :l2)', { l1: fx.leaseId, l2: leaseB.insertId });
+  await pool.query('DELETE FROM expenses WHERE id IN (:e1, :e2)', { e1: propertyExpense.insertId, e2: cabinetExpense.insertId });
+  await pool.query("UPDATE leases SET entry_fee_amount = 0, entry_fee_received_at = NULL, entry_fee_received_method = NULL WHERE id = :l", { l: fx.leaseId });
+  await pool.query('DELETE FROM leases WHERE id = :l', { l: leaseB.insertId });
+  await pool.query('DELETE FROM renters WHERE id = :r', { r: renterB.insertId });
+  await pool.query('DELETE FROM property_units WHERE id = :u', { u: unitB.insertId });
+  await pool.query('DELETE FROM owner_commission_rates WHERE owner_id = :o', { o: ownerB.insertId });
+  await pool.query('DELETE FROM properties WHERE id = :p', { p: propertyB.insertId });
+  await pool.query('DELETE FROM owners WHERE id = :o', { o: ownerB.insertId });
+});
+
+test("getCabinetRevenue — aucune donnée sur le mois : tout à zéro, jamais une erreur", async () => {
+  const rev = await getCabinetRevenue(fx.tenantId, '2019-01');
+  assert.deepEqual(rev, {
+    yearMonth: '2019-01',
+    breakdown: { commission: 0, entryFees: 0, lateFees: 0, expenses: 0 },
+    netCabinetIncome: 0,
+  });
+});
+
+test("getCabinetRevenue — une pénalité de retard RÉGLÉE entre dans la recette du cabinet, jamais la seule date d'application", async () => {
+  // Pénalité appliquée en juin (créance), réglée seulement en juillet — ne doit compter qu'au mois où
+  // l'argent est réellement entré (paid_at), jamais au mois d'application (applied_at).
+  const [lateFee] = await pool.query(
+    `INSERT INTO late_fees (tenant_id, lease_id, amount, applied_at, applied_by) VALUES (:t, :l, 8000, '2026-06-15', :by)`,
+    { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
+  );
+  const revBeforePayment = await getCabinetRevenue(fx.tenantId, '2026-06');
+  assert.equal(revBeforePayment.breakdown.lateFees, 0, "appliquée mais pas encore payée : rien en juin");
+
+  await pool.query(
+    `INSERT INTO late_fee_payments (tenant_id, late_fee_id, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :lf, 8000, 'especes', '2026-07-05', :by)`,
+    { t: fx.tenantId, lf: lateFee.insertId, by: fx.dgId },
+  );
+  const revAfterPayment = await getCabinetRevenue(fx.tenantId, '2026-07');
+  assert.equal(revAfterPayment.breakdown.lateFees, 8000, "réglée en juillet : comptée en juillet");
+  assert.equal(revAfterPayment.netCabinetIncome, 8000);
+
+  await pool.query('DELETE FROM late_fee_payments WHERE late_fee_id = :lf', { lf: lateFee.insertId });
+  await pool.query('DELETE FROM late_fees WHERE id = :id', { id: lateFee.insertId });
 });

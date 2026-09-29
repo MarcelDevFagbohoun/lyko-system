@@ -19,7 +19,7 @@ type InspectionFormProps = {
   onChange: (zones: InspectionZone[]) => void;
   showDeductions: boolean;
   onUploadPhoto: (zoneKey: string, itemKey: string, file: File) => void | Promise<void>;
-  onDeletePhoto: (zoneKey: string, itemKey: string) => void | Promise<void>;
+  onDeletePhoto: (zoneKey: string, itemKey: string, photoIndex: number) => void | Promise<void>;
   /** Référentiel de prix (uniquement utile quand `showDeductions`), pour proposer un prix plutôt que le saisir à l'aveugle. */
   catalog?: CatalogItem[];
   /** Postes dégradés par rapport à l'entrée ("zoneKey::itemKey") — mis en évidence avec une invite à facturer. */
@@ -63,7 +63,7 @@ export function InspectionForm({
       zones.map((zone) =>
         zone.key !== zoneKey
           ? zone
-          : { ...zone, items: [...zone.items, { key, label, custom: true, condition: null, comment: null, photoUrl: null, deduction: 0, billing: null }] },
+          : { ...zone, items: [...zone.items, { key, label, custom: true, condition: null, comment: null, photoUrls: [], deduction: 0, billing: null }] },
       ),
     );
   }
@@ -77,7 +77,7 @@ export function InspectionForm({
         key: zoneKey,
         label,
         custom: true,
-        items: [{ key: itemKey, label: firstItemLabel, custom: true, condition: null, comment: null, photoUrl: null, deduction: 0, billing: null }],
+        items: [{ key: itemKey, label: firstItemLabel, custom: true, condition: null, comment: null, photoUrls: [], deduction: 0, billing: null }],
       },
     ]);
   }
@@ -100,7 +100,7 @@ export function InspectionForm({
           onAddItem={(label) => addItem(zone.key, label)}
           onRemoveZone={() => removeZone(zone.key)}
           onUploadPhoto={(itemKey, file) => onUploadPhoto(zone.key, itemKey, file)}
-          onDeletePhoto={(itemKey) => onDeletePhoto(zone.key, itemKey)}
+          onDeletePhoto={(itemKey, photoIndex) => onDeletePhoto(zone.key, itemKey, photoIndex)}
         />
       ))}
       <AddZoneForm onAdd={addZone} />
@@ -129,7 +129,7 @@ function ZoneSection({
   onAddItem: (label: string) => void;
   onRemoveZone: () => void;
   onUploadPhoto: (itemKey: string, file: File) => void | Promise<void>;
-  onDeletePhoto: (itemKey: string) => void | Promise<void>;
+  onDeletePhoto: (itemKey: string, photoIndex: number) => void | Promise<void>;
 }) {
   const [addingItem, setAddingItem] = React.useState(false);
   const [newItemLabel, setNewItemLabel] = React.useState("");
@@ -167,7 +167,7 @@ function ZoneSection({
             onUpdate={(patch) => onUpdateItem(item.key, patch)}
             onRemove={item.custom ? () => onRemoveItem(item.key) : undefined}
             onUploadPhoto={(file) => onUploadPhoto(item.key, file)}
-            onDeletePhoto={() => onDeletePhoto(item.key)}
+            onDeletePhoto={(photoIndex) => onDeletePhoto(item.key, photoIndex)}
           />
         ))}
       </div>
@@ -214,7 +214,7 @@ function ItemRow({
   onUpdate: (patch: Partial<InspectionItem>) => void;
   onRemove?: () => void;
   onUploadPhoto: (file: File) => void | Promise<void>;
-  onDeletePhoto: () => void | Promise<void>;
+  onDeletePhoto: (photoIndex: number) => void | Promise<void>;
 }) {
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = React.useState(false);
@@ -272,6 +272,7 @@ function ItemRow({
             <button
               key={c}
               type="button"
+              title={CONDITION_LABELS[c]}
               onClick={() => onUpdate({ condition: c })}
               className={cn(
                 "rounded-full border px-3 py-1 font-label-sm transition-colors",
@@ -359,19 +360,20 @@ function ItemRow({
       )}
 
       <div className="mt-2 flex items-center gap-2">
-        {item.photoUrl ? (
-          <div className="relative h-16 w-16 overflow-hidden rounded border border-border">
+        {item.photoUrls.map((url, idx) => (
+          <div key={url} className="relative h-16 w-16 overflow-hidden rounded border border-border">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`${API_URL}${item.photoUrl}`} alt={item.label} className="h-full w-full object-cover" />
+            <img src={`${API_URL}${url}`} alt={item.label} className="h-full w-full object-cover" />
             <button
               type="button"
-              onClick={() => onDeletePhoto()}
+              onClick={() => onDeletePhoto(idx)}
               className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white"
             >
               <X size={12} />
             </button>
           </div>
-        ) : (
+        ))}
+        {item.photoUrls.length < 3 && (
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -379,7 +381,7 @@ function ItemRow({
             className="flex h-9 items-center gap-1.5 rounded border border-dashed border-border px-3 text-body-xs text-ink-muted hover:text-ink disabled:opacity-60"
           >
             <Camera size={14} />
-            {uploading ? "Envoi…" : "Photo (optionnel)"}
+            {uploading ? "Envoi…" : item.photoUrls.length > 0 ? "Ajouter" : "Photo (optionnel)"}
           </button>
         )}
         <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFileChange} className="hidden" />

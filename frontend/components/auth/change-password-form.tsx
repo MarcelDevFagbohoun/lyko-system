@@ -14,7 +14,7 @@ function strengthColor(score: number) {
 }
 
 export function ChangePasswordForm({ onDone }: { onDone: () => void }) {
-  const { changePassword } = useAuth();
+  const { user, changePassword } = useAuth();
   const [currentPassword, setCurrentPassword] = React.useState("");
   const [newPassword, setNewPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
@@ -49,7 +49,7 @@ export function ChangePasswordForm({ onDone }: { onDone: () => void }) {
         </div>
       )}
 
-      <Field label="Mot de passe actuel (temporaire)" htmlFor="currentPassword" required>
+      <Field label={user?.mustChangePassword ? "Mot de passe actuel (temporaire)" : "Mot de passe actuel"} htmlFor="currentPassword" required>
         <Input
           id="currentPassword"
           type="password"

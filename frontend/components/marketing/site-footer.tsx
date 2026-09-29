@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LykoLogo } from "@/components/brand/logo";
+import { CONTACT } from "@/components/marketing/contact";
 
 export function SiteFooter() {
   return (
@@ -8,9 +9,8 @@ export function SiteFooter() {
         <div className="flex max-w-sm flex-col gap-3">
           <LykoLogo />
           <p className="text-body-sm text-ink-muted">
-            Plateforme de gestion pour entreprises immobilières et juridiques : locataires,
-            propriétaires, paiements, réclamations, comptabilité et charges, dans un espace
-            cloisonné par entreprise, utilisable même hors connexion.
+            Le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE,
+            propriétaires, plaintes et comptabilité, dans un espace cloisonné par entreprise.
           </p>
         </div>
 
@@ -18,13 +18,19 @@ export function SiteFooter() {
           <div className="flex flex-col gap-2">
             <span className="font-label-sm uppercase tracking-wider text-ink-muted">Plateforme</span>
             <a href="#fonctionnalites" className="text-body-sm text-ink-soft hover:text-ink">
-              Fonctionnalités
+              Pour qui
             </a>
-            <a href="#comment-ca-marche" className="text-body-sm text-ink-soft hover:text-ink">
-              Comment ça marche
+            <a href="#charges" className="text-body-sm text-ink-soft hover:text-ink">
+              Charges SONEB/SBEE
+            </a>
+            <a href="#argent" className="text-body-sm text-ink-soft hover:text-ink">
+              Comptabilité
             </a>
             <a href="#securite" className="text-body-sm text-ink-soft hover:text-ink">
               Sécurité
+            </a>
+            <a href="#questions" className="text-body-sm text-ink-soft hover:text-ink">
+              Questions
             </a>
           </div>
           <div className="flex flex-col gap-2">
@@ -41,6 +47,16 @@ export function SiteFooter() {
             <Link href="/verifier" className="text-body-sm text-ink-soft hover:text-ink">
               Vérifier un document
             </Link>
+            {CONTACT.whatsappUrl && (
+              <a href={CONTACT.whatsappUrl} target="_blank" rel="noopener noreferrer" className="text-body-sm text-ink-soft hover:text-ink">
+                WhatsApp
+              </a>
+            )}
+            {CONTACT.email && (
+              <a href={`mailto:${CONTACT.email}`} className="text-body-sm text-ink-soft hover:text-ink">
+                {CONTACT.email}
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -48,7 +64,7 @@ export function SiteFooter() {
       <div className="border-t border-border">
         <div className="content-shell flex flex-col gap-2 py-4 text-body-xs text-ink-muted sm:flex-row sm:items-center sm:justify-between">
           <span>© {new Date().getFullYear()} Lyko System. Tous droits réservés.</span>
-          <span>Conçu pour les entreprises immobilières et juridiques au Bénin.</span>
+          <span>Conçu au Bénin, pour les cabinets et agences immobilières.</span>
         </div>
       </div>
     </footer>

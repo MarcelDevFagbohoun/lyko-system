@@ -1,7 +1,7 @@
 {
   "name": "Lyko System",
   "short_name": "Lyko",
-  "description": "Gestion de cabinets immobiliers et juridiques — locataires, propriétaires, paiements, comptabilité.",
+  "description": "Gestion locative pensée pour le Bénin — loyers, charges SONEB/SBEE, propriétaires, quittances, comptabilité.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
