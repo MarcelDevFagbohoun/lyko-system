@@ -1,14 +1,22 @@
 "use client";
 
-import { API_URL } from "@/lib/api/client";
 import { formatFcfa } from "@/lib/utils";
 import { CONDITION_LABELS } from "@/lib/constants/inspection";
 import type { InspectionZone } from "@/lib/api/renters";
 import { Badge } from "@/components/ui/badge";
 import { conditionBadgeVariant } from "@/lib/constants/inspection";
+import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 
 /** Affichage figé des zones/éléments d'une fiche finalisée — partagé entrée/sortie. */
-export function InspectionReadOnly({ zones, showDeductions }: { zones: InspectionZone[]; showDeductions: boolean }) {
+export function InspectionReadOnly({
+  zones,
+  showDeductions,
+  accessToken,
+}: {
+  zones: InspectionZone[];
+  showDeductions: boolean;
+  accessToken: string | null;
+}) {
   return (
     <div className="flex flex-col gap-5">
       {zones.map((zone) => (
@@ -30,11 +38,16 @@ export function InspectionReadOnly({ zones, showDeductions }: { zones: Inspectio
                       ))}
                     </ul>
                   )}
-                  {item.photoUrls.length > 0 && (
+                  {item.photoUrls.length > 0 && accessToken && (
                     <div className="mt-1 flex gap-1.5">
                       {item.photoUrls.map((url) => (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img key={url} src={`${API_URL}${url}`} alt={item.label} className="h-20 w-20 rounded border border-border object-cover" />
+                        <AuthenticatedImage
+                          key={url}
+                          src={url}
+                          accessToken={accessToken}
+                          alt={item.label}
+                          className="h-20 w-20 rounded border border-border object-cover"
+                        />
                       ))}
                     </div>
                   )}

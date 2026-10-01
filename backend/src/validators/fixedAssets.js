@@ -45,8 +45,18 @@ const depreciateFixedAssetSchema = z.object({
   period: z.string().regex(/^\d{4}-\d{2}$/, 'Mois invalide (AAAA-MM)'),
 });
 
+// Sortie du patrimoine (vente, rebut, perte — étape « audit comptable » du
+// 30/09/2026) : acte définitif comptablement (écriture GL de sortie, jamais
+// réversible), justification exigée comme toute suppression/annulation dans
+// ce projet.
+const disposeFixedAssetSchema = z.object({
+  disposedAt: dateSchema,
+  reason: z.string().trim().min(5, 'Justification requise (5 caractères minimum)').max(255, 'Trop long'),
+});
+
 module.exports = {
   createFixedAssetSchema,
   payFixedAssetSchema,
   depreciateFixedAssetSchema,
+  disposeFixedAssetSchema,
 };

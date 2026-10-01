@@ -20,6 +20,7 @@ import { PayNowButton } from "@/components/payments/pay-now-button";
 import type { ComplaintCategory } from "@/lib/api/complaints";
 import { COMPLAINT_CATEGORY_LABELS } from "@/lib/constants/complaints";
 import { formatFcfa, monthLabelFr, formatLateDuration } from "@/lib/utils";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { Badge } from "@/components/ui/badge";
 import { RentStrip } from "@/components/renters/rent-strip";
 import { Button } from "@/components/ui/button";
@@ -336,6 +337,11 @@ function ComplaintForm({ token }: { token: string }) {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [sent, setSent] = React.useState<string | null>(null);
+  // Même clé tant que l'envoi n'a pas réussi (un nouvel essai après une
+  // coupure/erreur réutilise la même clé — si la première tentative avait en
+  // fait été enregistrée côté serveur, le second envoi revient en « déjà
+  // enregistré » plutôt que de créer un doublon) ; renouvelée après un succès.
+  const { key: idempotencyKey, renew: renewIdempotencyKey } = useIdempotencyKey();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -347,6 +353,7 @@ function ComplaintForm({ token }: { token: string }) {
         category,
         title: title.trim(),
         priority: urgent ? "urgente" : "normale",
+        idempotencyKey,
       };
       if (description.trim()) input.description = description.trim();
       const res = await submitPortalComplaint(token, input);
@@ -354,6 +361,7 @@ function ComplaintForm({ token }: { token: string }) {
       setTitle("");
       setDescription("");
       setUrgent(false);
+      renewIdempotencyKey();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'envoyer ce signalement pour le moment.");
     } finally {

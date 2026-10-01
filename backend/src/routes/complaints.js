@@ -20,8 +20,9 @@ const {
 } = require('../constants/complaints');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
-const { assertUploadType, randomFileName } = require('../utils/uploads');
+const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { resolvePropertyScope } = require('../services/scope');
+const { claimIdempotencyKey } = require('../services/paymentGuards');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -60,7 +61,7 @@ function toPublicComplaint(row) {
     description: row.description,
     priority: row.priority,
     status: row.status,
-    photoUrls: (row.photo_paths || []).map((p) => `/uploads/${p}`),
+    photoUrls: (row.photo_paths || []).map((p) => toProtectedFileUrl(p)),
     resolutionNote: row.resolution_note,
     resolvedAt: isoDate(row.resolved_at),
     resolvedBy: toActor(row.resolver_first_name, row.resolver_last_name, row.resolver_role),
@@ -247,6 +248,8 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_COMPLAINT), async (req, r
     const code = await nextComplaintCode(conn, req.user.tenantId);
 
     await conn.beginTransaction();
+    // Clé d'idempotence (étape 36, étendue ici) : un envoi en double n'enregistre rien de plus.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'complaint', data.idempotencyKey);
 
     const [result] = await conn.query(
       `INSERT INTO complaints

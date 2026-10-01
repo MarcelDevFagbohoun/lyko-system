@@ -21,6 +21,7 @@ const {
   createFixedAssetSchema,
   payFixedAssetSchema,
   depreciateFixedAssetSchema,
+  disposeFixedAssetSchema,
 } = require('../validators/fixedAssets');
 const { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_KEYS, EXPENSE_PAYMENT_METHODS } = require('../constants/expenses');
 const { FIXED_ASSET_CATEGORIES } = require('../constants/fixedAssets');
@@ -29,12 +30,18 @@ const {
   EXPENSE_CATEGORY_TO_OPERATION_TYPE,
   FIXED_ASSET_CATEGORY_TO_ACQUISITION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
+  FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE,
 } = require('../constants/glOperationTypes');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { computeMonthlyDepreciation } = require('../services/gl/glDepreciationService');
 const { notifyDg } = require('../services/gl/glNotificationService');
-const { assertUploadType, randomFileName } = require('../utils/uploads');
-const { assertPeriodOpen, isPeriodClosed, getPeriodClosability } = require('../services/accountingPeriods');
+const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
+const {
+  assertPeriodOpen,
+  assertPeriodOpenLocked,
+  isPeriodClosed,
+  getPeriodClosability,
+} = require('../services/accountingPeriods');
 const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, summarizeRentMonth } = require('../services/rentTracking');
 const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate, getCabinetRevenue } = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
@@ -98,7 +105,7 @@ function toPublicExpense(row) {
     supplierId: row.supplier_id ?? null,
     supplierName: row.supplier_name ?? null,
     notes: row.notes,
-    receiptUrl: row.receipt_path ? `/uploads/${row.receipt_path}` : null,
+    receiptUrl: row.receipt_path ? toProtectedFileUrl(row.receipt_path) : null,
     // Facultatif : dépense rattachée à un Bien (et une Unité précise en son
     // sein) pour la calculette de recette/commission — null pour une dépense
     // de fonctionnement du cabinet (comportement historique, inchangé).
@@ -145,6 +152,7 @@ function toPublicFixedAsset(row) {
     supplierName: row.supplier_name ?? null,
     status: row.status,
     disposedAt: isoDate(row.disposed_at),
+    disposedReason: row.disposed_reason ?? null,
     accumulatedDepreciation,
     bookValue: acquisitionCost - accumulatedDepreciation,
     createdAt: row.created_at,
@@ -255,6 +263,9 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
     }
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.expenseDate);
     // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
     if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'expense', data.idempotencyKey);
 
@@ -375,6 +386,7 @@ router.patch('/expenses/:id', canAccounting, async (req, res, next) => {
   }
   const data = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
     const existing = await loadExpense(pool, req.user.tenantId, id);
     await assertPeriodOpen(req.user.tenantId, existing.expense_date);
@@ -398,7 +410,15 @@ router.patch('/expenses/:id', canAccounting, async (req, res, next) => {
     if (data.notes !== undefined) { fields.push('notes = :notes'); params.notes = data.notes; }
 
     if (fields.length > 0) {
-      await pool.query(`UPDATE expenses SET ${fields.join(', ')} WHERE id = :id`, params);
+      await conn.beginTransaction();
+      // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+      // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+      await assertPeriodOpenLocked(conn, req.user.tenantId, existing.expense_date);
+      if (data.expenseDate !== undefined) {
+        await assertPeriodOpenLocked(conn, req.user.tenantId, data.expenseDate);
+      }
+      await conn.query(`UPDATE expenses SET ${fields.join(', ')} WHERE id = :id`, params);
+      await conn.commit();
     }
 
     const [rows] = await pool.query(
@@ -410,7 +430,10 @@ router.patch('/expenses/:id', canAccounting, async (req, res, next) => {
     );
     res.json({ expense: toPublicExpense(rows[0]) });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -437,11 +460,32 @@ router.post('/expenses/:id/pay', canAccounting, async (req, res, next) => {
     const supplierName = supplierRows[0]?.name ?? 'Fournisseur';
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
 
-    await conn.query(
-      'UPDATE expenses SET payment_status = :status, payment_method = :method, paid_at = :paidAt WHERE id = :id',
+    // Bug corrigé (audit sécurité) : la vérification `payment_status !==
+    // 'unpaid'` ci-dessus se fait AVANT la transaction, sans verrou — un
+    // double-clic ou une requête relancée pouvait passer les deux fois cette
+    // vérification puis régler la dépense deux fois (deux écritures GL pour
+    // un seul vrai paiement). `FOR UPDATE` sérialise les tentatives
+    // concurrentes ; l'UPDATE conditionné à `payment_status = 'unpaid'`
+    // (vérifié via `affectedRows`) est le filet de sécurité final, même
+    // schéma que `rent_payments`/`utility_payments`.
+    const [[locked]] = await conn.query(
+      'SELECT payment_status FROM expenses WHERE id = :id AND tenant_id = :tenantId FOR UPDATE',
+      { id, tenantId: req.user.tenantId },
+    );
+    if (!locked || locked.payment_status !== 'unpaid') {
+      throw new ApiError(409, 'Cette dépense est déjà réglée.');
+    }
+
+    const [updateResult] = await conn.query(
+      `UPDATE expenses SET payment_status = :status, payment_method = :method, paid_at = :paidAt
+       WHERE id = :id AND payment_status = 'unpaid'`,
       { status: 'paid', method: data.paymentMethod, paidAt: data.paidAt, id },
     );
+    if (updateResult.affectedRows === 0) throw new ApiError(409, 'Cette dépense est déjà réglée.');
 
     if (await isModuleActive(conn, req.user.tenantId)) {
       await genererEcriture(conn, {
@@ -451,7 +495,14 @@ router.post('/expenses/:id/pay', canAccounting, async (req, res, next) => {
         amount: Number(existing.amount),
         paymentMethod: data.paymentMethod,
         narrationVars: { fournisseur: supplierName },
-        sourceTable: 'expenses',
+        // Haute #6 (étape 51) : `sourceTable` distinct de l'engagement ('expenses' ci-dessus, à la
+        // création) — MÊME principe que `glActivationService.js` (rattrapage), qui utilise déjà
+        // 'expense_settlements' pour ne jamais confondre les deux dans la déduplication. Avant ce
+        // correctif, les deux événements partageaient (source_table='expenses', source_id=id) : si le
+        // module était suspendu puis réactivé, le rattrapage ne reconnaissait jamais ce règlement déjà
+        // posté en direct (il cherchait 'expense_settlements', jamais 'expenses') et en reposait un
+        // second, en double.
+        sourceTable: 'expense_settlements',
         sourceId: id,
         createdBy: req.user.id,
         context: { supplierId: existing.supplier_id },
@@ -527,6 +578,9 @@ router.post('/fixed-assets', canAccounting, async (req, res, next) => {
   try {
     await assertPeriodOpen(req.user.tenantId, data.acquisitionDate);
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.acquisitionDate);
     // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
     if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'fixed_asset', data.idempotencyKey);
 
@@ -665,11 +719,26 @@ router.post('/fixed-assets/:id/pay', canAccounting, async (req, res, next) => {
     const supplierName = supplierRows[0]?.name ?? 'Fournisseur';
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
 
-    await conn.query(
-      'UPDATE fixed_assets SET payment_status = :status, payment_method = :method, paid_at = :paidAt WHERE id = :id',
+    // Même correctif que POST /expenses/:id/pay ci-dessus (audit sécurité) —
+    // verrou + double vérification pour empêcher un double règlement.
+    const [[locked]] = await conn.query(
+      'SELECT payment_status FROM fixed_assets WHERE id = :id AND tenant_id = :tenantId FOR UPDATE',
+      { id, tenantId: req.user.tenantId },
+    );
+    if (!locked || locked.payment_status !== 'unpaid') {
+      throw new ApiError(409, 'Cette immobilisation est déjà réglée.');
+    }
+
+    const [updateResult] = await conn.query(
+      `UPDATE fixed_assets SET payment_status = :status, payment_method = :method, paid_at = :paidAt
+       WHERE id = :id AND payment_status = 'unpaid'`,
       { status: 'paid', method: data.paymentMethod, paidAt: data.paidAt, id },
     );
+    if (updateResult.affectedRows === 0) throw new ApiError(409, 'Cette immobilisation est déjà réglée.');
 
     if (await isModuleActive(conn, req.user.tenantId)) {
       await genererEcriture(conn, {
@@ -679,7 +748,10 @@ router.post('/fixed-assets/:id/pay', canAccounting, async (req, res, next) => {
         amount: Number(existing.acquisition_cost),
         paymentMethod: data.paymentMethod,
         narrationVars: { fournisseur: supplierName },
-        sourceTable: 'fixed_assets',
+        // Haute #6 (étape 51) : même correctif que POST /expenses/:id/pay ci-dessus — `sourceTable`
+        // distinct de l'acquisition ('fixed_assets', à la création), aligné sur ce que
+        // `glActivationService.js` (rattrapage) utilise déjà pour ce même règlement.
+        sourceTable: 'fixed_asset_settlements',
         sourceId: id,
         createdBy: req.user.id,
         context: { supplierId: existing.supplier_id },
@@ -748,6 +820,9 @@ router.post('/fixed-assets/:id/depreciate', canAccounting, async (req, res, next
     const amount = Math.min(monthly, remainingBookValue);
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, entryDate);
 
     const [result] = await conn.query(
       'INSERT INTO fixed_asset_depreciations (tenant_id, fixed_asset_id, period, amount, recorded_by) VALUES (:tenantId, :id, :period, :amount, :by)',
@@ -780,6 +855,85 @@ router.post('/fixed-assets/:id/depreciate', canAccounting, async (req, res, next
   }
 });
 
+// POST /api/accounting/fixed-assets/:id/dispose — sortir une immobilisation
+// du patrimoine (vente, rebut, perte). Bug corrigé (audit comptable du
+// 30/09/2026) : cette action n'existait tout simplement pas — un bien
+// disparu restait indéfiniment "actif" avec sa valeur résiduelle, faussant
+// le bilan. Acte DÉFINITIF (comme une clôture de mois) : jamais de
+// réouverture, une justification est exigée comme pour toute suppression
+// de donnée comptable dans ce projet.
+router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = disposeFixedAssetSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const { disposedAt, reason } = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const existing = await loadFixedAsset(conn, req.user.tenantId, id);
+    if (existing.status === 'disposed') throw new ApiError(409, 'Cette immobilisation a déjà été sortie du patrimoine.');
+    await assertPeriodOpen(req.user.tenantId, disposedAt);
+
+    const [[depRow]] = await conn.query(
+      'SELECT COALESCE(SUM(amount), 0) AS total FROM fixed_asset_depreciations WHERE fixed_asset_id = :id',
+      { id },
+    );
+    const accumulatedDepreciation = Number(depRow.total);
+
+    await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, disposedAt);
+
+    await conn.query(
+      `UPDATE fixed_assets
+       SET status = 'disposed', disposed_at = :disposedAt, disposed_reason = :reason, disposed_by = :by
+       WHERE id = :id`,
+      { id, disposedAt, reason, by: req.user.id },
+    );
+
+    if (await isModuleActive(conn, req.user.tenantId)) {
+      const operationType = FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE[existing.category];
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType,
+        entryDate: disposedAt,
+        // `montant_total` de la règle = coût d'ACQUISITION brut (jamais la
+        // VNC) : la règle elle-même dérive l'amortissement cumulé (compte
+        // 28xxx) et la valeur nette comptable résiduelle (compte 654) à
+        // partir de ce montant — voir `amortissement_cumule`,
+        // glAccountResolver.js.
+        amount: Number(existing.acquisition_cost),
+        narrationVars: { libelle: `${existing.label} — ${reason}` },
+        sourceTable: 'fixed_assets',
+        sourceId: id,
+        createdBy: req.user.id,
+        context: { fixedAssetId: id },
+      });
+    }
+
+    await conn.commit();
+    logger.info('Immobilisation sortie du patrimoine', {
+      tenantId: req.user.tenantId,
+      fixedAssetId: id,
+      disposedAt,
+      accumulatedDepreciation,
+      bookValue: Number(existing.acquisition_cost) - accumulatedDepreciation,
+      by: req.user.id,
+    });
+    res.status(200).json({ fixedAssetId: id, disposedAt });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 // DELETE /api/accounting/expenses/:id — suppression logique d'une dépense mal
 // saisie : la trace reste en base (visible du DG via /deleted-entries) avec
 // une justification obligatoire, mais le montant sort des totaux/recettes.
@@ -793,13 +947,19 @@ router.delete('/expenses/:id', canAccounting, async (req, res, next) => {
   }
   const { reason } = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
     const existing = await loadExpense(pool, req.user.tenantId, id);
     await assertPeriodOpen(req.user.tenantId, existing.expense_date);
-    await pool.query(
+    await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, existing.expense_date);
+    await conn.query(
       'UPDATE expenses SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason WHERE id = :id',
       { by: req.user.id, reason, id },
     );
+    await conn.commit();
     logger.info('Dépense supprimée (suppression logique)', {
       tenantId: req.user.tenantId,
       expenseId: id,
@@ -808,7 +968,10 @@ router.delete('/expenses/:id', canAccounting, async (req, res, next) => {
     });
     res.status(204).send();
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -853,18 +1016,21 @@ async function computeAccountingDashboard(user, { from, to }) {
     // « Recette du mois » sur la fiche du Bien). Les compter aussi ici
     // ferait payer deux fois le même travaux : une fois au propriétaire, une
     // fois (à tort) au solde du cabinet.
+    // Haute #7 (étape 51) : base caisse réelle (`paid_at`), jamais `expense_date` — une dépense « à
+    // crédit » encore impayée ne doit jamais réduire `netCashFlow` tant qu'aucun argent n'est réellement
+    // sorti (même correctif que `services/commission.js getCabinetRevenue`/`getEscrowBalances`).
     const [[expenseRow]] = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
        FROM expenses
        WHERE tenant_id = :tenantId AND deleted_at IS NULL AND property_id IS NULL
-         AND expense_date BETWEEN :from AND :to`,
+         AND payment_status = 'paid' AND paid_at BETWEEN :from AND :to`,
       params,
     );
     const [byCategory] = await pool.query(
       `SELECT category, COALESCE(SUM(amount), 0) AS total
        FROM expenses
        WHERE tenant_id = :tenantId AND deleted_at IS NULL AND property_id IS NULL
-         AND expense_date BETWEEN :from AND :to
+         AND payment_status = 'paid' AND paid_at BETWEEN :from AND :to
        GROUP BY category ORDER BY total DESC`,
       params,
     );
@@ -872,11 +1038,13 @@ async function computeAccountingDashboard(user, { from, to }) {
     // période, pour ne pas donner l'impression que cet argent a disparu du
     // suivi — il reste visible ici, et déduit là où il doit l'être (fiche du
     // propriétaire concerné), jamais dans les totaux du cabinet ci-dessus.
+    // Haute #7 (étape 51) : même correctif — doit rester cohérent avec `getRecetteNetteMaison`/
+    // `getEscrowBalances`, qui déduisent désormais ces mêmes dépenses sur `paid_at`, jamais `expense_date`.
     const [[propertyExpenseRow]] = await pool.query(
       `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
        FROM expenses
        WHERE tenant_id = :tenantId AND deleted_at IS NULL AND property_id IS NOT NULL
-         AND expense_date BETWEEN :from AND :to`,
+         AND payment_status = 'paid' AND paid_at BETWEEN :from AND :to`,
       params,
     );
 
@@ -1353,7 +1521,7 @@ router.get('/rent-month', canAccounting, async (req, res, next) => {
     }
     const [leases] = await pool.query(
       `SELECT l.start_date, l.end_date, l.created_at, l.up_to_date_at_onboarding, l.rent_due_day, l.rent_timing,
-              l.monthly_rent, COALESCE(pay.paid, 0) AS paid
+              l.monthly_rent, l.entry_proration, COALESCE(pay.paid, 0) AS paid
        FROM leases l
        JOIN property_units u ON u.id = l.unit_id
        JOIN properties p ON p.id = u.property_id
@@ -1374,6 +1542,7 @@ router.get('/rent-month', canAccounting, async (req, res, next) => {
         rentDueDay: l.rent_due_day,
         rentTiming: l.rent_timing,
         monthlyRent: Number(l.monthly_rent),
+        entryProration: l.entry_proration,
         paid: Number(l.paid),
       })),
       month,
@@ -1598,13 +1767,8 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
   }
   const { period, force } = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
-    const [existing] = await pool.query(
-      'SELECT id FROM accounting_periods WHERE tenant_id = :tenantId AND period = :period LIMIT 1',
-      { tenantId: req.user.tenantId, period },
-    );
-    if (existing[0]) throw new ApiError(409, 'Ce mois est déjà clôturé.');
-
     const closability = await getPeriodClosability(req.user.tenantId, period);
     if (!closability.isClosable && !force) {
       throw new ApiError(
@@ -1619,10 +1783,25 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
     }
     const forced = !closability.isClosable && force;
 
-    await pool.query(
+    await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : `SELECT ... FOR UPDATE` sur la
+    // même clé que `assertPeriodOpenLocked` — sérialise cette clôture contre
+    // toute écriture financière en cours de saisie pour ce mois (celle-ci
+    // attend que l'écriture en cours commette avant de clôturer par-dessous
+    // elle) ET contre une seconde clôture concurrente du même mois (qui
+    // voit alors la ligne déjà insérée et reçoit un 409 propre plutôt qu'une
+    // exception de clé dupliquée non gérée).
+    const [existing] = await conn.query(
+      'SELECT id FROM accounting_periods WHERE tenant_id = :tenantId AND period = :period LIMIT 1 FOR UPDATE',
+      { tenantId: req.user.tenantId, period },
+    );
+    if (existing[0]) throw new ApiError(409, 'Ce mois est déjà clôturé.');
+
+    await conn.query(
       'INSERT INTO accounting_periods (tenant_id, period, closed_by, forced) VALUES (:tenantId, :period, :by, :forced)',
       { tenantId: req.user.tenantId, period, by: req.user.id, forced: forced ? 1 : 0 },
     );
+    await conn.commit();
 
     // Fige le solde de chaque bail concerné pour l'audit (voir
     // `lease_balance_snapshots`) — après la clôture elle-même, et dans son
@@ -1642,7 +1821,10 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
     logger.info('Mois comptable clôturé', { tenantId: req.user.tenantId, period, by: req.user.id, forced });
     res.status(201).json({ period, forced });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 

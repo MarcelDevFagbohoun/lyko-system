@@ -2,12 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Check, RotateCcw, Trash2, ListTodo } from "lucide-react";
+import { ArrowLeft, Plus, Check, RotateCcw, Trash2, ListTodo, Pencil, X } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import {
   listAssignedTasks,
   createAssignedTask,
+  updateAssignedTask,
   completeAssignedTask,
   reopenAssignedTask,
   deleteAssignedTask,
@@ -57,6 +58,7 @@ function TachesContent() {
   const [dueDate, setDueDate] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
+  const [editingId, setEditingId] = React.useState<number | null>(null);
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
@@ -209,6 +211,21 @@ function TachesContent() {
               </p>
             ) : (
               tasks.map((t) => {
+                if (editingId === t.id) {
+                  return (
+                    <EditTaskForm
+                      key={t.id}
+                      task={t}
+                      employees={employees}
+                      accessToken={accessToken}
+                      onCancel={() => setEditingId(null)}
+                      onSaved={() => {
+                        setEditingId(null);
+                        load();
+                      }}
+                    />
+                  );
+                }
                 const due = formatTaskDueLabel(t.dueDate, t.completedAt);
                 const canAct = isDg || t.assignedTo.id === user?.id;
                 return (
@@ -242,6 +259,11 @@ function TachesContent() {
                         </Button>
                       )}
                       {isDg && (
+                        <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(t.id)} aria-label="Modifier">
+                          <Pencil size={14} />
+                        </Button>
+                      )}
+                      {isDg && (
                         <Button type="button" size="sm" variant="ghost" onClick={() => handleDelete(t.id)}>
                           <Trash2 size={14} className="text-danger-fg" />
                         </Button>
@@ -255,5 +277,87 @@ function TachesContent() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function EditTaskForm({
+  task,
+  employees,
+  accessToken,
+  onCancel,
+  onSaved,
+}: {
+  task: AssignedTask;
+  employees: Employee[];
+  accessToken: string | null;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = React.useState(task.title);
+  const [description, setDescription] = React.useState(task.description ?? "");
+  const [assignedTo, setAssignedTo] = React.useState<number | "">(task.assignedTo.id);
+  const [dueDate, setDueDate] = React.useState(task.dueDate);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken || assignedTo === "") return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await updateAssignedTask(accessToken, task.id, {
+        title,
+        description: description.trim() || undefined,
+        assignedTo,
+        dueDate,
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de modifier cette tâche.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted px-3 py-2.5">
+      {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+      <Field label="Titre" htmlFor={`editTitle-${task.id}`} required>
+        <Input id={`editTitle-${task.id}`} value={title} onChange={(e) => setTitle(e.target.value)} />
+      </Field>
+      <Field label="Description (optionnel)" htmlFor={`editDescription-${task.id}`}>
+        <Input id={`editDescription-${task.id}`} value={description} onChange={(e) => setDescription(e.target.value)} />
+      </Field>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Assignée à" htmlFor={`editAssignedTo-${task.id}`} required>
+          <select
+            id={`editAssignedTo-${task.id}`}
+            value={assignedTo}
+            onChange={(e) => setAssignedTo(e.target.value ? Number(e.target.value) : "")}
+            className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <option value="">Sélectionnez un employé</option>
+            {employees.map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.firstName} {emp.lastName}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Date limite" htmlFor={`editDueDate-${task.id}`} required>
+          <Input id={`editDueDate-${task.id}`} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </Field>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button type="submit" size="sm" disabled={submitting || assignedTo === ""}>
+          {submitting ? "Enregistrement…" : "Enregistrer"}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={submitting}>
+          <X size={14} />
+          Annuler
+        </Button>
+      </div>
+    </form>
   );
 }

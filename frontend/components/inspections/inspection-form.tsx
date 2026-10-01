@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Camera, Plus, Trash2, X, Search, Receipt } from "lucide-react";
 import { cn, formatFcfa } from "@/lib/utils";
-import { API_URL } from "@/lib/api/client";
+import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import {
   INSPECTION_CONDITIONS,
   CONDITION_LABELS,
@@ -24,6 +24,7 @@ type InspectionFormProps = {
   catalog?: CatalogItem[];
   /** Postes dégradés par rapport à l'entrée ("zoneKey::itemKey") — mis en évidence avec une invite à facturer. */
   degradedKeys?: Set<string>;
+  accessToken: string | null;
 }
 
 /**
@@ -40,6 +41,7 @@ export function InspectionForm({
   onDeletePhoto,
   catalog = [],
   degradedKeys,
+  accessToken,
 }: InspectionFormProps) {
   function updateItem(zoneKey: string, itemKey: string, patch: Partial<InspectionItem>) {
     onChange(
@@ -101,6 +103,7 @@ export function InspectionForm({
           onRemoveZone={() => removeZone(zone.key)}
           onUploadPhoto={(itemKey, file) => onUploadPhoto(zone.key, itemKey, file)}
           onDeletePhoto={(itemKey, photoIndex) => onDeletePhoto(zone.key, itemKey, photoIndex)}
+          accessToken={accessToken}
         />
       ))}
       <AddZoneForm onAdd={addZone} />
@@ -119,6 +122,7 @@ function ZoneSection({
   onRemoveZone,
   onUploadPhoto,
   onDeletePhoto,
+  accessToken,
 }: {
   zone: InspectionZone;
   showDeductions: boolean;
@@ -130,6 +134,7 @@ function ZoneSection({
   onRemoveZone: () => void;
   onUploadPhoto: (itemKey: string, file: File) => void | Promise<void>;
   onDeletePhoto: (itemKey: string, photoIndex: number) => void | Promise<void>;
+  accessToken: string | null;
 }) {
   const [addingItem, setAddingItem] = React.useState(false);
   const [newItemLabel, setNewItemLabel] = React.useState("");
@@ -168,6 +173,7 @@ function ZoneSection({
             onRemove={item.custom ? () => onRemoveItem(item.key) : undefined}
             onUploadPhoto={(file) => onUploadPhoto(item.key, file)}
             onDeletePhoto={(photoIndex) => onDeletePhoto(item.key, photoIndex)}
+            accessToken={accessToken}
           />
         ))}
       </div>
@@ -206,6 +212,7 @@ function ItemRow({
   onRemove,
   onUploadPhoto,
   onDeletePhoto,
+  accessToken,
 }: {
   item: InspectionItem;
   showDeductions: boolean;
@@ -215,6 +222,7 @@ function ItemRow({
   onRemove?: () => void;
   onUploadPhoto: (file: File) => void | Promise<void>;
   onDeletePhoto: (photoIndex: number) => void | Promise<void>;
+  accessToken: string | null;
 }) {
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = React.useState(false);
@@ -362,8 +370,9 @@ function ItemRow({
       <div className="mt-2 flex items-center gap-2">
         {item.photoUrls.map((url, idx) => (
           <div key={url} className="relative h-16 w-16 overflow-hidden rounded border border-border">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`${API_URL}${url}`} alt={item.label} className="h-full w-full object-cover" />
+            {accessToken && (
+              <AuthenticatedImage src={url} accessToken={accessToken} alt={item.label} className="h-full w-full object-cover" />
+            )}
             <button
               type="button"
               onClick={() => onDeletePhoto(idx)}

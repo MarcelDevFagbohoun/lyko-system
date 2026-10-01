@@ -115,6 +115,7 @@ export type PortalComplaintInput = {
   title: string;
   description?: string;
   priority?: ComplaintPriority;
+  idempotencyKey?: string;
 };
 
 export function submitPortalComplaint(token: string, input: PortalComplaintInput) {

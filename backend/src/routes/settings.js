@@ -8,7 +8,7 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { updateSettingsSchema } = require('../validators/settings');
-const { assertUploadType, randomFileName } = require('../utils/uploads');
+const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { ROLE_TITLE_PRESETS, resolveRoleLabels } = require('../constants/roles');
 const { encryptSecret } = require('../utils/encryption');
 const logger = require('../utils/logger');
@@ -33,8 +33,8 @@ const upload = multer({
 
 function toPublicSettings(tenant) {
   return {
-    stampUrl: tenant.stamp_path ? `/uploads/${tenant.stamp_path}` : null,
-    signatureUrl: tenant.signature_path ? `/uploads/${tenant.signature_path}` : null,
+    stampUrl: tenant.stamp_path ? toProtectedFileUrl(tenant.stamp_path) : null,
+    signatureUrl: tenant.signature_path ? toProtectedFileUrl(tenant.signature_path) : null,
     // Nom des 3 postes chez cette entreprise (Réglages) — menu déroulant
     // fermé, voir constants/roles.js. Affiché partout, y compris à la
     // connexion employé (voir GET /api/auth/role-titles, public).

@@ -17,7 +17,10 @@
 
 const { ApiError } = require('../middleware/error');
 
-const DUPLICATE_MESSAGE = 'Ce paiement a déjà été enregistré (envoi en double évité). Rechargez la page pour le voir.';
+// Bug corrigé (audit sécurité/logique) : ce garde-fou sert désormais aussi à
+// des envois non financiers (plaintes) — le message ne doit plus dire
+// spécifiquement « paiement ».
+const DUPLICATE_MESSAGE = 'Cet envoi a déjà été enregistré (envoi en double évité). Rechargez la page pour le voir.';
 
 /** Réclame une clé (scope + clé) ; lève 409 `duplicate_request` si elle a déjà servi. À appeler dans la transaction du paiement. */
 async function claimIdempotencyKey(conn, tenantId, scope, key) {

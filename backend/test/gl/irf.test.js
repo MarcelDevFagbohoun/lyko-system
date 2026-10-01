@@ -199,7 +199,7 @@ test('payIrf (service) : refuse de régler plus que ce qui est dû, et refuse to
       context: { ownerId: fx2.ownerId },
     });
 
-    const balance = await getIrfBalance(pool, fx2.tenantId);
+    const { balance } = await getIrfBalance(pool, fx2.tenantId);
     assert.equal(balance, 5000);
 
     await assert.rejects(
@@ -214,8 +214,45 @@ test('payIrf (service) : refuse de régler plus que ce qui est dû, et refuse to
       userId: fx2.dgId,
     });
     assert.ok(result.entryId);
-    assert.equal(await getIrfBalance(pool, fx2.tenantId), 0);
+    assert.equal((await getIrfBalance(pool, fx2.tenantId)).balance, 0);
   } finally {
     await teardown(fx2.tenantId);
+  }
+});
+
+test('payIrf (service) — audit sécurité : deux règlements concurrents ne peuvent pas ensemble dépasser le solde dû', async () => {
+  const fx3 = await createFixture();
+  try {
+    await pool.query('UPDATE tenants SET gl_irf_enabled = 1, gl_irf_rate = 5 WHERE id = :t', { t: fx3.tenantId });
+    await genererEcriture(pool, {
+      tenantId: fx3.tenantId,
+      operationType: 'reversement_proprietaire',
+      entryDate: '2026-01-10',
+      amount: 100000,
+      paymentMethod: 'virement',
+      narrationVars: { proprietaire: 'Propriétaire Test' },
+      createdBy: fx3.dgId,
+      context: { ownerId: fx3.ownerId },
+    });
+    const { balance } = await getIrfBalance(pool, fx3.tenantId);
+    assert.equal(balance, 5000);
+
+    // Deux règlements de 3000 chacun (chacun < solde de 5000 lu isolément),
+    // lancés en même temps : sans le verrou, les deux pouvaient passer et
+    // retirer 6000 sur un solde réel de 5000. Un seul doit réussir.
+    const results = await Promise.allSettled([
+      payIrf(pool, fx3.tenantId, { amount: 3000, paymentMethod: 'especes', paidAt: '2026-01-15', userId: fx3.dgId }),
+      payIrf(pool, fx3.tenantId, { amount: 3000, paymentMethod: 'especes', paidAt: '2026-01-15', userId: fx3.dgId }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    assert.equal(fulfilled.length, 1, 'un seul des deux règlements concurrents doit réussir');
+    assert.equal(rejected.length, 1);
+    assert.match(rejected[0].reason.message, /dépasse ce qui est dû/);
+
+    const { balance: finalBalance } = await getIrfBalance(pool, fx3.tenantId);
+    assert.equal(finalBalance, 2000, 'le solde final doit refléter UN SEUL règlement de 3000, jamais deux');
+  } finally {
+    await teardown(fx3.tenantId);
   }
 });

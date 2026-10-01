@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { apiFetch } from "@/lib/api/client";
+import { apiFetch, ApiError } from "@/lib/api/client";
 
 export type AuthUser = {
   id: number;
@@ -107,6 +107,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // Rafraîchissement automatique du jeton d'accès (audit sécurité/logique,
+  // bug corrigé) : `JWT_ACCESS_TTL` côté backend est de 15 minutes, mais rien
+  // ne le renouvelait jamais — n'importe quel onglet resté ouvert plus
+  // longtemps tombait en erreur « Session invalide ou expirée » sur chaque
+  // appel, sans redirection ni récupération automatique (l'utilisateur devait
+  // deviner qu'il fallait recharger la page). Rafraîchit silencieusement
+  // pendant que la session est active — périodiquement, et aussi dès que
+  // l'onglet redevient visible (couvre un ordinateur mis en veille plus
+  // longtemps qu'un `setInterval` seul ne peut le détecter, puisqu'il ne
+  // tourne pas pendant la veille).
+  React.useEffect(() => {
+    if (state.status !== "authenticated") return;
+
+    let cancelled = false;
+    let refreshing = false;
+
+    async function silentlyRefresh() {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const { accessToken } = await apiFetch<{ accessToken: string }>("/api/auth/refresh", { method: "POST" });
+        if (!cancelled) setState((s) => (s.status === "authenticated" ? { ...s, accessToken } : s));
+      } catch (err) {
+        // Le serveur a explicitement rejeté le cookie de refresh (révoqué,
+        // expiré) : la session est réellement terminée. Une simple panne
+        // réseau passagère (pas une `ApiError`) ne doit jamais déconnecter
+        // qui que ce soit — le prochain tick réessaiera.
+        if (!cancelled && err instanceof ApiError) {
+          setState({ user: null, tenant: null, accessToken: null, status: "unauthenticated" });
+        }
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    const intervalId = setInterval(silentlyRefresh, 10 * 60 * 1000);
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") silentlyRefresh();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [state.status]);
 
   const login = React.useCallback(async (phone: string, password: string) => {
     const res = await apiFetch<{ user: AuthUser; tenant: AuthTenant; accessToken: string }>(

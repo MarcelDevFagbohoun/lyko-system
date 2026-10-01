@@ -13,6 +13,7 @@ const GL_OPERATION_TYPES = [
   'prorata_entree_encaisse',
   'frais_agence_encaisse',
   'charge_locative_encaissee',
+  'charge_locative_reglee_par_caution',
   'caution_recue',
   'caution_restituee',
   'caution_supplementaire_recue',
@@ -38,6 +39,9 @@ const GL_OPERATION_TYPES = [
   'amortissement_informatique',
   'amortissement_mobilier',
   'amortissement_transport',
+  'sortie_informatique',
+  'sortie_mobilier',
+  'sortie_transport',
 ];
 
 // Catégorie de `fixed_assets.category` → type d'opération d'ACQUISITION.
@@ -52,6 +56,14 @@ const FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE = {
   informatique: 'amortissement_informatique',
   mobilier: 'amortissement_mobilier',
   transport: 'amortissement_transport',
+};
+
+// Catégorie de `fixed_assets.category` → type d'opération de SORTIE du
+// patrimoine (vente, rebut, perte — étape « audit comptable » du 30/09/2026).
+const FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE = {
+  informatique: 'sortie_informatique',
+  mobilier: 'sortie_mobilier',
+  transport: 'sortie_transport',
 };
 
 // Catégories de `expenses.category` (existant) → type d'opération comptable.
@@ -84,5 +96,6 @@ module.exports = {
   EXPENSE_CATEGORY_TO_OPERATION_TYPE,
   FIXED_ASSET_CATEGORY_TO_ACQUISITION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
+  FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE,
   GL_CORE_HOOKED_OPERATION_TYPES,
 };

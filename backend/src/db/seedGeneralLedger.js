@@ -127,6 +127,14 @@ const ACCOUNTS = [
   },
   { code: '671', label: 'Intérêts des emprunts', class: 6, type: 'charge' },
   { code: '681', label: 'Dotations aux amortissements', class: 6, type: 'charge' },
+  {
+    code: '654',
+    label: "Valeurs comptables des cessions d'immobilisations",
+    class: 6,
+    type: 'charge',
+    note:
+      "Sortie d'immobilisation (vente, rebut, perte — étape « audit comptable » du 30/09/2026) : valeur nette comptable résiduelle (coût − amortissements déjà pratiqués) passée en charge lors de la sortie du bien. Pas de suivi d'un éventuel prix de cession dans ce module (V1) — toujours traité comme une sortie sans contrepartie financière.",
+  },
 
   // Classe 7 — Produits
   {
@@ -237,6 +245,19 @@ const RULES = [
       "À VALIDER : même logique de trésorerie que le loyer (une seule écriture à l'encaissement effectif, pas de créance constatée à la facturation). Le % répercuté au 411 (comportement historique : 100 %, rien gardé) est configurable par entreprise (tenants.gl_utility_passthrough_percent, Comptabilité avancée → Règles comptables) — le reste part en 706 comme frais de gestion du cabinet.",
     lines: [
       { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', role: 'tiers_locataire', formula: 'pourcentage_variable', param: 'taux_repercussion_charge' },
+      { side: 'credit', account: '706', formula: 'montant_moins_pourcentage', param: 'taux_repercussion_charge' },
+    ],
+  },
+  {
+    operation_type: 'charge_locative_reglee_par_caution',
+    label: 'Régler une charge SONEB/SBEE via la caution retenue',
+    journal: 'OD',
+    narration_template: 'Charge {fluide} {periode} réglée par la caution — {locataire}',
+    note:
+      "Variante de `charge_locative_encaissee` pour la part d'une caution SBEE/SONEB retenue à la sortie du locataire (`services/leaseDeposits.js settleUnpaidUtilityCharges`) : AUCUN nouvel encaissement de trésorerie (l'argent a déjà été reçu à la signature du bail, voir `caution_supplementaire_recue`) — seul le compte 165 (dette envers le locataire) est soldé à due concurrence ; la répercussion propriétaire/frais de gestion reste identique à `charge_locative_encaissee`.",
+    lines: [
+      { side: 'debit', account: '165', role: 'tiers_locataire_caution', formula: 'montant_total' },
       { side: 'credit', role: 'tiers_locataire', formula: 'pourcentage_variable', param: 'taux_repercussion_charge' },
       { side: 'credit', account: '706', formula: 'montant_moins_pourcentage', param: 'taux_repercussion_charge' },
     ],
@@ -407,6 +428,19 @@ const RULES = [
         { side: 'credit', account: c.depreciationAccount, formula: 'montant_total' },
       ],
     },
+    {
+      operation_type: `sortie_${c.category}`,
+      label: `Sortir du patrimoine — ${c.label}`,
+      journal: 'OD',
+      narration_template: `Sortie d'immobilisation — ${c.label} — {libelle}`,
+      note:
+        "Sortie du bien (vente, rebut, perte — étape « audit comptable » du 30/09/2026, jusqu'ici IMPOSSIBLE : aucune route ne permettait jamais de sortir une immobilisation du patrimoine, qui restait donc active indéfiniment). `montant_total` porte le coût d'ACQUISITION brut : le compte 2xxx repasse à zéro pour ce bien (crédité en totalité), l'amortissement déjà pratiqué solde le 28xxx correspondant, la valeur nette comptable résiduelle part en charge (654). Pas de suivi d'un éventuel prix de cession en V1 (aucune colonne dédiée) — toujours traité comme une sortie sans contrepartie financière.",
+      lines: [
+        { side: 'debit', account: c.depreciationAccount, formula: 'pourcentage_variable', param: 'amortissement_cumule' },
+        { side: 'debit', account: '654', formula: 'montant_moins_pourcentage', param: 'amortissement_cumule' },
+        { side: 'credit', account: c.assetAccount, formula: 'montant_total' },
+      ],
+    },
   ]),
   // Dépenses de fonctionnement — une règle par catégorie EXISTANTE
   // (expenses.category), pour que chaque catégorie ait sa propre
@@ -550,6 +584,36 @@ async function seed(tenantId) {
  * Suppose que `seed()` a déjà tourné au moins une fois pour ce tenant
  * (comptes/journaux déjà en place) — lève une erreur explicite sinon.
  */
+/**
+ * Ajoute au plan comptable les comptes du catalogue actuel qui n'existent
+ * encore PAS pour ce tenant (ex. le compte 654, introduit avec la sortie
+ * d'immobilisation — étape « audit comptable » du 30/09/2026) — jamais un
+ * compte déjà là (jamais de UPDATE sur son libellé/sa classe). À appeler
+ * AVANT `syncMissingPostingRules` ci-dessous : une règle qui référence un
+ * compte encore absent échouerait sinon à résoudre son `account_id`.
+ */
+async function syncMissingAccounts(tenantId) {
+  const conn = await pool.getConnection();
+  try {
+    const [existingRows] = await conn.query('SELECT code FROM gl_accounts WHERE tenant_id = :tenantId', { tenantId });
+    const existingCodes = new Set(existingRows.map((r) => r.code));
+    const missing = ACCOUNTS.filter((a) => !existingCodes.has(a.code));
+    if (missing.length === 0) return { added: [] };
+
+    for (const a of missing) {
+      await conn.query(
+        `INSERT INTO gl_accounts (tenant_id, code, system_key, label, class, account_type, is_control_account, is_system)
+         VALUES (:tenantId, :code, :systemKey, :label, :class, :type, :control, 1)`,
+        { tenantId, code: a.code, systemKey: a.systemKey ?? null, label: a.label, class: a.class, type: a.type, control: a.control ? 1 : 0 },
+      );
+    }
+    logger.info('Comptes manquants ajoutés au plan comptable', { tenantId, added: missing.map((a) => a.code) });
+    return { added: missing.map((a) => a.code) };
+  } finally {
+    conn.release();
+  }
+}
+
 async function syncMissingPostingRules(tenantId) {
   const conn = await pool.getConnection();
   try {
@@ -677,6 +741,7 @@ if (require.main === module) main();
 
 module.exports = {
   seed,
+  syncMissingAccounts,
   syncMissingPostingRules,
   syncAccountSystemKeys,
   ACCOUNTS,

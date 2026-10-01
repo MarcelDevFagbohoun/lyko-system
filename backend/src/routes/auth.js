@@ -14,7 +14,7 @@ const { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH } = require('../utils/
 const { issueSession, rotateRefreshToken, revokeRefreshToken } = require('../services/session');
 const { getPermissions } = require('../services/permissions');
 const { REFRESH_COOKIE_NAME, refreshCookieOptions } = require('../utils/cookies');
-const { assertUploadType, randomFileName } = require('../utils/uploads');
+const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { assertNotLocked, recordFailure, recordSuccess } = require('../middleware/loginThrottle');
 const { resolveRoleLabels } = require('../constants/roles');
 const logger = require('../utils/logger');
@@ -94,10 +94,10 @@ function toPublicUser(user, { permissions = [], mustChangePassword } = {}) {
     // Cachet/signature personnels (apposés sur les quittances des paiements
     // qu'il encaisse lui-même) — jamais ceux de l'entreprise, gérés à part
     // dans Réglages (DG uniquement).
-    stampUrl: user.stamp_path ? `/uploads/${user.stamp_path}` : null,
-    signatureUrl: user.signature_path ? `/uploads/${user.signature_path}` : null,
+    stampUrl: user.stamp_path ? toProtectedFileUrl(user.stamp_path) : null,
+    signatureUrl: user.signature_path ? toProtectedFileUrl(user.signature_path) : null,
     // Photo de profil — purement visuelle dans l'app, jamais sur un document PDF.
-    avatarUrl: user.avatar_path ? `/uploads/${user.avatar_path}` : null,
+    avatarUrl: user.avatar_path ? toProtectedFileUrl(user.avatar_path) : null,
   };
 }
 

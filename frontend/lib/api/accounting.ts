@@ -444,6 +444,7 @@ export type FixedAsset = {
   supplierName: string | null;
   status: "active" | "disposed";
   disposedAt: string | null;
+  disposedReason: string | null;
   accumulatedDepreciation: number;
   bookValue: number;
   createdAt: string;
@@ -506,4 +507,19 @@ export function depreciateFixedAsset(accessToken: string, id: number, period: st
       body: JSON.stringify({ period }),
     },
   );
+}
+
+/**
+ * Sort une immobilisation du patrimoine (vente, rebut, perte) — acte
+ * DÉFINITIF (comme une clôture de mois), jamais réversible. Génère une
+ * écriture comptable de sortie (amortissement cumulé soldé, valeur nette
+ * comptable résiduelle passée en charge) si le module avancé est actif.
+ */
+export function disposeFixedAsset(accessToken: string, id: number, input: { disposedAt: string; reason: string }) {
+  return apiFetch<{ fixedAssetId: number; disposedAt: string }>(`/api/accounting/fixed-assets/${id}/dispose`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }

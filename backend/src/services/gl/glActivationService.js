@@ -114,6 +114,15 @@ async function backfillOne(pool, tenantId, summary, op) {
     summary.generated += 1;
   } catch (err) {
     await conn.rollback().catch(() => {});
+    // Haute #8 (étape 51) : la vérification de déduplication ci-dessus n'a pas de verrou — deux
+    // activations lancées en concurrence pour ce même tenant peuvent toutes deux la passer avant que
+    // l'une des deux ne commite. La contrainte UNIQUE `uq_gl_entries_active_source` (migration 077) est
+    // le filet de sécurité final : si elle se déclenche ici, c'est qu'un autre appel concurrent vient de
+    // générer la MÊME écriture entre-temps — un « déjà fait », jamais une vraie erreur.
+    if (err.code === 'ER_DUP_ENTRY') {
+      summary.skipped += 1;
+      return;
+    }
     summary.errors.push(`${op.sourceTable}#${op.sourceId} (${op.entryDate}) : ${err.message}`);
   } finally {
     conn.release();
@@ -179,7 +188,7 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
   }
 
   const [utilityPayments] = await pool.query(
-    `SELECT up.id, up.amount, up.payment_method, up.paid_at, up.recorded_by,
+    `SELECT up.id, up.amount, up.payment_method, up.paid_at, up.recorded_by, up.settled_from_deposit,
             uc.utility_type, uc.period_start, uc.period_end, uc.lease_id,
             r.first_name, r.last_name
      FROM utility_payments up
@@ -193,7 +202,7 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
     operations.push({
       sourceTable: 'utility_payments',
       sourceId: p.id,
-      operationType: 'charge_locative_encaissee',
+      operationType: p.settled_from_deposit ? 'charge_locative_reglee_par_caution' : 'charge_locative_encaissee',
       entryDate: isoDate(p.paid_at),
       amount: Number(p.amount),
       paymentMethod: p.payment_method,

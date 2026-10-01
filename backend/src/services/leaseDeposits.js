@@ -144,10 +144,11 @@ async function settleUnpaidUtilityCharges(conn, { tenantId, leaseId, utilityType
       tenantId,
       charge,
       amount: toPay,
-      paymentMethod: 'especes', // convention : la source réelle est la caution, pas un mode de paiement classique — voir la note ci-dessous
+      paymentMethod: 'especes', // valeur de repli pour la colonne (aucun mode de paiement réel) : `settledFromDeposit` ci-dessous est le vrai discriminant, jamais utilisé pour la trésorerie
       paidAt,
       notes: `Réglé via la caution ${UTILITY_TYPE_LABELS[utilityType]} à la sortie du locataire.`,
       recordedBy: createdBy,
+      settledFromDeposit: true, // aucun nouvel encaissement : l'argent a déjà été reçu à la signature (`caution_supplementaire_recue`) — voir `charge_locative_reglee_par_caution`, qui solde le 165 au lieu de débiter la trésorerie une seconde fois
     });
     remaining -= toPay;
     settled += toPay;

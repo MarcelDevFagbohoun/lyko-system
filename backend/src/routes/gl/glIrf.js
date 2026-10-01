@@ -22,7 +22,7 @@ const canAdvanced = requirePermission('comptabilite_avancee');
 
 router.get('/', canAdvanced, async (req, res, next) => {
   try {
-    const balanceOwed = await getIrfBalance(pool, req.user.tenantId);
+    const { balance: balanceOwed } = await getIrfBalance(pool, req.user.tenantId);
     res.json({ balanceOwed });
   } catch (err) {
     next(err);

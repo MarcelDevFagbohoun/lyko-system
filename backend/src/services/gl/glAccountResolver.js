@@ -90,10 +90,20 @@ async function resolveTreasuryAccountId(conn, tenantId, paymentMethod) {
  * cabinet peut très bien gérer un bien sans commission (cas rare, valide).
  */
 async function resolveCommissionRate(conn, tenantId, ownerId, atDate) {
+  // Bug corrigé (audit sécurité/logique) : `ends_on` est écrit comme le
+  // DERNIER JOUR INCLUS de validité de l'ancien taux (owners.js, à la
+  // création d'un nouveau taux : `ends_on = starts_on du nouveau − 1 jour`).
+  // La comparaison stricte `>` excluait donc CE jour-là de l'ancien taux
+  // sans que le nouveau (dont `starts_on` est le lendemain) ne le couvre
+  // non plus — un jour « orphelin » tombait silencieusement à 0 % de
+  // commission dans le grand livre. `services/commission.js`
+  // (`pickRateValidAt`/tableau de bord/garde-fou de versement) utilise déjà
+  // `>=`, la même comparaison inclusive — ce moteur GL doit s'y aligner
+  // pour ne jamais diverger de la commission réellement due ce jour-là.
   const [rows] = await conn.query(
     `SELECT rate FROM owner_commission_rates
      WHERE tenant_id = :tenantId AND owner_id = :ownerId
-       AND starts_on <= :atDate AND (ends_on IS NULL OR ends_on > :atDate)
+       AND starts_on <= :atDate AND (ends_on IS NULL OR ends_on >= :atDate)
      ORDER BY starts_on DESC LIMIT 1`,
     { tenantId, ownerId, atDate },
   );
@@ -299,6 +309,23 @@ async function resolveLineAmount(conn, { tenantId, line, totalAmount, context })
               ? irfAmount
               : commissionAmount + irfAmount;
         return line.amount_formula === 'pourcentage_variable' ? amount : totalAmount - amount;
+      }
+      // `amortissement_cumule` (sortie d'immobilisation UNIQUEMENT, étape
+      // « audit comptable » du 30/09/2026) : `totalAmount` porte le coût
+      // d'ACQUISITION brut (crédité en totalité sur le compte 2xxx, qui doit
+      // repasser à zéro pour ce bien) ; l'amortissement déjà pratiqué (somme
+      // réelle de `fixed_asset_depreciations`, jamais recalculé) solde le
+      // compte 28xxx (amortissement cumulé) ; le reste — la valeur nette
+      // comptable résiduelle — part en charge (654).
+      if (line.formula_param === 'amortissement_cumule') {
+        const fixedAssetId = context.fixedAssetId;
+        if (!fixedAssetId) throw new Error("Contexte manquant : fixedAssetId requis pour la formule 'amortissement_cumule'");
+        const [[row]] = await conn.query(
+          'SELECT COALESCE(SUM(amount), 0) AS total FROM fixed_asset_depreciations WHERE fixed_asset_id = :fixedAssetId',
+          { fixedAssetId },
+        );
+        const accumulated = Number(row.total);
+        return line.amount_formula === 'pourcentage_variable' ? accumulated : totalAmount - accumulated;
       }
       throw new Error(`Paramètre de formule non pris en charge : ${line.formula_param}`);
     }

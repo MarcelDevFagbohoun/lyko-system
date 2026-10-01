@@ -1,4 +1,5 @@
 import { apiFetch, type Actor } from "./client";
+import { newIdempotencyKey } from "@/lib/utils";
 
 export type ComplaintCategory = "plomberie" | "electricite" | "serrurerie" | "climatisation" | "maconnerie" | "autre";
 export type ComplaintPriority = "normale" | "urgente";
@@ -73,6 +74,14 @@ export type CreateComplaintResult =
  */
 export async function createComplaint(accessToken: string, input: CreateComplaintInput): Promise<CreateComplaintResult> {
   const { photos, ...rest } = input;
+  // Une seule clé pour CET envoi, réutilisée telle quelle si la requête part
+  // en file hors-ligne ci-dessous : si la tentative en direct avait en fait
+  // réussi côté serveur mais que sa réponse s'est perdue (coupure juste après),
+  // le rejeu automatique de la file avec la MÊME clé revient en 409 « déjà
+  // enregistré » plutôt que de créer un doublon (voir `claimIdempotencyKey`
+  // côté serveur, et `lib/offline/queue.ts` qui traite déjà ce 409 précis
+  // comme un succès silencieux).
+  const idempotencyKey = newIdempotencyKey();
   try {
     const fd = new FormData();
     fd.append("leaseId", String(rest.leaseId));
@@ -81,6 +90,7 @@ export async function createComplaint(accessToken: string, input: CreateComplain
     if (rest.description) fd.append("description", rest.description);
     fd.append("priority", rest.priority);
     if (rest.reportedAt) fd.append("reportedAt", rest.reportedAt);
+    fd.append("idempotencyKey", idempotencyKey);
     photos?.forEach((f) => fd.append("photos", f));
     const result = await apiFetch<{ complaintId: number; code: string }>("/api/complaints", {
       method: "POST",
@@ -100,6 +110,7 @@ export async function createComplaint(accessToken: string, input: CreateComplain
         category: rest.category,
         title: rest.title,
         priority: rest.priority,
+        idempotencyKey,
       };
       if (rest.description) body.description = rest.description;
       if (rest.reportedAt) body.reportedAt = rest.reportedAt;

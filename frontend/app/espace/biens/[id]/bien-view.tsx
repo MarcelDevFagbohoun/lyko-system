@@ -4,13 +4,14 @@ import * as React from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Plus, Phone, MapPin, Layers, DoorOpen, Check, Gauge, Receipt, Store, UserCog, UserX } from "lucide-react";
+import { ArrowLeft, Plus, Phone, MapPin, Layers, DoorOpen, Check, Gauge, Receipt, Store, UserCog, UserX, Pencil } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { API_URL } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/client";
+import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import {
   getProperty,
   createUnit,
+  updateUnit,
   releaseUnit,
   updateProperty,
   getPropertiesMeta,
@@ -82,6 +83,7 @@ function BienContent() {
   const [showUnitForm, setShowUnitForm] = React.useState(false);
   const [justFreed, setJustFreed] = React.useState<string | null>(null);
   const [publishingUnit, setPublishingUnit] = React.useState<Unit | null>(null);
+  const [editingUnit, setEditingUnit] = React.useState<Unit | null>(null);
 
   const load = React.useCallback(() => {
     if (!accessToken || !Number.isInteger(propertyId)) return;
@@ -162,13 +164,13 @@ function BienContent() {
             </div>
             <Attribution actor={property.createdBy} verb="Bien créé par" at={property.createdAt} />
 
-            {property.photoUrls.length > 0 && (
+            {property.photoUrls.length > 0 && accessToken && (
               <div className="flex flex-wrap gap-3">
                 {property.photoUrls.map((url) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <AuthenticatedImage
                     key={url}
-                    src={`${API_URL}${url}`}
+                    src={url}
+                    accessToken={accessToken}
                     alt={property.code}
                     className="h-24 w-24 rounded-lg border border-border object-cover"
                   />
@@ -270,22 +272,27 @@ function BienContent() {
                       {u.sbeeMeterNumber && <div>SBEE : {u.sbeeMeterNumber}</div>}
                     </TableCell>
                     <TableCell className="text-right">
-                      {u.status !== "libre" ? (
-                        <ReleaseUnitAction
-                          propertyId={propertyId}
-                          unit={u}
-                          accessToken={accessToken}
-                          onReleased={() => {
-                            setJustFreed(u.code);
-                            load();
-                          }}
-                        />
-                      ) : (
-                        <Button variant="ghost" size="sm" onClick={() => setPublishingUnit(u)}>
-                          <Store size={14} />
-                          Publier
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => setEditingUnit(u)} aria-label="Modifier">
+                          <Pencil size={14} />
                         </Button>
-                      )}
+                        {u.status !== "libre" ? (
+                          <ReleaseUnitAction
+                            propertyId={propertyId}
+                            unit={u}
+                            accessToken={accessToken}
+                            onReleased={() => {
+                              setJustFreed(u.code);
+                              load();
+                            }}
+                          />
+                        ) : (
+                          <Button variant="ghost" size="sm" onClick={() => setPublishingUnit(u)}>
+                            <Store size={14} />
+                            Publier
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -301,6 +308,19 @@ function BienContent() {
             onCancel={() => setPublishingUnit(null)}
             onPublished={() => {
               setPublishingUnit(null);
+              load();
+            }}
+          />
+        )}
+
+        {editingUnit && (
+          <EditUnitForm
+            propertyId={propertyId}
+            unit={editingUnit}
+            accessToken={accessToken}
+            onCancel={() => setEditingUnit(null)}
+            onSaved={() => {
+              setEditingUnit(null);
               load();
             }}
           />
@@ -1116,6 +1136,133 @@ function PublishListingForm({
             {submitting ? "Publication…" : "Publier"}
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function EditUnitForm({
+  propertyId,
+  unit,
+  accessToken,
+  onCancel,
+  onSaved,
+}: {
+  propertyId: number;
+  unit: Unit;
+  accessToken: string | null;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const [designations, setDesignations] = React.useState<CatalogEntry<UnitDesignationKey>[]>([]);
+  const [designation, setDesignation] = React.useState<UnitDesignationKey>(unit.designation);
+  const [designationCustom, setDesignationCustom] = React.useState(unit.designationCustom ?? "");
+  const [monthlyRent, setMonthlyRent] = React.useState(String(unit.monthlyRent));
+  const [sonebMeterNumber, setSonebMeterNumber] = React.useState(unit.sonebMeterNumber ?? "");
+  const [sbeeMeterNumber, setSbeeMeterNumber] = React.useState(unit.sbeeMeterNumber ?? "");
+  const [furnished, setFurnished] = React.useState(unit.furnished);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  React.useEffect(() => {
+    if (!accessToken) return;
+    getPropertiesMeta(accessToken).then((res) => setDesignations(res.unitDesignations));
+  }, [accessToken]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await updateUnit(accessToken, propertyId, unit.id, {
+        designation,
+        designationCustom: designation === "autre" ? designationCustom.trim() : undefined,
+        monthlyRent: Number(monthlyRent),
+        sonebMeterNumber: sonebMeterNumber.trim() || undefined,
+        sbeeMeterNumber: sbeeMeterNumber.trim() || undefined,
+        furnished,
+      });
+      toast.success(`Unité ${unit.code} modifiée.`);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de modifier cette unité.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          <span className="inline-flex items-center gap-2">
+            <Pencil size={16} />
+            Modifier {unit.code}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Désignation" htmlFor="editDesignation" required>
+              <select
+                id="editDesignation"
+                value={designation}
+                onChange={(e) => setDesignation(e.target.value as UnitDesignationKey)}
+                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {designations.map((d) => (
+                  <option key={d.key} value={d.key}>{d.label}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Loyer mensuel (FCFA)" htmlFor="editMonthlyRent" required>
+              <Input
+                id="editMonthlyRent"
+                inputMode="numeric"
+                value={monthlyRent}
+                onChange={(e) => setMonthlyRent(e.target.value.replace(/\D/g, ""))}
+              />
+            </Field>
+          </div>
+
+          {designation === "autre" && (
+            <Field label="Précisez la désignation" htmlFor="editDesignationCustom" required>
+              <Input id="editDesignationCustom" value={designationCustom} onChange={(e) => setDesignationCustom(e.target.value)} />
+            </Field>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="N° compteur SONEB (optionnel)" htmlFor="editSoneb">
+              <Input id="editSoneb" value={sonebMeterNumber} onChange={(e) => setSonebMeterNumber(e.target.value)} />
+            </Field>
+            <Field label="N° compteur SBEE (optionnel)" htmlFor="editSbee">
+              <Input id="editSbee" value={sbeeMeterNumber} onChange={(e) => setSbeeMeterNumber(e.target.value)} />
+            </Field>
+          </div>
+
+          <label className="flex items-center gap-2 text-body-sm text-ink-soft">
+            <input
+              type="checkbox"
+              checked={furnished}
+              onChange={(e) => setFurnished(e.target.checked)}
+              className="h-4 w-4 rounded border-border-strong text-primary"
+            />
+            Meublé
+          </label>
+
+          <div className="flex items-center gap-2">
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Enregistrement…" : "Enregistrer"}
+            </Button>
+            <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
+              Annuler
+            </Button>
+          </div>
+        </form>
       </CardContent>
     </Card>
   );

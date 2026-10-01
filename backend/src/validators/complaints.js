@@ -21,6 +21,11 @@ const createComplaintSchema = z.object({
   description: optionalText(2000),
   priority: z.enum(COMPLAINT_PRIORITIES, { errorMap: () => ({ message: 'Priorité invalide' }) }).default('normale'),
   reportedAt: dateSchema.optional(),
+  // Clé d'idempotence (même principe que les enregistrements d'argent, étape
+  // 36) : un envoi en double (reconnexion instable, rejeu de la file
+  // hors-ligne après un succès dont la réponse s'est perdue) n'enregistre
+  // rien de plus. Optionnelle pour rester compatible avec un ancien client.
+  idempotencyKey: z.string().trim().min(1).max(100).optional(),
 });
 
 const updateComplaintSchema = z.object({

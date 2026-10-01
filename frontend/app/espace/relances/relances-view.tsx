@@ -47,7 +47,7 @@ export function RelancesView() {
 }
 
 function RelancesContent() {
-  const { accessToken, tenant } = useAuth();
+  const { accessToken, tenant, user } = useAuth();
   const [arrears, setArrears] = React.useState<PortfolioArrearsEntry[] | null>(null);
   const [openPenaltyLeaseId, setOpenPenaltyLeaseId] = React.useState<number | null>(null);
   const [total, setTotal] = React.useState(0);
@@ -56,24 +56,40 @@ function RelancesContent() {
   const [utilityTotal, setUtilityTotal] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
 
+  // Bug corrigé (audit sécurité/logique) : `RequireAuth` sur `RelancesView`
+  // ouvre la page à trois profils DIFFÉRENTS (locataires OU comptabilite OU
+  // charges — chacun légitime, voir les routes backend `/arrears`,
+  // `/predictive-alerts`, `/utility-arrears`), pas à un profil qui aurait
+  // forcément les trois. Un agent "charges" seul recevait un 403 sur la
+  // section loyer, affichée à tort comme une vraie erreur (« Impossible de
+  // charger les impayés. ») — pire, une tentative de rustine en cours de
+  // route l'aurait affichée comme « aucun retard », tout aussi trompeur. La
+  // section loyer/pénalités est donc simplement masquée pour un profil qui
+  // n'a ni "locataires" ni "comptabilite", exactement comme la section
+  // charges se masque déjà silencieusement pour un profil sans "charges" ni
+  // "comptabilite" (liste vide, pas de tentative de requête).
+  const canSeeRentArrears = user?.role === 'dg' || user?.permissions.includes('locataires') || user?.permissions.includes('comptabilite');
+
   React.useEffect(() => {
     if (!accessToken) return;
-    listPortfolioArrears(accessToken)
-      .then((res) => {
-        setArrears(res.arrears);
-        setTotal(res.total);
-      })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les impayés."));
-    listPredictiveAlerts(accessToken)
-      .then((res) => setPredictive(res.alerts))
-      .catch(() => setPredictive([]));
+    if (canSeeRentArrears) {
+      listPortfolioArrears(accessToken)
+        .then((res) => {
+          setArrears(res.arrears);
+          setTotal(res.total);
+        })
+        .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les impayés."));
+      listPredictiveAlerts(accessToken)
+        .then((res) => setPredictive(res.alerts))
+        .catch(() => setPredictive([]));
+    }
     listUtilityArrears(accessToken)
       .then((res) => {
         setUtilityArrears(res.arrears);
         setUtilityTotal(res.total);
       })
       .catch(() => setUtilityArrears([]));
-  }, [accessToken]);
+  }, [accessToken, canSeeRentArrears]);
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -103,7 +119,7 @@ function RelancesContent() {
           </Card>
         )}
 
-        {arrears === null && !error ? (
+        {arrears === null && !error && canSeeRentArrears ? (
           <p className="text-body-sm text-ink-muted">Chargement…</p>
         ) : arrears && arrears.length === 0 ? (
           <Card>

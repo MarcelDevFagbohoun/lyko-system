@@ -8,7 +8,8 @@ const { requireAuth, requirePermission, requireRole } = require('../middleware/a
 const { createChargeSchema, updateChargeSchema, createUtilityPaymentSchema, deleteReasonSchema } = require('../validators/charges');
 const { UTILITY_TYPES, UTILITY_TYPE_KEYS, CHARGE_STATUSES } = require('../constants/charges');
 const { toActor } = require('../utils/actor');
-const { assertPeriodOpen } = require('../services/accountingPeriods');
+const { assertPeriodOpen, assertPeriodOpenLocked } = require('../services/accountingPeriods');
+const { resolvePropertyScope, assertLeaseInScope } = require('../services/scope');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const logger = require('../utils/logger');
@@ -92,24 +93,38 @@ const CHARGE_JOINS = `
   LEFT JOIN users pu ON pu.id = uc.paid_recorded_by
 `;
 
-/** Charge un bail actif de l'entreprise courante, ou lève une erreur explicite. */
-async function loadActiveLease(conn, tenantId, leaseId) {
-  const [rows] = await conn.query(
-    'SELECT * FROM leases WHERE id = :leaseId AND tenant_id = :tenantId LIMIT 1',
-    { leaseId, tenantId },
-  );
-  if (!rows[0]) throw new ApiError(404, 'Bail introuvable');
-  if (rows[0].status !== 'active') throw new ApiError(400, 'Ce bail est terminé : impossible d\'y rattacher une facture');
-  return rows[0];
+/**
+ * Charge un bail actif de l'entreprise courante, ou lève une erreur explicite.
+ * Bug corrigé (audit sécurité/logique) : ce module n'appliquait jamais le
+ * cloisonnement par agent (étape 14, `resolvePropertyScope`), contrairement
+ * à `renters.js`/`leases.js`/`complaints.js` — un agent restreint à certains
+ * Biens pouvait, dès lors que le DG lui accordait la permission `charges`,
+ * voir/gérer les factures SONEB/SBEE de TOUTE l'entreprise (jamais inter-
+ * entreprises, mais un dépassement du portefeuille censé le restreindre
+ * partout ailleurs). `scopeAgentId` (via `resolvePropertyScope`) : `null` =
+ * accès complet, sinon vérifié contre `properties.agent_id`.
+ */
+async function loadActiveLease(tenantId, leaseId, scopeAgentId) {
+  const rows0 = await assertLeaseInScope(tenantId, leaseId, scopeAgentId);
+  if (rows0.status !== 'active') throw new ApiError(400, 'Ce bail est terminé : impossible d\'y rattacher une facture');
+  return rows0;
 }
 
-/** Charge une facture de l'entreprise courante (non supprimée), ou lève 404. */
-async function loadCharge(conn, tenantId, id) {
+/** Charge une facture de l'entreprise courante (non supprimée) dans la portée de l'agent, ou lève 404. */
+async function loadCharge(conn, tenantId, id, scopeAgentId) {
   const [rows] = await conn.query(
-    'SELECT * FROM utility_charges WHERE id = :id AND tenant_id = :tenantId AND deleted_at IS NULL LIMIT 1',
+    `SELECT uc.*, p.agent_id AS property_agent_id
+     FROM utility_charges uc
+     JOIN leases l ON l.id = uc.lease_id
+     JOIN property_units u ON u.id = l.unit_id
+     JOIN properties p ON p.id = u.property_id
+     WHERE uc.id = :id AND uc.tenant_id = :tenantId AND uc.deleted_at IS NULL LIMIT 1`,
     { id, tenantId },
   );
   if (!rows[0]) throw new ApiError(404, 'Facture introuvable');
+  if (scopeAgentId != null && Number(rows[0].property_agent_id) !== Number(scopeAgentId)) {
+    throw new ApiError(404, 'Facture introuvable');
+  }
   return rows[0];
 }
 
@@ -129,6 +144,8 @@ router.get('/previous-reading', async (req, res, next) => {
   if (!UTILITY_TYPE_KEYS.includes(utilityType)) return next(new ApiError(400, 'Fluide invalide'));
 
   try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await assertLeaseInScope(req.user.tenantId, leaseId, scopeAgentId);
     const [[row]] = await pool.query(
       `SELECT reading_end FROM utility_charges
        WHERE tenant_id = :tenantId AND lease_id = :leaseId AND utility_type = :utilityType AND deleted_at IS NULL
@@ -144,8 +161,13 @@ router.get('/previous-reading', async (req, res, next) => {
 // GET /api/charges?status=&utilityType=&leaseId=&q= — registre des charges SONEB/SBEE.
 router.get('/', async (req, res, next) => {
   try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
     const params = { tenantId: req.user.tenantId };
     let where = 'uc.tenant_id = :tenantId AND uc.deleted_at IS NULL';
+    if (scopeAgentId != null) {
+      where += ' AND p.agent_id = :scopeAgentId';
+      params.scopeAgentId = scopeAgentId;
+    }
 
     const status = typeof req.query.status === 'string' ? req.query.status : '';
     if (status && CHARGE_STATUSES.includes(status)) {
@@ -188,6 +210,7 @@ router.get('/', async (req, res, next) => {
 // Mêmes exclusions que la liste : factures supprimées logiquement ignorées.
 router.get('/month-summary', async (req, res, next) => {
   try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
     const currentMonth = new Date().toISOString().slice(0, 7);
     const month = typeof req.query.month === 'string' && req.query.month ? req.query.month : currentMonth;
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new ApiError(400, 'Mois invalide (AAAA-MM)');
@@ -197,24 +220,32 @@ router.get('/month-summary', async (req, res, next) => {
       firstDay: `${month}-01`,
       lastDay: new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10),
     };
+    if (scopeAgentId != null) params.scopeAgentId = scopeAgentId;
     const paidPerCharge = '(SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id)';
+    // Cloisonnement par agent (audit sécurité/logique) : jointure jusqu'au Bien
+    // uniquement quand nécessaire (`scopeAgentId` non nul) — un DG/comptable
+    // (accès complet) ne paie jamais le coût de cette jointure en plus.
+    const scopeJoin = scopeAgentId != null
+      ? 'JOIN leases scl ON scl.id = uc.lease_id JOIN property_units scu ON scu.id = scl.unit_id JOIN properties scp ON scp.id = scu.property_id'
+      : '';
+    const scopeWhere = scopeAgentId != null ? ' AND scp.agent_id = :scopeAgentId' : '';
 
     const [[billed]] = await pool.query(
       `SELECT COUNT(*) AS n, COALESCE(SUM(uc.amount), 0) AS billed, COALESCE(SUM(pt.paid_total), 0) AS paid
-       FROM utility_charges uc LEFT JOIN ${paidPerCharge} pt ON pt.charge_id = uc.id
-       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.billed_at BETWEEN :firstDay AND :lastDay`,
+       FROM utility_charges uc LEFT JOIN ${paidPerCharge} pt ON pt.charge_id = uc.id ${scopeJoin}
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.billed_at BETWEEN :firstDay AND :lastDay${scopeWhere}`,
       params,
     );
     const [[older]] = await pool.query(
       `SELECT COUNT(*) AS n, COALESCE(SUM(uc.amount - COALESCE(pt.paid_total, 0)), 0) AS remaining
-       FROM utility_charges uc LEFT JOIN ${paidPerCharge} pt ON pt.charge_id = uc.id
-       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.status <> 'payee' AND uc.billed_at < :firstDay`,
+       FROM utility_charges uc LEFT JOIN ${paidPerCharge} pt ON pt.charge_id = uc.id ${scopeJoin}
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.status <> 'payee' AND uc.billed_at < :firstDay${scopeWhere}`,
       params,
     );
     const [[received]] = await pool.query(
       `SELECT COUNT(*) AS n, COALESCE(SUM(up.amount), 0) AS total
-       FROM utility_payments up JOIN utility_charges uc ON uc.id = up.charge_id AND uc.deleted_at IS NULL
-       WHERE up.tenant_id = :tenantId AND up.paid_at BETWEEN :firstDay AND :lastDay`,
+       FROM utility_payments up JOIN utility_charges uc ON uc.id = up.charge_id AND uc.deleted_at IS NULL ${scopeJoin}
+       WHERE up.tenant_id = :tenantId AND up.paid_at BETWEEN :firstDay AND :lastDay${scopeWhere}`,
       params,
     );
     const billedTotal = Number(billed.billed);
@@ -244,8 +275,10 @@ router.post('/', async (req, res, next) => {
   }
   const data = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
-    await loadActiveLease(pool, req.user.tenantId, data.leaseId);
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadActiveLease(req.user.tenantId, data.leaseId, scopeAgentId);
     await assertPeriodOpen(req.user.tenantId, data.billedAt);
 
     // Le montant n'est jamais saisi : toujours consommation (index fin -
@@ -253,7 +286,11 @@ router.post('/', async (req, res, next) => {
     const consumption = data.readingEnd - data.readingStart;
     const amount = Math.round(consumption * data.unitPrice);
 
-    const [result] = await pool.query(
+    await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.billedAt);
+    const [result] = await conn.query(
       `INSERT INTO utility_charges
          (tenant_id, lease_id, utility_type, period_start, period_end, reading_start, reading_end,
           unit_price, amount, billed_at, notes, recorded_by)
@@ -274,6 +311,7 @@ router.post('/', async (req, res, next) => {
         recordedBy: req.user.id,
       },
     );
+    await conn.commit();
 
     logger.info('Charge SONEB/SBEE enregistrée', {
       tenantId: req.user.tenantId,
@@ -286,7 +324,10 @@ router.post('/', async (req, res, next) => {
     });
     res.status(201).json({ chargeId: result.insertId, consumption, amount });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -301,8 +342,10 @@ router.patch('/:id', async (req, res, next) => {
   }
   const data = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
-    const existing = await loadCharge(pool, req.user.tenantId, id);
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const existing = await loadCharge(pool, req.user.tenantId, id, scopeAgentId);
     await assertPeriodOpen(req.user.tenantId, existing.billed_at);
     if (data.billedAt !== undefined) {
       await assertPeriodOpen(req.user.tenantId, data.billedAt);
@@ -347,13 +390,24 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     if (fields.length > 0) {
-      await pool.query(`UPDATE utility_charges SET ${fields.join(', ')} WHERE id = :id`, params);
+      await conn.beginTransaction();
+      // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+      // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+      await assertPeriodOpenLocked(conn, req.user.tenantId, existing.billed_at);
+      if (data.billedAt !== undefined) {
+        await assertPeriodOpenLocked(conn, req.user.tenantId, data.billedAt);
+      }
+      await conn.query(`UPDATE utility_charges SET ${fields.join(', ')} WHERE id = :id`, params);
+      await conn.commit();
     }
 
     const [rows] = await pool.query(`SELECT ${CHARGE_SELECT} ${CHARGE_JOINS} WHERE uc.id = :id`, { id });
     res.json({ charge: toPublicCharge(rows[0]) });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -363,7 +417,8 @@ router.get('/:id/payments', async (req, res, next) => {
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
   try {
-    await loadCharge(pool, req.user.tenantId, id);
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadCharge(pool, req.user.tenantId, id, scopeAgentId);
     const [rows] = await pool.query(
       `SELECT up.id, up.amount, up.payment_method, up.paid_at, up.notes, up.created_at,
               pu.first_name AS recorder_first_name, pu.last_name AS recorder_last_name, pu.role AS recorder_role
@@ -401,7 +456,7 @@ router.get('/:id/payments', async (req, res, next) => {
  */
 async function recordUtilityPayment(
   conn,
-  { tenantId, charge, amount, paymentMethod, paidAt, notes, recordedBy, kkiapayTransactionId = null },
+  { tenantId, charge, amount, paymentMethod, paidAt, notes, recordedBy, kkiapayTransactionId = null, settledFromDeposit = false },
 ) {
   const [[{ paidTotal }]] = await conn.query(
     'SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id',
@@ -413,8 +468,8 @@ async function recordUtilityPayment(
   }
 
   const [paymentResult] = await conn.query(
-    `INSERT INTO utility_payments (tenant_id, charge_id, amount, payment_method, paid_at, notes, recorded_by, kkiapay_transaction_id)
-     VALUES (:tenantId, :chargeId, :amount, :paymentMethod, :paidAt, :notes, :recordedBy, :kkiapayTransactionId)`,
+    `INSERT INTO utility_payments (tenant_id, charge_id, amount, payment_method, paid_at, notes, recorded_by, kkiapay_transaction_id, settled_from_deposit)
+     VALUES (:tenantId, :chargeId, :amount, :paymentMethod, :paidAt, :notes, :recordedBy, :kkiapayTransactionId, :settledFromDeposit)`,
     {
       tenantId,
       chargeId: charge.id,
@@ -424,6 +479,7 @@ async function recordUtilityPayment(
       notes: notes ?? null,
       recordedBy: recordedBy ?? null,
       kkiapayTransactionId,
+      settledFromDeposit: settledFromDeposit ? 1 : 0,
     },
   );
 
@@ -447,7 +503,7 @@ async function recordUtilityPayment(
     const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
     await genererEcriture(conn, {
       tenantId,
-      operationType: 'charge_locative_encaissee',
+      operationType: settledFromDeposit ? 'charge_locative_reglee_par_caution' : 'charge_locative_encaissee',
       entryDate: paidAt,
       amount,
       paymentMethod,
@@ -479,11 +535,15 @@ router.post('/:id/payments', async (req, res, next) => {
 
   const conn = await pool.getConnection();
   try {
-    const charge = await loadCharge(conn, req.user.tenantId, id);
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const charge = await loadCharge(conn, req.user.tenantId, id, scopeAgentId);
     if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée.');
     await assertPeriodOpen(req.user.tenantId, charge.billed_at);
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, charge.billed_at);
     // Sérialise les enregistrements concurrents sur cette facture — même
     // principe que les paiements de loyer (routes/leases.js).
     await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id });
@@ -548,13 +608,33 @@ router.delete('/:id', async (req, res, next) => {
   }
   const { reason } = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
-    const existing = await loadCharge(pool, req.user.tenantId, id);
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const existing = await loadCharge(pool, req.user.tenantId, id, scopeAgentId);
     await assertPeriodOpen(req.user.tenantId, existing.billed_at);
-    await pool.query(
+    // Haute #5 (étape 51) : contrairement à PATCH ci-dessus (qui fige déjà le montant dès qu'un
+    // paiement existe), DELETE ne vérifiait jamais rien — supprimer une facture déjà réglée (même
+    // partiellement) faisait disparaître son montant des impayés/soldes sans jamais annuler l'écriture
+    // GL déjà posée (`charge_locative_encaissee`), qui a déjà crédité le propriétaire : le solde
+    // séquestre recalculé peut alors devenir négatif silencieusement, exactement comme l'annulation d'un
+    // paiement de loyer déjà reversé (Haute #1). Même garde-fou que PATCH : bloquer plutôt que corrompre.
+    const [[{ paidTotal }]] = await pool.query(
+      'SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id',
+      { id },
+    );
+    if (Number(paidTotal) > 0) {
+      throw new ApiError(409, 'Un paiement a déjà été enregistré sur cette facture — impossible de la supprimer.');
+    }
+    await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, existing.billed_at);
+    await conn.query(
       'UPDATE utility_charges SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason WHERE id = :id',
       { by: req.user.id, reason, id },
     );
+    await conn.commit();
     logger.info('Charge SONEB/SBEE supprimée (suppression logique)', {
       tenantId: req.user.tenantId,
       chargeId: id,
@@ -563,7 +643,10 @@ router.delete('/:id', async (req, res, next) => {
     });
     res.status(204).send();
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -575,7 +658,8 @@ router.post('/:id/payment-links', async (req, res, next) => {
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
   try {
-    const charge = await loadCharge(pool, req.user.tenantId, id);
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const charge = await loadCharge(pool, req.user.tenantId, id, scopeAgentId);
     if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée.');
 
     const [[tenant]] = await pool.query('SELECT kkiapay_enabled FROM tenants WHERE id = :id LIMIT 1', {

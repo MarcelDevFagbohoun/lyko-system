@@ -21,6 +21,7 @@ const { getConversation } = require('../src/services/assistant/conversations');
 const { buildSystem } = require('../src/services/assistant/systemPrompt');
 const { getProfile, saveProfile } = require('../src/services/assistant/profile');
 const { purgeExpired } = require('../src/services/assistant/conversations');
+const { runAssistantPurgeJob } = require('../src/jobs/assistantPurgeJob');
 const { createBareFixture } = require('./gl/fixtures');
 
 let fx;
@@ -630,4 +631,42 @@ test('outils : la direction voit tous les outils quelles que soient ses permissi
   const calls = installClient();
   await runChat({ auth: authOf(fx.dgId, fx.tenantId, 'dg'), message: 'Bonjour', emit: () => {} });
   assert.equal(calls[0].params.tools.length, 6);
+});
+
+// ───────────────────────────── purge planifiée ─────────────────────────────
+
+test(
+  "purge planifiée : balaie TOUS les cabinets passés en argument, même celui qui n'a pas discuté " +
+    "depuis la purge opportuniste précédente (bug corrigé — avant cette tâche, seule une purge " +
+    'déclenchée par un NOUVEL échange nettoyait le tenant courant, jamais un cabinet resté silencieux)',
+  async () => {
+    const mine = await runChat({ auth: authOf(agentId, fx.tenantId), message: 'Vieille conversation', emit: () => {} });
+    const theirs = await runChat({ auth: authOf(foreign.dgId, foreign.tenantId, 'dg'), message: 'Vieille aussi', emit: () => {} });
+    // Recule les deux conversations bien au-delà du délai de conservation — aucune n'a été
+    // "réactivée" par un nouvel échange depuis, exactement le scénario du bug.
+    await pool.query('UPDATE assistant_conversations SET updated_at = (NOW() - INTERVAL 200 DAY) WHERE id IN (:a, :b)', {
+      a: mine.conversationId,
+      b: theirs.conversationId,
+    });
+
+    await runAssistantPurgeJob({ tenantIds: [fx.tenantId, foreign.tenantId] });
+
+    assert.equal(await getConversation(fx.tenantId, agentId, mine.conversationId), null);
+    assert.equal(await getConversation(foreign.tenantId, foreign.dgId, theirs.conversationId), null);
+  },
+);
+
+test('purge planifiée : une conversation récente (dans le délai de conservation) est laissée intacte', async () => {
+  const recent = await runChat({ auth: authOf(agentId, fx.tenantId), message: 'Toute fraîche', emit: () => {} });
+  await runAssistantPurgeJob({ tenantIds: [fx.tenantId, foreign.tenantId] });
+  assert.notEqual(await getConversation(fx.tenantId, agentId, recent.conversationId), null);
+});
+
+test('purge planifiée : un identifiant de cabinet en tête de liste ne bloque jamais le passage aux suivants', async () => {
+  const theirs = await runChat({ auth: authOf(foreign.dgId, foreign.tenantId, 'dg'), message: 'À purger', emit: () => {} });
+  await pool.query('UPDATE assistant_conversations SET updated_at = (NOW() - INTERVAL 200 DAY) WHERE id = :id', {
+    id: theirs.conversationId,
+  });
+  await runAssistantPurgeJob({ tenantIds: [999999999, foreign.tenantId] });
+  assert.equal(await getConversation(foreign.tenantId, foreign.dgId, theirs.conversationId), null);
 });

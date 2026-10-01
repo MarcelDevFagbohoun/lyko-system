@@ -13,6 +13,7 @@
 
 const { pool } = require('../config/db');
 const { listLeaseDeposits } = require('./leaseDeposits');
+const { toProtectedFileUrl } = require('../utils/uploads');
 const { RENT_TIMINGS } = require('../constants/rentTiming');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
@@ -90,8 +91,8 @@ function toPublicContract(row) {
     id: row.id,
     status: row.status,
     particularConditions: row.particular_conditions,
-    tenantSignatureUrl: row.tenant_signature_path ? `/uploads/${row.tenant_signature_path}` : null,
-    agentSignatureUrl: row.agent_signature_path ? `/uploads/${row.agent_signature_path}` : null,
+    tenantSignatureUrl: row.tenant_signature_path ? toProtectedFileUrl(row.tenant_signature_path) : null,
+    agentSignatureUrl: row.agent_signature_path ? toProtectedFileUrl(row.agent_signature_path) : null,
     finalizedAt: row.finalized_at,
     finalizedBy: toActor(row.finalizer_first_name, row.finalizer_last_name, row.finalizer_role),
     createdBy: toActor(row.creator_first_name, row.creator_last_name, row.creator_role),

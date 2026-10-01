@@ -344,7 +344,12 @@ router.get('/financial-statements.xlsx', canAdvanced, async (req, res, next) => 
         heading: 'Actif',
         lines: [
           ...balanceSheet.actif.map((a) => ({ label: `${a.code} — ${a.label}`, amount: a.amount })),
-          ...(balanceSheet.resultatNet < 0 ? [{ label: "Perte de l'exercice", amount: -balanceSheet.resultatNet }] : []),
+          // Bug corrigé (audit comptable du 30/09/2026) : `balanceSheet.resultatNet` est désormais
+          // CUMULÉ depuis toujours (jamais seulement l'exercice consulté — voir `computeBalanceSheet`),
+          // faute d'écriture de report à nouveau distincte (121/129) dans ce module. Le libellé « de
+          // l'exercice » induisait donc en erreur dès le 2ᵉ exercice — voir `incomeStatement.resultatNet`
+          // ci-dessus pour le résultat du SEUL exercice consulté.
+          ...(balanceSheet.resultatNet < 0 ? [{ label: 'Perte cumulée non affectée', amount: -balanceSheet.resultatNet }] : []),
           { label: 'Total actif', amount: balanceSheet.totalActif },
         ],
       },
@@ -352,7 +357,7 @@ router.get('/financial-statements.xlsx', canAdvanced, async (req, res, next) => 
         heading: 'Passif',
         lines: [
           ...balanceSheet.passif.map((p) => ({ label: `${p.code} — ${p.label}`, amount: p.amount })),
-          ...(balanceSheet.resultatNet > 0 ? [{ label: "Bénéfice de l'exercice", amount: balanceSheet.resultatNet }] : []),
+          ...(balanceSheet.resultatNet > 0 ? [{ label: 'Bénéfice cumulé non affecté', amount: balanceSheet.resultatNet }] : []),
           { label: 'Total passif', amount: balanceSheet.totalPassif },
         ],
       },

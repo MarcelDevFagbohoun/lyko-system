@@ -49,11 +49,32 @@ function createApp() {
     res.json({ name: 'Lyko System API', docs: '/api/health' });
   });
 
-  // Logos, cachets et signatures d'entreprise. Chargés en <img> par le front,
-  // potentiellement sur un autre sous-domaine (app. / api.) en prod : CORP
-  // `cross-origin` pour que l'affichage ne dépende pas du découpage de domaine.
+  // Bug corrigé (audit sécurité/logique, étape 49) : ce montage servait
+  // AUPARAVANT tout le dossier `uploads/` (photos de bien/plainte/état des
+  // lieux, justificatifs de dépense, cachets/signatures, avatars…) sans la
+  // moindre authentification — seul un nom de fichier non devinable
+  // protégeait ces documents. Ne reste désormais public QUE ce qui doit
+  // vraiment l'être : le logo d'entreprise (affiché sur les pages publiques —
+  // portail locataire/propriétaire, page de paiement — avant toute
+  // authentification) et les photos d'annonces marketplace (affichées aux
+  // visiteurs anonymes du site public Quick Immo, c'est le principe même
+  // d'une annonce immobilière publique). Tout le reste passe désormais par
+  // `routes/files.js` (`GET /api/files/…`), qui exige une session valide et
+  // borne l'accès au tenant de cette session — voir son en-tête pour le
+  // détail. CORP `cross-origin` : chargé en <img> par le front, potentiellement
+  // sur un autre sous-domaine (app. / api.) en prod.
+  // `logo[^/]*` (pas seulement `logo-[^/]+`) : KIko Store (tenant 8, le seul tenant réel) a été
+  // configuré AVANT l'introduction de `randomFileName('logo', ext)` (étape 49) — son fichier s'appelle
+  // littéralement `logo.png`, sans le suffixe aléatoire. Un motif trop strict le faisait disparaître
+  // derrière un 404, cassant l'affichage du logo partout (portail, page de paiement, en-tête) — bug
+  // trouvé en production le 2026-10-01.
+  const PUBLIC_UPLOAD_PATTERN = /^\/tenants\/\d+\/(logo[^/]*\.(?:png|jpg|jpeg|webp)|marketplace\/.+)$/;
   app.use(
     '/uploads',
+    (req, res, next) => {
+      if (!PUBLIC_UPLOAD_PATTERN.test(req.path)) return res.status(404).json({ error: 'Fichier introuvable' });
+      next();
+    },
     express.static(path.join(__dirname, '../uploads'), {
       maxAge: '1d',
       setHeaders: (res) => res.set('Cross-Origin-Resource-Policy', 'cross-origin'),

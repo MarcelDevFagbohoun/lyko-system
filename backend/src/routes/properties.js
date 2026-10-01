@@ -22,7 +22,7 @@ const {
   MAX_PHOTOS_PER_PROPERTY,
 } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
-const { assertUploadType, randomFileName } = require('../utils/uploads');
+const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const logger = require('../utils/logger');
 
 /**
@@ -94,7 +94,7 @@ function toPublicProperty(row, extra = {}) {
     locationSetAt: row.location_set_at,
     type: row.property_type,
     levels: row.levels,
-    photoUrls: (row.photo_paths || []).map((p) => `/uploads/${p}`),
+    photoUrls: (row.photo_paths || []).map((p) => toProtectedFileUrl(p)),
     // Sous-comptage SONEB/SBEE (étape 9bis) — configuration par immeuble.
     utilityConfig: {
       soneb: {

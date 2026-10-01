@@ -15,10 +15,18 @@ const { resolveOpenFiscalYear } = require('./glPostingService');
 const { ApiError } = require('../../middleware/error');
 
 async function extourneEcriture(conn, { tenantId, entryId, entryDate, userId, reason }) {
-  const [entryRows] = await conn.query('SELECT * FROM gl_entries WHERE id = :entryId AND tenant_id = :tenantId LIMIT 1', {
-    entryId,
-    tenantId,
-  });
+  // Bug corrigé (audit sécurité) : `FOR UPDATE` sérialise deux extournes
+  // concurrentes sur la MÊME écriture (double-clic, ou deux comptables) —
+  // sans lui, les deux pouvaient lire `status = 'validee'` avant que
+  // l'une des deux ait commité, produire chacune sa propre écriture miroir,
+  // et l'effet économique de l'écriture d'origine se retrouvait inversé
+  // deux fois. Le `WHERE status = 'validee'` sur l'UPDATE final (vérifié
+  // via `affectedRows`) est le filet de sécurité final, même schéma que
+  // les corrections apportées à `POST /expenses/:id/pay` et consorts.
+  const [entryRows] = await conn.query(
+    'SELECT * FROM gl_entries WHERE id = :entryId AND tenant_id = :tenantId LIMIT 1 FOR UPDATE',
+    { entryId, tenantId },
+  );
   const original = entryRows[0];
   if (!original) throw new ApiError(404, 'Écriture introuvable.');
   if (original.status === 'extournee') throw new ApiError(409, 'Cette écriture a déjà été extournée.');
@@ -32,6 +40,19 @@ async function extourneEcriture(conn, { tenantId, entryId, entryDate, userId, re
   const fiscalYearId = await resolveOpenFiscalYear(conn, tenantId, entryDate);
   const entryNumber = await nextEntryNumber(conn, tenantId);
   const narration = `Extourne de l'écriture n°${original.entry_number} — ${original.narration}${reason ? ` (${reason})` : ''}`;
+
+  // Haute #8 (étape 51) : l'originale DOIT être marquée 'extournee' AVANT l'insertion de l'écriture
+  // miroir ci-dessous — la contrainte UNIQUE `uq_gl_entries_active_source` (migration 077) exclut une
+  // écriture 'extournee' de l'unicité (NULL généré), mais tant que l'originale reste 'validee', les deux
+  // écritures partageraient le même (tenant_id, source_table, source_id) actif et la contrainte
+  // refuserait l'INSERT — y compris pour une extourne parfaitement légitime, pas seulement une course.
+  // `reversed_by_entry_id` (qui a besoin de l'id de l'écriture miroir, pas encore créée) est renseigné
+  // séparément juste après, une fois l'INSERT fait.
+  const [flipResult] = await conn.query(
+    "UPDATE gl_entries SET status = 'extournee' WHERE id = :id AND status = 'validee'",
+    { id: original.id },
+  );
+  if (flipResult.affectedRows === 0) throw new ApiError(409, 'Cette écriture a déjà été extournée.');
 
   const [reversalResult] = await conn.query(
     `INSERT INTO gl_entries
@@ -72,7 +93,7 @@ async function extourneEcriture(conn, { tenantId, entryId, entryDate, userId, re
     );
   }
 
-  await conn.query("UPDATE gl_entries SET status = 'extournee', reversed_by_entry_id = :reversalId WHERE id = :id", {
+  await conn.query('UPDATE gl_entries SET reversed_by_entry_id = :reversalId WHERE id = :id', {
     reversalId,
     id: original.id,
   });

@@ -18,7 +18,7 @@ const { utilityConfigSchema, createBatchSchema, saveBatchSchema, mainPaymentSche
 const { UTILITY_TYPE_KEYS, DIFFERENCE_ALERT_PCT } = require('../constants/charges');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
-const { assertPeriodOpen, isPeriodClosed } = require('../services/accountingPeriods');
+const { assertPeriodOpen, assertPeriodOpenLocked, isPeriodClosed } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
 const { getBatchPoint, getUtilityPoint, getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint');
 const { getChargeAccounts } = require('../services/utilityRemittance');
@@ -617,6 +617,9 @@ router.post('/utility-batches/:id/validate', async (req, res, next) => {
       billableSubAmount > 0;
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, isoDate(batch.period_end));
     let generated = 0;
     for (const r of rows) {
       if (r.active_lease_id && Number(r.amount) > 0) {

@@ -39,11 +39,16 @@ const glActivationRoutes = require('./gl/glActivation');
 const glBankReconciliationRoutes = require('./gl/glBankReconciliation');
 const glSettingsRoutes = require('./gl/glSettings');
 const glIrfRoutes = require('./gl/glIrf');
+const fileRoutes = require('./files');
 
 const router = Router();
 
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
+// Fichiers téléversés authentifiés (photos, justificatifs, cachets/
+// signatures, avatars — étape 49, audit sécurité) : `requireAuth` posé DANS
+// `files.js` lui-même, pas de piège d'ordre de montage particulier ici.
+router.use('/files', fileRoutes);
 router.use('/employees', employeeRoutes);
 router.use('/properties', propertyRoutes);
 router.use('/owners', ownerRoutes);

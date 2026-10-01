@@ -401,6 +401,7 @@ router.get('/', canRead, async (req, res, next) => {
         rentDueDay: lease.rentDueDay,
         rentTiming: lease.rentTiming,
         monthlyRent: lease.monthlyRent,
+        entryProration: lease.entryProration,
         payments: leasePayments,
       });
       // Frise des 12 mois (état de chaque mois) — même source que le retard ci-dessus.
@@ -412,6 +413,7 @@ router.get('/', canRead, async (req, res, next) => {
         rentDueDay: lease.rentDueDay,
         rentTiming: lease.rentTiming,
         monthlyRent: lease.monthlyRent,
+        entryProration: lease.entryProration,
         payments: leasePayments,
       });
       return { ...renter, activeLease: lease, arrears, rentStrip };
@@ -568,6 +570,7 @@ router.get('/:id', canRead, async (req, res, next) => {
               rentDueDay: lease.rentDueDay,
               rentTiming: lease.rentTiming,
               monthlyRent: lease.monthlyRent,
+              entryProration: lease.entryProration,
               payments,
             })
           : null,
@@ -581,6 +584,7 @@ router.get('/:id', canRead, async (req, res, next) => {
               rentDueDay: lease.rentDueDay,
               rentTiming: lease.rentTiming,
               monthlyRent: lease.monthlyRent,
+              entryProration: lease.entryProration,
               payments,
             })
           : null,

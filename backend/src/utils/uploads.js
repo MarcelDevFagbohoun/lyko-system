@@ -9,11 +9,31 @@ const { ApiError } = require('../middleware/error');
  * 1. Contrôle du CONTENU réel (octets magiques). multer ne connaît que le
  *    `Content-Type` déclaré par le client ; on vérifie ici la signature
  *    binaire et on ignore l'extension/MIME annoncés.
- * 2. Noms de fichiers NON ÉNUMÉRABLES. Les fichiers sont servis en statique
- *    sous `/uploads/tenants/<id>/…` avec un `<id>` séquentiel : un suffixe
- *    aléatoire par fichier empêche de deviner l'URL du cachet/de la signature
- *    d'un autre cabinet.
+ * 2. Noms de fichiers NON ÉNUMÉRABLES sous `tenants/<id>/…` — un suffixe
+ *    aléatoire par fichier empêche de deviner l'URL même avec un `<id>`
+ *    séquentiel.
+ *
+ * Étape 49 (audit sécurité, suite) — troisième protection : la plupart des
+ * fichiers exigent désormais une authentification pour être LUS, pas
+ * seulement un nom non devinable. Seuls le logo d'entreprise et les photos
+ * d'annonces marketplace restent servis en statique sous `/uploads/…` (ils
+ * doivent rester visibles sans session, y compris sur le site public Quick
+ * Immo) — voir `routes/files.js` et `app.js`. Tout le reste (photos de bien,
+ * de plainte, d'état des lieux, justificatifs de dépense, cachets/
+ * signatures, avatars) passe par `toProtectedFileUrl` ci-dessous.
  */
+
+const PROTECTED_URL_PREFIX = '/api/files';
+
+/** URL d'un fichier téléversé qui exige désormais une authentification (voir `routes/files.js`). */
+function toProtectedFileUrl(relPath) {
+  return `${PROTECTED_URL_PREFIX}/${relPath}`;
+}
+
+/** Reconstruit le chemin relatif (`tenants/<id>/…`) à partir d'une URL `/uploads/…` OU `/api/files/…`. */
+function stripFileUrlPrefix(url) {
+  return url.replace(/^\/(uploads|api\/files)\//, '');
+}
 
 /** @returns {'png'|'jpg'|'webp'|'pdf'|null} */
 function detectFileType(buf) {
@@ -50,4 +70,4 @@ function randomFileName(base, ext) {
   return `${base}-${crypto.randomBytes(10).toString('hex')}.${ext}`;
 }
 
-module.exports = { detectFileType, assertUploadType, randomFileName };
+module.exports = { detectFileType, assertUploadType, randomFileName, toProtectedFileUrl, stripFileUrlPrefix };

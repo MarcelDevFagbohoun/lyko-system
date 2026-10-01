@@ -99,7 +99,12 @@ async function deleteConversation(tenantId, userId, conversationId) {
   return r.affectedRows > 0;
 }
 
-/** Purge opportuniste des conversations plus vieilles que le délai de conservation (pas de tâche planifiée dédiée). */
+/**
+ * Purge des conversations plus vieilles que le délai de conservation.
+ * Appelée opportunistement après chaque échange (`chat.js`, tenant courant
+ * seulement) ET chaque jour pour TOUS les tenants par `jobs/assistantPurgeJob.js`
+ * (celle-ci couvre un cabinet qui n'a pas discuté récemment).
+ */
 async function purgeExpired(tenantId, retentionDays) {
   await pool.query(
     'DELETE FROM assistant_conversations WHERE tenant_id = :tenantId AND updated_at < (NOW() - INTERVAL :days DAY)',

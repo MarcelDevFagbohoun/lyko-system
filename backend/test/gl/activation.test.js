@@ -4,12 +4,13 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { pool, closePool } = require('../../src/config/db');
-const { isModuleActive } = require('../../src/services/gl/glPostingService');
+const { isModuleActive, genererEcriture } = require('../../src/services/gl/glPostingService');
 const {
   isInitialized,
   ensureFiscalYearsCoverRange,
   activateModule,
   deactivateModule,
+  backfillHistoricalEntries,
 } = require('../../src/services/gl/glActivationService');
 const { createBareFixture, teardown } = require('./fixtures');
 
@@ -243,6 +244,72 @@ test('rattrapage — une dépense à crédit déjà réglée avant activation re
   }
 });
 
+test("Haute #6 (étape 51) — un règlement de dépense DÉJÀ posté en direct (module actif) n'est jamais dupliqué par le rattrapage après une suspension/réactivation", async () => {
+  // Reproduit exactement le scénario du bug : une dépense à crédit engagée ET réglée PENDANT que le
+  // module est actif (donc déjà comptabilisée en direct, comme le fait maintenant routes/accounting.js
+  // POST /expenses/:id/pay avec `sourceTable: 'expense_settlements'`) — puis le module est suspendu et
+  // réactivé. Avant le correctif, le rattrapage cherchait à tort 'expenses' pour le règlement (au lieu de
+  // 'expense_settlements', jamais généré en direct) et en reposait un second, en double.
+  const fx6 = await createBareFixture();
+  try {
+    const [s] = await pool.query('INSERT INTO suppliers (tenant_id, name, created_by) VALUES (:t, :n, :by)', {
+      t: fx6.tenantId,
+      n: 'Menuisier Test',
+      by: fx6.dgId,
+    });
+    await activateModule(pool, fx6.tenantId, { userId: fx6.dgId, ipAddress: '127.0.0.1' });
+
+    const [exp] = await pool.query(
+      `INSERT INTO expenses (tenant_id, category, label, amount, expense_date, supplier_id, payment_status, payment_method, paid_at, recorded_by)
+       VALUES (:t, 'entretien', 'Porte réparée', 20000, '2026-06-01', :s, 'paid', 'virement', '2026-06-10', :by)`,
+      { t: fx6.tenantId, s: s.insertId, by: fx6.dgId },
+    );
+    // Les deux écritures « en direct », exactement comme le ferait la route (engagement puis règlement).
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await genererEcriture(conn, {
+        tenantId: fx6.tenantId,
+        operationType: 'depense_entretien',
+        entryDate: '2026-06-01',
+        amount: 20000,
+        narrationVars: { libelle: 'Porte réparée' },
+        sourceTable: 'expenses',
+        sourceId: exp.insertId,
+        createdBy: fx6.dgId,
+        context: { supplierId: s.insertId },
+      });
+      await genererEcriture(conn, {
+        tenantId: fx6.tenantId,
+        operationType: 'reglement_fournisseur',
+        entryDate: '2026-06-10',
+        amount: 20000,
+        paymentMethod: 'virement',
+        narrationVars: { fournisseur: 'Menuisier Test' },
+        sourceTable: 'expense_settlements',
+        sourceId: exp.insertId,
+        createdBy: fx6.dgId,
+        context: { supplierId: s.insertId },
+      });
+      await conn.commit();
+    } finally {
+      conn.release();
+    }
+
+    await deactivateModule(pool, fx6.tenantId, { userId: fx6.dgId, ipAddress: '127.0.0.1' });
+    const result = await activateModule(pool, fx6.tenantId, { userId: fx6.dgId, ipAddress: '127.0.0.1' });
+    assert.equal(result.entriesGenerated, 0, 'les deux écritures existent déjà (postées en direct) — rien à rattraper');
+
+    const [settlementEntries] = await pool.query(
+      "SELECT id FROM gl_entries WHERE tenant_id = :t AND source_table = 'expense_settlements' AND source_id = :id",
+      { t: fx6.tenantId, id: exp.insertId },
+    );
+    assert.equal(settlementEntries.length, 1, 'jamais de doublon du règlement après suspension/réactivation');
+  } finally {
+    await teardown(fx6.tenantId);
+  }
+});
+
 test('rattrapage — immobilisation à crédit déjà réglée + amortissement déjà saisi, tous AVANT activation', async () => {
   const fx5 = await createBareFixture();
   try {
@@ -301,5 +368,50 @@ test('rattrapage — immobilisation à crédit déjà réglée + amortissement d
     assert.equal(depreciationLines[1].code, '28442');
   } finally {
     await teardown(fx5.tenantId);
+  }
+});
+
+test("Haute #8 (étape 51) — deux rattrapages lancés en VRAIE concurrence sur le même tenant ne créent jamais deux écritures pour la même opération", async () => {
+  // Reproduit la course exacte visée par l'audit : `backfillOne` vérifie l'absence d'écriture (SELECT)
+  // AVANT `beginTransaction()`, sans aucun verrou — deux appels concurrents à `activateModule`/
+  // `backfillHistoricalEntries` pour le MÊME tenant (double-clic, requête relancée) peuvent tous deux
+  // passer cette vérification avant que l'un des deux ne commite. Avant ce correctif (migration 077,
+  // contrainte UNIQUE `uq_gl_entries_active_source`), rien n'empêchait les DEUX d'insérer leur propre
+  // écriture pour la même opération réelle. `Promise.all` déclenche une vraie concurrence (deux
+  // connexions MySQL distinctes), pas un simple enchaînement séquentiel.
+  const fx7 = await createBareFixture();
+  try {
+    // Module d'abord initialisé (plan comptable/règles seedés) SANS historique à rattraper, exactement
+    // comme `activateModule` le ferait sur un tenant tout neuf — sinon `genererEcriture` échouerait
+    // (aucune règle comptable encore seedée) et masquerait la course testée ici derrière une erreur sans
+    // rapport.
+    await activateModule(pool, fx7.tenantId, { userId: fx7.dgId, ipAddress: '127.0.0.1' });
+    // Puis un paiement inséré directement (comme si le module avait momentanément raté cette écriture) :
+    // la seule opération que les deux rattrapages concurrents ci-dessous vont se disputer.
+    await pool.query(
+      "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-04', 50000, 'especes', '2026-04-05', :by)",
+      { t: fx7.tenantId, l: fx7.leaseId, by: fx7.dgId },
+    );
+
+    const [resultA, resultB] = await Promise.all([
+      backfillHistoricalEntries(pool, fx7.tenantId, { fromDate: '2026-01-01', createdBy: fx7.dgId }),
+      backfillHistoricalEntries(pool, fx7.tenantId, { fromDate: '2026-01-01', createdBy: fx7.dgId }),
+    ]);
+
+    // Jamais les deux à la fois : soit l'un génère pendant que l'autre trouve déjà fait (séquentiel de
+    // fait, verrou implicite de la transaction), soit les deux passent la vérification en même temps et
+    // la contrainte UNIQUE convertit le second en « déjà fait » (skipped) — jamais une vraie erreur, et
+    // jamais 2 écritures générées pour la même opération.
+    assert.equal(resultA.generated + resultB.generated, 1, 'une seule des deux générations doit aboutir');
+    assert.equal(resultA.errors.length, 0, JSON.stringify(resultA.errors));
+    assert.equal(resultB.errors.length, 0, JSON.stringify(resultB.errors));
+
+    const [entries] = await pool.query(
+      "SELECT id FROM gl_entries WHERE tenant_id = :t AND source_table = 'rent_payments'",
+      { t: fx7.tenantId },
+    );
+    assert.equal(entries.length, 1, 'une seule écriture au final, jamais un doublon');
+  } finally {
+    await teardown(fx7.tenantId);
   }
 });

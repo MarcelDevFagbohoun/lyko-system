@@ -16,7 +16,7 @@ const { ApiError } = require('../../middleware/error');
 const { requireAuth, requirePermission } = require('../../middleware/auth');
 const { updatePostingRuleSchema } = require('../../validators/gl/referentiels');
 const { GL_CORE_HOOKED_OPERATION_TYPES } = require('../../constants/glOperationTypes');
-const { syncMissingPostingRules, syncAccountSystemKeys } = require('../../db/seedGeneralLedger');
+const { syncMissingAccounts, syncMissingPostingRules, syncAccountSystemKeys } = require('../../db/seedGeneralLedger');
 const logger = require('../../utils/logger');
 
 const router = Router();
@@ -137,15 +137,19 @@ router.patch('/:id', canAdvanced, async (req, res, next) => {
 // non plus).
 router.post('/resync', canAdvanced, async (req, res, next) => {
   try {
+    // Ordre important : les comptes AVANT les règles (une règle qui
+    // référence un compte encore absent échouerait sinon).
+    const { added: addedAccounts } = await syncMissingAccounts(req.user.tenantId);
     const { added } = await syncMissingPostingRules(req.user.tenantId);
     const { updated } = await syncAccountSystemKeys(req.user.tenantId);
     logger.info('Règles/comptes comptables resynchronisés', {
       tenantId: req.user.tenantId,
+      addedAccounts,
       added,
       updatedSystemKeys: updated,
       by: req.user.id,
     });
-    res.json({ added, updatedSystemKeys: updated });
+    res.json({ addedAccounts, added, updatedSystemKeys: updated });
   } catch (err) {
     next(err);
   }

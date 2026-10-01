@@ -147,6 +147,131 @@ test('amortissement_informatique : débite 681, crédite 28442 (compte soustract
   }
 });
 
+// ───── bug corrigé (audit comptable du 30/09/2026) : sortie d'immobilisation, jusqu'ici IMPOSSIBLE ─────
+
+test("sortie_informatique — VNC PARTIELLE : solde 2442 (crédit, coût total), débite 28442 (amortissement cumulé) ET 654 (perte résiduelle)", async () => {
+  const conn = await pool.getConnection();
+  try {
+    // Un bien de 600000, amorti de 100000 à ce jour (VNC résiduelle = 500000).
+    const [asset] = await pool.query(
+      `INSERT INTO fixed_assets (tenant_id, label, category, acquisition_date, acquisition_cost, useful_life_years, payment_status, payment_method, created_by)
+       VALUES (:t, 'Ordinateur test', 'informatique', '2025-01-01', 600000, 3, 'paid', 'virement', :by)`,
+      { t: fx.tenantId, by: fx.dgId },
+    );
+    await pool.query(
+      'INSERT INTO fixed_asset_depreciations (tenant_id, fixed_asset_id, period, amount, recorded_by) VALUES (:t, :aid, :period, :amount, :by)',
+      { t: fx.tenantId, aid: asset.insertId, period: '2026-01', amount: 100000, by: fx.dgId },
+    );
+
+    await conn.beginTransaction();
+    const result = await genererEcriture(conn, {
+      tenantId: fx.tenantId,
+      operationType: 'sortie_informatique',
+      entryDate: '2026-04-01',
+      amount: 600000, // coût d'acquisition brut, jamais la VNC
+      narrationVars: { libelle: 'Ordinateur volé' },
+      sourceTable: 'fixed_assets',
+      sourceId: asset.insertId,
+      createdBy: fx.dgId,
+      context: { fixedAssetId: asset.insertId },
+    });
+    await conn.commit();
+
+    assert.equal(result.totalDebit, 600000);
+    assert.equal(result.totalCredit, 600000);
+    const [lines] = await pool.query(
+      'SELECT el.side, el.amount, a.code FROM gl_entry_lines el JOIN gl_accounts a ON a.id = el.account_id WHERE el.entry_id = :id ORDER BY el.line_order',
+      { id: result.entryId },
+    );
+    assert.deepEqual(
+      lines.map((l) => [l.side, l.code, Number(l.amount)]),
+      [
+        ['debit', '28442', 100000], // solde l'amortissement déjà pratiqué
+        ['debit', '654', 500000], // valeur nette comptable résiduelle, passée en charge
+        ['credit', '2442', 600000], // le bien sort du patrimoine pour son coût brut
+      ],
+    );
+
+    await pool.query('DELETE FROM fixed_assets WHERE id = :id', { id: asset.insertId });
+  } finally {
+    conn.release();
+  }
+});
+
+test('sortie_mobilier — VNC NULLE (déjà entièrement amorti) : aucune ligne 654 (jamais une charge à 0)', async () => {
+  const conn = await pool.getConnection();
+  try {
+    const [asset] = await pool.query(
+      `INSERT INTO fixed_assets (tenant_id, label, category, acquisition_date, acquisition_cost, useful_life_years, payment_status, payment_method, created_by)
+       VALUES (:t, 'Bureau test', 'mobilier', '2023-01-01', 150000, 3, 'paid', 'especes', :by)`,
+      { t: fx.tenantId, by: fx.dgId },
+    );
+    await pool.query(
+      'INSERT INTO fixed_asset_depreciations (tenant_id, fixed_asset_id, period, amount, recorded_by) VALUES (:t, :aid, :period, :amount, :by)',
+      { t: fx.tenantId, aid: asset.insertId, period: '2026-01', amount: 150000, by: fx.dgId },
+    );
+
+    await conn.beginTransaction();
+    const result = await genererEcriture(conn, {
+      tenantId: fx.tenantId,
+      operationType: 'sortie_mobilier',
+      entryDate: '2026-04-01',
+      amount: 150000, // entièrement amorti : VNC = 0
+      narrationVars: { libelle: 'Bureau mis au rebut' },
+      sourceTable: 'fixed_assets',
+      sourceId: asset.insertId,
+      createdBy: fx.dgId,
+      context: { fixedAssetId: asset.insertId },
+    });
+    await conn.commit();
+
+    const [lines] = await pool.query(
+      'SELECT el.side, a.code FROM gl_entry_lines el JOIN gl_accounts a ON a.id = el.account_id WHERE el.entry_id = :id ORDER BY el.line_order',
+      { id: result.entryId },
+    );
+    assert.equal(lines.length, 2, 'jamais de ligne 654 à 0 FCFA');
+    assert.deepEqual(lines.map((l) => [l.side, l.code]), [
+      ['debit', '28444'],
+      ['credit', '2444'],
+    ]);
+
+    await pool.query('DELETE FROM fixed_assets WHERE id = :id', { id: asset.insertId });
+  } finally {
+    conn.release();
+  }
+});
+
+test("sortie_transport — AUCUN amortissement encore pratiqué : toute la valeur part directement en perte (654), aucune ligne 28451 à 0", async () => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await genererEcriture(conn, {
+      tenantId: fx.tenantId,
+      operationType: 'sortie_transport',
+      entryDate: '2026-04-01',
+      amount: 3500000,
+      narrationVars: { libelle: 'Véhicule accidenté, jamais amorti' },
+      sourceTable: 'fixed_assets',
+      sourceId: 779, // aucune ligne fixed_asset_depreciations pour cet id
+      createdBy: fx.dgId,
+      context: { fixedAssetId: 779 },
+    });
+    await conn.commit();
+
+    const [lines] = await pool.query(
+      'SELECT el.side, a.code, el.amount FROM gl_entry_lines el JOIN gl_accounts a ON a.id = el.account_id WHERE el.entry_id = :id ORDER BY el.line_order',
+      { id: result.entryId },
+    );
+    assert.equal(lines.length, 2, 'jamais de ligne 28451 à 0 FCFA');
+    assert.deepEqual(lines.map((l) => [l.side, l.code, Number(l.amount)]), [
+      ['debit', '654', 3500000],
+      ['credit', '2451', 3500000],
+    ]);
+  } finally {
+    conn.release();
+  }
+});
+
 test('reglement_fournisseur_investissement : solde le 481, jamais le 401 du même fournisseur', async () => {
   const conn = await pool.getConnection();
   try {

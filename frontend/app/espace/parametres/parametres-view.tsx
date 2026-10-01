@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import { useToast } from "@/lib/toast/toast-context";
 import {
   fetchAssistantSettings,
@@ -358,9 +359,13 @@ function ParametresContent() {
               </CardHeader>
               <CardContent className="flex flex-col items-center gap-3">
                 <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
-                  {currentStamp ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={currentStamp} alt="Cachet" className="max-h-full max-w-full object-contain" />
+                  {currentStamp && accessToken ? (
+                    <AuthenticatedImage
+                      src={currentStamp}
+                      accessToken={accessToken}
+                      alt="Cachet"
+                      className="max-h-full max-w-full object-contain"
+                    />
                   ) : (
                     <Stamp size={28} className="text-ink-faint" />
                   )}
@@ -379,9 +384,13 @@ function ParametresContent() {
               </CardHeader>
               <CardContent className="flex flex-col items-center gap-3">
                 <div className="flex h-28 w-full items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
-                  {currentSignature ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={currentSignature} alt="Signature" className="max-h-full max-w-full object-contain" />
+                  {currentSignature && accessToken ? (
+                    <AuthenticatedImage
+                      src={currentSignature}
+                      accessToken={accessToken}
+                      alt="Signature"
+                      className="max-h-full max-w-full object-contain"
+                    />
                   ) : (
                     <PenTool size={28} className="text-ink-faint" />
                   )}

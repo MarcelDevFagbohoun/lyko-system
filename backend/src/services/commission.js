@@ -126,11 +126,13 @@ async function getRecetteNetteMaison(tenantId, propertyId, yearMonth) {
        AND l.entry_prorata_received_at IS NOT NULL AND DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') = :yearMonth`,
     { tenantId, propertyId, yearMonth },
   );
+  // Haute #7 (étape 51) : base caisse réelle (`paid_at`), jamais `expense_date` — doit rester cohérent
+  // avec `getEscrowBalances` (même correctif), sous peine de rouvrir la divergence corrigée en Haute #2.
   const [expenseRows] = await pool.query(
     `SELECT COALESCE(SUM(amount), 0) AS total
      FROM expenses
      WHERE tenant_id = :tenantId AND property_id = :propertyId AND deleted_at IS NULL
-       AND DATE_FORMAT(expense_date, '%Y-%m') = :yearMonth`,
+       AND payment_status = 'paid' AND DATE_FORMAT(paid_at, '%Y-%m') = :yearMonth`,
     { tenantId, propertyId, yearMonth },
   );
 
@@ -213,14 +215,30 @@ async function getRecetteProprietaire(tenantId, propertyId, yearMonth) {
  * un agent restreint.
  */
 async function getEscrowBalances(tenantId, db = pool) {
+  // Bug corrigé (audit comptable du 30/09/2026) : si l'entreprise a activé
+  // `gl_commission_timing = 'reversement'` (Comptabilité avancée → Règles
+  // comptables), la commission n'est prélevée comptablement qu'AU MOMENT du
+  // reversement (voir `computeReversementDeductions`,
+  // `services/gl/glAccountResolver.js`) — jamais à l'encaissement du loyer.
+  // Ce calcul du solde séquestre disponible déduisait pourtant TOUJOURS la
+  // commission au fil de l'eau, comme en mode 'encaissement' : le solde
+  // affiché/plafonné était donc déjà net, et la commission se retrouvait
+  // prélevée une SECONDE fois par l'écriture GL du reversement. En mode
+  // 'reversement', le solde disponible reste donc BRUT (commission = 0 ici,
+  // exactement comme le fait déjà `genererEcriture` pour `loyer_encaisse`).
+  const [timingRows] = await db.query('SELECT gl_commission_timing FROM tenants WHERE id = :tenantId LIMIT 1', {
+    tenantId,
+  });
+  const commissionDeductedAtCollection = (timingRows[0]?.gl_commission_timing ?? 'encaissement') === 'encaissement';
+
   const [paymentRows] = await db.query(
-    `SELECT p.owner_id, rp.covers_month AS ym, SUM(rp.amount) AS total
+    `SELECT p.owner_id, p.id AS property_id, rp.covers_month AS ym, SUM(rp.amount) AS total
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
      WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL
-     GROUP BY p.owner_id, rp.covers_month`,
+     GROUP BY p.owner_id, p.id, rp.covers_month`,
     { tenantId },
   );
   // Dette initiale réglée (étape 42, demande explicite de l'utilisateur : « lorsqu'un impayé est payé
@@ -230,33 +248,37 @@ async function getEscrowBalances(tenantId, db = pool) {
   // par mois de loyer (cette dette n'en a pas) — même traitement comptable qu'un loyer (voir
   // `dette_initiale_encaissee`, glOperationTypes).
   const [openingDebtRows] = await db.query(
-    `SELECT p.owner_id, DATE_FORMAT(lodp.paid_at, '%Y-%m') AS ym, SUM(lodp.amount) AS total
+    `SELECT p.owner_id, p.id AS property_id, DATE_FORMAT(lodp.paid_at, '%Y-%m') AS ym, SUM(lodp.amount) AS total
      FROM lease_opening_debt_payments lodp
      JOIN leases l ON l.id = lodp.lease_id
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
      WHERE lodp.tenant_id = :tenantId
-     GROUP BY p.owner_id, ym`,
+     GROUP BY p.owner_id, p.id, ym`,
     { tenantId },
   );
   // Prorata d'entrée réglé (étape 42) — un seul montant par bail (pas un historique de paiements comme
   // la dette initiale ci-dessus), groupé par mois de règlement effectif (`entry_prorata_received_at`) ;
   // absent tant que rien n'a été concrètement encaissé (`IS NOT NULL`).
   const [prorataRows] = await db.query(
-    `SELECT p.owner_id, DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') AS ym, SUM(l.entry_prorata_amount) AS total
+    `SELECT p.owner_id, p.id AS property_id, DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') AS ym, SUM(l.entry_prorata_amount) AS total
      FROM leases l
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
      WHERE l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL
-     GROUP BY p.owner_id, ym`,
+     GROUP BY p.owner_id, p.id, ym`,
     { tenantId },
   );
+  // Haute #7 (étape 51) : groupée par mois de RÈGLEMENT réel (`paid_at`), jamais la date d'engagement
+  // (`expense_date`) — une dépense « à crédit » encore impayée ne doit réduire aucun solde séquestre tant
+  // qu'aucun argent n'est réellement sorti (même principe de base caisse que le reste de cette fonction).
   const [expenseRows] = await db.query(
-    `SELECT p.owner_id, DATE_FORMAT(e.expense_date, '%Y-%m') AS ym, SUM(e.amount) AS total
+    `SELECT p.owner_id, p.id AS property_id, DATE_FORMAT(e.paid_at, '%Y-%m') AS ym, SUM(e.amount) AS total
      FROM expenses e
      JOIN properties p ON p.id = e.property_id
      WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.property_id IS NOT NULL
-     GROUP BY p.owner_id, ym`,
+       AND e.payment_status = 'paid'
+     GROUP BY p.owner_id, p.id, ym`,
     { tenantId },
   );
   const [rateRows] = await db.query(
@@ -269,22 +291,32 @@ async function getEscrowBalances(tenantId, db = pool) {
     { tenantId },
   );
 
-  // (owner_id -> (mois -> { rent, openingDebt, prorata, expenses })) : les quatre agrégats ne se
-  // recoupent jamais sur la même ligne (requêtes séparées, voir `getRecetteNetteMaison`), on les
-  // fusionne ici cellule par cellule. Trois sources distinctes plutôt qu'un seul total « payments » :
-  // le DÉTAIL de ce qui compose le solde séquestre doit rester lisible (demande explicite de
-  // l'utilisateur), pas seulement son montant.
-  const byOwnerMonth = new Map();
-  function cell(ownerId, ym) {
-    if (!byOwnerMonth.has(ownerId)) byOwnerMonth.set(ownerId, new Map());
-    const monthMap = byOwnerMonth.get(ownerId);
+  // (owner_id -> propertyId -> (mois -> { rent, openingDebt, prorata, expenses })) : les quatre
+  // agrégats ne se recoupent jamais sur la même ligne (requêtes séparées, voir `getRecetteNetteMaison`),
+  // on les fusionne ici cellule par cellule. Trois sources distinctes plutôt qu'un seul total
+  // « payments » : le DÉTAIL de ce qui compose le solde séquestre doit rester lisible (demande
+  // explicite de l'utilisateur), pas seulement son montant.
+  //
+  // Bug corrigé (audit comptable du 30/09/2026) : la clé était auparavant seulement (owner, mois) —
+  // la commission d'un propriétaire à PLUSIEURS Biens était donc arrondie UNE FOIS sur le total combiné
+  // de tous ses Biens pour ce mois, alors que `getRecetteProprietaire` (fiche d'UN Bien) l'arrondit
+  // Bien par Bien. Pour un même mois, la somme des fiches de chaque Bien pouvait alors différer de
+  // quelques FCFA du solde séquestre agrégé — deux vues du même argent en désaccord. La clé inclut
+  // maintenant `propertyId`, et l'arrondi de la commission se fait à CETTE granularité (Bien + mois,
+  // identique à `getRecetteProprietaire`), avant d'être sommé au niveau du propriétaire.
+  const byOwnerPropertyMonth = new Map();
+  function cell(ownerId, propertyId, ym) {
+    if (!byOwnerPropertyMonth.has(ownerId)) byOwnerPropertyMonth.set(ownerId, new Map());
+    const byProperty = byOwnerPropertyMonth.get(ownerId);
+    if (!byProperty.has(propertyId)) byProperty.set(propertyId, new Map());
+    const monthMap = byProperty.get(propertyId);
     if (!monthMap.has(ym)) monthMap.set(ym, { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 });
     return monthMap.get(ym);
   }
-  for (const r of paymentRows) cell(r.owner_id, r.ym).rent = Number(r.total);
-  for (const r of openingDebtRows) cell(r.owner_id, r.ym).openingDebt = Number(r.total);
-  for (const r of prorataRows) cell(r.owner_id, r.ym).prorata = Number(r.total);
-  for (const r of expenseRows) cell(r.owner_id, r.ym).expenses = Number(r.total);
+  for (const r of paymentRows) cell(r.owner_id, r.property_id, r.ym).rent = Number(r.total);
+  for (const r of openingDebtRows) cell(r.owner_id, r.property_id, r.ym).openingDebt = Number(r.total);
+  for (const r of prorataRows) cell(r.owner_id, r.property_id, r.ym).prorata = Number(r.total);
+  for (const r of expenseRows) cell(r.owner_id, r.property_id, r.ym).expenses = Number(r.total);
 
   const ratesByOwner = new Map();
   for (const r of rateRows) {
@@ -302,18 +334,22 @@ async function getEscrowBalances(tenantId, db = pool) {
   const payoutsByOwner = new Map(payoutRows.map((r) => [r.owner_id, Number(r.total)]));
 
   const balances = new Map();
-  for (const [ownerId, months] of byOwnerMonth) {
+  for (const [ownerId, byProperty] of byOwnerPropertyMonth) {
     let totalCollected = 0;
     const breakdown = { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 };
-    for (const [ym, m] of months) {
-      breakdown.rent += m.rent;
-      breakdown.openingDebt += m.openingDebt;
-      breakdown.prorata += m.prorata;
-      breakdown.expenses += m.expenses;
-      const recetteNette = m.rent + m.openingDebt + m.prorata - m.expenses;
-      const rate = rateAt(ownerId, lastDayOfMonth(ym));
-      const commissionCabinet = Math.round(recetteNette * (rate / 100));
-      totalCollected += recetteNette - commissionCabinet;
+    for (const months of byProperty.values()) {
+      for (const [ym, m] of months) {
+        breakdown.rent += m.rent;
+        breakdown.openingDebt += m.openingDebt;
+        breakdown.prorata += m.prorata;
+        breakdown.expenses += m.expenses;
+        const recetteNette = m.rent + m.openingDebt + m.prorata - m.expenses;
+        const rate = rateAt(ownerId, lastDayOfMonth(ym));
+        // Arrondi à la granularité BIEN + MOIS (jamais sur le total combiné de tous les Biens de ce
+        // mois) — voir le commentaire détaillé ci-dessus.
+        const commissionCabinet = commissionDeductedAtCollection ? Math.round(recetteNette * (rate / 100)) : 0;
+        totalCollected += recetteNette - commissionCabinet;
+      }
     }
     const totalPayouts = payoutsByOwner.get(ownerId) ?? 0;
     balances.set(ownerId, { totalCollected, totalPayouts, balance: totalCollected - totalPayouts, breakdown });
@@ -379,12 +415,18 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
      GROUP BY p.owner_id`,
     { tenantId, yearMonth },
   );
+  // Haute #7 (étape 51) : filtrée sur `paid_at` (règlement RÉEL), jamais `expense_date` (simple date
+  // d'engagement) — une dépense « à crédit » (`payment_status='unpaid'`, `paid_at` encore NULL) ne doit
+  // JAMAIS réduire la recette nette d'un propriétaire tant qu'aucun argent n'est réellement sorti (même
+  // principe de base caisse déjà appliqué au loyer/aux pénalités ci-dessus). `paid_at` vaut déjà
+  // `expense_date` pour une dépense payée immédiatement (voir POST /expenses) : comportement inchangé
+  // dans ce cas, seul le cas « à crédit » est corrigé.
   const [propertyExpenseRows] = await db.query(
     `SELECT p.owner_id, SUM(e.amount) AS total
      FROM expenses e
      JOIN properties p ON p.id = e.property_id
      WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.property_id IS NOT NULL
-       AND DATE_FORMAT(e.expense_date, '%Y-%m') = :yearMonth
+       AND e.payment_status = 'paid' AND DATE_FORMAT(e.paid_at, '%Y-%m') = :yearMonth
      GROUP BY p.owner_id`,
     { tenantId, yearMonth },
   );
@@ -434,10 +476,12 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
   );
   const lateFees = Number(lateFeeRows[0].total);
 
+  // Haute #7 (étape 51) : même correctif que propertyExpenseRows ci-dessus — base caisse réelle
+  // (`paid_at`), jamais la date d'engagement.
   const [cabinetExpenseRows] = await db.query(
     `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
      WHERE tenant_id = :tenantId AND property_id IS NULL AND deleted_at IS NULL
-       AND DATE_FORMAT(expense_date, '%Y-%m') = :yearMonth`,
+       AND payment_status = 'paid' AND DATE_FORMAT(paid_at, '%Y-%m') = :yearMonth`,
     { tenantId, yearMonth },
   );
   const expenses = Number(cabinetExpenseRows[0].total);

@@ -385,6 +385,7 @@ function DraftEditor({
           degradedKeys={degradedKeys}
           onUploadPhoto={handleUploadPhoto}
           onDeletePhoto={handleDeletePhoto}
+          accessToken={accessToken}
         />
 
         <BillingReportSection zones={zones} />
@@ -586,7 +587,7 @@ function FinalizedView({
 
         {lease.moveInReport && <ComparisonSection moveIn={lease.moveInReport} moveOut={report} />}
 
-        <InspectionReadOnly zones={report.zones} showDeductions />
+        <InspectionReadOnly zones={report.zones} showDeductions accessToken={accessToken} />
 
         <BillingReportSection zones={report.zones} />
 
@@ -672,8 +673,8 @@ function FinalizedView({
         )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} />
-          <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} />
+          <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} accessToken={accessToken} />
+          <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} accessToken={accessToken} />
         </div>
       </CardContent>
     </Card>

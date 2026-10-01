@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, CalendarClock, HelpCircle, ChevronDown, ChevronUp, LockOpen, Landmark, UserPlus, Percent } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, CalendarClock, HelpCircle, ChevronDown, ChevronUp, LockOpen, Landmark, UserPlus, Percent, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { API_URL, ApiError, openAuthenticatedPdf, downloadAuthenticatedFile } from "@/lib/api/client";
+import { ApiError, openAuthenticatedPdf, downloadAuthenticatedFile } from "@/lib/api/client";
 import {
   listExpenses,
   createExpense,
@@ -27,6 +27,7 @@ import {
   createFixedAsset,
   payFixedAsset,
   depreciateFixedAsset,
+  disposeFixedAsset,
   getFixedAsset,
   type Expense,
   type ExpenseCategory,
@@ -1499,10 +1500,15 @@ function ExpenseRow({
                 Régler
               </Button>
             )}
-            {expense.receiptUrl && (
-              <a href={`${API_URL}${expense.receiptUrl}`} target="_blank" rel="noopener noreferrer" aria-label="Voir le justificatif">
-                <Button variant="ghost" size="sm"><FileDown size={14} /></Button>
-              </a>
+            {expense.receiptUrl && accessToken && (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Voir le justificatif"
+                onClick={() => openAuthenticatedPdf(expense.receiptUrl!, accessToken)}
+              >
+                <FileDown size={14} />
+              </Button>
             )}
             <Button variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label="Modifier">
               <Pencil size={14} />
@@ -1778,6 +1784,9 @@ function FixedAssetRow({
   const [settlePaidAt, setSettlePaidAt] = React.useState(todayIso());
   const [depreciating, setDepreciating] = React.useState(false);
   const [period, setPeriod] = React.useState(currentYearMonth());
+  const [disposing, setDisposing] = React.useState(false);
+  const [disposedAt, setDisposedAt] = React.useState(todayIso());
+  const [disposeReason, setDisposeReason] = React.useState("");
   const [expanded, setExpanded] = React.useState(false);
   const [depreciations, setDepreciations] = React.useState<FixedAssetDepreciationEntry[] | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
@@ -1811,6 +1820,22 @@ function FixedAssetRow({
       toast.success(`Amortissement de ${formatFcfa(res.amount)} enregistré pour ${period}.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer cet amortissement.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDispose() {
+    if (!accessToken || !disposeReason.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await disposeFixedAsset(accessToken, asset.id, { disposedAt, reason: disposeReason.trim() });
+      setDisposing(false);
+      onChanged();
+      toast.success(`« ${asset.label} » sortie du patrimoine.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de sortir cette immobilisation.");
     } finally {
       setSubmitting(false);
     }
@@ -1892,6 +1917,38 @@ function FixedAssetRow({
     );
   }
 
+  if (disposing) {
+    return (
+      <TableRow>
+        <TableCell colSpan={7}>
+          <div className="flex flex-col gap-2 py-2">
+            {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+            <p className="text-body-sm text-ink">
+              Sortir « {asset.label} » du patrimoine (vente, rebut, perte) ? Action définitive — la valeur nette
+              comptable résiduelle ({formatFcfa(asset.bookValue)}) sera passée en charge.
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Input type="date" value={disposedAt} onChange={(e) => setDisposedAt(e.target.value)} />
+              <Input
+                value={disposeReason}
+                onChange={(e) => setDisposeReason(e.target.value)}
+                placeholder="Motif (ex. volé, revendu, hors d'usage)"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="danger" size="sm" onClick={handleDispose} disabled={submitting || !disposeReason.trim()}>
+                {submitting ? "Enregistrement…" : "Confirmer la sortie"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setDisposing(false)} disabled={submitting}>
+                Annuler
+              </Button>
+            </div>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
   return (
     <>
       <TableRow>
@@ -1932,6 +1989,11 @@ function FixedAssetRow({
                 Amortir
               </Button>
             )}
+            {asset.status !== "disposed" && (
+              <Button variant="ghost" size="sm" onClick={() => setDisposing(true)} aria-label="Sortir du patrimoine">
+                <LogOut size={14} className="text-danger-fg" />
+              </Button>
+            )}
           </div>
         </TableCell>
       </TableRow>
@@ -1939,6 +2001,11 @@ function FixedAssetRow({
         <TableRow>
           <TableCell colSpan={7}>
             <div className="flex flex-col gap-1.5 py-2">
+              {asset.status === "disposed" && (
+                <p className="text-body-sm text-ink-soft">
+                  Sortie du patrimoine le {asset.disposedAt} — {asset.disposedReason}
+                </p>
+              )}
               {depreciations === null ? (
                 <p className="text-body-sm text-ink-muted">Chargement…</p>
               ) : depreciations.length === 0 ? (

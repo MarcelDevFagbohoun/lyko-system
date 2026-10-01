@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Phone, Building2, Pencil, CheckCircle2, PlayCircle, Archive, RotateCcw } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { API_URL, ApiError } from "@/lib/api/client";
+import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
+import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import { getComplaint, updateComplaint, updateComplaintStatus, type Complaint, type ComplaintCategory, type ComplaintPriority } from "@/lib/api/complaints";
 import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_PRIORITY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
 import { RequireAuth } from "@/components/auth/require-auth";
@@ -138,15 +139,24 @@ function PlainteContent() {
                   </div>
                 )}
 
-                {complaint.photoUrls.length > 0 && (
+                {complaint.photoUrls.length > 0 && accessToken && (
                   <div>
                     <p className="mb-2 font-label-sm uppercase tracking-wider text-ink-muted">Photos</p>
                     <div className="flex flex-wrap gap-3">
                       {complaint.photoUrls.map((url) => (
-                        <a key={url} href={`${API_URL}${url}`} target="_blank" rel="noopener noreferrer">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={`${API_URL}${url}`} alt="Photo du dossier" className="h-24 w-24 rounded-lg border border-border object-cover" />
-                        </a>
+                        <button
+                          key={url}
+                          type="button"
+                          onClick={() => openAuthenticatedPdf(url, accessToken)}
+                          className="cursor-zoom-in"
+                        >
+                          <AuthenticatedImage
+                            src={url}
+                            accessToken={accessToken}
+                            alt="Photo du dossier"
+                            className="h-24 w-24 rounded-lg border border-border object-cover"
+                          />
+                        </button>
                       ))}
                     </div>
                   </div>

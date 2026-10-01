@@ -99,7 +99,7 @@ function ContratContent() {
         {!contract ? (
           <StartCard leaseId={leaseId} accessToken={accessToken} canManage={canManage} onStarted={(c, p) => { setContract(c); setPreview(p); }} />
         ) : contract.status === "finalized" ? (
-          <FinalizedView lease={lease} contract={contract} preview={preview} />
+          <FinalizedView lease={lease} contract={contract} preview={preview} accessToken={accessToken} />
         ) : (
           <DraftEditor
             leaseId={leaseId}
@@ -353,7 +353,17 @@ function DraftEditor({
   );
 }
 
-function FinalizedView({ lease, contract, preview }: { lease: Lease; contract: LeaseContract; preview: LeaseContractData }) {
+function FinalizedView({
+  lease,
+  contract,
+  preview,
+  accessToken,
+}: {
+  lease: Lease;
+  contract: LeaseContract;
+  preview: LeaseContractData;
+  accessToken: string | null;
+}) {
   return (
     <Card className="max-w-3xl">
       <CardHeader>
@@ -377,8 +387,8 @@ function FinalizedView({ lease, contract, preview }: { lease: Lease; contract: L
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SignatureBlock label="Signature du locataire" url={contract.tenantSignatureUrl} />
-          <SignatureBlock label="Signature de l'agent" url={contract.agentSignatureUrl} />
+          <SignatureBlock label="Signature du locataire" url={contract.tenantSignatureUrl} accessToken={accessToken} />
+          <SignatureBlock label="Signature de l'agent" url={contract.agentSignatureUrl} accessToken={accessToken} />
         </div>
       </CardContent>
     </Card>

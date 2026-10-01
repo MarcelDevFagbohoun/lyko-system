@@ -3,6 +3,7 @@
 const { INSPECTION_ZONES, LEGACY_CONDITION_TO_NEW, INSPECTION_CONDITION_RANK } = require('../constants/inspection');
 const { toActor } = require('../utils/actor');
 const { pool } = require('../config/db');
+const { toProtectedFileUrl } = require('../utils/uploads');
 
 /** Élément vide (nouvelle zone/nouvel élément, ou remise à zéro pour la sortie). */
 function emptyItem(key, label, custom = false) {
@@ -188,8 +189,8 @@ function toPublicInspectionReport(row) {
     // jamais un accès en écriture du locataire lui-même (voir docs/AVANCEMENT.md).
     tenantReserves: row.tenant_reserves,
     finalizedAt: isoDateTime(row.finalized_at),
-    tenantSignatureUrl: row.tenant_signature_path ? `/uploads/${row.tenant_signature_path}` : null,
-    agentSignatureUrl: row.agent_signature_path ? `/uploads/${row.agent_signature_path}` : null,
+    tenantSignatureUrl: row.tenant_signature_path ? toProtectedFileUrl(row.tenant_signature_path) : null,
+    agentSignatureUrl: row.agent_signature_path ? toProtectedFileUrl(row.agent_signature_path) : null,
     conductedBy: toActor(row.conductor_first_name, row.conductor_last_name, row.conductor_role),
     finalizedBy: toActor(row.finalizer_first_name, row.finalizer_last_name, row.finalizer_role),
     // Réouverture (étape 48, correction DG) — historique de la DERNIÈRE

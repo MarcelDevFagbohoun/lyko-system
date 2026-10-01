@@ -31,6 +31,7 @@ import { LykoLogo } from "@/components/brand/logo";
 import { ConnectionIndicator } from "@/components/system/connection-indicator";
 import { startQueueAutoSync } from "@/lib/offline/queue";
 import { Badge } from "@/components/ui/badge";
+import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import { CADRES, type Cadre } from "@/lib/module-theme";
 import { cn } from "@/lib/utils";
 
@@ -198,10 +199,10 @@ export function EspaceSidebar() {
   const footer = (
     <div className="border-t border-border p-3 pb-4">
       <div className="flex items-center gap-2.5 px-1 py-1.5">
-        {user.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`${API_URL}${user.avatarUrl}`}
+        {user.avatarUrl && accessToken ? (
+          <AuthenticatedImage
+            src={user.avatarUrl}
+            accessToken={accessToken}
             alt=""
             className="h-9 w-9 shrink-0 rounded-full object-cover"
           />

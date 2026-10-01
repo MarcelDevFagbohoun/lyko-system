@@ -647,7 +647,7 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
   const agentSigUrl = contract.agentSignatureUrl;
   const sigImgY = sigTop + 16;
   if (tenantSigUrl) {
-    const f = path.join(UPLOADS_ROOT, tenantSigUrl.replace(/^\/uploads\//, ''));
+    const f = uploadedFile(tenantSigUrl);
     if (fs.existsSync(f)) {
       try {
         doc.image(f, 50, sigImgY, { fit: [200, 55] });
@@ -670,7 +670,7 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
       ? path.join(UPLOADS_ROOT, tenant.stamp_path)
       : null;
   if (agentSigUrl) {
-    const f = path.join(UPLOADS_ROOT, agentSigUrl.replace(/^\/uploads\//, ''));
+    const f = uploadedFile(agentSigUrl);
     if (fs.existsSync(f)) {
       try {
         doc.image(f, 315, sigImgY, { fit: [130, 45] });
@@ -709,9 +709,15 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
 const CONDITION_LABELS = { BE: 'Bon état', ME: 'Mauvais état', SR: 'Sous réserve' };
 const CONDITION_COLORS = { BE: SUCCESS_FG, ME: DANGER_FG, SR: WARNING_FG };
 
-/** Chemin disque d'un fichier téléversé référencé par son URL publique `/uploads/...`. */
+/**
+ * Chemin disque d'un fichier téléversé référencé par son URL `/uploads/...`
+ * (fichiers restés publics : logo, photos marketplace) ou `/api/files/...`
+ * (fichiers désormais authentifiés — audit sécurité, étape 49) — accepte les
+ * deux préfixes, cette fonction lit toujours directement sur disque, jamais
+ * via HTTP, donc le contrôle d'accès de la route ne la concerne pas.
+ */
 function uploadedFile(publicUrl) {
-  return publicUrl ? path.join(UPLOADS_ROOT, publicUrl.replace(/^\/uploads\//, '')) : null;
+  return publicUrl ? path.join(UPLOADS_ROOT, publicUrl.replace(/^\/(uploads|api\/files)\//, '')) : null;
 }
 
 /**
@@ -1803,13 +1809,15 @@ function streamFinancialStatementsPdf(res, { tenant, fiscalYear, incomeStatement
     doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(MUTED).text('ACTIF', 50, y);
     y = doc.y + 4;
     for (const a of balanceSheet.actif) line(`${a.code} — ${a.label}`, a.amount);
-    if (balanceSheet.resultatNet < 0) line('Perte de l\'exercice', -balanceSheet.resultatNet);
+    // Cumulé depuis toujours, jamais seulement cet exercice — voir le commentaire détaillé sur
+    // `computeBalanceSheet` (pas d'écriture de report à nouveau distincte dans ce module).
+    if (balanceSheet.resultatNet < 0) line('Perte cumulée non affectée', -balanceSheet.resultatNet);
     line('Total actif', balanceSheet.totalActif, { bold: true });
     y += 6;
     doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(MUTED).text('PASSIF', 50, y);
     y = doc.y + 4;
     for (const p of balanceSheet.passif) line(`${p.code} — ${p.label}`, p.amount);
-    if (balanceSheet.resultatNet > 0) line("Bénéfice de l'exercice", balanceSheet.resultatNet);
+    if (balanceSheet.resultatNet > 0) line('Bénéfice cumulé non affecté', balanceSheet.resultatNet);
     line('Total passif', balanceSheet.totalPassif, { bold: true });
   }
   y += 16;

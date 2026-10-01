@@ -20,6 +20,9 @@ const portalComplaintSchema = z.object({
   title: z.string().trim().min(3, 'Titre requis (3 caractères min.)').max(150, 'Trop long'),
   description: optionalText(2000),
   priority: z.enum(COMPLAINT_PRIORITIES, { errorMap: () => ({ message: 'Priorité invalide' }) }).default('normale'),
+  // Clé d'idempotence (même principe que routes/complaints.js) : un double
+  // envoi sur reconnexion instable n'enregistre rien de plus.
+  idempotencyKey: z.string().trim().min(1).max(100).optional(),
 });
 
 module.exports = { portalComplaintSchema };

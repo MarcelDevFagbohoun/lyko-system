@@ -5,6 +5,7 @@ const { pool } = require('../config/db');
 const kkiapay = require('./kkiapay');
 const { recordRentPayment } = require('../routes/leases');
 const { recordUtilityPayment, loadCharge } = require('../routes/charges');
+const { assertPeriodOpen, assertPeriodOpenLocked } = require('./accountingPeriods');
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -72,6 +73,13 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
     return { alreadyRecorded: true };
   }
 
+  // Haute #4 (étape 51) : seul chemin de paiement qui ne vérifiait jamais la clôture de mois — un
+  // paiement confirmé par KKiaPay sur une période déjà clôturée pouvait donc glisser une écriture dans
+  // un mois censé être figé. Vérifié AVANT l'appel réseau à KKiaPay (échec rapide, inutile de le
+  // solliciter pour une date qu'on refusera de toute façon) ; la date réelle est toujours « aujourd'hui »
+  // (un paiement en ligne ne peut jamais être antidaté), voir `todayIso()` plus bas.
+  await assertPeriodOpen(tenant.id, todayIso());
+
   const verification = await kkiapay.verifyTransaction(tenant, transactionId);
   if (!verification.success) {
     throw new ApiError(400, `Paiement non confirmé par KKiaPay (statut : ${verification.status ?? 'inconnu'})`);
@@ -88,6 +96,9 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+    // Re-vérifie SOUS VERROU, dans la transaction — voir le commentaire détaillé sur
+    // `assertPeriodOpenLocked` (même schéma que les routes manuelles de leases.js/charges.js).
+    await assertPeriodOpenLocked(conn, tenant.id, todayIso());
 
     if (kind === 'rent') {
       await conn.query('SELECT id FROM leases WHERE id = :id FOR UPDATE', { id: leaseId });
@@ -120,11 +131,27 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
     }
 
     if (linkId) {
-      await conn.query(
-        `UPDATE payment_links SET status = 'paid', paid_at = NOW(), kkiapay_transaction_id = :tx
-         WHERE id = :id AND tenant_id = :t`,
-        { tx: transactionId, id: linkId, t: tenant.id },
+      // Bug corrigé (audit sécurité/logique) : le lien était marqué « payé »
+      // pour toute transaction KKiaPay confirmée, sans comparer son montant à
+      // celui réellement attendu (`payment_links.amount`) — un montant
+      // insuffisant (transaction mal formée, ou une autre transaction réelle
+      // du même compte marchand délibérément soumise ici) affichait quand
+      // même « réglé » au personnel alors que la dette n'est pas soldée.
+      // L'argent reçu est de toute façon déjà crédité ci-dessus au bail/à la
+      // facture (jamais refusé) — seul le badge du LIEN reste « en attente »
+      // si le montant confirmé n'atteint pas ce qui était demandé, pour que
+      // le même lien reste utilisable pour le complément.
+      const [[link]] = await conn.query(
+        'SELECT amount FROM payment_links WHERE id = :id AND tenant_id = :t FOR UPDATE',
+        { id: linkId, t: tenant.id },
       );
+      if (link && verification.amount >= Number(link.amount)) {
+        await conn.query(
+          `UPDATE payment_links SET status = 'paid', paid_at = NOW(), kkiapay_transaction_id = :tx
+           WHERE id = :id AND tenant_id = :t`,
+          { tx: transactionId, id: linkId, t: tenant.id },
+        );
+      }
     }
 
     await conn.commit();

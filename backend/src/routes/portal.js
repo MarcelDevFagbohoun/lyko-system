@@ -23,6 +23,7 @@ const {
 } = require('../services/inspection');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 const { verifyAndRecordKkiapay } = require('../services/paymentVerification');
+const { claimIdempotencyKey } = require('../services/paymentGuards');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -161,6 +162,7 @@ router.get('/:token', async (req, res, next) => {
         rentDueDay: activeLease.rent_due_day,
         rentTiming: activeLease.rent_timing,
         monthlyRent: activeLease.monthly_rent,
+        entryProration: activeLease.entry_proration,
         payments: payRows.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
       });
       // Frise des 12 mois : ses propres paiements, mois par mois.
@@ -171,6 +173,7 @@ router.get('/:token', async (req, res, next) => {
         rentDueDay: activeLease.rent_due_day,
         rentTiming: activeLease.rent_timing,
         monthlyRent: activeLease.monthly_rent,
+        entryProration: activeLease.entry_proration,
         payments: payRows.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
       });
 
@@ -428,12 +431,18 @@ router.post('/:token/complaints', async (req, res, next) => {
   }
   const data = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
     const { id: renterId, tenantId } = req.portalRenter;
     const lease = await loadActivePortalLease(tenantId, renterId);
     const code = await nextComplaintCode(tenantId);
 
-    const [result] = await pool.query(
+    await conn.beginTransaction();
+    // Clé d'idempotence (même principe que routes/complaints.js) : un envoi
+    // en double sur reconnexion instable n'enregistre rien de plus.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, tenantId, 'complaint', data.idempotencyKey);
+
+    const [result] = await conn.query(
       `INSERT INTO complaints
          (tenant_id, lease_id, code, category, title, description, priority, reported_at, created_by, reported_via_portal)
        VALUES (:tenantId, :leaseId, :code, :category, :title, :description, :priority, CURDATE(), NULL, 1)`,
@@ -447,6 +456,7 @@ router.post('/:token/complaints', async (req, res, next) => {
         priority: data.priority,
       },
     );
+    await conn.commit();
 
     logger.info('Plainte signalée depuis le portail locataire', {
       tenantId,
@@ -457,7 +467,10 @@ router.post('/:token/complaints', async (req, res, next) => {
     });
     res.status(201).json({ complaintId: result.insertId, code });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 

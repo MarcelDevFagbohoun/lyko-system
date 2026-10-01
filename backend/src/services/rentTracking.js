@@ -81,10 +81,21 @@ function computeEntryProrata({ startDate, monthlyRent, rentDueDay }) {
  * celui de son enregistrement sur la plateforme s'il est postérieur (le suivi
  * ne remonte jamais avant Lyko System) ; un locataire entré « à jour » démarre le
  * mois d'après. Partagé par le calcul de retard et la frise des mois.
+ *
+ * Bug corrigé (audit comptable du 30/09/2026) : avec un prorata d'entrée
+ * (`entryProration === 'prorata'`), les jours entre `startDate` et la
+ * première échéance normale sont DÉJÀ réglés par le prorata, payé à part à
+ * la signature (voir `computeEntryProrata` ci-dessus) — le cycle mensuel
+ * classique ne doit donc commencer à compter qu'À PARTIR de cette première
+ * échéance normale, jamais depuis `startDate` lui-même. Sans ce correctif,
+ * un locataire entré le 25 avec échéance le 5 apparaissait « en retard »
+ * dès le jour de son emménagement, sur un mois déjà couvert par le prorata.
  */
-function baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding }) {
+function baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding, entryProration, rentDueDay }) {
+  const effectiveStartDate =
+    entryProration === 'prorata' && rentDueDay != null ? firstRegularDueDate(startDate, rentDueDay) : startDate;
   const createdAtIso = createdAt ? toIsoDateString(createdAt) : null;
-  const baselineDate = createdAtIso && createdAtIso > startDate ? createdAtIso : startDate;
+  const baselineDate = createdAtIso && createdAtIso > effectiveStartDate ? createdAtIso : effectiveStartDate;
   const baselineMonth = baselineDate.slice(0, 7);
   return upToDateAtOnboarding ? addMonth(baselineMonth) : baselineMonth;
 }
@@ -121,10 +132,10 @@ function baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding }) {
  * un nouvel appel.
  */
 function computeArrears(
-  { startDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments },
+  { startDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments, entryProration },
   today = new Date(),
 ) {
-  const baselineMonth = baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding });
+  const baselineMonth = baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding, entryProration, rentDueDay });
 
   const paidThrough = payments.length > 0 ? payments.map((p) => p.coversMonth).sort().at(-1) : null;
 
@@ -287,7 +298,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   }
   const [activeLeases] = await pool.query(
     `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing, l.opening_debt_amount,
-            l.created_at, l.up_to_date_at_onboarding,
+            l.created_at, l.up_to_date_at_onboarding, l.entry_proration,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
             un.code AS unit_code, p.code AS property_code
      FROM leases l
@@ -344,6 +355,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
       rentDueDay: lease.rent_due_day,
       rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
+      entryProration: lease.entry_proration,
       payments: paymentsByLease.get(lease.id) || [],
     });
     const openingDebtRemaining = Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0);
@@ -401,7 +413,7 @@ async function snapshotLeaseBalances(tenantId, period) {
 
   const [leases] = await pool.query(
     `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing, l.opening_debt_amount,
-            l.created_at, l.up_to_date_at_onboarding
+            l.created_at, l.up_to_date_at_onboarding, l.entry_proration
      FROM leases l
      WHERE l.tenant_id = :tenantId AND l.start_date <= :last AND (l.end_date IS NULL OR l.end_date >= :first)`,
     { tenantId, first, last },
@@ -435,6 +447,7 @@ async function snapshotLeaseBalances(tenantId, period) {
       rentDueDay: lease.rent_due_day,
       rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
+      entryProration: lease.entry_proration,
       payments: paymentsByLease.get(lease.id) || [],
     });
     const unpaidMonths = arrears.status === 'late' ? Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth)) : 0;
@@ -471,7 +484,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
   }
   const [activeLeases] = await pool.query(
     `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing,
-            l.created_at, l.up_to_date_at_onboarding,
+            l.created_at, l.up_to_date_at_onboarding, l.entry_proration,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
             un.code AS unit_code, p.code AS property_code
      FROM leases l
@@ -510,6 +523,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
       rentDueDay: lease.rent_due_day,
       rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
+      entryProration: lease.entry_proration,
       payments: leasePayments.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
     });
 
@@ -609,7 +623,7 @@ const STRIP_MONTHS = 12;
  * `computeArrears` : à terme échu, le loyer d'un mois est dû le mois suivant.
  */
 function buildRentStrip(
-  { startDate, endDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments },
+  { startDate, endDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments, entryProration },
   today = new Date(),
 ) {
   const rent = Number(monthlyRent) || 0;
@@ -617,7 +631,13 @@ function buildRentStrip(
   const currentMonth = todayIso.slice(0, 7);
   const startMonth = toIsoDateString(startDate).slice(0, 7);
   const endMonth = endDate ? toIsoDateString(endDate).slice(0, 7) : null;
-  const baselineMonth = baselineMonthOf({ startDate: toIsoDateString(startDate), createdAt, upToDateAtOnboarding });
+  const baselineMonth = baselineMonthOf({
+    startDate: toIsoDateString(startDate),
+    createdAt,
+    upToDateAtOnboarding,
+    entryProration,
+    rentDueDay,
+  });
 
   const paidByMonth = new Map();
   for (const p of payments) {
@@ -676,7 +696,13 @@ function summarizeRentMonth(leases, month, today = new Date()) {
         rentTiming: lease.rentTiming,
         startMonth: startDate.slice(0, 7),
         endMonth: lease.endDate ? toIsoDateString(lease.endDate).slice(0, 7) : null,
-        baselineMonth: baselineMonthOf({ startDate, createdAt: lease.createdAt, upToDateAtOnboarding: lease.upToDateAtOnboarding }),
+        baselineMonth: baselineMonthOf({
+          startDate,
+          createdAt: lease.createdAt,
+          upToDateAtOnboarding: lease.upToDateAtOnboarding,
+          entryProration: lease.entryProration,
+          rentDueDay: lease.rentDueDay,
+        }),
       },
       todayIso,
     );

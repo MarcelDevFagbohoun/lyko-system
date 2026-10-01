@@ -57,6 +57,33 @@ async function assertPeriodOpen(tenantId, dateStr) {
   }
 }
 
+/**
+ * Bug corrigé (audit sécurité/logique) : `assertPeriodOpen` ci-dessus est un
+ * simple `SELECT`, exécuté AVANT `conn.beginTransaction()` dans tous ses
+ * appelants — rien n'empêchait une clôture de mois de se glisser entre cette
+ * vérification et l'écriture réelle (course). `assertPeriodOpenLocked(conn,
+ * ...)` referme cette fenêtre : à appeler UNE SECONDE FOIS, juste après
+ * `conn.beginTransaction()`, sur la connexion de la transaction en cours.
+ * `SELECT ... FOR UPDATE` sur `accounting_periods (tenant_id, period)` (clé
+ * UNIQUE) pose un verrou de « gap » même quand le mois n'est PAS encore
+ * clôturé (aucune ligne à verrouiller autrement) : la clôture elle-même
+ * (`POST /api/accounting/periods`) doit acquérir ce même verrou avant son
+ * propre `INSERT` pour que les deux se sérialisent correctement.
+ */
+async function assertPeriodOpenLocked(conn, tenantId, dateStr) {
+  const period = toPeriod(dateStr);
+  const [rows] = await conn.query(
+    'SELECT 1 FROM accounting_periods WHERE tenant_id = :tenantId AND period = :period LIMIT 1 FOR UPDATE',
+    { tenantId, period },
+  );
+  if (rows.length > 0) {
+    throw new ApiError(
+      403,
+      `Le mois ${period} est clôturé : aucune écriture financière ne peut plus y être ajoutée, modifiée ou supprimée.`,
+    );
+  }
+}
+
 // Marge de sécurité après l'échéance la plus tardive des baux actifs du mois,
 // pour laisser le temps aux derniers paiements d'arriver avant de proposer la
 // clôture comme sûre. Valeur fixe pour l'instant (pas de réglage exposé —
@@ -124,6 +151,7 @@ async function getPeriodClosability(tenantId, period) {
 module.exports = {
   isPeriodClosed,
   assertPeriodOpen,
+  assertPeriodOpenLocked,
   toPeriod,
   getAccountingStartDate,
   getPeriodClosability,

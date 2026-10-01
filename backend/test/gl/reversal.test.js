@@ -119,3 +119,62 @@ test('extourneEcriture — refuse une écriture introuvable', async () => {
     conn.release();
   }
 });
+
+test('extourneEcriture — audit sécurité : deux extournes concurrentes sur la MÊME écriture ne peuvent pas ensemble s\'exécuter', async () => {
+  // Écriture dédiée (celle du `before()` est déjà extournée par un test précédent).
+  const seedConn = await pool.getConnection();
+  let entryId;
+  try {
+    await seedConn.beginTransaction();
+    const result = await genererEcriture(seedConn, {
+      tenantId: fx.tenantId,
+      operationType: 'depense_entretien',
+      entryDate: '2026-04-05',
+      amount: 4500,
+      paymentMethod: 'especes',
+      narrationVars: { libelle: 'Réparation électricité' },
+      createdBy: fx.dgId,
+    });
+    await seedConn.commit();
+    entryId = result.entryId;
+  } finally {
+    seedConn.release();
+  }
+
+  const attempt = async () => {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const result = await extourneEcriture(conn, {
+        tenantId: fx.tenantId,
+        entryId,
+        entryDate: '2026-04-06',
+        userId: fx.dgId,
+        reason: 'Test concurrence',
+      });
+      await conn.commit();
+      return result;
+    } catch (err) {
+      await conn.rollback().catch(() => {});
+      throw err;
+    } finally {
+      conn.release();
+    }
+  };
+
+  // Sans le verrou (`FOR UPDATE` + compare-and-swap), les deux pouvaient
+  // toutes les deux lire `status = 'validee'` et produire chacune leur
+  // propre écriture miroir — inversant l'effet économique deux fois.
+  const results = await Promise.allSettled([attempt(), attempt()]);
+  const fulfilled = results.filter((r) => r.status === 'fulfilled');
+  const rejected = results.filter((r) => r.status === 'rejected');
+  assert.equal(fulfilled.length, 1, 'une seule des deux extournes concurrentes doit réussir');
+  assert.equal(rejected.length, 1);
+  assert.match(rejected[0].reason.message, /déjà été extournée/);
+
+  const [reversalRows] = await pool.query(
+    "SELECT id FROM gl_entries WHERE tenant_id = :t AND reverses_entry_id = :entryId",
+    { t: fx.tenantId, entryId },
+  );
+  assert.equal(reversalRows.length, 1, 'une seule écriture miroir doit exister, jamais deux');
+});

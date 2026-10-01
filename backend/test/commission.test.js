@@ -24,7 +24,7 @@ const {
   assertPayoutWithinBalance,
 } = require('../src/services/commission');
 const { ApiError } = require('../src/middleware/error');
-const { createBareFixture, setCommissionRate } = require('./gl/fixtures');
+const { createBareFixture, setCommissionRate, teardown } = require('./gl/fixtures');
 
 let fx;
 
@@ -60,8 +60,8 @@ test('getEscrowBalances — recette nette cumulée (commission 10%) moins versem
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
   await pool.query(
-    `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, payment_method, recorded_by)
-     VALUES (:t, :p, 'entretien', 'Réparation', 5000, '2026-01-15', 'especes', :by)`,
+    `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, payment_method, paid_at, recorded_by)
+     VALUES (:t, :p, 'entretien', 'Réparation', 5000, '2026-01-15', 'especes', '2026-01-15', :by)`,
     { t: fx.tenantId, p: fx.propertyId, by: fx.dgId },
   );
 
@@ -403,8 +403,8 @@ test("getCabinetRevenue — commission sommée sur TOUS les propriétaires + fra
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
   const [propertyExpense] = await pool.query(
-    `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, payment_method, recorded_by)
-     VALUES (:t, :p, 'entretien', 'Réparation Bien A', 10000, '2026-06-10', 'especes', :by)`,
+    `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, payment_method, paid_at, recorded_by)
+     VALUES (:t, :p, 'entretien', 'Réparation Bien A', 10000, '2026-06-10', 'especes', '2026-06-10', :by)`,
     { t: fx.tenantId, p: fx.propertyId, by: fx.dgId },
   );
   // Frais d'agence à l'entrée sur ce même bail, reçus le même mois : 100 % cabinet.
@@ -446,8 +446,8 @@ test("getCabinetRevenue — commission sommée sur TOUS les propriétaires + fra
 
   // Dépense de FONCTIONNEMENT du cabinet (property_id NULL) le même mois : 15 000.
   const [cabinetExpense] = await pool.query(
-    `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, payment_method, recorded_by)
-     VALUES (:t, NULL, 'loyer_bureau', 'Loyer du bureau', 15000, '2026-06-20', 'virement', :by)`,
+    `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, payment_method, paid_at, recorded_by)
+     VALUES (:t, NULL, 'loyer_bureau', 'Loyer du bureau', 15000, '2026-06-20', 'virement', '2026-06-20', :by)`,
     { t: fx.tenantId, by: fx.dgId },
   );
 
@@ -502,3 +502,157 @@ test("getCabinetRevenue — une pénalité de retard RÉGLÉE entre dans la rece
   await pool.query('DELETE FROM late_fee_payments WHERE late_fee_id = :lf', { lf: lateFee.insertId });
   await pool.query('DELETE FROM late_fees WHERE id = :id', { id: lateFee.insertId });
 });
+
+// ───── bug corrigé (audit comptable du 30/09/2026) : double déduction de commission en mode 'reversement' ─────
+
+test("getEscrowBalances — gl_commission_timing='reversement' : le solde reste BRUT (la commission n'est prélevée qu'au reversement, jamais deux fois)", async () => {
+  // En mode 'reversement' (Comptabilité avancée → Règles comptables), la commission n'est comptabilisée
+  // en produit qu'au moment du reversement effectif (`computeReversementDeductions`), jamais à
+  // l'encaissement du loyer — le solde séquestre disponible pour un NOUVEAU versement doit donc rester
+  // BRUT (sans déduire la commission une première fois ici), sous peine de la prélever deux fois : une
+  // première fois silencieusement dans ce calcul, une seconde fois réellement dans l'écriture GL.
+  // Fixture ISOLÉE (jamais `fx`, partagé et déjà chargé d'historique par les tests précédents) :
+  // `gl_commission_timing` s'applique à TOUT l'historique du tenant d'un coup, un fixture propre est
+  // le seul moyen d'isoler l'effet de CE règlement précis sans aucune contamination.
+  const iso = await createBareFixture();
+  try {
+    await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10); // 10 %
+    await pool.query("UPDATE tenants SET gl_commission_timing = 'reversement' WHERE id = :t", { t: iso.tenantId });
+    await pool.query(
+      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+       VALUES (:t, :l, '2027-01', 100000, 'virement', '2027-01-05', :by)`,
+      { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
+    );
+
+    const balances = await getEscrowBalances(iso.tenantId);
+    const b = balances.get(iso.ownerId);
+    // BRUT (aucune commission déduite ici) — le bug aurait donné 90000 (taux 10 % déjà retenu deux fois).
+    assert.equal(b.totalCollected, 100000);
+    assert.equal(b.balance, 100000);
+
+    // Un versement du plein montant brut doit donc être accepté (rejeté à tort si le bug était présent,
+    // puisque le solde net calculé par erreur aurait été inférieur de 10000 FCFA à ce montant).
+    await assert.doesNotReject(assertPayoutWithinBalance(iso.tenantId, iso.ownerId, 100000));
+  } finally {
+    await teardown(iso.tenantId);
+  }
+});
+
+// ───── bug corrigé (audit comptable du 30/09/2026) : arrondi de commission incohérent pour un propriétaire multi-biens ─────
+
+test(
+  'getEscrowBalances — propriétaire à PLUSIEURS Biens : le solde agrégé est exactement la SOMME de ce que ' +
+    "chaque fiche de Bien afficherait (arrondi Bien par Bien, jamais sur le total combiné du mois)",
+  async () => {
+    const iso = await createBareFixture();
+    try {
+      await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10); // 10 %
+
+      // Second Bien, même propriétaire — même structure que le Bien créé par createBareFixture.
+      const [property2] = await pool.query(
+        'INSERT INTO properties (tenant_id, code, owner_id, address, created_by) VALUES (:t, :code, :o, :address, :by)',
+        { t: iso.tenantId, code: 'GLT-002', o: iso.ownerId, address: 'Adresse test 2', by: iso.dgId },
+      );
+      const [unit2] = await pool.query(
+        "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'U2', 'studio', 'loue', 33333, :by)",
+        { t: iso.tenantId, p: property2.insertId, by: iso.dgId },
+      );
+      const [renter2] = await pool.query(
+        "INSERT INTO renters (tenant_id, first_name, last_name, phone, created_by) VALUES (:t, 'Locataire', 'Deux', :phone, :by)",
+        { t: iso.tenantId, phone: `04${Math.floor(Math.random() * 100000000)}`, by: iso.dgId },
+      );
+      const [lease2] = await pool.query(
+        "INSERT INTO leases (tenant_id, renter_id, unit_id, start_date, monthly_rent, rent_due_day, deposit_amount, status, created_by) VALUES (:t, :r, :u, '2026-01-01', 33333, 5, 33333, 'active', :by)",
+        { t: iso.tenantId, r: renter2.insertId, u: unit2.insertId, by: iso.dgId },
+      );
+
+      // Même mois, même recette nette (33333) sur les DEUX Biens de ce même propriétaire.
+      await pool.query(
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l1, '2026-05', 33333, 'especes', '2026-05-05', :by), (:t, :l2, '2026-05', 33333, 'especes', '2026-05-05', :by)`,
+        { t: iso.tenantId, l1: iso.leaseId, l2: lease2.insertId, by: iso.dgId },
+      );
+
+      // Référence : ce que chaque FICHE DE BIEN affiche individuellement.
+      const recette1 = await getRecetteProprietaire(iso.tenantId, iso.propertyId, '2026-05');
+      const recette2 = await getRecetteProprietaire(iso.tenantId, property2.insertId, '2026-05');
+      assert.equal(recette1.commissionCabinet, 3333); // round(33333 * 10%) = 3333.3 -> 3333
+      assert.equal(recette2.commissionCabinet, 3333);
+      assert.equal(recette1.partProprietaire, 30000);
+      assert.equal(recette2.partProprietaire, 30000);
+      const sumOfPropertyFiches = recette1.partProprietaire + recette2.partProprietaire; // 60000
+
+      const balances = await getEscrowBalances(iso.tenantId);
+      const b = balances.get(iso.ownerId);
+      // Le bug aurait arrondi UNE FOIS sur le total combiné (66666 * 10% = 6666.6 -> 6667), donnant 59999.
+      assert.equal(b.totalCollected, sumOfPropertyFiches);
+      assert.equal(b.totalCollected, 60000);
+    } finally {
+      await teardown(iso.tenantId);
+    }
+  },
+);
+
+// ───── bug corrigé (Haute #7, étape 51) : dépense « à crédit » pas encore réglée, filtrée à tort sur sa date d'engagement plutôt que son règlement réel ─────
+
+test(
+  "getEscrowBalances / getRecetteNetteMaison / getCabinetRevenue — une dépense « à crédit » pas encore réglée ne réduit AUCUNE recette (base caisse réelle), même si sa date d'engagement tombe dans le mois",
+  async () => {
+    const iso = await createBareFixture();
+    try {
+      await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10); // 10 %
+      await pool.query(
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l, '2026-07', 100000, 'especes', '2026-07-05', :by)`,
+        { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
+      );
+      const [supplier] = await pool.query('INSERT INTO suppliers (tenant_id, name, created_by) VALUES (:t, :n, :by)', {
+        t: iso.tenantId,
+        n: 'Plombier à crédit (test Haute #7)',
+        by: iso.dgId,
+      });
+      // Engagée (expense_date) DANS le mois consulté, mais toujours IMPAYÉE (payment_status='unpaid',
+      // paid_at NULL) — aucun argent n'est réellement sorti : ne doit réduire ni la recette du Bien, ni
+      // le solde séquestre, ni la recette du cabinet, avant son règlement effectif.
+      await pool.query(
+        `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, supplier_id, payment_status, recorded_by)
+         VALUES (:t, :p, 'entretien', 'Fuite non réglée', 15000, '2026-07-10', :s, 'unpaid', :by)`,
+        { t: iso.tenantId, p: iso.propertyId, s: supplier.insertId, by: iso.dgId },
+      );
+      // Dépense de FONCTIONNEMENT du cabinet, elle aussi engagée ce mois-ci mais encore impayée.
+      await pool.query(
+        `INSERT INTO expenses (tenant_id, property_id, category, label, amount, expense_date, supplier_id, payment_status, recorded_by)
+         VALUES (:t, NULL, 'loyer_bureau', 'Loyer bureau non réglé', 8000, '2026-07-12', :s, 'unpaid', :by)`,
+        { t: iso.tenantId, s: supplier.insertId, by: iso.dgId },
+      );
+
+      const recette = await getRecetteNetteMaison(iso.tenantId, iso.propertyId, '2026-07');
+      assert.equal(recette.totalExpenses, 0, "une dépense impayée n'entre dans aucune recette nette de Bien");
+      assert.equal(recette.recetteNette, 100000);
+
+      const balances = await getEscrowBalances(iso.tenantId);
+      const b = balances.get(iso.ownerId);
+      // 100000 - commission (10%) = 90000 — la commission EST normalement déduite ici (mode
+      // 'encaissement' par défaut) ; ce qui est testé, c'est l'ABSENCE de toute déduction supplémentaire
+      // pour la dépense impayée (le bug aurait donné 90000 - 15000 = 75000).
+      assert.equal(b.totalCollected, 90000, "le solde séquestre ne doit pas être amputé d'une dépense jamais réglée");
+
+      const rev = await getCabinetRevenue(iso.tenantId, '2026-07');
+      assert.equal(rev.breakdown.expenses, 0, "la recette du cabinet ne doit pas déduire une dépense de fonctionnement impayée");
+      assert.equal(rev.breakdown.commission, 10000); // 100000 * 10%, aucune dépense déduite avant
+
+      // Règlement effectif le mois SUIVANT : c'est CE mois-là (paid_at), jamais le mois d'engagement, qui
+      // doit désormais porter la déduction.
+      await pool.query(
+        "UPDATE expenses SET payment_status = 'paid', payment_method = 'virement', paid_at = '2026-08-03' WHERE tenant_id = :t AND property_id = :p",
+        { t: iso.tenantId, p: iso.propertyId },
+      );
+      const recetteJuillet = await getRecetteNetteMaison(iso.tenantId, iso.propertyId, '2026-07');
+      assert.equal(recetteJuillet.totalExpenses, 0, 'le mois d\'engagement (juillet) reste à 0 : le règlement a eu lieu en août');
+      const recetteAout = await getRecetteNetteMaison(iso.tenantId, iso.propertyId, '2026-08');
+      assert.equal(recetteAout.totalExpenses, 15000, 'le mois de règlement réel (août) porte désormais la déduction');
+    } finally {
+      await teardown(iso.tenantId);
+    }
+  },
+);

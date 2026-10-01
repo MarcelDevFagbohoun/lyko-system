@@ -502,3 +502,74 @@ test('computeEntryProrata : montant arrondi au franc le plus proche', () => {
 test('computeEntryProrata : loyer nul ou absent → prorata nul, jamais une erreur', () => {
   assert.deepEqual(computeEntryProrata({ startDate: '2026-09-25', monthlyRent: 0, rentDueDay: 5 }), { days: 10, amount: 0, dueDate: '2026-10-05' });
 });
+
+// ───────────── bug corrigé (audit comptable du 30/09/2026) : prorata d'entrée × computeArrears ─────────────
+
+test('computeArrears — AVEC entryProration=prorata : jamais « en retard » sur le mois déjà couvert par le prorata', () => {
+  // Reproduction exacte du bug trouvé par l'audit : bail signé le 2026-09-25 (rentDueDay=5, donc
+  // premier cycle normal le 2026-10-05), aucun paiement de loyer encore (le prorata est réglé à part,
+  // jamais via rent_payments). Le 2026-09-30 (5 jours après la signature), le locataire ne doit RIEN
+  // encore au titre du cycle mensuel classique — la première échéance normale n'est que le 2026-10-05.
+  const today = new Date('2026-09-30T00:00:00Z');
+  const arrears = computeArrears(
+    {
+      startDate: '2026-09-25',
+      createdAt: '2026-09-25',
+      rentDueDay: 5,
+      rentTiming: 'avance',
+      monthlyRent: 60000,
+      entryProration: 'prorata',
+      payments: [],
+    },
+    today,
+  );
+  assert.equal(arrears.nextDueMonth, '2026-10', 'le cycle normal démarre au mois de la première échéance normale, pas au mois de signature');
+  assert.equal(arrears.dueDate, '2026-10-05');
+  assert.equal(arrears.status, 'current', "jamais 'late' le jour de l'emménagement sur un mois déjà couvert par le prorata");
+  assert.equal(arrears.daysLate, -5);
+});
+
+test('computeArrears — SANS entryProration (ou "aucun") : comportement inchangé, toujours suivi depuis startDate', () => {
+  // Même bail, mais sans prorata (ou entryProration omis) : le cycle normal part bien de startDate —
+  // celui-ci doit donc apparaître en retard, comme avant ce correctif (non-régression).
+  const today = new Date('2026-09-30T00:00:00Z');
+  const arrearsOmitted = computeArrears(
+    { startDate: '2026-09-25', createdAt: '2026-09-25', rentDueDay: 5, rentTiming: 'avance', monthlyRent: 60000, payments: [] },
+    today,
+  );
+  const arrearsAucun = computeArrears(
+    {
+      startDate: '2026-09-25',
+      createdAt: '2026-09-25',
+      rentDueDay: 5,
+      rentTiming: 'avance',
+      monthlyRent: 60000,
+      entryProration: 'aucun',
+      payments: [],
+    },
+    today,
+  );
+  for (const arrears of [arrearsOmitted, arrearsAucun]) {
+    assert.equal(arrears.nextDueMonth, '2026-09');
+    assert.equal(arrears.status, 'late');
+    assert.equal(arrears.daysLate, 25);
+  }
+});
+
+test('buildRentStrip — AVEC entryProration=prorata : le mois de signature ne ressort jamais en_retard', () => {
+  const today = new Date('2026-09-30T00:00:00Z');
+  const strip = buildRentStrip(
+    {
+      startDate: '2026-09-25',
+      createdAt: '2026-09-25',
+      rentDueDay: 5,
+      rentTiming: 'avance',
+      monthlyRent: 60000,
+      entryProration: 'prorata',
+      payments: [],
+    },
+    today,
+  );
+  const september = strip.find((m) => m.month === '2026-09');
+  assert.notEqual(september.status, 'en_retard', 'septembre est couvert par le prorata, jamais un mois en retard');
+});

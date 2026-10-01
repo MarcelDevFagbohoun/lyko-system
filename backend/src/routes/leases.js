@@ -27,11 +27,13 @@ const { computeArrears, allocateRentPayment } = require('../services/rentTrackin
 const { claimIdempotencyKey, hasRecentIdenticalRentPayment, DUPLICATE_MESSAGE } = require('../services/paymentGuards');
 const { streamReceiptPdf, streamMoveOutPdf, streamMoveInPdf, streamLeaseContractPdf } = require('../services/pdf');
 const { buildContractData, loadContractRow, toPublicContract } = require('../services/leaseContract');
-const { assertPeriodOpen } = require('../services/accountingPeriods');
+const { assertPeriodOpen, assertPeriodOpenLocked } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
 const { getOrCreateIssuance, ensureShareToken } = require('../services/documentIssuance');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { extourneEcriture } = require('../services/gl/glReversalService');
+const { getEscrowBalances } = require('../services/commission');
+const { resolveOwnerFromLease } = require('../services/gl/glAccountResolver');
 const {
   listLeaseDeposits,
   checkAdditionalDepositRefunds,
@@ -49,7 +51,7 @@ const {
   toPublicInspectionReport,
   toPublicMoveOutReport,
 } = require('../services/inspection');
-const { assertUploadType, randomFileName } = require('../utils/uploads');
+const { assertUploadType, randomFileName, toProtectedFileUrl, stripFileUrlPrefix } = require('../utils/uploads');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
 
@@ -219,6 +221,7 @@ async function recordRentPayment(
     rentDueDay: lease.rent_due_day,
     rentTiming: lease.rent_timing,
     monthlyRent: lease.monthly_rent,
+    entryProration: lease.entry_proration,
     payments: payRows.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
   });
   const startMonth = coversMonth && coversMonth >= arrears.nextDueMonth ? coversMonth : arrears.nextDueMonth;
@@ -293,6 +296,18 @@ async function recordRentPayment(
 }
 
 // PATCH /api/leases/:leaseId — mettre fin à un bail (libère l'unité).
+//
+// Bug corrigé (audit comptable du 30/09/2026) : cette route terminait un
+// bail sans jamais toucher à ses cautions (`deposit_status` restait `held`
+// indéfiniment) — et une fois `status !== 'active'`, l'état des lieux de
+// sortie (seule voie qui régularise réellement les cautions, voir
+// `finalizeAdditionalDeposits` plus bas) devient DÉFINITIVEMENT
+// inaccessible pour ce bail (il exige `status === 'active'`). Un raccourci
+// pour un cas légitime (bail sans aucune caution en jeu) devenait donc un
+// piège pour le cas courant. Corrigé : refuse ce raccourci dès qu'une
+// caution — loyer ou SBEE/SONEB/peinture — est encore `held`, et renvoie
+// vers le circuit de sortie normal (état des lieux) qui les régularise
+// TOUTES dans la même transaction que la fin du bail.
 router.patch('/:leaseId', canLocataires, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
   if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
@@ -307,6 +322,23 @@ router.patch('/:leaseId', canLocataires, async (req, res, next) => {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
     if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
+
+    if (Number(lease.deposit_amount) > 0 && lease.deposit_status === 'held') {
+      throw new ApiError(
+        409,
+        'La caution de ce bail est encore à régulariser — terminez le bail via un état des lieux de sortie (Locataires → Sortie), pas ce raccourci.',
+      );
+    }
+    const [[heldAdditional]] = await conn.query(
+      "SELECT COUNT(*) AS n FROM lease_deposits WHERE lease_id = :leaseId AND status = 'held'",
+      { leaseId },
+    );
+    if (Number(heldAdditional.n) > 0) {
+      throw new ApiError(
+        409,
+        'Une caution supplémentaire (SBEE/SONEB/peinture) de ce bail est encore à régulariser — terminez le bail via un état des lieux de sortie (Locataires → Sortie), pas ce raccourci.',
+      );
+    }
 
     await conn.beginTransaction();
     await conn.query('UPDATE leases SET status = :status, end_date = :endDate WHERE id = :id', {
@@ -381,12 +413,44 @@ router.delete('/:leaseId/payments/:paymentId', canPayments, async (req, res, nex
 
     await assertPeriodOpen(req.user.tenantId, paymentRows[0].paid_at);
 
+    // Bug corrigé (audit comptable du 30/09/2026) : cette annulation ne
+    // vérifiait jamais son impact sur le solde séquestre du propriétaire —
+    // si ce loyer avait déjà servi de base à un versement, l'annuler après
+    // coup pouvait faire passer le solde séquestre SOUS ZÉRO, silencieusement
+    // (rien ne bloquait, rien n'alertait). Verrouille la fiche du
+    // propriétaire (même principe que `assertPayoutWithinBalance`, appelé
+    // pour un NOUVEAU versement) avant de décider.
+    const owner = await resolveOwnerFromLease(conn, req.user.tenantId, leaseId);
+
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — la vérification ci-dessus (avant `beginTransaction`)
+    // n'empêchait pas une clôture de mois de se glisser entre les deux.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, paymentRows[0].paid_at);
+    await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
+      id: owner.id,
+      tenantId: req.user.tenantId,
+    });
 
     await conn.query(
       'UPDATE rent_payments SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason WHERE id = :id',
       { by: req.user.id, reason, id: paymentId },
     );
+
+    // Relit le solde séquestre SOUS CE VERROU, avec l'annulation déjà
+    // appliquée dans CETTE transaction (visible ici, pas encore commitée) —
+    // si ce loyer avait déjà été versé au propriétaire, l'annuler ferait
+    // passer son solde sous zéro : on refuse plutôt que de laisser un
+    // décalage invisible entre ce qui a été versé et ce qui a réellement
+    // été encaissé.
+    const balancesAfterCancel = await getEscrowBalances(req.user.tenantId, conn);
+    const ownerBalanceAfterCancel = balancesAfterCancel.get(owner.id)?.balance ?? 0;
+    if (ownerBalanceAfterCancel < 0) {
+      throw new ApiError(
+        409,
+        `Impossible d'annuler ce paiement : ce montant a déjà été versé à ${owner.name} (le solde séquestre passerait à ${ownerBalanceAfterCancel} FCFA). Régularisez d'abord ce versement.`,
+      );
+    }
 
     const [glEntryRows] = await conn.query(
       "SELECT id, status FROM gl_entries WHERE tenant_id = :tenantId AND source_table = 'rent_payments' AND source_id = :paymentId LIMIT 1",
@@ -432,6 +496,9 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
 
     // Sérialise les enregistrements concurrents sur ce bail : un double-clic ou
     // deux requêtes simultanées ne pourront pas insérer chacune sans voir l'autre.
@@ -461,6 +528,7 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
         rentDueDay: lease.rent_due_day,
         rentTiming: lease.rent_timing,
         monthlyRent: lease.monthly_rent,
+        entryProration: lease.entry_proration,
         payments: payRowsForGuard.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
       });
       const startMonthForGuard =
@@ -620,6 +688,9 @@ router.post('/:leaseId/late-fees/:lateFeeId/payments', canPayments, async (req, 
     const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
 
     // Verrouille la pénalité : deux règlements simultanés ne doivent jamais pouvoir dépasser ensemble
     // le solde restant (même principe que le règlement de la dette initiale ci-dessus).
@@ -806,6 +877,9 @@ router.post('/:leaseId/opening-debt/payments', canPayments, async (req, res, nex
     const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
 
     // Verrouille le bail : deux règlements simultanés ne doivent jamais
     // pouvoir dépasser ensemble le solde restant (même principe que le
@@ -1062,7 +1136,7 @@ router.post(
       }
 
       const rel = await saveInspectionFile(req.user.tenantId, leaseId, req.file, 'photo', 'Photo');
-      found.item.photoUrls.push(`/uploads/${rel}`);
+      found.item.photoUrls.push(toProtectedFileUrl(rel));
 
       await pool.query('UPDATE move_in_reports SET items = :items WHERE lease_id = :leaseId', {
         items: JSON.stringify({ zones }),
@@ -1099,7 +1173,7 @@ router.delete('/:leaseId/move-in-report/items/:zoneKey/:itemKey/photo/:photoInde
       items: JSON.stringify({ zones }),
       leaseId,
     });
-    if (oldPath) await deleteInspectionFile(oldPath.replace(/^\/uploads\//, ''));
+    if (oldPath) await deleteInspectionFile(stripFileUrlPrefix(oldPath));
 
     const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
     res.json({ report: toPublicInspectionReport(row) });
@@ -1270,6 +1344,7 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
         rentDueDay: lease.rent_due_day,
         rentTiming: lease.rent_timing,
         monthlyRent: lease.monthly_rent,
+        entryProration: lease.entry_proration,
         payments: payments.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
       });
     }
@@ -1410,7 +1485,7 @@ router.post(
       }
 
       const rel = await saveInspectionFile(req.user.tenantId, leaseId, req.file, 'photo', 'Photo');
-      found.item.photoUrls.push(`/uploads/${rel}`);
+      found.item.photoUrls.push(toProtectedFileUrl(rel));
 
       await pool.query('UPDATE move_out_reports SET items = :items WHERE lease_id = :leaseId', {
         items: JSON.stringify({ zones }),
@@ -1447,7 +1522,7 @@ router.delete('/:leaseId/move-out-report/items/:zoneKey/:itemKey/photo/:photoInd
       items: JSON.stringify({ zones }),
       leaseId,
     });
-    if (oldPath) await deleteInspectionFile(oldPath.replace(/^\/uploads\//, ''));
+    if (oldPath) await deleteInspectionFile(stripFileUrlPrefix(oldPath));
 
     const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
     res.json({ report: toPublicMoveOutReport(row) });

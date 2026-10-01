@@ -179,18 +179,22 @@ router.get(
 // GET /api/marketplace-accounts/favorites
 router.get('/favorites', requireMarketplaceAccount, requireAccountRole('chercheur'), async (req, res, next) => {
   try {
+    // Bug de sécurité corrigé (audit) : sans le filtre tenant_id ci-dessous,
+    // un favori pointant vers l'unité d'une AUTRE entreprise (voir le garde
+    // posé sur POST ci-dessous) aurait tout de même pu remonter ses données
+    // ici — défense en profondeur même si POST empêche désormais d'en créer.
     const [rows] = await pool.query(
       `SELECT u.id AS unit_id, u.code AS unit_code, u.designation, u.designation_custom,
               u.monthly_rent, u.furnished, u.status,
               p.code AS property_code, p.address, p.property_type,
               ml.description, ml.photo_paths
        FROM marketplace_favorites f
-       JOIN property_units u ON u.id = f.unit_id
+       JOIN property_units u ON u.id = f.unit_id AND u.tenant_id = :tenantId
        JOIN properties p ON p.id = u.property_id
        LEFT JOIN marketplace_listings ml ON ml.unit_id = u.id
        WHERE f.account_id = :accountId
        ORDER BY f.created_at DESC`,
-      { accountId: req.account.id },
+      { accountId: req.account.id, tenantId: req.account.tenantId },
     );
     res.json({
       favorites: rows.map((r) => ({
@@ -214,10 +218,25 @@ router.get('/favorites', requireMarketplaceAccount, requireAccountRole('chercheu
 });
 
 // POST /api/marketplace-accounts/favorites/:unitId
+// Bug de sécurité corrigé (audit) : rien ne vérifiait que `unitId` appartient
+// à l'entreprise (tenant) du compte, ni même qu'il s'agit d'une annonce
+// publiée — un compte pouvait « favoriser » (puis lire via GET ci-dessus)
+// n'importe quelle unité de n'importe quelle entreprise, publiée ou non,
+// juste en devinant un id séquentiel. Exigeant désormais une annonce
+// publiée pour CE tenant précis — même condition que la page publique
+// (`GET /public/:tenantId`).
 router.post('/favorites/:unitId', requireMarketplaceAccount, requireAccountRole('chercheur'), async (req, res, next) => {
   const unitId = Number(req.params.unitId);
   if (!Number.isInteger(unitId)) return next(new ApiError(400, 'Identifiant invalide'));
   try {
+    const [listed] = await pool.query(
+      `SELECT 1 FROM marketplace_listings ml
+       JOIN property_units u ON u.id = ml.unit_id
+       WHERE ml.unit_id = :unitId AND u.tenant_id = :tenantId LIMIT 1`,
+      { unitId, tenantId: req.account.tenantId },
+    );
+    if (!listed[0]) throw new ApiError(404, 'Annonce introuvable');
+
     await pool.query(
       'INSERT IGNORE INTO marketplace_favorites (account_id, unit_id) VALUES (:accountId, :unitId)',
       { accountId: req.account.id, unitId },
@@ -233,10 +252,15 @@ router.delete('/favorites/:unitId', requireMarketplaceAccount, requireAccountRol
   const unitId = Number(req.params.unitId);
   if (!Number.isInteger(unitId)) return next(new ApiError(400, 'Identifiant invalide'));
   try {
-    await pool.query('DELETE FROM marketplace_favorites WHERE account_id = :accountId AND unit_id = :unitId', {
-      accountId: req.account.id,
-      unitId,
-    });
+    // `account_id` seul suffit déjà à ne retirer QUE ses propres favoris (aucune fuite possible ici),
+    // mais un favori créé avant le correctif ci-dessus pouvait pointer vers une autre entreprise —
+    // ce garde permet de le retirer normalement sans jamais avoir besoin de le lire au préalable.
+    await pool.query(
+      `DELETE f FROM marketplace_favorites f
+       JOIN property_units u ON u.id = f.unit_id
+       WHERE f.account_id = :accountId AND f.unit_id = :unitId AND u.tenant_id = :tenantId`,
+      { accountId: req.account.id, unitId, tenantId: req.account.tenantId },
+    );
     res.status(204).send();
   } catch (err) {
     next(err);

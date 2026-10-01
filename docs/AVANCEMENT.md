@@ -5406,3 +5406,539 @@ Données de test entièrement nettoyées (rapports, écritures GL, catalogue, fi
 
 **Reste à faire** : aucune action de code en attente sur les 4 points traités. Construire la page « Mes
 tâches » (découverte pendant l'audit, hors périmètre) reste optionnel, à la demande de l'utilisateur.
+
+## Étape 49 — Audit de sécurité général du projet (6 volets) + 4 correctifs sévérité haute
+
+Demande directe de l'utilisateur : « on va un revue général ds fonctionnalité que ne marche pas encore,
+les bugs, les mauvaises utilisations de sécurité, manque de logique ». Audit mené en 6 volets parallèles
+(agents en lecture seule, aucune modification pendant l'audit) : authentification/isolation multi-tenant,
+surface publique (portails, marketplace, webhooks), intégrité de l'argent (paiements, GL, KKiaPay),
+sécurité des uploads de fichiers, sécurité de l'assistant IA, sécurité/logique frontend. Puis, sur
+décision de l'utilisateur (« les 4 sévérité haute d'abord »), les 4 problèmes les plus sérieux ont été
+corrigés et vérifiés en direct.
+
+### Vue d'ensemble du constat
+Le code est globalement discipliné (portée par tenant systématique sur la quasi-totalité des routes,
+jetons à entropie forte, montants validés, grand livre équilibré, aucune vraie faille XSS trouvée). Deux
+agents indépendants ont trouvé la MÊME faille (favoris marketplace), ce qui l'a confirmée sans ambiguïté.
+Au total : 4 constats sévérité haute, ~11 sévérité moyenne (non traités à ce stade), le reste en notes/
+choix déjà assumés.
+
+### Les 4 correctifs sévérité haute
+
+**1. Fuite de données inter-entreprises confirmée (favoris Quick Immo)** — `POST/GET/DELETE
+/api/marketplace-accounts/favorites/:unitId` (`routes/marketplaceAccounts.js`) ne vérifiait jamais que
+l'unité appartient à la même entreprise (tenant) que le compte, ni même qu'elle est réellement publiée.
+N'importe quel compte public auto-inscrit pouvait « favoriser » puis lire (adresse, loyer, statut) n'importe
+quelle unité de n'importe quelle entreprise sur la plateforme, publiée ou non, juste en devinant un id
+séquentiel. Corrigé : `POST` exige désormais une annonce publiée (`marketplace_listings`) pour CE tenant
+précis (même condition que la page publique) ; `GET`/`DELETE` filtrent aussi par `tenant_id`, en défense
+en profondeur. Confirmé en base : 0 favori existant n'enfreignait déjà la règle. Vérifié en direct par
+jeton forgé (compte réel, tenant 136) : unité d'un autre tenant → 404 ; unité publiée du même tenant →
+201 ; `GET /favorites` ne renvoie que la bonne. Favori de test retiré après vérification.
+
+**2. Double paiement possible (dépense fournisseur / immobilisation / IRF)** — `POST
+/api/accounting/expenses/:id/pay`, `POST /api/accounting/fixed-assets/:id/pay`
+(`routes/accounting.js`) et `payIrf` (`services/gl/glIrfService.js`) vérifiaient le statut « déjà réglé »
+AVANT d'ouvrir la transaction, sans verrou — un double-clic ou une requête relancée pouvait régler deux
+fois la même dette (deux écritures GL pour un seul vrai paiement), contrairement à `rent_payments`/
+`utility_payments` qui étaient déjà protégés. Corrigé : verrou `SELECT ... FOR UPDATE` + `UPDATE ...
+WHERE payment_status = 'unpaid'` (vérifié via `affectedRows`) pour dépenses/immobilisations, même schéma
+que l'existant côté loyers. Pour l'IRF (solde dérivé d'une somme sur `gl_entry_lines`, pas une ligne à
+verrouiller directement) : verrouillage du compte 442 (`gl_accounts`) puis relecture du solde SOUS ce
+verrou avant de décider — même principe que le correctif déjà en place pour les versements propriétaires
+(audit A2). `getIrfBalance` renvoie désormais `{accountId, balance}` (était un nombre brut) — site
+d'appel `routes/gl/glIrf.js` et les tests ajustés en conséquence. Vérifié : nouveau test de concurrence
+réelle (`Promise.allSettled` sur deux `payIrf` simultanés, un seul réussit, solde final correct) ; en
+direct par HTTP, deux requêtes `curl` strictement simultanées sur la même dépense puis la même
+immobilisation — une seule aboutit (204), l'autre 409, une seule écriture « Règlement fournisseur » en
+base dans les deux cas. Données de test nettoyées.
+
+**3. Double extourne comptable possible** — `extourneEcriture` (`services/gl/glReversalService.js`)
+lisait le statut de l'écriture sans verrou puis faisait un `UPDATE` inconditionnel — deux extournes
+lancées en même temps sur la MÊME écriture pouvaient toutes les deux réussir, chacune créant sa propre
+écriture miroir et inversant l'effet économique deux fois, silencieusement (aucune erreur). Corrigé :
+`SELECT ... FOR UPDATE` sur l'écriture cible + `UPDATE ... WHERE status = 'validee'` (vérifié via
+`affectedRows`). Les 3 appelants (annulation d'un paiement de loyer, réouverture d'un état des lieux de
+sortie déjà finalisé, bouton « Extourner » manuel) appellent déjà `extourneEcriture` à l'intérieur de leur
+propre transaction — aucun changement nécessaire côté appelants. Vérifié : nouveau test de concurrence
+réelle (deux extournes simultanées sur la même écriture via deux connexions séparées) — une seule
+réussit, l'autre échoue en « déjà été extournée », une seule écriture miroir existe en base.
+
+**4. Aucun rafraîchissement automatique du jeton de session** — `JWT_ACCESS_TTL` (15 minutes) côté
+backend n'était jamais renouvelé côté frontend : `lib/auth/auth-context.tsx` ne rafraîchissait le jeton
+qu'une seule fois, au montage de la page. N'importe quel onglet laissé ouvert plus de 15 minutes tombait
+en erreur « Session invalide ou expirée » sur chaque appel API, sans redirection ni récupération
+automatique — l'utilisateur devait deviner qu'il fallait recharger la page. Corrigé, sans toucher à
+`apiFetch` ni aux ~100 sites d'appel existants (qui lisent tous le jeton via le contexte React, donc
+profitent automatiquement d'un jeton mis à jour en state) : un nouvel `useEffect` dans `AuthProvider`
+rafraîchit silencieusement le jeton toutes les 10 minutes (confortablement sous les 15 minutes de durée
+de vie), ET dès que l'onglet redevient visible (`visibilitychange`) — ce second déclencheur couvre le cas
+d'un ordinateur mis en veille plus longtemps qu'un `setInterval` seul ne peut le détecter (il ne tourne
+pas pendant la veille). Un échec de rafraîchissement dû à une simple panne réseau passagère ne déconnecte
+jamais personne (seule une vraie `ApiError` — cookie de refresh réellement révoqué/expiré côté serveur —
+déclenche une déconnexion) ; un garde anti-chevauchement évite deux rafraîchissements concurrents (qui
+auraient pu se marcher dessus, le refresh token étant à usage unique). Vérifié en direct (Selenium) : un
+événement `visibilitychange` déclenche bien un appel réseau réel `POST /api/auth/refresh` (confirmé dans
+les logs backend, HTTP 200), sans casser la session ni la navigation.
+
+**Vérifié globalement** : suite backend **267/267** (2 nouveaux tests de concurrence : IRF et extourne) ;
+`tsc`/`eslint` frontend propres. Non commité au moment de l'audit (fusionné dans `main` depuis, voir
+commit `f1a352b`).
+
+### Correctifs sévérité moyenne (suite, même audit)
+
+Sur décision explicite de l'utilisateur (« on traite ça en même temps »), les constats sévérité moyenne
+ont été traités dans la foulée, un par un avec vérification en direct après chacun. `/uploads` servi sans
+authentification a été explicitement laissé en risque documenté (décision utilisateur — l'entropie forte
+du nom de fichier atténue déjà le risque ; refactoriser des dizaines de composants frontend pour ajouter
+une auth dessus est jugé disproportionné à ce stade).
+
+**Erreur de calcul de commission d'un jour** — `resolveCommissionRate` (`glAccountResolver.js`) comparait
+`ends_on > atDate` (strict) alors que `owners.js` écrit `ends_on` comme le DERNIER JOUR INCLUS de l'ancien
+taux : ce jour précis retombait à 0 % dans le grand livre au lieu de l'ancien taux, désynchronisé de
+`services/commission.js` (tableau de bord, garde-fou de versement) qui utilisait déjà la bonne borne
+inclusive. Corrigé (`>=`) ; nouveau test dédié `test/gl/commissionRateBoundary.test.js` (4 cas : jour
+frontière, lendemain, milieu de plage, avant tout taux).
+
+**`charges.js` ignorait le cloisonnement par agent** — contrairement à l'audit initial qui accusait aussi
+`utilityReadings.js` (vérification directe : ce fichier avait déjà 13 usages corrects de
+`resolvePropertyScope`, ce constat-là était erroné), `routes/charges.js` n'appliquait vraiment aucun
+filtre agent sur aucune de ses routes (liste, détail, paiements, résumé mensuel). Corrigé : même schéma que
+le reste de l'application (`resolvePropertyScope` + jointure jusqu'à `properties.agent_id`, 404 plutôt que
+403 en cas de hors-périmètre). Vérifié en direct avec un agent de test restreint à un seul Bien : liste,
+détail et résumé mensuel ne montrent plus que les charges de son périmètre.
+
+**Clôture de mois non reverrouillée dans la transaction d'écriture (course)** — `assertPeriodOpen` était
+un simple `SELECT` exécuté AVANT `conn.beginTransaction()` dans les ~22 sites d'appel (`leases.js`,
+`owners.js`, `utilityReadings.js`, `gl/glIrf.js`, `accounting.js`, `charges.js`) : rien n'empêchait une
+clôture de mois de se glisser entre cette vérification et l'écriture réelle, laissant potentiellement
+passer une écriture antidatée dans un mois qui vient d'être clôturé. Corrigé par une nouvelle fonction
+`assertPeriodOpenLocked(conn, tenantId, dateStr)` (`services/accountingPeriods.js`) qui pose un verrou de
+« gap » InnoDB (`SELECT ... FOR UPDATE` sur la clé UNIQUE `(tenant_id, period)` de `accounting_periods`,
+même sans ligne existante) — appelée une seconde fois, DANS la transaction, juste après
+`conn.beginTransaction()`, sur chacun des 22 sites. La route de clôture elle-même
+(`POST /api/accounting/periods`) a été réécrite pour acquérir ce même verrou avant son propre `INSERT`,
+ce qui sérialise correctement clôture et écriture l'une contre l'autre (et corrige au passage une double
+clôture concurrente qui remontait auparavant une 500 brute au lieu d'une 409 propre). Deux routes
+(`PATCH`/`DELETE /api/accounting/expenses/:id`, `DELETE /api/owners/:id/charge-remittances/:remittanceId`,
+`DELETE /api/charges/:id`) n'avaient encore aucune transaction du tout et ont été enveloppées dans une
+pour pouvoir participer au même verrou.
+
+Effet de bord découvert en vérifiant en direct (5 créations de dépense + 1 clôture de mois lancées
+strictement en parallèle sur le même mois, tenant 1594) : sous forte contention sur ce même verrou,
+InnoDB détecte parfois un cycle d'attente entre transactions et en annule une lui-même
+(`ER_LOCK_DEADLOCK`) — jamais une corruption (MySQL garantit qu'aucune des deux transactions n'est
+appliquée à moitié), mais rien dans le code ne traduisait ce cas : l'utilisateur recevait une 500 brute
+avec le message MySQL en anglais. Corrigé dans le gestionnaire d'erreurs central
+(`middleware/error.js`) : `ER_LOCK_DEADLOCK`/`ER_LOCK_WAIT_TIMEOUT` sont désormais traduits en une 409
+propre (« Conflit temporaire… merci de réessayer »), quel que soit le verrou concerné — bénéficie aussi
+au verrou pré-existant de `seedGeneralLedger.js` repéré plus tôt dans le même audit. Revérifié après ce
+correctif : même course en parallèle → les créations concurrentes reçoivent soit 201 (validées avant la
+clôture) soit 409 propre (deadlock OU période déjà clôturée), la clôture aboutit, et aucune dépense
+n'est jamais retrouvée datée dans un mois déjà clôturé. Données de test nettoyées après vérification.
+
+**Vérifié** : suite backend **271/271** ; `node -c` propre sur les 8 fichiers touchés.
+
+**Lien de paiement marqué « payé » sans vérifier le montant confirmé** — `verifyAndRecordKkiapay`
+(`services/paymentVerification.js`) marquait `payment_links.status = 'paid'` pour toute transaction
+KKiaPay confirmée, sans jamais comparer son montant à `payment_links.amount` (le montant réellement dû).
+Un montant insuffisant (transaction mal formée, ou une autre transaction réelle du même compte marchand
+soumise ici) affichait quand même « réglé » au personnel. Corrigé : le lien ne passe à `'paid'` que si
+`verification.amount >= link.amount` ; l'argent reçu reste de toute façon toujours crédité au bail/à la
+facture dans les deux cas (jamais refusé), seul le badge du lien distingue réglé/en attente. Nouveau
+fichier de test `test/paymentVerification.test.js` (2 cas : montant insuffisant → crédité mais lien
+« pending » ; montant suffisant → lien « paid »), `kkiapay.verifyTransaction` mocké via `node:test`.
+
+**Plaintes sans clé d'idempotence** — ni `routes/complaints.js` (personnel) ni `routes/portal.js`
+(locataire) ne protégeaient contre un double envoi sur reconnexion instable, contrairement à tous les
+enregistrements d'argent (étape 36). Risque concret côté personnel : `lib/api/complaints.ts` met en file
+hors-ligne (IndexedDB) tout envoi en échec réseau et le rejoue au retour de connexion — si le premier
+envoi avait en fait réussi côté serveur mais que sa réponse s'était perdue, le rejeu créait un doublon
+silencieux. Corrigé en réutilisant tel quel le garde-fou déjà en place pour l'argent
+(`claimIdempotencyKey`, `services/paymentGuards.js`) : nouveau champ optionnel `idempotencyKey` sur les
+deux schémas (`validators/complaints.js`, `validators/portal.js`), réclamé dans la transaction des deux
+routes (celle de `portal.js` n'avait d'ailleurs encore aucune transaction — ajoutée). Côté frontend, une
+seule clé est générée par envoi et réutilisée telle quelle pour la mise en file hors-ligne — c'est cette
+réutilisation qui ferme vraiment la faille (`lib/api/complaints.ts`, et le formulaire du portail locataire
+`app/portail/[token]/portail-view.tsx` via le hook déjà existant `useIdempotencyKey`). Le message d'erreur
+générique de doublon (`DUPLICATE_MESSAGE`) parlait spécifiquement de « paiement » — généralisé
+(« Cet envoi a déjà été enregistré… ») puisqu'il sert maintenant aussi aux plaintes. Vérifié en direct
+(tenant 1594) : même clé envoyée deux fois → 201 puis 409 propre, une seule plainte en base, une seule
+clé consommée. `tsc`/`eslint` frontend propres, suite backend **273/273**.
+
+**Page Relances : décalage entre le profil admis par la page et ce que chaque section accepte
+réellement** — `RequireAuth permission={["locataires","comptabilite","charges"]}` (OR) est en réalité
+correct dans son principe (la page sert bien 3 profils différents, chaque section ayant sa propre
+permission côté backend : `/arrears` et `/predictive-alerts` → locataires OU comptabilite ;
+`/utility-arrears` → charges OU comptabilite) — ce n'était donc pas la liste de permissions elle-même le
+problème, mais l'absence de dégradation propre par section : un agent avec UNIQUEMENT `charges` (sans
+`locataires` ni `comptabilite`) recevait un 403 sur `/arrears`, affiché comme une vraie panne
+(« Impossible de charger les impayés. ») au lieu d'être traité comme une section non applicable à son
+profil — exactement comme la section charges le fait déjà silencieusement pour un profil sans `charges`.
+Corrigé (`app/espace/relances/relances-view.tsx`) : la section loyer/pénalités ne tente même plus l'appel
+et reste simplement absente pour un profil sans `locataires` ni `comptabilite` (calculé côté client via
+`user.role`/`user.permissions`, même logique que `RequireAuth`), au lieu de se rabattre sur une erreur ou
+un « aucun retard » trompeur après coup. `tsc`/`eslint` propres. Vérifié en direct (Selenium, tenant
+1594, agent de test avec la seule permission `charges`) : page accessible, aucune bannière d'erreur,
+aucun « Chargement… » bloqué, section loyer totalement absente, section charges SONEB/SBEE correctement
+peuplée (7 factures). Agent de test supprimé après vérification.
+
+**Purge des conversations de l'assistant IA jamais planifiée** — `purgeExpired`
+(`services/assistant/conversations.js`) n'était appelée qu'opportunistement après chaque échange
+(`services/assistant/chat.js`), et seulement pour le tenant qui vient de discuter : un cabinet qui a
+discuté une fois puis plus jamais gardait ses anciennes conversations indéfiniment, au-delà du délai de
+conservation affiché (`AI_RETENTION_DAYS`, 90 jours par défaut). Corrigé : nouveau
+`jobs/assistantPurgeJob.js` (même patron que les 5 tâches planifiées existantes —
+`tenantIds`/pas d'argument = tous les cabinets, une erreur sur un cabinet n'interrompt jamais les
+suivants), enregistré dans `jobs/scheduler.js` à 03h00 chaque jour (heure creuse). La purge opportuniste
+reste en place en complément (aucune régression si le job planifié tombe en panne un jour). 3 nouveaux
+tests dans `test/assistant.test.js` : balayage de deux cabinets (dont un qui n'a jamais rediscuté depuis)
+avec des conversations vieillies directement en base ; une conversation récente n'est jamais touchée ; un
+identifiant de cabinet en tête de liste ne bloque jamais le passage aux suivants.
+
+**Vérifié** : suite backend **276/276** (271 → 273 avec les correctifs KKiaPay/plaintes → 276 avec la
+purge planifiée) ; `node -c` propre sur les 3 fichiers touchés/créés ; scheduler démarré manuellement en
+isolation (`startScheduler()`, 6 tâches désormais enregistrées) sans erreur.
+
+**Tous les constats sévérité moyenne de l'étape 49 sont désormais traités.** Deux constats bas/notes
+laissés tels quels sur décision assumée (jamais des bugs à proprement parler) : `/uploads` sans
+authentification (voir plus haut, choix utilisateur explicite après une question posée en cours de
+session — l'entropie forte du nom de fichier atténue déjà le risque, refactoriser des dizaines de
+composants frontend pour ajouter une auth dessus étant jugé disproportionné à ce stade) ; cache hors-ligne
+(IndexedDB) non chiffré (compromis pré-existant, documenté dans le code) ; `updateUnit`/
+`updateAssignedTask` (fonctions API frontend jamais appelées) laissées sans suite, ambigu s'il s'agit d'un
+écran manquant — pas de suppression ni de nouvel écran sans consigne explicite.
+
+**Récapitulatif étape 49 (audit + tous les correctifs)** : 4 sévérité haute + 7 sévérité moyenne corrigés
+et vérifiés en direct (concurrence réelle, Selenium, ou curl selon le cas) ; suite backend passée de
+267/267 (avant tout correctif) à **276/276** ; `tsc`/`eslint` frontend propres tout du long ; aucune
+modification sur KIko Store (tenant 8), tout testé sur le tenant jetable 1594 avec nettoyage systématique
+des données de test. Non commité au moment de la rédaction (branche `main`, en plus des commits déjà
+en place localement pour les étapes 39-48).
+
+## Étape 50 — les 3 derniers constats de l'audit (étape 49), sur demande explicite (« on va régler ça aussi »)
+
+Les 3 derniers points de l'étape 49, laissés en risque documenté faute de décision produit, ont été
+tranchés par l'utilisateur (3 questions posées) puis implémentés. Détail complet dans la mémoire projet
+(`general-security-audit.md`), résumé ici.
+
+### 1. `/uploads` sans authentification — corrigé (choix : fetch + blob)
+
+**Découverte en cours de route, avant tout code** : le site public Quick Immo (`quick-immo/`, app externe
+séparée) affiche des photos d'unités à des visiteurs anonymes
+(`listing-card.tsx`, `mon-compte/page.tsx`) — impossible donc de rendre TOUT `/uploads` authentifié sans
+casser la marketplace publique. Vérification du code (`routes/marketplace.js`) : les photos d'annonces
+marketplace vivent dans un dossier SÉPARÉ (`tenants/<id>/marketplace/<unitId>/`) des photos de Bien
+utilisées par la fiche CRM (`tenants/<id>/properties/<id>/`) — aucun conflit, seules les photos
+marketplace + le logo d'entreprise doivent rester publics.
+
+**Backend** :
+- `routes/files.js` (nouveau) — `GET /api/files/*`, exige `requireAuth`, borne strictement au tenant de
+  la session (`tenants/<tenantId>/…`), rejette toute tentative de traversée de répertoire, liste blanche
+  d'extensions.
+- `app.js` — le montage `express.static('/uploads', …)` ne sert plus QUE le logo (motif `logo-*.{png,jpg,jpeg,webp}`
+  à la racine `tenants/<id>/`) et les photos marketplace (`tenants/<id>/marketplace/**`) ; tout le reste
+  renvoie 404 sur `/uploads/…` désormais.
+- `utils/uploads.js` — nouveaux `toProtectedFileUrl(rel)`/`stripFileUrlPrefix(url)`, utilisés par les 15
+  endroits qui construisaient une URL `/uploads/…` dans une réponse JSON (`auth.js`, `accounting.js`,
+  `settings.js`, `properties.js`, `complaints.js`, `leases.js`, `leaseContract.js`, `inspection.js`) —
+  sauf les 7 qui restent volontairement publics (logo ×5, photos marketplace ×2). `services/pdf.js`
+  (génère les PDF en lisant directement sur disque, jamais via HTTP) adapté pour résoudre indifféremment
+  un chemin `/uploads/…` ou `/api/files/…`.
+
+**Frontend** (choix explicite de l'utilisateur : fetch + blob plutôt qu'URL signée) :
+- `components/ui/authenticated-image.tsx` (nouveau) — `<img>` de remplacement : récupère le fichier en
+  blob avec l'en-tête `Authorization`, affiche une URL objet locale ; gère aussi nativement un `src` déjà
+  local (`blob:`/`data:`, aperçu avant envoi) sans le re-télécharger.
+- `openAuthenticatedPdf` (déjà existant, `lib/api/client.ts`) réutilisé tel quel pour les liens
+  « voir/ouvrir » (marche pour n'importe quel type de fichier, pas seulement les PDF).
+- 9 composants adaptés : `espace-sidebar.tsx` (avatar — le logo, lui, reste public et inchangé),
+  `bien-view.tsx`, `plainte-view.tsx`, `parametres-view.tsx`, `mon-compte-view.tsx`,
+  `comptabilite-view.tsx`, `signature-block.tsx` (+ ses 3 appelants : contrat/état des lieux
+  entrée/sortie), `inspection-form.tsx`, `inspection-readonly.tsx`. `accessToken` propagé en prop
+  jusqu'aux sous-composants qui ne l'avaient pas encore (`SignatureBlock`, `ItemRow`/`ZoneSection`
+  dans `inspection-form.tsx`, `FinalizedView` dans `contrat-view.tsx`). `marketplace-view.tsx` (photo
+  d'annonce, employé) volontairement PAS touché — même dossier public que Quick Immo.
+
+**Vérifié** : 5 scénarios en direct (curl, tenant 1594) — ancienne URL `/uploads/…` sur un fichier privé
+→ 404 ; nouvelle route sans jeton → 401 ; avec le bon jeton → 200 + contenu binaire identique (MD5) ;
+traversée de répertoire → 404 ; jeton valide d'un tenant demandant un fichier d'un AUTRE tenant → 404 ;
+logo et photo marketplace restent 200 sans jeton. Selenium (navigateur réel) : upload d'avatar,
+enregistrement, RECHARGEMENT de page (donc sans aperçu local, fetch authentifié pur) — l'avatar s'affiche
+correctement dans la sidebar ET la fiche « Mon compte », capture d'écran à l'appui. `tsc`/`eslint`
+frontend propres, suite backend **276/276**. Données de test nettoyées (avatar, colonne `avatar_path`,
+fichiers logo/marketplace placés manuellement pour le test).
+
+### 2. Chiffrement du cache hors-ligne (IndexedDB) — corrigé (choix : clé en mémoire uniquement)
+
+`lib/offline/crypto.ts` (nouveau) — AES-GCM 256 bits via Web Crypto natif (aucune dépendance), clé de
+session générée au premier besoin, **jamais persistée** (ni `localStorage`, ni `sessionStorage`, ni
+IndexedDB) : c'est le choix explicite de l'utilisateur (protection plus forte contre une extraction brute
+des fichiers du navigateur), accepté en connaissance de cause que toute donnée déjà chiffrée devienne
+irrécupérable dès qu'une nouvelle clé est générée — en particulier un rechargement de page perd la file de
+paiements/plaintes pas encore synchronisés. `lib/offline/db.ts` chiffre désormais `body` (les deux
+magasins) et `summary` (file — contient des noms/montants lisibles) ; le reste (id, url, kind, method,
+path, status, error, dates) reste en clair, ce sont des métadonnées de synchronisation, non des données
+métier. Entièrement transparent pour les appelants (`cacheGet`/`queueList` renvoient toujours du JSON
+déchiffré) — zéro changement dans `lib/offline/queue.ts` ni dans les composants qui affichent la file
+(`connection-indicator.tsx`, `espace-sidebar.tsx`).
+
+Un piège technique rencontré en écrivant `queueUpdate` : une opération Web Crypto asynchrone intercalée
+entre un `get` et un `put` sur la MÊME transaction IndexedDB risque de tomber hors de sa fenêtre de vie
+(auto-commit) — corrigé en séparant lecture et écriture sur deux transactions distinctes, le chiffrement
+se faisant entre les deux, hors de toute transaction ouverte.
+
+Une entrée de la file devenue illisible (clé perdue) est retirée silencieusement de `queueList()` (avec
+un `console.warn` pour le diagnostic) plutôt que de laisser une entrée fantôme s'accumuler indéfiniment.
+`clearOfflineData()` (déconnexion) force aussi une nouvelle clé pour la session suivante, par principe.
+
+**Vérifié en direct** (Selenium, tenant 1594) : après navigation normale dans l'app, lecture directe
+d'IndexedDB — les 5 lignes du cache ne contiennent plus que `{url, encBody, cachedAt}` (jamais de champ
+`body` en clair), le contenu de `encBody` est un blob base64 opaque, et aucune sous-chaîne reconnaissable
+du contenu réel (prénom, nom, téléphone d'un locataire) n'apparaît dans le JSON stocké. Résiduel repéré
+(hors périmètre de ce correctif) : l'URL elle-même sert de clé d'indexation IndexedDB et reste donc en
+clair par nécessité — pour UN endpoint précis (`GET /api/auth/role-titles?phone=...`, appelé pendant la
+saisie du formulaire de connexion, avant authentification), le numéro de téléphone tapé apparaît donc en
+clair dans cette clé de cache. Effet mineur (l'app le faisait déjà avant ce correctif, la donnée cachée
+elle-même — le libellé du poste — n'est pas sensible), non traité ici (le corriger exigerait de hacher les
+URLs utilisées comme clé, un changement de conception plus large que ce qui a été demandé). La file de
+mutations, elle, n'a pas pu être testée en conditions RÉELLEMENT hors-ligne (Selenium/Firefox headless ne
+simule pas fiablement une coupure réseau) — sa logique de chiffrement est strictement la même
+(`encryptValue`/`decryptValue`) que celle du cache de lecture, déjà vérifiée en direct, et `tsc`/`eslint`
+sont propres sur `db.ts`/`crypto.ts`/`queue.ts`.
+
+### 3. Formulaires `updateUnit`/`updateAssignedTask` — corrigé (les 2 formulaires manquants construits)
+
+Backend déjà prêt et testé des deux côtés (aucune modification nécessaire) — juste l'UI manquait.
+
+**Unité locative** (`app/espace/biens/[id]/bien-view.tsx`) : nouveau bouton « Modifier » (icône crayon)
+sur chaque ligne du tableau des unités, toujours visible quel que soit le statut (contrairement à
+« Libérer »/« Publier », mutuellement exclusifs selon le statut). Ouvre `EditUnitForm` (nouveau composant,
+même gabarit que `NewUnitForm` déjà existant), pré-rempli avec les valeurs actuelles de l'unité :
+désignation, loyer, compteurs SONEB/SBEE, meublé. Le statut n'est volontairement PAS éditable ici pour ne
+pas entrer en conflit avec le workflow dédié déjà en place (« Libérer » qui termine le bail actif).
+
+**Tâche assignée** (`app/espace/taches/taches-view.tsx`) : nouveau bouton « Modifier » (DG uniquement,
+même garde que « Supprimer »), qui remplace l'affichage de la ligne par un formulaire d'édition inline
+(`EditTaskForm`, nouveau composant) — titre, description, employé assigné, date limite.
+
+**Vérifié en direct** (Selenium, tenant 1594) : création d'une tâche de test puis modification de son
+titre → le nouveau titre s'affiche, l'ancien disparaît (capture d'écran à l'appui). Modification du loyer
+d'une unité réelle du portefeuille (AUD-001-U02, 100 000 → 123 456 FCFA) → toast de confirmation, nouveau
+montant affiché dans le tableau (capture d'écran à l'appui) ; loyer restauré à sa valeur d'origine après
+vérification. Employé de test et tâches de test supprimés. `tsc`/`eslint` propres.
+
+---
+
+**Étape 50 entièrement terminée** : les 3 derniers constats de l'audit (étape 49) sont désormais tous
+traités — `/uploads` authentifié, cache hors-ligne chiffré, formulaires d'édition manquants construits.
+Suite backend **276/276**, `tsc`/`eslint` frontend propres sur l'ensemble du projet (une seule erreur
+eslint résiduelle, dans `next-env.d.ts`, fichier auto-généré par Next.js sans rapport avec ce travail).
+Non commité. Rien de tout ce travail n'a touché KIko Store (tenant 8) — uniquement le tenant jetable 1594,
+avec nettoyage systématique des données de test après chaque vérification.
+
+## Étape 51 — audit du cœur comptable, sur demande explicite (« vérifie toutes les fonctionnalités comptables »)
+
+Demande directe de l'utilisateur, distincte de l'audit sécurité (étape 49) : un audit du cœur COMPTABLE
+lui-même (justesse des calculs, pas la sécurité). Mené en 6 agents parallèles en lecture seule (loyers/
+retards/pénalités, commissions/versements/séquestre, charges SONEB/SBEE, module GL SYSCOHADA, dépenses/
+immobilisations, cautions + cohérence croisée entre les vues). Synthèse : **5 constats critiques, 8
+« Haute », 5 « Moyenne »**. Sur décision explicite de l'utilisateur (« Critiques + Haute d'un coup »), les
+13 constats les plus sérieux sont traités dans cette même étape.
+
+### Les 5 correctifs CRITIQUES
+
+**1. Prorata d'entrée jamais réinjecté dans le calcul de retard** — `baselineMonthOf`
+(`services/rentTracking.js`) utilisait toujours `startDate` brut du bail comme point de départ du suivi
+mensuel classique, même quand un prorata d'entrée (étape 42) avait été réglé à part. Un locataire entré
+le 25 (échéance le 5) apparaissait « en retard de 25 jours » **le jour même de son emménagement**, sur un
+mois déjà couvert par le prorata — répercuté dans la relance groupée, les alertes prédictives, et figé
+pour toujours dans les photos de solde à la clôture (`snapshotLeaseBalances`). Corrigé : `baselineMonthOf`
+accepte désormais `entryProration`/`rentDueDay` et démarre le suivi à `firstRegularDueDate(...)` quand
+`entryProration === 'prorata'` — correctif porté par la fonction PARTAGÉE elle-même (pas par chacun de ses
+~17 points d'appel individuellement) pour ne jamais en oublier un. 5 nouveaux tests dans
+`rentTracking.test.js`. Vérifié en direct (tenant 1594) : bail créé le 25/09 avec prorata → `status:
+"current"`, `daysLate: -5`, absent de la relance groupée.
+
+**2. Double déduction de commission en mode `gl_commission_timing = 'reversement'`** —
+`getEscrowBalances`/`assertPayoutWithinBalance` (`services/commission.js`) déduisaient TOUJOURS la
+commission au fil de l'eau, même quand ce réglage (Comptabilité avancée → Règles comptables, réellement
+activable côté UI) reporte la déduction au moment du reversement effectif. Le solde séquestre affiché
+était donc déjà net, et la commission se retrouvait prélevée une SECONDE fois par l'écriture GL du
+reversement. Corrigé : le calcul du solde reste BRUT quand ce mode est actif. Nouveau test isolé dans
+`commission.test.js`. **Vérifié en direct sur données réelles** (tenant 1594, déjà en mode
+`'reversement'`) : solde séquestre = 550 000 FCFA (loyers bruts), alors que le taux réel est de 10 % —
+confirme que le bug touchait déjà ce tenant avant le correctif.
+
+**3. Aucun report à nouveau à la clôture d'exercice — le bilan était faux dès la 2ᵉ année d'activité** —
+`computeBalanceSheet` (`services/gl/glFinancialStatements.js`) filtrait actif/passif sur le seul
+`fiscal_year_id` de l'exercice consulté, alors que ces comptes PERSISTENT d'un exercice à l'autre (une
+trésorerie ne repart jamais à zéro le 1er janvier) — et ce module ne génère jamais d'écriture de report à
+nouveau (choix assumé, documenté). Corrigé en rendant `actif`/`passif` — et le résultat net utilisé pour
+équilibrer le bilan — CUMULATIFS depuis le tout premier mouvement du tenant (même principe déjà établi et
+correct pour la trésorerie dans `computeCashFlow`, juste étendu à tout le bilan). Libellés PDF/Excel
+corrigés en conséquence (« Perte/Bénéfice cumulé(e) non affecté(e) », plus « de l'exercice »). 2 tests
+existants corrigés (ils vérifiaient en fait le bug), 1 nouveau test de cumul avec activité sur 2 exercices
+distincts.
+
+**4. Sortie d'immobilisation — fonctionnalité totalement absente** — le schéma prévoyait
+`fixed_assets.status = 'disposed'` depuis l'origine (migration 049), mais AUCUNE route ne permettait
+jamais d'y accéder : un bien vendu/volé/mis au rebut restait indéfiniment « actif » avec sa valeur
+résiduelle, faussant le bilan. Construit de zéro : nouveau compte SYSCOHADA 654 (« Valeurs comptables des
+cessions d'immobilisations »), 3 nouvelles règles de comptabilisation `sortie_{informatique,mobilier,
+transport}` (nouvelle formule `amortissement_cumule` dans `glAccountResolver.js` : solde l'amortissement
+déjà pratiqué, passe la VNC résiduelle en charge, crédite l'actif pour son coût brut — toujours équilibré
+par construction), nouvelle route `POST /api/accounting/fixed-assets/:id/dispose` (justification exigée,
+acte définitif), colonnes `disposed_reason`/`disposed_by` (migration 075), bouton « Sortir » dans
+`comptabilite-view.tsx`. Un tenant déjà actif en continu doit passer par le bouton « Resynchroniser les
+règles » existant (nouvelle fonction `syncMissingAccounts`, appelée avant `syncMissingPostingRules` —
+sinon une règle référençant un compte encore absent échouerait) pour récupérer le compte 654 et les 3
+nouvelles règles. 8 tests dans `fixedAssets.test.js` (VNC partielle/nulle/totale — jamais de ligne à 0
+FCFA). **Vérifié en direct de bout en bout** (tenant 1594) : création → 2 mois d'amortissement (33 334
+cumulés) → sortie → écriture generée exactement équilibrée (28442 débit 33 334, 654 débit 566 666, 2442
+crédit 600 000) ; double sortie et amortissement après sortie correctement rejetés (409).
+
+**5. Résiliation anticipée bloquait définitivement l'accès aux cautions** — `PATCH /api/leases/:leaseId`
+(raccourci de fin de bail, jamais appelé par le frontend actuel mais accessible par API directe à tout
+agent avec le droit `locataires`) terminait le bail sans jamais toucher `deposit_status` ni les cautions
+supplémentaires (SBEE/SONEB/peinture) — et une fois `status !== 'active'`, l'état des lieux de sortie
+(SEULE voie qui régularise réellement tout ça, voir `finalizeAdditionalDeposits`) devient
+DÉFINITIVEMENT inaccessible pour ce bail. Corrigé : ce raccourci refuse désormais de s'exécuter
+(409) dès qu'une caution — loyer ou supplémentaire — est encore `held`, en renvoyant explicitement vers
+le circuit normal (état des lieux de sortie). Le cas légitime (aucune caution en jeu) continue de
+fonctionner. **Vérifié en direct** : bail de test avec caution de 50 000 FCFA → 409 ; bail réel sans
+caution en jeu → 204 (restauré immédiatement après vérification pour ne pas perturber les données du
+tenant de test).
+
+**Vérifié globalement (5 critiques)** : suite backend passée de 267/267 (avant toute cette étape) à
+**285/285** (14 nouveaux tests). Aucune modification sur KIko Store (tenant 8). Session interrompue une
+fois en cours de route (redémarrage de l'environnement) — serveur backend relancé, repris sans perte de
+travail (tous les fichiers déjà modifiés étaient sur disque). Non commité.
+
+### Les correctifs « Haute sévérité » (sur 8)
+
+**1. Annulation d'un paiement de loyer déjà reversé → solde séquestre négatif silencieux** —
+`DELETE /api/leases/:leaseId/payments/:paymentId` (`routes/leases.js`) annulait n'importe quel paiement
+sans jamais vérifier qu'il n'avait pas déjà été reversé au propriétaire entretemps : le solde séquestre de
+ce propriétaire pouvait passer sous zéro sans aucun garde-fou (argent déjà sorti de la trésorerie du
+cabinet). Corrigé avec le même schéma « verrou puis recalcul » que `assertPayoutWithinBalance` : la ligne
+`owners` du propriétaire concerné est verrouillée (`FOR UPDATE`) dans la même transaction que
+l'annulation, le solde séquestre est recalculé APRÈS l'annulation logique (`getEscrowBalances` voit déjà
+l'écriture de suppression), et un solde négatif fait échouer la transaction (409, message explicite
+renvoyant à la régularisation du reversement) plutôt que de la laisser filer.
+
+**2. Divergence d'arrondi entre la fiche d'un Bien et le solde séquestre agrégé (propriétaire
+multi-biens)** — `getEscrowBalances` (`services/commission.js`) arrondissait la commission une seule fois
+sur le total agrégé du propriétaire, alors que la fiche de chaque Bien (`getRecetteProprietaire`)
+l'arrondit BIEN PAR BIEN — pour un propriétaire à plusieurs biens, la somme des soldes affichés par bien
+pouvait différer de quelques francs du solde séquestre global affiché sur sa fiche. Corrigé en
+restructurant l'agrégation interne de `getEscrowBalances` par `(propriétaire, bien, mois)` — comme
+`getRecetteProprietaire` — et en arrondissant la commission à CE niveau avant de sommer : les deux vues
+sont désormais mathématiquement garanties cohérentes par construction, plus par coïncidence. Nouveau test
+dans `commission.test.js` avec un propriétaire à 2 biens.
+
+**3. Cautions SBEE/SONEB retenues à la sortie mélangeaient la trésorerie** —
+`settleUnpaidUtilityCharges` (`services/leaseDeposits.js`) réglait la part retenue d'une caution SBEE/SONEB
+en appelant `recordUtilityPayment` avec `paymentMethod: 'especes'` codé en dur, ce qui déclenchait la règle
+`charge_locative_encaissee` : un débit de trésorerie (571) pour de l'argent qui, en réalité, avait déjà été
+reçu à la signature du bail (`caution_supplementaire_recue`, qui a déjà débité 571 et crédité 165) — un
+double encaissement fictif. Pire, le compte 165 (dette envers le locataire) n'était JAMAIS soldé pour la
+part retenue : seule `caution_supplementaire_restituee` le débite, et uniquement pour la part réellement
+rendue au locataire. Corrigé par une nouvelle règle dédiée `charge_locative_reglee_par_caution` (nouveau
+`formula_param` réutilisant les lignes de répercussion propriétaire/frais de gestion identiques à
+`charge_locative_encaissee`, mais débitant le compte 165 au lieu de la trésorerie) — un nouveau paramètre
+`settledFromDeposit` sur `recordUtilityPayment` choisit la bonne règle et marque la ligne
+`utility_payments.settled_from_deposit` (migration 076) pour que le rattrapage GL
+(`glActivationService.js`, qui posait le même problème pour un tenant activant le module APRÈS avoir déjà
+utilisé cette fonctionnalité) utilise lui aussi la bonne règle. Aucun nouveau compte requis (165 déjà
+seedé depuis l'étape 43) — un tenant déjà actif récupère la nouvelle règle via le bouton
+« Resynchroniser » existant. 2 nouveaux tests dans `leaseDeposits.test.js` (règlement direct : débit 165 +
+crédit 411, zéro écriture de trésorerie ; rattrapage historique : même règle appliquée rétroactivement).
+
+**Vérifié (Haute 1-3)** : suite backend passée à **287/287** (+2 tests). Non commité.
+
+**4. Chemin de paiement KKiaPay sans verrou de clôture de mois** — `verifyAndRecordKkiapay`
+(`services/paymentVerification.js`), seul point d'entrée des 3 chemins KKiaPay (portail, lien de paiement,
+webhook), n'appelait jamais `assertPeriodOpen`/`assertPeriodOpenLocked` — contrairement à TOUTES les autres
+routes de paiement (loyer, charges). Corrigé avec le même schéma que partout ailleurs : vérification
+rapide AVANT l'appel réseau à KKiaPay (`assertPeriodOpen`, sur la date du jour — un paiement en ligne ne
+peut jamais être antidaté), puis re-vérification SOUS VERROU dans la transaction
+(`assertPeriodOpenLocked`). 2 nouveaux tests dans `paymentVerification.test.js` (loyer ET charge, mois en
+cours clôturé → rejeté, aucun enregistrement).
+
+**5. Suppression d'une facture SONEB/SBEE déjà réglée sans garde-fou** — `DELETE /api/charges/:id`
+n'avait jamais le même garde-fou que `PATCH /:id` (qui fige déjà le montant dès qu'un paiement existe) :
+supprimer une facture déjà réglée (même partiellement) faisait disparaître son montant des impayés/soldes
+sans jamais toucher l'écriture GL déjà posée (`charge_locative_encaissee`, qui a déjà crédité le
+propriétaire) — même risque de solde séquestre négatif silencieux que le Haute #1. Corrigé par le même
+garde-fou que PATCH (409 si un paiement existe). **Vérifié en direct** (tenant 1594) : facture jamais
+réglée → 204 ; facture avec un règlement partiel → 409 explicite. Pas de route HTTP testée
+automatiquement dans ce projet (aucune infrastructure supertest) — vérification live uniquement, données
+de test nettoyées.
+
+**6. Incohérence de `sourceTable` entre règlement en direct et rattrapage du module** —
+`POST /expenses/:id/pay` et `POST /fixed-assets/:id/pay` (`routes/accounting.js`) postaient leur écriture
+de règlement avec `sourceTable: 'expenses'`/`'fixed_assets'` — EXACTEMENT le même `(source_table,
+source_id)` que l'écriture d'ENGAGEMENT de la même dépense/immobilisation — alors que
+`glActivationService.js` (rattrapage) utilise depuis toujours `'expense_settlements'`/
+`'fixed_asset_settlements'` pour ce même règlement, précisément pour ne jamais le confondre avec
+l'engagement dans la déduplication (qui ne regarde QUE `source_table`+`source_id`, jamais
+`operation_type`). Si le module était suspendu puis réactivé après qu'un tel règlement ait eu lieu EN
+DIRECT, le rattrapage ne le reconnaissait jamais comme déjà fait et en reposait un second, en double.
+Corrigé en alignant les deux routes sur la convention déjà établie par le rattrapage. Nouveau test dans
+`activation.test.js` reproduisant le scénario exact (règlement posté en direct → suspension → réactivation
+→ toujours une seule écriture). **Vérifié en direct** (tenant 1594) : dépense à crédit créée puis réglée →
+2 écritures distinctes confirmées (`expenses` puis `expense_settlements`), données nettoyées.
+
+**Vérifié (Haute 1-6)** : suite backend **290/290** (+3 tests sur ces 3 derniers). Non commité.
+
+**7. Recette nette du cabinet pas vraiment en base caisse pour les dépenses à crédit** —
+`getCabinetRevenue`/`getEscrowBalances`/`getRecetteNetteMaison` (`services/commission.js`) et le tableau de
+bord (`routes/accounting.js`) déduisaient les dépenses sur `expense_date` (date d'ENGAGEMENT), jamais
+`paid_at` (date de RÈGLEMENT réel) — alors que toutes les autres sources (loyer, dette initiale, prorata,
+pénalités) sont déjà en base caisse (comptées à l'encaissement réel, jamais à la facturation). Une dépense
+« à crédit » encore impayée réduisait donc à tort la recette nette d'un propriétaire, le solde séquestre ET
+la recette du cabinet, le mois de son engagement — avant qu'aucun argent n'ait réellement quitté la
+trésorerie — puis ne réduisait RIEN le mois de son règlement effectif (déjà « consommée » à tort plus tôt).
+Corrigé dans les 5 requêtes concernées (filtrées sur `payment_status = 'paid' AND paid_at BETWEEN ...`,
+`paid_at` valant déjà `expense_date` pour une dépense payée immédiatement — aucun changement dans ce cas
+courant). Nouveau test isolé dans `commission.test.js` (dépense impayée engagée en juillet, réglée en
+août : juillet reste à 0, août porte la déduction). **Vérifié en direct** (tenant 1594) : dépense à crédit
+de 7000 FCFA engagée le 10/09 — absente du tableau de bord de septembre ; réglée le 05/10 — apparaît
+alors dans le tableau de bord d'OCTOBRE, jamais septembre.
+
+**8. Activation du module GL en concurrence pouvait dupliquer des écritures** — `backfillOne`
+(`glActivationService.js`) vérifiait l'absence d'écriture (SELECT) AVANT `conn.beginTransaction()`, sans
+aucun verrou, et `gl_entries` n'avait qu'un INDEX (pas une contrainte) sur `(tenant_id, source_table,
+source_id)` : deux activations lancées en concurrence pour le même tenant (double-clic, requête relancée)
+pouvaient toutes deux passer cette vérification avant que l'une ne commite, puis insérer chacune sa propre
+écriture pour la même opération réelle. Corrigé par une contrainte UNIQUE au niveau base de données
+(migration 077, `uq_gl_entries_active_source`) sur une colonne générée qui exclut volontairement une
+écriture `extournee` (réversée) de l'unicité — sans cette exclusion, le mécanisme NORMAL d'extourne
+(`glReversalService.js`, qui réutilise intentionnellement le même `source_id` pour l'écriture de
+remplacement) aurait lui-même été bloqué à tort. `backfillOne` traite désormais un conflit `ER_DUP_ENTRY`
+comme « déjà fait » (skipped), jamais une erreur. **Bug annexe trouvé et corrigé en implémentant ce
+correctif** : `extourneEcriture` ne marquait l'écriture d'origine `'extournee'` qu'APRÈS avoir inséré
+l'écriture miroir — les deux se retrouvaient donc brièvement actives en même temps sur le même
+`(source_table, source_id)`, ce qui aurait fait échouer TOUTE extourne portant sur une opération avec
+source (pas seulement la course visée). Réordonné : l'original est marqué `'extournee'` D'ABORD (son
+propre `affectedRows` sert de filet de sécurité contre une double extourne concurrente, comme avant),
+PUIS l'écriture miroir est insérée, PUIS `reversed_by_entry_id` est renseigné séparément. Nouveau test de
+VRAIE concurrence (`Promise.all` sur deux `backfillHistoricalEntries` simultanés, deux connexions MySQL
+distinctes) dans `activation.test.js`. 2 données de test orphelines trouvées sur le tenant 1594 pendant
+l'investigation (artefacts d'une précédente vérification manuelle de cette même étape, avant le correctif
+Haute #6) et nettoyées avant d'appliquer la contrainte.
+
+**Vérifié (Haute 1-8, TOUS traités)** : suite backend **292/292** (286 tests de cette étape 51 +
+1 regression fix sur `glReversalService.js` + 5 tests restant en échec, SANS LIEN avec cette étape — voir
+note ci-dessous). Non commité.
+
+**Note sans rapport avec cette étape** : 5 tests pré-existants (`test/assistant.test.js`,
+`test/assistantTools.test.js`, `test/gl/rentPaymentCancellation.test.js`) ont commencé à échouer en cours
+de session, non pas à cause d'un correctif ci-dessus, mais parce que le calendrier réel est passé du
+2026-09-30 au 2026-10-01 PENDANT cette session — ces tests fixent un bail censé « déjà en retard » par
+rapport à une date relative au jour réel de l'exécution, et le passage au mois suivant a changé ce calcul.
+Confirmé en isolant chaque fichier : aucun ne touche `gl_entries`/la comptabilité, ce sont des fixtures de
+`listPortfolioArrears` sensibles au calendrier réel, une fragilité préexistante sans rapport avec l'audit
+comptable. Hors scope de cette étape (pas un des 18 constats) — non corrigé.

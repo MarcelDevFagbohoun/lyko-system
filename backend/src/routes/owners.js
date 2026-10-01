@@ -19,7 +19,7 @@ const { toActor } = require('../utils/actor');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { getChargeAccount, assertRemittanceWithinBalance, listRemittances } = require('../services/utilityRemittance');
 const { getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint');
-const { assertPeriodOpen } = require('../services/accountingPeriods');
+const { assertPeriodOpen, assertPeriodOpenLocked } = require('../services/accountingPeriods');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { resolvePropertyScope } = require('../services/scope');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
@@ -400,6 +400,9 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
     // Sérialise les versements d'un même propriétaire : le solde est vérifié APRÈS ce verrou et DANS la
     // transaction (garde-fou de l'audit comptable A2, voir services/commission.js
     // `assertPayoutWithinBalance`) — deux versements simultanés, chacun inférieur au solde, ne peuvent
@@ -487,6 +490,9 @@ router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
     await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
     await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
       id,
       tenantId: req.user.tenantId,
@@ -547,6 +553,7 @@ router.delete('/:id/charge-remittances/:remittanceId', canPayout, async (req, re
     return next(new ApiError(400, 'Justification requise', parsed.error.flatten().fieldErrors));
   }
 
+  const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
@@ -558,12 +565,19 @@ router.delete('/:id/charge-remittances/:remittanceId', canPayout, async (req, re
     if (rows[0].deleted_at) throw new ApiError(409, 'Ce reversement est déjà annulé.');
     await assertPeriodOpen(req.user.tenantId, isoDate(rows[0].paid_at));
 
-    await pool.query(
+    await conn.beginTransaction();
+    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+    await assertPeriodOpenLocked(conn, req.user.tenantId, isoDate(rows[0].paid_at));
+    const [result] = await conn.query(
       `UPDATE owner_charge_remittances
        SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason
        WHERE id = :remittanceId AND deleted_at IS NULL`,
       { by: req.user.id, reason: parsed.data.reason, remittanceId },
     );
+    if (result.affectedRows === 0) throw new ApiError(409, 'Ce reversement est déjà annulé.');
+    await conn.commit();
+
     logger.info('Reversement de charges annulé', {
       tenantId: req.user.tenantId,
       ownerId: id,
@@ -573,7 +587,10 @@ router.delete('/:id/charge-remittances/:remittanceId', canPayout, async (req, re
     });
     res.status(204).send();
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 

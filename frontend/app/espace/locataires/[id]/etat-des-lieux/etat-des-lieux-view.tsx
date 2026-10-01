@@ -256,6 +256,7 @@ function DraftEditor({
           showDeductions={false}
           onUploadPhoto={handleUploadPhoto}
           onDeletePhoto={handleDeletePhoto}
+          accessToken={accessToken}
         />
 
         <div className="flex flex-col gap-2">
@@ -311,7 +312,7 @@ function FinalizedView({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
-        <InspectionReadOnly zones={report.zones} showDeductions={false} />
+        <InspectionReadOnly zones={report.zones} showDeductions={false} accessToken={accessToken} />
 
         {report.generalNotes && (
           <div className="rounded-lg border border-border bg-surface-muted p-3">
@@ -328,8 +329,8 @@ function FinalizedView({
         )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} />
-          <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} />
+          <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} accessToken={accessToken} />
+          <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} accessToken={accessToken} />
         </div>
         {report.finalizedAt && (
           <p className="text-body-xs text-ink-muted">

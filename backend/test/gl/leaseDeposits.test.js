@@ -234,6 +234,40 @@ test('finalizeAdditionalDeposits — SBEE : le solde impayé est RÉELLEMENT ré
     { t: fx.tenantId },
   );
   assert.equal(Number(entry.amount), 9000, 'seule la part RENDUE génère une écriture, jamais la part retenue');
+
+  // Haute #3 (étape 51) : la part RETENUE (6000) règle la charge SBEE via `charge_locative_reglee_par_caution`
+  // — débit 165 (solde la dette locataire), JAMAIS un débit trésorerie (571/521/552) : l'argent a déjà été
+  // reçu à la signature du bail (`caution_supplementaire_recue`), ce règlement n'est qu'un transfert interne.
+  const [[settlement]] = await pool.query(
+    "SELECT id FROM gl_entries WHERE tenant_id = :t AND source_operation_type = 'charge_locative_reglee_par_caution'",
+    { t: fx.tenantId },
+  );
+  assert.ok(settlement, 'le règlement par caution doit générer sa propre écriture');
+  const [settlementLines] = await pool.query(
+    `SELECT el.side, el.amount, a.code FROM gl_entry_lines el JOIN gl_accounts a ON a.id = el.account_id
+     WHERE el.entry_id = :id ORDER BY el.line_order`,
+    { id: settlement.id },
+  );
+  assert.deepEqual(
+    settlementLines.map((l) => [l.side, l.code, Number(l.amount)]),
+    [
+      ['debit', '165', 6000],
+      ['credit', '411', 6000], // 100% répercuté au propriétaire (taux_repercussion_charge par défaut) : rien gardé en 706
+    ],
+    'le règlement par caution débite 165 (jamais la trésorerie) et crédite la répercussion propriétaire, comme un encaissement normal',
+  );
+  const [[treasuryCount]] = await pool.query(
+    `SELECT COUNT(*) AS n FROM gl_entries e JOIN gl_entry_lines el ON el.entry_id = e.id
+     JOIN gl_accounts a ON a.id = el.account_id
+     WHERE e.tenant_id = :t AND a.code IN ('571','521','552') AND e.source_table = 'utility_payments'`,
+    { t: fx.tenantId },
+  );
+  assert.equal(Number(treasuryCount.n), 0, 'aucun encaissement de trésorerie ne doit être généré pour la part réglée par la caution');
+  const [[paymentRow]] = await pool.query(
+    "SELECT settled_from_deposit FROM utility_payments WHERE tenant_id = :t AND charge_id = :c",
+    { t: fx.tenantId, c: chargeId },
+  );
+  assert.equal(Number(paymentRow.settled_from_deposit), 1, 'le règlement doit être marqué comme réglé par la caution, pour le rattrapage GL futur');
 });
 
 test("finalizeAdditionalDeposits — SBEE : un impayé supérieur à la caution l'absorbe entièrement, rien à rendre, le solde restant reste dû (jamais effacé)", async () => {
@@ -415,4 +449,32 @@ test("rattrapage GL (backfill) — réception ET restitution d'une même caution
   const again = await backfillHistoricalEntries(pool, fx.tenantId, { fromDate: '2026-01-01', createdBy: fx.dgId });
   assert.equal(again.generated, 0);
   assert.equal(again.skipped, 2);
+});
+
+test("rattrapage GL (backfill) — un règlement SBEE marqué settled_from_deposit utilise `charge_locative_reglee_par_caution` (jamais `charge_locative_encaissee`)", async () => {
+  // Reproduit le même piège que le test précédent, mais pour la trésorerie (Haute #3, étape 51) :
+  // un paiement réglé via la caution AVANT l'activation de la comptabilité avancée doit, au rattrapage,
+  // solder le 165 et non débiter une seconde fois la trésorerie pour de l'argent jamais réellement reçu.
+  const chargeId = await insertCharge({ utilityType: 'soneb', amount: 5000 });
+  const [payment] = await pool.query(
+    `INSERT INTO utility_payments (tenant_id, charge_id, amount, payment_method, paid_at, recorded_by, settled_from_deposit)
+     VALUES (:t, :c, 5000, 'especes', '2026-02-01', :by, 1)`,
+    { t: fx.tenantId, c: chargeId, by: fx.dgId },
+  );
+  await pool.query("UPDATE utility_charges SET status = 'payee' WHERE id = :id", { id: chargeId });
+
+  const summary = await backfillHistoricalEntries(pool, fx.tenantId, { fromDate: '2026-01-01', createdBy: fx.dgId });
+  assert.equal(summary.errors.length, 0, JSON.stringify(summary.errors));
+
+  const [[entry]] = await pool.query(
+    `SELECT source_operation_type FROM gl_entries WHERE tenant_id = :t AND source_table = 'utility_payments' AND source_id = :id`,
+    { t: fx.tenantId, id: payment.insertId },
+  );
+  assert.equal(entry.source_operation_type, 'charge_locative_reglee_par_caution');
+  const [[treasuryCount]] = await pool.query(
+    `SELECT COUNT(*) AS n FROM gl_entries e JOIN gl_entry_lines el ON el.entry_id = e.id JOIN gl_accounts a ON a.id = el.account_id
+     WHERE e.tenant_id = :t AND e.source_table = 'utility_payments' AND e.source_id = :id AND a.code IN ('571','521','552')`,
+    { t: fx.tenantId, id: payment.insertId },
+  );
+  assert.equal(Number(treasuryCount.n), 0, 'le rattrapage ne doit jamais générer un encaissement de trésorerie pour une part réglée par la caution');
 });
