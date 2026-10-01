@@ -27,10 +27,12 @@ export function buildRentReminderMessage(params: {
   companyName?: string | null;
 }): string {
   return [
-    `Bonjour ${params.renterFirstName},`,
-    `Nous vous rappelons que le loyer de ${params.unitLabel} (${formatFcfa(params.monthlyRent)})`,
-    `est en retard de ${params.daysLate} jour(s) (échéance du ${params.dueDate}).`,
-    `Merci de régulariser votre situation rapidement.`,
+    `Bonjour ${params.renterFirstName}, nous espérons que vous allez bien.`,
+    `Nous nous permettons de vous rappeler que le loyer de ${params.unitLabel}, d'un montant de ${formatFcfa(params.monthlyRent)},`,
+    `présente un retard de ${params.daysLate} jour(s) (échéance du ${params.dueDate}).`,
+    `Si ce règlement a déjà été effectué, nous vous prions de ne pas tenir compte de ce message.`,
+    `Dans le cas contraire, nous vous remercions de bien vouloir régulariser votre situation dans les meilleurs délais.`,
+    `Nous restons à votre disposition pour toute question.`,
     params.companyName ? `Cordialement, ${params.companyName}` : "",
   ].join(" ");
 }
@@ -48,10 +50,11 @@ export function buildPredictiveReminderMessage(params: {
   companyName?: string | null;
 }): string {
   return [
-    `Bonjour ${params.renterFirstName},`,
-    `Nous vous rappelons que le loyer de ${params.unitLabel} (${formatFcfa(params.monthlyRent)})`,
-    `arrive à échéance le ${params.dueDate}.`,
-    `Merci de bien vouloir procéder au règlement à temps.`,
+    `Bonjour ${params.renterFirstName}, nous espérons que vous allez bien.`,
+    `Nous vous informons, à titre de rappel amical, que le loyer de ${params.unitLabel}, d'un montant de ${formatFcfa(params.monthlyRent)},`,
+    `arrivera à échéance le ${params.dueDate}.`,
+    `Si ce règlement a déjà été effectué, nous vous prions de ne pas tenir compte de ce message.`,
+    `Nous vous remercions par avance de bien vouloir prévoir le paiement en temps voulu.`,
     params.companyName ? `Cordialement, ${params.companyName}` : "",
   ].join(" ");
 }
@@ -72,10 +75,11 @@ export function buildUtilityReminderMessage(params: {
   companyName?: string | null;
 }): string {
   return [
-    `Bonjour ${params.renterFirstName},`,
-    `Nous vous rappelons que votre facture ${params.utilityTypeLabel} de ${params.unitLabel} (${formatFcfa(params.amountOwed)})`,
+    `Bonjour ${params.renterFirstName}, nous espérons que vous allez bien.`,
+    `Nous nous permettons de vous rappeler que votre facture ${params.utilityTypeLabel} de ${params.unitLabel}, d'un montant de ${formatFcfa(params.amountOwed)},`,
     `est en attente de règlement depuis ${params.daysLate} jour(s) (facturée le ${params.billedAt}).`,
-    `Merci de régulariser votre situation rapidement.`,
+    `Si ce règlement a déjà été effectué, nous vous prions de ne pas tenir compte de ce message.`,
+    `Dans le cas contraire, nous vous remercions de bien vouloir régulariser votre situation dans les meilleurs délais.`,
     params.companyName ? `Cordialement, ${params.companyName}` : "",
   ].join(" ");
 }
