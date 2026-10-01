@@ -311,7 +311,7 @@ function DashboardTab({
     if (!accessToken) return;
     getMandantsCabinetIndicator(accessToken)
       .then(setIndicator)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger l'indicateur mandants/cabinet."));
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger l'indicateur mandants/entreprise."));
   }, [accessToken]);
 
   const byCode = (code: string) => lines?.find((l) => l.code === code)?.balance ?? 0;
@@ -364,10 +364,10 @@ function MandantsCabinetCard({ indicator }: { indicator: MandantsCabinetIndicato
           <span className={`flex h-7 w-7 items-center justify-center rounded-full text-white ${isCovered ? "bg-success" : "bg-danger"}`}>
             {isCovered ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}
           </span>
-          <CardTitle>Séparation des fonds — mandants / cabinet</CardTitle>
+          <CardTitle>Séparation des fonds — mandants / entreprise</CardTitle>
         </div>
         <CardDescription>
-          Vérifie que la trésorerie réelle du cabinet couvre bien ce qu&apos;il détient pour le compte de tiers :
+          Vérifie que la trésorerie réelle de l&apos;entreprise couvre bien ce qu&apos;elle détient pour le compte de tiers :
           loyers nets déjà encaissés mais pas encore reversés aux propriétaires, et cautions locataires pas encore
           restituées.
         </CardDescription>
@@ -2257,8 +2257,8 @@ function GlSettingsCard({ accessToken }: { accessToken: string | null }) {
         <div className="rounded-lg border border-border px-3 py-2.5">
           <p className="font-label-md text-ink">Charges SONEB/SBEE répercutées au locataire</p>
           <p className="text-body-xs text-ink-muted">
-            Part de chaque charge encaissée qui éteint la dette du locataire (411) ; le reste est gardé par le
-            cabinet comme frais de gestion (706). 100 % = tout répercuté, rien gardé (comportement historique).
+            Part de chaque charge encaissée qui éteint la dette du locataire (411) ; le reste est gardé par
+            l&apos;entreprise comme frais de gestion (706). 100 % = tout répercuté, rien gardé (comportement historique).
           </p>
           <div className="mt-2 flex items-center gap-2">
             <Input
@@ -2282,7 +2282,7 @@ function GlSettingsCard({ accessToken }: { accessToken: string | null }) {
         <div className="rounded-lg border border-border px-3 py-2.5">
           <p className="font-label-md text-ink">Moment de comptabilisation de la commission</p>
           <p className="text-body-xs text-ink-muted">
-            La commission du cabinet (706) peut être constatée dès l&apos;encaissement du loyer (comportement
+            La commission de l&apos;entreprise (706) peut être constatée dès l&apos;encaissement du loyer (comportement
             historique), ou seulement au moment où l&apos;argent est réellement reversé au propriétaire.
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">

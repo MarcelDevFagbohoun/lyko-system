@@ -40,6 +40,14 @@ async function createBareFixture() {
     { tenantId, code: 'GLT-001', ownerId, address: 'Adresse test', by: dgId },
   );
   const propertyId = property.insertId;
+  // Étape 51bis : `getEscrowBalances`/`getRecetteProprietaire` résolvent désormais le propriétaire via
+  // `property_owner_history`, jamais `properties.owner_id` directement — sans cette ligne, AUCUNE requête
+  // comptable ne trouverait de propriétaire pour ce Bien de test. Période ouverte dès 2020 : large marge
+  // avant toute date utilisée par un test de ce fichier.
+  await pool.query(
+    "INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on) VALUES (:tenantId, :propertyId, :ownerId, '2020-01-01')",
+    { tenantId, propertyId, ownerId },
+  );
 
   const [unit] = await pool.query(
     "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:tenantId, :propertyId, 'U1', 'studio', 'loue', 50000, :by)",

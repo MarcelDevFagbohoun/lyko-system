@@ -9,6 +9,7 @@ import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
   getRenter,
   updateRenter,
+  updateRenterNotes,
   createLease,
   createPayment,
   generatePortalLink,
@@ -171,6 +172,7 @@ function LocataireContent() {
               {renter.profession ? ` · ${renter.profession}` : ""}
             </p>
             <Attribution actor={renter.createdBy} verb="Fiche créée par" at={renter.createdAt} className="mt-1 block" />
+            <RenterNotesSection renter={renter} accessToken={accessToken} onSaved={setRenter} />
           </div>
           {activeLease && (
             <div className="flex flex-wrap gap-2">
@@ -411,7 +413,7 @@ function PortalLinkCard({
   );
 }
 
-/** Formulaire de modification de l'identité du locataire (nom, email, profession, notes). */
+/** Formulaire de modification de l'identité du locataire (nom, email, profession). */
 function EditRenterForm({
   renter,
   accessToken,
@@ -427,7 +429,6 @@ function EditRenterForm({
   const [lastName, setLastName] = React.useState(renter.lastName);
   const [email, setEmail] = React.useState(renter.email ?? "");
   const [profession, setProfession] = React.useState(renter.profession ?? "");
-  const [notes, setNotes] = React.useState(renter.notes ?? "");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
@@ -448,7 +449,6 @@ function EditRenterForm({
         // serait jamais effacé.
         email: email.trim(),
         profession: profession.trim(),
-        notes: notes.trim(),
       });
       onSaved(res.renter);
       toast.success("Modifications enregistrées.");
@@ -490,9 +490,6 @@ function EditRenterForm({
               <Input id="editProfession" value={profession} onChange={(e) => setProfession(e.target.value)} />
             </Field>
           </div>
-          <Field label="Notes (optionnel)" htmlFor="editNotes">
-            <Input id="editNotes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </Field>
           <div className="flex items-center gap-2">
             <Button type="submit" disabled={submitting}>
               {submitting ? "Enregistrement…" : "Enregistrer les modifications"}
@@ -504,6 +501,111 @@ function EditRenterForm({
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Note interne libre sur la situation du locataire (ex. « paie toujours en retard »,
+ * « préfère être contacté le soir ») — volontairement SÉPARÉE de `EditRenterForm` (identité)
+ * et ouverte à TOUT employé authentifié (comptable, agent, pas seulement qui gère la fiche) :
+ * demande explicite de l'utilisateur, un comptable ou un agent doit pouvoir laisser une
+ * observation même sans le droit de modifier la fiche, et la direction doit la voir avec son
+ * auteur. Le bouton « + Ajouter une note » est volontairement un vrai bouton teinté (pas un
+ * lien discret) : feedback utilisateur, trop peu visible à l'origine.
+ */
+function RenterNotesSection({
+  renter,
+  accessToken,
+  onSaved,
+}: {
+  renter: Renter;
+  accessToken: string | null;
+  onSaved: (renter: Renter) => void;
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [notes, setNotes] = React.useState(renter.notes ?? "");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  React.useEffect(() => {
+    if (!editing) setNotes(renter.notes ?? "");
+  }, [renter.notes, editing]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await updateRenterNotes(accessToken, renter.id, notes.trim() || null);
+      onSaved(res.renter);
+      setEditing(false);
+      toast.success("Note enregistrée.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer cette note.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <form onSubmit={handleSubmit} className="mt-2 flex max-w-xl flex-col gap-2">
+        {error && (
+          <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
+            {error}
+          </div>
+        )}
+        <textarea
+          id="renterNotes"
+          autoFocus
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={4}
+          maxLength={2000}
+          placeholder="Ex. paie toujours en espèces, préfère être contacté le soir, a déjà eu un retard en mars…"
+          className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-md text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        />
+        <div className="flex items-center gap-2">
+          <Button type="submit" size="md" disabled={submitting}>
+            {submitting ? "Enregistrement…" : "Enregistrer la note"}
+          </Button>
+          <Button type="button" variant="ghost" size="md" onClick={() => setEditing(false)} disabled={submitting}>
+            Annuler
+          </Button>
+        </div>
+      </form>
+    );
+  }
+
+  if (renter.notes) {
+    return (
+      <div className="mt-2 max-w-xl rounded-lg border border-border bg-surface-muted px-3 py-2">
+        <div className="whitespace-pre-wrap text-body-sm text-ink-soft">
+          <span className="font-label-sm text-ink-muted">Note — </span>
+          {renter.notes}
+        </div>
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          <Attribution actor={renter.notesUpdatedBy} verb="Modifiée par" at={renter.notesUpdatedAt} />
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="inline-flex items-center gap-1 text-body-xs font-label-sm text-primary hover:underline"
+          >
+            <Pencil size={12} />
+            Modifier
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Button type="button" variant="secondary" size="md" className="mt-2" onClick={() => setEditing(true)}>
+      <Plus size={16} />
+      Ajouter une note sur ce locataire
+    </Button>
   );
 }
 
@@ -1083,7 +1185,7 @@ function LateFeeRow({
       idem.renew();
       setOpen(false);
       setNotes("");
-      toast.success(`${formatFcfa(Number(amount))} réglés sur cette pénalité, ajoutés à la recette du cabinet.`);
+      toast.success(`${formatFcfa(Number(amount))} réglés sur cette pénalité, ajoutés à la recette de l'entreprise.`);
       onSettled();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce règlement.");

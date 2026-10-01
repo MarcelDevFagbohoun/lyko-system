@@ -9,6 +9,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const {
   createRenterSchema,
   updateRenterSchema,
+  updateRenterNotesSchema,
   createLeaseSchema,
 } = require('../validators/renters');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
@@ -298,6 +299,8 @@ function toPublicRenter(row) {
     email: row.email,
     profession: row.profession,
     notes: row.notes,
+    notesUpdatedBy: toActor(row.notes_updater_first_name, row.notes_updater_last_name, row.notes_updater_role),
+    notesUpdatedAt: row.notes_updated_at,
     createdBy: toActor(row.renter_creator_first_name, row.renter_creator_last_name, row.renter_creator_role),
     createdAt: row.created_at,
     // Jamais le token/hash lui-même ici (uniquement renvoyé une fois, à la
@@ -435,8 +438,11 @@ router.get('/:id', canRead, async (req, res, next) => {
     await assertRenterInScope(req.user.tenantId, id, scopeAgentId);
 
     const [renterRows] = await pool.query(
-      `SELECT r.*, ru.first_name AS renter_creator_first_name, ru.last_name AS renter_creator_last_name, ru.role AS renter_creator_role
-       FROM renters r LEFT JOIN users ru ON ru.id = r.created_by
+      `SELECT r.*, ru.first_name AS renter_creator_first_name, ru.last_name AS renter_creator_last_name, ru.role AS renter_creator_role,
+              nu.first_name AS notes_updater_first_name, nu.last_name AS notes_updater_last_name, nu.role AS notes_updater_role
+       FROM renters r
+       LEFT JOIN users ru ON ru.id = r.created_by
+       LEFT JOIN users nu ON nu.id = r.notes_updated_by
        WHERE r.id = :id AND r.tenant_id = :tenantId LIMIT 1`,
       { id, tenantId: req.user.tenantId },
     );
@@ -797,17 +803,66 @@ router.patch('/:id', canManage, async (req, res, next) => {
     if (data.lastName !== undefined) { fields.push('last_name = :lastName'); params.lastName = data.lastName; }
     if (data.email !== undefined) { fields.push('email = :email'); params.email = data.email; }
     if (data.profession !== undefined) { fields.push('profession = :profession'); params.profession = data.profession; }
-    if (data.notes !== undefined) { fields.push('notes = :notes'); params.notes = data.notes; }
 
     if (fields.length > 0) {
       await pool.query(`UPDATE renters SET ${fields.join(', ')} WHERE id = :id`, params);
     }
 
     const [rows] = await pool.query(
-      `SELECT r.*, ru.first_name AS renter_creator_first_name, ru.last_name AS renter_creator_last_name, ru.role AS renter_creator_role
-       FROM renters r LEFT JOIN users ru ON ru.id = r.created_by WHERE r.id = :id`,
+      `SELECT r.*, ru.first_name AS renter_creator_first_name, ru.last_name AS renter_creator_last_name, ru.role AS renter_creator_role,
+              nu.first_name AS notes_updater_first_name, nu.last_name AS notes_updater_last_name, nu.role AS notes_updater_role
+       FROM renters r
+       LEFT JOIN users ru ON ru.id = r.created_by
+       LEFT JOIN users nu ON nu.id = r.notes_updated_by
+       WHERE r.id = :id`,
       { id },
     );
+    res.json({ renter: toPublicRenter(rows[0]) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/renters/:id/notes — note interne libre sur la situation du locataire (ex. « paie
+// toujours en retard », « préfère être contacté le soir »). Volontairement SANS la permission
+// "locataires" (contrairement à PATCH /:id ci-dessus, qui modifie l'identité) : demande explicite de
+// l'utilisateur — un comptable ou un agent qui n'a pas le droit de modifier la fiche doit quand même
+// pouvoir y laisser une observation, visible ensuite par toute l'équipe (y compris la direction) sur
+// la fiche. `requireAuth` (déjà appliqué à tout ce routeur) suffit donc comme seule barrière ; la
+// portée agent (un Bien hors de son périmètre) reste quand même vérifiée, comme pour la lecture.
+router.patch('/:id/notes', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = updateRenterNotesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const [existing] = await pool.query(
+      'SELECT id FROM renters WHERE id = :id AND tenant_id = :tenantId LIMIT 1',
+      { id, tenantId: req.user.tenantId },
+    );
+    if (!existing[0]) throw new ApiError(404, 'Locataire introuvable');
+    await assertRenterInScope(req.user.tenantId, id, scopeAgentId);
+
+    await pool.query(
+      'UPDATE renters SET notes = :notes, notes_updated_by = :by, notes_updated_at = NOW() WHERE id = :id',
+      { id, notes: parsed.data.notes, by: req.user.id },
+    );
+
+    const [rows] = await pool.query(
+      `SELECT r.*, ru.first_name AS renter_creator_first_name, ru.last_name AS renter_creator_last_name, ru.role AS renter_creator_role,
+              nu.first_name AS notes_updater_first_name, nu.last_name AS notes_updater_last_name, nu.role AS notes_updater_role
+       FROM renters r
+       LEFT JOIN users ru ON ru.id = r.created_by
+       LEFT JOIN users nu ON nu.id = r.notes_updated_by
+       WHERE r.id = :id`,
+      { id },
+    );
+    logger.info('Note locataire modifiée', { tenantId: req.user.tenantId, renterId: id, by: req.user.id });
     res.json({ renter: toPublicRenter(rows[0]) });
   } catch (err) {
     next(err);

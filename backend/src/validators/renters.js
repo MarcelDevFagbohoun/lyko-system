@@ -186,7 +186,13 @@ const updateRenterSchema = z.object({
   lastName: nameSchema.optional(),
   email: emailSchema.optional(),
   profession: optionalText(150).optional(),
-  notes: optionalText(2000).optional(),
+});
+
+// Note interne libre sur un locataire — schéma séparé de `updateRenterSchema` ci-dessus : voir
+// PATCH /api/renters/:id/notes (routes/renters.js), volontairement accessible à tout employé, pas
+// seulement qui a la permission "locataires".
+const updateRenterNotesSchema = z.object({
+  notes: optionalText(2000),
 });
 
 const endLeaseSchema = z.object({
@@ -254,6 +260,7 @@ const createLateFeePaymentSchema = z.object({
 module.exports = {
   createRenterSchema,
   updateRenterSchema,
+  updateRenterNotesSchema,
   createLeaseSchema,
   endLeaseSchema,
   createPaymentSchema,

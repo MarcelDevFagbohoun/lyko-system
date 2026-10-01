@@ -82,7 +82,7 @@ function TableauDeBordContent() {
         <div>
           <h1 className="font-display text-headline-xl text-ink">Tableau de bord</h1>
           <p className="text-body-md text-ink-soft">
-            Bonjour {user?.firstName}. Vue d&apos;ensemble de votre cabinet, mois en cours.
+            Bonjour {user?.firstName}. Vue d&apos;ensemble de votre entreprise, mois en cours.
           </p>
         </div>
 
@@ -167,7 +167,7 @@ function TableauDeBordContent() {
                 />
                 {money.cabinetRevenue && (
                   <StatCard
-                    label="Recette nette du cabinet (mois)"
+                    label="Recette nette de l'entreprise (mois)"
                     icon={<PiggyBank size={16} />}
                     value={formatFcfa(money.cabinetRevenue.netCabinetIncome)}
                     tone={money.cabinetRevenue.netCabinetIncome >= 0 ? "success" : "danger"}

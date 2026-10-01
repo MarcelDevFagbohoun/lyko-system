@@ -33,6 +33,7 @@ const {
   FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE,
 } = require('../constants/glOperationTypes');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
+const { extourneEcriture } = require('../services/gl/glReversalService');
 const { computeMonthlyDepreciation } = require('../services/gl/glDepreciationService');
 const { notifyDg } = require('../services/gl/glNotificationService');
 const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
@@ -524,13 +525,19 @@ router.post('/expenses/:id/pay', canAccounting, async (req, res, next) => {
 // + total dû), pas un module CRM fournisseurs complet.
 router.get('/suppliers', canAccounting, async (req, res, next) => {
   try {
+    // Étape 51bis (Basse #7) : ne sommait que les dépenses impayées — un fournisseur UNIQUEMENT lié à
+    // une immobilisation achetée « à crédit » (même flux `supplier_id`, voir createFixedAssetSchema)
+    // affichait `totalOwed: 0` alors qu'il lui était réellement dû de l'argent. Deux sous-requêtes
+    // corrélées (jamais un second LEFT JOIN direct, qui multiplierait les lignes dépenses × immobilisations
+    // du même fournisseur et fausserait la somme) plutôt qu'une jointure.
     const [rows] = await pool.query(
       `SELECT s.id, s.name,
-              COALESCE(SUM(CASE WHEN e.payment_status = 'unpaid' THEN e.amount ELSE 0 END), 0) AS total_owed
+              (SELECT COALESCE(SUM(e.amount), 0) FROM expenses e
+                 WHERE e.supplier_id = s.id AND e.deleted_at IS NULL AND e.payment_status = 'unpaid')
+              + (SELECT COALESCE(SUM(fa.acquisition_cost), 0) FROM fixed_assets fa
+                 WHERE fa.supplier_id = s.id AND fa.payment_status = 'unpaid') AS total_owed
        FROM suppliers s
-       LEFT JOIN expenses e ON e.supplier_id = s.id AND e.deleted_at IS NULL
        WHERE s.tenant_id = :tenantId
-       GROUP BY s.id, s.name
        ORDER BY s.name ASC`,
       { tenantId: req.user.tenantId },
     );
@@ -790,6 +797,12 @@ router.post('/fixed-assets/:id/depreciate', canAccounting, async (req, res, next
   try {
     const existing = await loadFixedAsset(conn, req.user.tenantId, id);
     if (existing.status === 'disposed') throw new ApiError(409, 'Cette immobilisation a été sortie du patrimoine.');
+    // Étape 51bis (Basse #6) : aucune validation n'empêchait d'enregistrer un amortissement pour un mois
+    // ANTÉRIEUR à l'acquisition — un bien qui n'existait pas encore ne peut rien s'être déprécié.
+    const acquisitionPeriod = isoDate(existing.acquisition_date).slice(0, 7);
+    if (period < acquisitionPeriod) {
+      throw new ApiError(400, `Cette immobilisation a été acquise en ${acquisitionPeriod} — aucun amortissement ne peut être antérieur.`);
+    }
     await assertPeriodOpen(req.user.tenantId, entryDate);
 
     const [[existingPeriod]] = await conn.query(
@@ -876,13 +889,26 @@ router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) =
   try {
     const existing = await loadFixedAsset(conn, req.user.tenantId, id);
     if (existing.status === 'disposed') throw new ApiError(409, 'Cette immobilisation a déjà été sortie du patrimoine.');
-    await assertPeriodOpen(req.user.tenantId, disposedAt);
-
+    // Étape 51bis (Basse #6) : aucune validation n'empêchait de sortir une immobilisation à une date
+    // ANTÉRIEURE à son acquisition, ni antérieure à un amortissement déjà enregistré pour un mois plus
+    // tardif — `amortissement_cumule` (glAccountResolver.js) additionne TOUT l'amortissement déjà
+    // enregistré sans filtrer par date, une sortie antidatée produirait une VNC incohérente avec sa
+    // propre date.
+    if (disposedAt < isoDate(existing.acquisition_date)) {
+      throw new ApiError(400, `Cette immobilisation a été acquise le ${isoDate(existing.acquisition_date)} — la sortie ne peut pas être antérieure.`);
+    }
     const [[depRow]] = await conn.query(
-      'SELECT COALESCE(SUM(amount), 0) AS total FROM fixed_asset_depreciations WHERE fixed_asset_id = :id',
+      'SELECT COALESCE(SUM(amount), 0) AS total, MAX(period) AS latestPeriod FROM fixed_asset_depreciations WHERE fixed_asset_id = :id',
       { id },
     );
+    if (depRow.latestPeriod && disposedAt.slice(0, 7) < depRow.latestPeriod) {
+      throw new ApiError(
+        400,
+        `Un amortissement a déjà été enregistré pour ${depRow.latestPeriod} — la sortie ne peut pas être antérieure à ce mois.`,
+      );
+    }
     const accumulatedDepreciation = Number(depRow.total);
+    await assertPeriodOpen(req.user.tenantId, disposedAt);
 
     await conn.beginTransaction();
     // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
@@ -909,7 +935,16 @@ router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) =
         // glAccountResolver.js.
         amount: Number(existing.acquisition_cost),
         narrationVars: { libelle: `${existing.label} — ${reason}` },
-        sourceTable: 'fixed_assets',
+        // Bug trouvé EN vérifiant Basse #6 (étape 51bis) : partageait `sourceTable: 'fixed_assets'` avec
+        // l'écriture d'ACQUISITION — les deux restent `validee` indéfiniment (la sortie ne réverse jamais
+        // l'acquisition, c'est un évènement distinct qui s'ajoute), donc la contrainte UNIQUE
+        // `uq_gl_entries_active_source` (migration 077, Haute #8) rejetait TOUTE sortie d'immobilisation
+        // depuis son ajout — régression 100% bloquante jamais détectée par cet audit, car la sortie
+        // d'immobilisation est une fonctionnalité du Critique #4 de cette même étape, jamais rejouée par
+        // un test après l'ajout de la contrainte. Corrigé en alignant sur la convention déjà établie pour
+        // ce même cas de figure (`expense_settlements`, `lease_deposits_return`...) : un label distinct
+        // pour un second évènement RÉEL sur la même ligne source.
+        sourceTable: 'fixed_asset_disposals',
         sourceId: id,
         createdBy: req.user.id,
         context: { fixedAssetId: id },
@@ -959,6 +994,29 @@ router.delete('/expenses/:id', canAccounting, async (req, res, next) => {
       'UPDATE expenses SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason WHERE id = :id',
       { by: req.user.id, reason, id },
     );
+
+    // Étape 51bis (Moyenne #5) : supprimer une dépense déjà comptabilisée ne contre-passait jamais son
+    // écriture GL — la dépense disparaissait du tableau de bord simple (filtré sur `deleted_at`), mais
+    // restait indéfiniment dans le bilan/compte de résultat SYSCOHADA, divergence permanente entre les
+    // deux vues. Extourne les DEUX écritures possibles (engagement + règlement si la dépense était « à
+    // crédit » et déjà réglée, voir Haute #6 — `sourceTable` distincts) — même précédent que l'annulation
+    // d'un paiement de loyer (`DELETE /:leaseId/payments/:paymentId`, routes/leases.js).
+    const [glEntryRows] = await conn.query(
+      `SELECT id, status FROM gl_entries
+       WHERE tenant_id = :tenantId AND source_table IN ('expenses', 'expense_settlements') AND source_id = :id`,
+      { tenantId: req.user.tenantId, id },
+    );
+    for (const entry of glEntryRows) {
+      if (entry.status !== 'validee') continue;
+      await extourneEcriture(conn, {
+        tenantId: req.user.tenantId,
+        entryId: entry.id,
+        entryDate: new Date().toISOString().slice(0, 10),
+        userId: req.user.id,
+        reason: `Dépense supprimée — ${reason}`,
+      });
+    }
+
     await conn.commit();
     logger.info('Dépense supprimée (suppression logique)', {
       tenantId: req.user.tenantId,
@@ -1048,17 +1106,25 @@ async function computeAccountingDashboard(user, { from, to }) {
       params,
     );
 
-    // Charges SONEB/SBEE impayées : pas de filtre de période — un impayé
-    // reste dû tant qu'il n'est pas réglé, quelle que soit la date de facturation.
+    // Charges SONEB/SBEE impayées : pas de filtre de période — un impayé reste dû tant qu'il n'est pas
+    // réglé, quelle que soit la date de facturation.
+    // Étape 51bis (Moyenne #2) : `status = 'impayee'` seul ignorait toute facture PARTIELLEMENT réglée
+    // (`status = 'partiellement_payee'`, voir `recordUtilityPayment`) — un reste à payer de plusieurs
+    // milliers de FCFA disparaissait du total, contrairement à `GET /api/charges/month-summary` (déjà
+    // correct : `status <> 'payee'`) et au registre des charges. Corrigé en reprenant exactement le même
+    // calcul : `status <> 'payee'` et le RESTE DÛ (`amount - payé`), jamais le montant facturé en entier.
+    const paidPerCharge = '(SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id)';
     const [[unpaidChargesRow]] = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
-       FROM utility_charges WHERE tenant_id = :tenantId AND deleted_at IS NULL AND status = 'impayee'`,
+      `SELECT COALESCE(SUM(uc.amount - COALESCE(pt.paid_total, 0)), 0) AS total, COUNT(*) AS n
+       FROM utility_charges uc LEFT JOIN ${paidPerCharge} pt ON pt.charge_id = uc.id
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.status <> 'payee'`,
       { tenantId: user.tenantId },
     );
     const [unpaidByType] = await pool.query(
-      `SELECT utility_type, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
-       FROM utility_charges WHERE tenant_id = :tenantId AND deleted_at IS NULL AND status = 'impayee'
-       GROUP BY utility_type`,
+      `SELECT uc.utility_type, COALESCE(SUM(uc.amount - COALESCE(pt.paid_total, 0)), 0) AS total, COUNT(*) AS n
+       FROM utility_charges uc LEFT JOIN ${paidPerCharge} pt ON pt.charge_id = uc.id
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.status <> 'payee'
+       GROUP BY uc.utility_type`,
       { tenantId: user.tenantId },
     );
 
@@ -1388,7 +1454,7 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
     for (const r of expenseRows) {
       rows.push({
         date: isoDate(r.expense_date),
-        type: r.property_id ? 'Travaux facturé au Bien (charge propriétaire)' : 'Dépense (cabinet)',
+        type: r.property_id ? 'Travaux facturé au Bien (charge propriétaire)' : 'Dépense (entreprise)',
         tiers: r.label,
         bien: r.property_code || '',
         categorie: categoryLabels[r.category] ?? r.category,
@@ -1414,7 +1480,7 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
     for (const r of entryFeeRows) {
       rows.push({
         date: isoDate(r.paid_at),
-        type: "Frais d'agence à l'entrée (produit du cabinet)",
+        type: "Frais d'agence à l'entrée (produit de l'entreprise)",
         tiers: `${r.renter_first_name} ${r.renter_last_name}`,
         bien: `${r.property_code} · ${r.unit_code}`,
         categorie: 'Frais d’agence',

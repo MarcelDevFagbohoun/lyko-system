@@ -19,6 +19,7 @@ const { createManualEntrySchema, extourneSchema } = require('../../validators/gl
 const { resolveOpenFiscalYear } = require('../../services/gl/glPostingService');
 const { extourneEcriture } = require('../../services/gl/glReversalService');
 const { nextEntryNumber } = require('../../services/gl/glNumbering');
+const { assertPeriodOpen, assertPeriodOpenLocked } = require('../../services/accountingPeriods');
 const { logGlAudit } = require('../../services/gl/glAuditService');
 const { notifyDg } = require('../../services/gl/glNotificationService');
 const { toActor } = require('../../utils/actor');
@@ -189,7 +190,13 @@ router.post('/manual', canAdvanced, async (req, res, next) => {
       }
     }
 
+    // Haute #4 (étape 51) avait déjà corrigé ce même trou pour KKiaPay ; Moyenne #4 (étape 51bis) : la
+    // saisie manuelle était la SEULE route qui postait des écritures sans jamais vérifier la clôture de
+    // mois (toutes les autres — loyers, charges, dépenses, versements — l'imposent déjà).
+    await assertPeriodOpen(req.user.tenantId, entryDate);
+
     await conn.beginTransaction();
+    await assertPeriodOpenLocked(conn, req.user.tenantId, entryDate);
 
     const fiscalYearId = await resolveOpenFiscalYear(conn, req.user.tenantId, entryDate);
     const entryNumber = await nextEntryNumber(conn, req.user.tenantId);
@@ -251,7 +258,13 @@ router.post('/:id/extourne', canAdvanced, async (req, res, next) => {
 
   const conn = await pool.getConnection();
   try {
+    // Moyenne #4 (étape 51bis) : l'extourne ne vérifiait jamais la clôture de mois — `entryDate` est la
+    // date de L'ÉCRITURE MIROIR (pas celle de l'originale, voir glReversalService.js), c'est donc son
+    // propre mois qui doit être ouvert, comme pour toute nouvelle écriture financière.
+    await assertPeriodOpen(req.user.tenantId, entryDate);
+
     await conn.beginTransaction();
+    await assertPeriodOpenLocked(conn, req.user.tenantId, entryDate);
     const result = await extourneEcriture(conn, {
       tenantId: req.user.tenantId,
       entryId: id,

@@ -115,7 +115,7 @@ export function OwnerPortailView() {
                   <StatCard label="Loyers encaissés" value={formatFcfa(recette.totals.totalPayments, { withSuffix: false })} unit="FCFA" tone="success" />
                   <StatCard label="Dépenses rattachées" value={formatFcfa(recette.totals.totalExpenses, { withSuffix: false })} unit="FCFA" tone={recette.totals.totalExpenses > 0 ? "warning" : "default"} />
                   <StatCard label="Recette nette" value={formatFcfa(recette.totals.recetteNette, { withSuffix: false })} unit="FCFA" />
-                  <StatCard label="Commission cabinet" value={formatFcfa(recette.totals.commissionCabinet, { withSuffix: false })} unit="FCFA" tone="info" />
+                  <StatCard label="Commission entreprise" value={formatFcfa(recette.totals.commissionCabinet, { withSuffix: false })} unit="FCFA" tone="info" />
                   <StatCard label="Votre part" value={formatFcfa(recette.totals.partProprietaire, { withSuffix: false })} unit="FCFA" tone="success" />
                 </CardContent>
               </Card>
@@ -188,7 +188,7 @@ export function OwnerPortailView() {
             <Card>
               <CardHeader>
                 <CardTitle>Historique des versements</CardTitle>
-                <CardDescription>Les 12 derniers versements reçus du cabinet.</CardDescription>
+                <CardDescription>Les 12 derniers versements reçus de l&apos;entreprise.</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 {payouts.length === 0 ? (

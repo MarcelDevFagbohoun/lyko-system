@@ -4,7 +4,7 @@ export const RENAMEABLE_SYSTEM_ACCOUNTS = [
     key: "owner_control_account",
     label: "Propriétaires mandants",
     defaultCode: "4671",
-    hint: "SYSCOHADA ne prévoit pas de compte officiel dédié au mandat de gestion locative — certains cabinets utilisent 4671, d'autres un compte 46 « Associés ».",
+    hint: "SYSCOHADA ne prévoit pas de compte officiel dédié au mandat de gestion locative — certaines entreprises utilisent 4671, d'autres un compte 46 « Associés ».",
   },
   {
     key: "late_fee_income_account",

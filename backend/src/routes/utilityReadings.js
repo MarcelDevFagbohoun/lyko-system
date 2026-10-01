@@ -74,7 +74,7 @@ async function loadRows(tenantId, batch) {
             pu.${batch.utility_type}_meter_number AS meter_number,
             al.id AS active_lease_id, al.status AS active_lease_status,
             ar.first_name AS renter_first_name, ar.last_name AS renter_last_name,
-            ch.status AS charge_status,
+            ch.id AS live_charge_id, ch.status AS charge_status,
             (SELECT ur.reading_end
                FROM utility_readings ur
                JOIN utility_reading_batches ub ON ub.id = ur.batch_id
@@ -85,7 +85,7 @@ async function loadRows(tenantId, batch) {
      JOIN property_units pu ON pu.id = r.unit_id
      LEFT JOIN leases al ON al.unit_id = r.unit_id AND al.tenant_id = :tenantId AND al.status = 'active'
      LEFT JOIN renters ar ON ar.id = al.renter_id
-     LEFT JOIN utility_charges ch ON ch.id = r.charge_id
+     LEFT JOIN utility_charges ch ON ch.id = r.charge_id AND ch.deleted_at IS NULL
      WHERE r.batch_id = :batchId AND r.tenant_id = :tenantId
      ORDER BY pu.code`,
     { tenantId, batchId: batch.id, propertyId: batch.property_id, utilityType: batch.utility_type },
@@ -112,6 +112,31 @@ function computeTotals(batch, rows) {
     alert = 'high';
   }
   return { subConsumption, subAmount, mainConsumption, mainAmount, differenceConsumption, differenceAmount, differencePct, alert };
+}
+
+/**
+ * Répartit `differenceAmount` (écart compteur principal / Σ décompteurs) au prorata de `billableRows`
+ * (`{unitId, amount}`) — chaque part est arrondie indépendamment, leur somme ne retombe donc pas
+ * forcément exactement sur `differenceAmount` (`Math.round` sur chaque ligne). Fonction PURE, extraite
+ * pour être testable sans base : renvoie une `Map<unitId, share>` dont la somme égale TOUJOURS
+ * `differenceAmount` exactement — le résidu d'arrondi est imputé à la plus grosse ligne facturable,
+ * jamais discrètement perdu (ou laissé filer au propriétaire alors que la politique 'prorata' voulait
+ * que 100 % de l'écart retombe sur les locataires — bug corrigé étape 51bis, Basse #2).
+ */
+function distributeLossShares(billableRows, differenceAmount, billableSubAmount) {
+  const shares = new Map();
+  let distributed = 0;
+  for (const r of billableRows) {
+    const share = Math.round(differenceAmount * (r.amount / billableSubAmount));
+    shares.set(r.unitId, share);
+    distributed += share;
+  }
+  const residual = differenceAmount - distributed;
+  if (residual !== 0 && billableRows.length > 0) {
+    const largest = billableRows.reduce((a, b) => (b.amount > a.amount ? b : a));
+    shares.set(largest.unitId, shares.get(largest.unitId) + residual);
+  }
+  return shares;
 }
 
 function toPublicBatch(batch, rows, point = null) {
@@ -164,7 +189,11 @@ function toPublicBatch(batch, rows, point = null) {
       readingEnd: r.reading_end,
       consumption: r.reading_end - r.reading_start,
       amount: Number(r.amount),
-      charge: r.charge_id ? { id: r.charge_id, status: r.charge_status } : null,
+      // Étape 51bis (Basse #3) : `r.charge_id` (colonne brute de `utility_readings`) n'est jamais effacée
+      // après une suppression logique de la facture — `live_charge_id` (jointure filtrée sur
+      // `deleted_at IS NULL`) est le vrai indicateur qu'une facture existe ENCORE réellement, sinon
+      // l'écran du relevé affichait une facture « fantôme » déjà invisible partout ailleurs.
+      charge: r.live_charge_id ? { id: r.live_charge_id, status: r.charge_status } : null,
     })),
     totals: computeTotals(batch, rows),
     point,
@@ -616,6 +645,17 @@ router.post('/utility-batches/:id/validate', async (req, res, next) => {
       totals.differenceAmount > 0 &&
       billableSubAmount > 0;
 
+    // Étape 51bis (Basse #2) : quand la politique choisie est 'prorata' (100 % de l'écart doit retomber
+    // sur les locataires, c'est tout le principe de ce réglage), le résidu d'arrondi ne doit jamais filer
+    // au propriétaire par défaut — voir `distributeLossShares`.
+    const lossShareByUnitId = applyLoss
+      ? distributeLossShares(
+          billableRows.map((r) => ({ unitId: r.unit_id, amount: Number(r.amount) })),
+          totals.differenceAmount,
+          billableSubAmount,
+        )
+      : new Map();
+
     await conn.beginTransaction();
     // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
     // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
@@ -623,9 +663,7 @@ router.post('/utility-batches/:id/validate', async (req, res, next) => {
     let generated = 0;
     for (const r of rows) {
       if (r.active_lease_id && Number(r.amount) > 0) {
-        const lossShare = applyLoss
-          ? Math.round(totals.differenceAmount * (Number(r.amount) / billableSubAmount))
-          : 0;
+        const lossShare = applyLoss ? lossShareByUnitId.get(r.unit_id) : 0;
         const amount = Number(r.amount) + lossShare;
         const [chRes] = await conn.query(
           `INSERT INTO utility_charges
@@ -740,3 +778,4 @@ router.delete('/utility-batches/:id', async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.distributeLossShares = distributeLossShares;

@@ -405,7 +405,7 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
     .fontSize(9)
     .fillColor(INK_SOFT)
     .text(
-      `Le cabinet ${tenant.company_name} certifie avoir reçu de ${renter.first_name} ${renter.last_name} ` +
+      `L'entreprise ${tenant.company_name} certifie avoir reçu de ${renter.first_name} ${renter.last_name} ` +
         `la somme ci-dessus au titre du loyer de ${propertyLabel(property)}, pour la période mentionnée.`,
       50,
       y,
@@ -545,7 +545,7 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
     1,
     'Les parties',
     `Entre les soussignés : d'une part, ${data.owner.name}${ownerAddressPart}, propriétaire du bien désigné ` +
-      `à l'article 2, représenté aux fins des présentes par le cabinet ${tenant.company_name} ` +
+      `à l'article 2, représenté aux fins des présentes par l'entreprise ${tenant.company_name} ` +
       `(RCCM ${tenant.rccm}, IFU ${tenant.ifu}), ci-après dénommé « le Bailleur » ; et d'autre part, ` +
       `${data.renter.firstName} ${data.renter.lastName}, joignable au ${data.renter.phone}, ci-après ` +
       `dénommé « le Locataire ». Il a été convenu ce qui suit.`,
@@ -581,7 +581,7 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
       `au plus tard le ${data.lease.rentDueDay} de chaque mois concerné.` +
       (data.lease.entryFeeAmount > 0
         ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)}, dus une seule fois à la signature, ` +
-          `restent intégralement acquis au cabinet et ne sont pas restituables.`
+          `restent intégralement acquis à l'entreprise et ne sont pas restituables.`
         : ''),
   );
 
@@ -1003,7 +1003,7 @@ function drawReopenedNotice(doc, report, y) {
     doc.addPage();
     y = doc.page.margins.top;
   }
-  const text = `Document corrigé le ${formatDateFr(report.reopenedAt.slice(0, 10))} (motif enregistré au journal du cabinet).`;
+  const text = `Document corrigé le ${formatDateFr(report.reopenedAt.slice(0, 10))} (motif enregistré au journal de l'entreprise).`;
   doc.font(FONT_SANS).fontSize(8).fillColor(FAINT).text(text, 50, y, { width: 495 });
   return y + 16;
 }
@@ -1640,7 +1640,7 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
     valueWidth: 180,
     valueColor: SUCCESS_FG,
   });
-  drawPanelRow(doc, "Frais d'agence à l'entrée (produit du cabinet)", `+ ${formatFcfa(t.entryFeesCollected)}`, 65, boxY + 20, {
+  drawPanelRow(doc, "Frais d'agence à l'entrée (produit de l'entreprise)", `+ ${formatFcfa(t.entryFeesCollected)}`, 65, boxY + 20, {
     labelWidth: 285,
     valueWidth: 180,
     valueColor: SUCCESS_FG,
@@ -1650,7 +1650,7 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
     valueWidth: 180,
     valueColor: DANGER_FG,
   });
-  drawPanelRow(doc, 'Dépenses du cabinet', `- ${formatFcfa(t.expenses)}`, 65, boxY + 60, {
+  drawPanelRow(doc, "Dépenses de l'entreprise", `- ${formatFcfa(t.expenses)}`, 65, boxY + 60, {
     labelWidth: 285,
     valueWidth: 180,
     valueColor: DANGER_FG,
@@ -1669,7 +1669,7 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
     .text(
       `Impayés locataires (estimation) : ${formatFcfa(t.tenantArrears)} (${t.tenantArrearsCount}) · ` +
         `Charges impayées : ${formatFcfa(t.unpaidCharges)} (${t.unpaidChargesCount}) · ` +
-        `Travaux facturés aux Biens (hors solde cabinet) : ${formatFcfa(t.propertyExpenses)}`,
+        `Travaux facturés aux Biens (hors solde entreprise) : ${formatFcfa(t.propertyExpenses)}`,
       65,
       boxY + 116,
       { width: 460 },
@@ -1696,7 +1696,7 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
   }
 
   if (dashboard.expensesByCategory.length > 0) {
-    sectionTitle('Dépenses du cabinet par catégorie');
+    sectionTitle("Dépenses de l'entreprise par catégorie");
     for (const c of dashboard.expensesByCategory) {
       line(EXPENSE_CATEGORY_LABELS[c.category] ?? c.category, formatFcfa(c.total));
     }

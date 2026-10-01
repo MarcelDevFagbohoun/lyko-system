@@ -55,7 +55,7 @@ const ROLES = [
       "Leur frise des 12 mois de loyer : payé, partiel, en retard",
       "Contrat de bail téléchargeable",
       "Leurs factures d'eau et d'électricité restant à régler",
-      "Paiement en ligne si le cabinet l'a activé",
+      "Paiement en ligne si l'entreprise l'a activé",
     ],
   },
 ] as const;

@@ -5942,3 +5942,218 @@ rapport à une date relative au jour réel de l'exécution, et le passage au moi
 Confirmé en isolant chaque fichier : aucun ne touche `gl_entries`/la comptabilité, ce sont des fixtures de
 `listPortfolioArrears` sensibles au calendrier réel, une fragilité préexistante sans rapport avec l'audit
 comptable. Hors scope de cette étape (pas un des 18 constats) — non corrigé.
+
+## Étape 51bis — relance de l'audit comptable, demande explicite (« quels sont les erreurs qu'on n'a pas encore corrigés »)
+
+Les 5 constats « Moyenne sévérité » de l'étape 51 n'avaient jamais été détaillés par écrit (seul leur
+nombre conservé). Sur demande de l'utilisateur, un audit ciblé en 4 agents parallèles (loyers/commissions/
+séquestre, charges SONEB/SBEE, module GL SYSCOHADA, dépenses/immobilisations/cautions — chacun briefé sur
+les 13 correctifs déjà faits pour ne jamais les re-signaler) a identifié **8 constats Moyenne et 7 Basse**
+sévérité, traités un par un sur décision explicite de l'utilisateur (« on traite tout mais un à un »).
+
+**1. Réattribuer le propriétaire d'un Bien réécrivait silencieusement tout son historique financier** —
+`PATCH /api/properties/:id` changeait `owner_id` sans aucune trace, et TOUTE la comptabilité
+(`getEscrowBalances`, `getRecetteProprietaire`/`getRecetteNetteMaison`, `getCabinetRevenue`) résolvait
+systématiquement le propriétaire à partir de `properties.owner_id` ACTUEL — jamais celui en vigueur au
+moment de chaque paiement/dépense. Réattribuer un Bien réécrivait donc tout son historique de loyers/
+dépenses à l'ancien ou au nouveau propriétaire, pouvant rendre un solde séquestre négatif sans raison.
+
+Corrigé par une nouvelle table `property_owner_history` (migration 078 — même principe que
+`owner_commission_rates` : `starts_on`/`ends_on`, jamais écrasée, seulement clôturée), backfillée pour
+tous les Biens existants (une période ouverte par Bien, démarrant à sa création — comportement inchangé
+pour toute entreprise qui n'a jamais réattribué, l'écrasante majorité). `properties.owner_id` reste le
+propriétaire ACTUEL (dénormalisé, utilisé partout où seul « aujourd'hui » compte — fiche Bien, portée
+agent, etc.) ; seules les fonctions qui attribuent de l'ARGENT résolvent désormais le propriétaire EN
+VIGUEUR à la date réelle de l'événement, via un nouveau `resolveOwnerAtDate`/des `LEFT JOIN
+property_owner_history` avec repli sur `properties.owner_id` si aucune période ne couvre la date (un
+paiement antidaté à avant la création du Bien — trouvé en vérifiant ce correctif en direct — ne doit
+jamais disparaître silencieusement du total, l'ancien comportement imprécis étant préférable à une perte
+d'argent dans l'agrégat).
+
+`POST /api/properties` (création) ouvre désormais la première période ; `PATCH /api/properties/:id`,
+quand `ownerId` change réellement, clôture la période en vigueur et en ouvre une nouvelle à la date du
+jour dans la MÊME transaction (`FOR UPDATE` contre une double réattribution concurrente) — tout ce qui a
+déjà été réellement perçu/dépensé reste attribué à l'ANCIEN propriétaire, seul l'avenir appartient au
+nouveau. 2 nouveaux tests dans `commission.test.js` (réattribution en cours de mandat : janvier reste à
+A, février va à B, taux de commission différents respectés chacun ; paiement antidaté : repli sur le
+propriétaire actuel, jamais perdu). **Vérifié en direct** (tenant 1594) : Bien créé → propriétaire A,
+réattribué à B via l'API réelle → `property_owner_history` montre bien 2 périodes (A clôturée le jour
+même, B ouverte), `properties.owner_id` à jour ; données de test nettoyées.
+
+**Vérifié** : suite backend **294/294** (289 passent + les 5 échecs calendaires déjà documentés, sans
+rapport). Non commité.
+
+**2. Le tableau de bord comptable ignorait les charges SONEB/SBEE partiellement payées** —
+`computeAccountingDashboard` (routes/accounting.js, réutilisé par l'écran, le rapport PDF ET l'assistant
+IA) filtrait `status = 'impayee'` seul, ignorant `status = 'partiellement_payee'` — une facture réglée à
+moitié disparaissait ENTIÈREMENT du total "impayés", contrairement à `GET /api/charges/month-summary`
+(déjà correct). Corrigé en reprenant exactement le même calcul : `status <> 'payee'` et le RESTE DÛ
+(`amount - payé`), jamais le montant facturé en entier. Nouveau fichier `test/accountingDashboard.test.js`
+(1 test). **Vérifié en direct** (tenant 1594) : facture de 10 000 FCFA réglée à 3 000 → le tableau de bord
+affiche désormais +7 000 FCFA (le reste dû), jamais 0 ni 10 000 ; donnée nettoyée.
+
+**Vérifié** : suite backend **295/295** (290 passent + les 5 échecs calendaires sans rapport).
+
+**3. Création concurrente d'un tiers comptable pouvait faire échouer un paiement valide** —
+`getOrCreateThirdParty` (services/gl/glThirdPartyService.js) faisait un SELECT puis un INSERT sans aucun
+verrou — deux opérations concernant le MÊME tiers jamais encore vu en comptabilité (ex. deux loyers du
+même locataire enregistrés au même instant) pouvaient toutes deux passer le SELECT avant que l'une des
+deux ne commite, et la contrainte UNIQUE `uq_gl_third_parties_source` (migration 046, déjà existante)
+faisait alors échouer la SECONDE transaction en bloc — un paiement par ailleurs valide perdu dans une 500.
+Corrigé en rattrapant `ER_DUP_ENTRY` à l'INSERT et en re-sélectionnant la ligne gagnante, même principe
+déjà appliqué à `gl_entries` (étape 51, Haute #8). Nouveau fichier `test/gl/thirdParty.test.js` (2 tests,
+dont une VRAIE concurrence via deux connexions MySQL distinctes et `Promise.all`).
+
+**Vérifié** : suite backend **297/297** (292 passent + les 5 échecs calendaires sans rapport).
+
+**4. Les écritures manuelles et l'extourne ignoraient le verrou de clôture de mois** —
+`POST /api/gl/entries/manual` et `POST /api/gl/entries/:id/extourne` (routes/gl/glEntries.js) ne vérifiaient
+jamais `assertPeriodOpen`/`assertPeriodOpenLocked`, contrairement à TOUTES les autres routes qui postent
+des écritures (loyers, charges, dépenses, versements, IRF, KKiaPay — Haute #4). Un comptable pouvait saisir
+ou extourner une écriture datée dans un mois déjà clôturé, violant silencieusement l'invariant « aucune
+écriture financière ne peut plus y être ajoutée » et faussant un mois censé être figé. Corrigé avec le même
+schéma partout ailleurs (check avant `beginTransaction()`, re-check sous verrou dans la transaction) ;
+pour l'extourne, c'est la date de L'ÉCRITURE MIROIR qui est vérifiée (pas celle de l'originale — voir
+`glReversalService.js`, l'extourne peut légitimement tomber dans un exercice différent). **Vérifié en
+direct** (tenant 1594) : mois d'octobre clôturé temporairement → saisie manuelle ET extourne toutes deux
+rejetées (403) ; mois rouvert → les deux réussissent normalement ; données de test nettoyées.
+
+**5. Supprimer une dépense déjà comptabilisée ne contre-passait jamais son écriture GL** —
+`DELETE /api/accounting/expenses/:id` soft-supprimait la dépense sans jamais chercher ni extourner son
+écriture GL — la dépense disparaissait du tableau de bord simple (filtré sur `deleted_at`), mais restait
+indéfiniment dans le bilan/compte de résultat SYSCOHADA, une divergence permanente entre les deux vues.
+Corrigé avec le même précédent que l'annulation d'un paiement de loyer
+(`DELETE /:leaseId/payments/:paymentId`, routes/leases.js) : extourne, datée du jour de la suppression,
+TOUTES les écritures `validee` trouvées pour `source_table IN ('expenses', 'expense_settlements')` — une
+dépense « à crédit » déjà réglée (Haute #6) voit donc son ENGAGEMENT et son RÈGLEMENT tous deux
+contre-passés, pas seulement l'un des deux. **Vérifié en direct** (tenant 1594) : dépense payée simple
+supprimée → son écriture passe à `extournee` avec une écriture miroir ; dépense à crédit réglée puis
+supprimée → les DEUX écritures (engagement + règlement) correctement extournées chacune avec son miroir ;
+données de test nettoyées.
+
+**6. Dépassement de la caution peinture perdu si on rouvre un PV de sortie pour le corriger** —
+`checkAdditionalDepositRefunds` (services/leaseDeposits.js) ne regarde que les cautions encore `held` pour
+calculer `peintureOverflow` (dépassement de la retenue peinture au-delà de SA PROPRE caution, ajouté aux
+retenues de la caution de LOYER) — sur une CORRECTION (réouverture d'un PV déjà finalisé pour corriger un
+détail SANS RAPPORT), la caution peinture est déjà `returned` depuis la première finalisation
+(`finalizeAdditionalDeposits` n'est jamais rejouée sur correction), donc le recalcul retombait TOUJOURS à
+0 — un dépassement légitimement facturé la première fois disparaissait silencieusement, rendant le
+remboursement recalculé trop généreux. Corrigé par une nouvelle colonne
+`move_out_reports.peinture_overflow_amount` (migration 079) : persistée à CHAQUE finalisation, mais sur une
+correction, relue (jamais recalculée) au lieu d'appeler `checkAdditionalDepositRefunds`. **Vérifié en
+direct de bout en bout** (tenant 1594, lease jetable 6445) : caution peinture 3000, retenue saisie 5000 →
+1ʳᵉ finalisation : `totalDeductions=2000` (le dépassement), `netRefund=48000`, persisté correctement ;
+réouverture pour corriger un montant SANS RAPPORT (+500 FCFA « autres retenues ») → re-finalisation :
+`totalDeductions=2500` (500 + les 2000 de dépassement PRÉSERVÉS), `netRefund=47500` — AVANT le correctif,
+cela aurait donné `totalDeductions=500`/`netRefund=49500`, 2000 FCFA remboursés en trop au locataire.
+Données de test (bail, PV, GL, fichiers de signature) entièrement nettoyées.
+
+**7. Une retenue peinture saisie sans caution peinture sur le bail n'avait aucun effet réel** —
+`checkAdditionalDepositRefunds`/`finalizeAdditionalDeposits` ignorent silencieusement tout type de caution
+sans ligne `held` correspondante — un agent pouvait saisir `peintureDeductionAmount` sur un bail SANS
+caution peinture (le PV l'affiche comme une retenue bien réelle), mais ce montant n'entrait jamais dans
+`totalDeductions`/`netRefund` ni dans aucune écriture GL : une retenue fantôme sur un document officiel.
+Corrigé en bloquant (400) dès la saisie (`PATCH /:leaseId/move-out-report`) si `peintureDeductionAmount > 0`
+sans caution peinture `held` sur ce bail. **Vérifié en direct** (tenant 1594, bail jetable 6572, aucune
+caution peinture) : tentative de saisie → 400 explicite ; saisie sans peinture → 200 normal ; données
+nettoyées.
+
+**8. L'alerte prédictive de retard confondait versements partiels et mois distincts** —
+`listPredictiveLateAlerts` (services/rentTracking.js) comptait les 3 derniers VERSEMENTS bruts, jamais les
+3 derniers MOIS COUVERTS distincts — `allocateRentPayment` autorise pourtant plusieurs versements pour le
+même mois (règlement partiel puis complément plus tard). Un seul mois réglé en deux fois comptait donc à
+tort pour 2 « retards » distincts, déclenchant une fausse alerte de « retard récurrent » sur la base d'un
+SEUL évènement réel. Corrigé en extrayant une nouvelle fonction PURE `recentMonthlyLateCount` (agrège
+d'abord par `coversMonth`, retient la date du DERNIER versement qui a soldé chaque mois pour juger du
+retard) — testée par 3 nouveaux tests déterministes dans `rentTracking.test.js` (aucune dépendance à la
+date réelle, contrairement à la fonction appelante elle-même, qui ne peut pas être testée de façon fiable
+pour cette raison précise — voir la note sur les 5 échecs calendaires plus haut). Route
+`GET /api/accounting/predictive-alerts` testée en direct (tenant 1594) : répond normalement, sans erreur.
+
+**LES 8 CONSTATS « MOYENNE SÉVÉRITÉ » SONT TOUS TRAITÉS.**
+
+### Les 7 constats « Basse sévérité »
+
+**1. Numérotation des quittances par `COUNT(*)` non verrouillé** — `nextReceiptNumber`
+(routes/leases.js) pouvait calculer le même numéro pour deux paiements de BAUX DIFFÉRENTS enregistrés au
+même instant (le verrou posé sur le bail ne sérialise que les paiements d'un MÊME bail), faisant échouer
+le second sur la contrainte UNIQUE `uq_receipts_number`. Corrigé par un nouveau `insertReceiptForPayment`
+qui retente avec le numéro suivant sur `ER_DUP_ENTRY` au lieu de laisser l'erreur remonter — même
+philosophie que les autres garde-fous de concurrence de cette étape. Testé par VRAIE concurrence (2
+connexions MySQL, `Promise.all`, deux baux distincts). Vérifié en direct : un paiement normal continue de
+générer sa quittance normalement.
+
+**Vérifié** : suite backend **301/301** (296 passent + les 5 échecs calendaires sans rapport).
+
+**2. Arrondi de répartition des pertes SONEB/SBEE laissant un résidu non distribué** —
+`POST /api/utility-batches/:id/validate` (routes/utilityReadings.js) arrondissait chaque part de l'écart
+compteur principal/décompteurs INDÉPENDAMMENT — leur somme ne retombait pas forcément exactement sur
+l'écart total (quelques FCFA perdus), laissant filer un résidu au propriétaire même quand la politique
+'prorata' voulait que 100 % de l'écart retombe sur les locataires. Corrigé en extrayant une fonction PURE
+`distributeLossShares` (imputant le résidu d'arrondi à la plus grosse ligne facturable), testée par 3
+nouveaux tests déterministes dans `test/lossShareDistribution.test.js`.
+
+**Vérifié** : suite backend **304/304** (299 passent + les 5 échecs calendaires sans rapport).
+
+**3. Une charge supprimée restait visible « fantôme » sur l'écran du relevé de compteurs** —
+`loadRows` (routes/utilityReadings.js) joint `utility_charges` SANS filtrer `deleted_at IS NULL`,
+contrairement à toutes les autres vues (registre, point des charges, carnet propriétaire) — supprimer une
+facture générée par un relevé la laissait affichée comme « impayée » sur l'écran du relevé, alors qu'elle
+avait disparu partout ailleurs. Corrigé en filtrant la jointure et en distinguant `live_charge_id`
+(jointure filtrée) de la colonne brute `charge_id` (jamais effacée par la suppression logique). **Vérifié
+en direct** (tenant 1594, relevé jetable sur le bien AUD-002) : 3 charges générées à la validation, une
+supprimée → l'écran du relevé montre immédiatement `charge: null` pour cette unité, les deux autres
+restent affichées normalement ; données nettoyées.
+
+**4. Numérotation des écritures GL potentiellement non-chronologique après suspension/réactivation —
+EXAMINÉ, AUCUN CORRECTIF NÉCESSAIRE.** L'audit signalait qu'une écriture rétroactive découverte au
+rattrapage (après une réactivation) peut recevoir un numéro plus élevé qu'une écriture déjà postée datée
+plus tard. Après examen : `gl_entry_number_counters` a pour exigence documentée d'être continue et SANS
+TROU (obligation comptable réelle), pas nécessairement chronologique terme à terme. Le scénario décrit
+correspond exactement à la pratique comptable réelle (une écriture de régularisation découverte
+tardivement prend le numéro du jour, jamais insérée rétroactivement dans la séquence déjà émise) —
+renuméroter des écritures déjà attribuées pour « corriger » ce cas violerait une règle plus importante
+encore (un numéro de pièce comptable émis ne doit jamais être réutilisé ni déplacé). Aucun changement de
+code : comportement jugé correct, pas un bug.
+
+**5. Nom d'un tiers comptable jamais mis à jour après un renommage** — `getOrCreateThirdParty`
+(glThirdPartyService.js) n'écrivait `display_name` qu'à la CRÉATION de la ligne auxiliaire — un locataire/
+propriétaire/fournisseur renommé ensuite (pas supprimé, juste renommé) gardait indéfiniment son ANCIEN nom
+sur tous les rapports comptables (grand livre auxiliaire, détail d'écriture). Corrigé : rafraîchi à chaque
+appel si le nom a changé. Testé (persistance en base vérifiée, pas seulement la valeur de retour).
+
+**Vérifié** : suite backend **305/305** (300 passent + les 5 échecs calendaires sans rapport).
+
+**6. Aucune validation de cohérence des dates pour l'amortissement/la sortie d'immobilisation** —
+`POST /fixed-assets/:id/depreciate` et `/dispose` n'empêchaient ni un amortissement daté AVANT
+l'acquisition, ni une sortie antérieure à l'acquisition ou à un amortissement déjà enregistré pour un mois
+plus tardif. Corrigé par 3 nouvelles validations (400 explicite dans chaque cas).
+
+**🔴 Bug plus sérieux trouvé EN vérifiant ce point en direct** : la sortie d'immobilisation
+(`POST /fixed-assets/:id/dispose`) postait son écriture GL avec `sourceTable: 'fixed_assets'` — EXACTEMENT
+le même `(source_table, source_id)` que l'écriture d'ACQUISITION, qui reste `validee` indéfiniment (la
+sortie ne la réverse jamais, c'est un évènement qui s'AJOUTE). Depuis l'ajout de la contrainte UNIQUE
+`uq_gl_entries_active_source` (migration 077, Haute #8, plus tôt dans cette même étape), **TOUTE sortie
+d'immobilisation échouait en 500** (`ER_DUP_ENTRY`) pour n'importe quelle entreprise ayant le module GL
+actif — régression bloquante à 100 %, jamais détectée car la fonctionnalité de sortie (Critique #4) n'a
+jamais été retestée après l'ajout de la contrainte. Corrigé en alignant sur la convention déjà établie
+pour ce même cas de figure (`expense_settlements`, `lease_deposits_return`...) : nouveau label
+`sourceTable: 'fixed_asset_disposals'`, distinct de l'acquisition.
+
+**Vérifié en direct, bout en bout** (tenant 1594, 2 immobilisations jetables) : amortissement avant
+acquisition → 400 ; sortie avant acquisition → 400 ; sortie avant un amortissement déjà enregistré pour un
+mois postérieur → 400 (testé isolément sur une 2ᵉ immobilisation) ; sortie à une date valide → échouait en
+500 AVANT le correctif `sourceTable`, réussit normalement APRÈS (acquisition ET sortie coexistent
+désormais comme deux écritures `validee` distinctes, vérifié en base) ; données nettoyées.
+
+**7. Le total dû à un fournisseur ignorait les immobilisations à crédit** —
+`GET /api/accounting/suppliers` ne sommait que `expenses.payment_status='unpaid'`, jamais les
+immobilisations achetées « à crédit » (même flux `supplier_id`) — un fournisseur UNIQUEMENT lié à une
+immobilisation impayée affichait `totalOwed: 0`. Corrigé par deux sous-requêtes corrélées (jamais un
+second `LEFT JOIN` direct, qui aurait multiplié dépenses × immobilisations du même fournisseur et faussé
+la somme). **Vérifié en direct** (tenant 1594) : fournisseur jetable avec UNIQUEMENT une immobilisation
+impayée (45 000 FCFA) → `totalOwed: 45000` (était 0 avant) ; ajout d'une dépense impayée du même
+fournisseur (7 000 FCFA) → `totalOwed: 52000` (somme correcte, pas de doublon) ; données nettoyées.
+
+**LES 15 CONSTATS DE L'ÉTAPE 51BIS SONT TOUS TRAITÉS** (7 Basse corrigées, 1 examinée et jugée non-bug).
+Suite backend finale : **305/305** (300 passent + les 5 échecs calendaires préexistants, sans rapport).

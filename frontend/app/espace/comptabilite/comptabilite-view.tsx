@@ -176,7 +176,7 @@ function ComptabiliteContent() {
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div>
             <h1 className="font-display text-headline-xl text-ink">Comptabilité</h1>
-            <p className="text-body-md text-ink-soft">Recettes et dépenses du cabinet, classées par nature, mois par mois.</p>
+            <p className="text-body-md text-ink-soft">Recettes et dépenses de l&apos;entreprise, classées par nature, mois par mois.</p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <Field label="Période" htmlFor="yearMonth">
@@ -328,7 +328,7 @@ function ComptabiliteContent() {
                 <CardTitle>Comptes séquestres par mandat</CardTitle>
               </div>
               <CardDescription>
-                Ce que le cabinet détient actuellement pour chaque propriétaire (recette nette cumulée depuis
+                Ce que l&apos;entreprise détient actuellement pour chaque propriétaire (recette nette cumulée depuis
                 toujours, moins les versements déjà effectués) — pas borné à la période sélectionnée ci-dessus.
               </CardDescription>
             </CardHeader>
@@ -511,9 +511,9 @@ function ComptabiliteContent() {
           <CardHeader>
             <CardTitle>Journal des dépenses</CardTitle>
             <CardDescription>
-              Dépenses de fonctionnement du cabinet pour la période sélectionnée. Les travaux facturés à un Bien
+              Dépenses de fonctionnement de l&apos;entreprise pour la période sélectionnée. Les travaux facturés à un Bien
               (repérés par son code ci-dessous) sont à la charge du propriétaire et n&apos;entrent pas dans les
-              totaux du cabinet.
+              totaux de l&apos;entreprise.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -1043,7 +1043,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         icon={<UserPlus size={16} />}
         value={formatFcfa(totals.entryFeesCollected)}
         tone={totals.entryFeesCollected > 0 ? "success" : "default"}
-        trend={{ value: `${totals.entryFeesCollectedCount} locataire(s) — produit du cabinet, jamais reversé`, direction: "flat" }}
+        trend={{ value: `${totals.entryFeesCollectedCount} locataire(s) — produit de l'entreprise, jamais reversé`, direction: "flat" }}
       />
       <StatCard
         label="Versé aux propriétaires"
@@ -1053,7 +1053,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         trend={{ value: `${totals.ownerPayoutsCount} versement(s)`, direction: "flat" }}
       />
       <StatCard
-        label="Dépenses du cabinet"
+        label="Dépenses de l'entreprise"
         icon={<Wallet size={16} />}
         value={formatFcfa(totals.expenses)}
         tone={totals.expenses > 0 ? "warning" : "default"}
@@ -1085,7 +1085,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         icon={<Scale size={16} />}
         value={formatFcfa(totals.netCashFlow)}
         tone={totals.netCashFlow >= 0 ? "success" : "danger"}
-        trend={{ value: "Encaissé + frais d'agence, moins reversé et dépenses du cabinet", direction: totals.netCashFlow >= 0 ? "up" : "down" }}
+        trend={{ value: "Encaissé + frais d'agence, moins reversé et dépenses de l'entreprise", direction: totals.netCashFlow >= 0 ? "up" : "down" }}
       />
     </div>
   );
@@ -1466,7 +1466,7 @@ function ExpenseRow({
         <div className="flex items-center gap-1.5">
           <span className="text-ink">{expense.label}</span>
           {expense.propertyCode && (
-            <Badge variant="info" title="Travaux facturés à ce Bien, à la charge du propriétaire, pas du cabinet">
+            <Badge variant="info" title="Travaux facturés à ce Bien, à la charge du propriétaire, pas de l'entreprise">
               {expense.propertyCode}
             </Badge>
           )}
@@ -1550,7 +1550,7 @@ function FixedAssetsSection({ accessToken }: { accessToken: string | null }) {
   return (
     <Card className="border-info-border bg-info/5">
       <CardHeader>
-        <CardTitle>Immobilisations du cabinet</CardTitle>
+        <CardTitle>Immobilisations de l&apos;entreprise</CardTitle>
         <CardDescription>
           Matériel propre à l&apos;agence (informatique, mobilier, véhicules) — jamais les Biens gérés pour le
           compte des propriétaires. La valeur nette reflète uniquement les mois d&apos;amortissement déjà

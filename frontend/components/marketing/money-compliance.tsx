@@ -16,12 +16,12 @@ const ITEMS = [
   {
     icon: Landmark,
     title: "Séquestre par propriétaire",
-    description: "Vous savez toujours combien le cabinet détient pour chacun, et un versement ne peut pas dépasser ce solde.",
+    description: "Vous savez toujours combien l'entreprise détient pour chacun, et un versement ne peut pas dépasser ce solde.",
   },
   {
     icon: Percent,
     title: "Commission sur mesure",
-    description: "Un taux par propriétaire, avec des dates d'effet : la part du cabinet et celle du propriétaire se calculent seules.",
+    description: "Un taux par propriétaire, avec des dates d'effet : la part de l'entreprise et celle du propriétaire se calculent seules.",
   },
   {
     icon: Wallet,
@@ -50,7 +50,7 @@ export function MoneyCompliance() {
     <section id="argent" className="bg-surface-muted py-14 sm:py-20">
       <div className="content-shell">
         <SectionHeading
-          eyebrow="L'argent du cabinet"
+          eyebrow="L'argent de l'entreprise"
           title="Des comptes justes, du premier paiement à la clôture"
           description="Chaque franc encaissé est rattaché à un locataire, un Bien, un propriétaire — et reste traçable."
         />

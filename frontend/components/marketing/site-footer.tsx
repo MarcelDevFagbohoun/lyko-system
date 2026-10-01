@@ -64,7 +64,7 @@ export function SiteFooter() {
       <div className="border-t border-border">
         <div className="content-shell flex flex-col gap-2 py-4 text-body-xs text-ink-muted sm:flex-row sm:items-center sm:justify-between">
           <span>© {new Date().getFullYear()} Lyko System. Tous droits réservés.</span>
-          <span>Conçu au Bénin, pour les cabinets et agences immobilières.</span>
+          <span>Conçu au Bénin, pour les entreprises et agences immobilières.</span>
         </div>
       </div>
     </footer>

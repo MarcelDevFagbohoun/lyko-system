@@ -230,6 +230,8 @@ export type Renter = {
   email: string | null;
   profession: string | null;
   notes: string | null;
+  notesUpdatedBy: Actor;
+  notesUpdatedAt: string | null;
   createdBy: Actor;
   createdAt: string;
   /** Un lien de portail a déjà été généré pour ce locataire (jamais le token lui-même). */
@@ -325,7 +327,6 @@ export type UpdateRenterInput = Partial<{
   lastName: string;
   email: string | null;
   profession: string | null;
-  notes: string | null;
 }>;
 
 export function updateRenter(accessToken: string, id: number, input: UpdateRenterInput) {
@@ -334,6 +335,20 @@ export function updateRenter(accessToken: string, id: number, input: UpdateRente
     accessToken,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Note interne libre sur la situation du locataire — endpoint séparé de `updateRenter`
+ * (identité) et volontairement ouvert à tout employé authentifié (comptable, agent),
+ * pas seulement à qui a le droit de modifier la fiche (demande explicite de l'utilisateur).
+ */
+export function updateRenterNotes(accessToken: string, id: number, notes: string | null) {
+  return apiFetch<{ renter: Renter }>(`/api/renters/${id}/notes`, {
+    method: "PATCH",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes }),
   });
 }
 

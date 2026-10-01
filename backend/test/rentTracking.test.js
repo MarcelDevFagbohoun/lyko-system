@@ -14,6 +14,7 @@ const {
   computeArrears,
   allocateRentPayment,
   isPaymentLate,
+  recentMonthlyLateCount,
   buildRentStrip,
   summarizeRentMonth,
   firstRegularDueDate,
@@ -572,4 +573,52 @@ test('buildRentStrip — AVEC entryProration=prorata : le mois de signature ne r
   );
   const september = strip.find((m) => m.month === '2026-09');
   assert.notEqual(september.status, 'en_retard', 'septembre est couvert par le prorata, jamais un mois en retard');
+});
+
+// ───── bug corrigé (étape 51bis, Moyenne #8) : alerte prédictive confondant versements partiels et mois distincts ─────
+
+test("recentMonthlyLateCount — un SEUL mois réglé en 2 versements (partiel + complément en retard) compte pour 1 retard, jamais 2", () => {
+  // Échéance le 5. Juillet : 2 versements pour le MÊME mois (30000 le 3, dans les temps ; 70000 le 10,
+  // en retard — le mois n'est soldé/jugé qu'à la date du DERNIER versement). Juin et août : un seul
+  // versement chacun, tous deux à temps.
+  const { recentMonths, lateCount } = recentMonthlyLateCount(
+    [
+      { coversMonth: '2026-06', paidAt: '2026-06-04' },
+      { coversMonth: '2026-07', paidAt: '2026-07-03' },
+      { coversMonth: '2026-07', paidAt: '2026-07-10' },
+      { coversMonth: '2026-08', paidAt: '2026-08-05' },
+    ],
+    5,
+    'avance',
+  );
+  assert.equal(recentMonths.length, 3, '3 MOIS distincts, jamais 4 versements bruts');
+  assert.equal(lateCount, 1, 'juillet compte pour UN SEUL retard (date du dernier versement), jamais deux');
+});
+
+test('recentMonthlyLateCount — 2 mois distincts réellement en retard déclenchent bien 2, comportement normal inchangé', () => {
+  const { recentMonths, lateCount } = recentMonthlyLateCount(
+    [
+      { coversMonth: '2026-06', paidAt: '2026-06-10' },
+      { coversMonth: '2026-07', paidAt: '2026-07-08' },
+      { coversMonth: '2026-08', paidAt: '2026-08-04' },
+    ],
+    5,
+    'avance',
+  );
+  assert.equal(recentMonths.length, 3);
+  assert.equal(lateCount, 2, 'juin ET juillet sont réellement deux mois distincts en retard');
+});
+
+test("recentMonthlyLateCount — ne retient que les 3 MOIS les plus récents, jamais plus même avec davantage de versements", () => {
+  const { recentMonths } = recentMonthlyLateCount(
+    [
+      { coversMonth: '2026-05', paidAt: '2026-05-04' },
+      { coversMonth: '2026-06', paidAt: '2026-06-04' },
+      { coversMonth: '2026-07', paidAt: '2026-07-04' },
+      { coversMonth: '2026-08', paidAt: '2026-08-04' },
+    ],
+    5,
+    'avance',
+  );
+  assert.deepEqual(recentMonths.map((m) => m.coversMonth), ['2026-08', '2026-07', '2026-06']);
 });

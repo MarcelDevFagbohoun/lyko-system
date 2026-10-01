@@ -262,7 +262,7 @@ const TOOLS = [
     label: 'Consultation du bilan comptable…',
     allowed: (ctx) => hasAny(ctx, 'comptabilite'),
     description:
-      "Donne le bilan du cabinet pour un mois donné : loyers encaissés, versés aux propriétaires, dépenses, solde net, impayés, charges SONEB/SBEE impayées, solde séquestre total, propriétaires sans taux de commission défini. Utilise cet outil pour toute question sur la santé financière du cabinet.",
+      "Donne le bilan de l'entreprise pour un mois donné : loyers encaissés, versés aux propriétaires, dépenses, solde net, impayés, charges SONEB/SBEE impayées, solde séquestre total, propriétaires sans taux de commission défini. Utilise cet outil pour toute question sur la santé financière de l'entreprise.",
     properties: moisSchema,
     run: bilanComptableDuMois,
   },
@@ -270,7 +270,7 @@ const TOOLS = [
     name: 'soldes_proprietaires',
     label: 'Consultation des soldes propriétaires…',
     allowed: (ctx) => hasAny(ctx, 'comptabilite'),
-    description: "Donne, pour chaque propriétaire, le solde que le cabinet détient actuellement pour son compte (séquestre), du plus élevé au plus faible.",
+    description: "Donne, pour chaque propriétaire, le solde que l'entreprise détient actuellement pour son compte (séquestre), du plus élevé au plus faible.",
     properties: limiteSchema(20, 10),
     run: soldesProprietaires,
   },

@@ -127,7 +127,7 @@ export function ChargeRemittanceCard({
         </CardTitle>
         <CardDescription>
           Le propriétaire paie lui-même la facture mère : les charges encaissées chez ses locataires lui sont reversées
-          intégralement (le cabinet ne garde rien). Séparé du séquestre des loyers.
+          intégralement (l&apos;entreprise ne garde rien). Séparé du séquestre des loyers.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

@@ -38,7 +38,7 @@ export function fetchAssistantSettings(accessToken: string) {
 
 export function saveAssistantSettings(
   accessToken: string,
-  input: { enabled: boolean; acknowledge?: boolean; monthlyQuota?: number },
+  input: { enabled: boolean; acknowledge?: boolean },
 ) {
   return apiFetch<{ enabled: boolean; consentAt: string | null; usage: AssistantSettings["usage"] }>("/api/assistant/settings", {
     method: "PUT",

@@ -19,7 +19,7 @@ async function loadContext(auth) {
   const [[row]] = await pool.query(
     `SELECT u.id AS user_id, u.first_name, u.role, u.status,
             t.id AS tenant_id, t.company_name, t.dg_title, t.comptable_title, t.agent_title,
-            t.assistant_enabled, t.assistant_monthly_quota, t.assistant_consent_at
+            t.assistant_enabled, t.assistant_consent_at
      FROM users u JOIN tenants t ON t.id = u.tenant_id
      WHERE u.id = :userId AND u.tenant_id = :tenantId LIMIT 1`,
     { userId: auth.id, tenantId: auth.tenantId },

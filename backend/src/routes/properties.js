@@ -313,6 +313,15 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_PROPERTY), async (req, re
     );
     const propertyId = result.insertId;
 
+    // Étape 51bis : ouvre la première période de `property_owner_history` (migration 078) — sans cette
+    // ligne, un Bien créé après la migration n'aurait AUCUNE période, et toute requête comptable qui
+    // résout le propriétaire en vigueur à une date donnée (`getEscrowBalances`, `getRecetteProprietaire`)
+    // ne trouverait jamais personne pour lui.
+    await conn.query(
+      'INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on, set_by) VALUES (:tenantId, :propertyId, :ownerId, CURDATE(), :setBy)',
+      { tenantId: req.user.tenantId, propertyId, ownerId: data.ownerId, setBy: req.user.id },
+    );
+
     let photoPaths = [];
     if (req.files && req.files.length > 0) {
       const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}/properties/${propertyId}`);
@@ -353,12 +362,15 @@ router.patch('/:id', upload.array('photos', MAX_PHOTOS_PER_PROPERTY), async (req
   }
   const data = parsed.data;
 
+  const conn = await pool.getConnection();
+  let ownerChanging = false;
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const property = await loadProperty(pool, req.user.tenantId, id, scopeAgentId);
+    const property = await loadProperty(conn, req.user.tenantId, id, scopeAgentId);
 
+    ownerChanging = data.ownerId !== undefined && Number(data.ownerId) !== Number(property.owner_id);
     if (data.ownerId !== undefined) {
-      await assertOwnerExists(pool, req.user.tenantId, data.ownerId);
+      await assertOwnerExists(conn, req.user.tenantId, data.ownerId);
     }
 
     const fields = [];
@@ -391,14 +403,41 @@ router.patch('/:id', upload.array('photos', MAX_PHOTOS_PER_PROPERTY), async (req
       params.photos = JSON.stringify(existingPhotos);
     }
 
-    if (fields.length > 0) {
-      await pool.query(`UPDATE properties SET ${fields.join(', ')} WHERE id = :id`, params);
+    if (ownerChanging) {
+      // Audit comptable (étape 51bis) : réattribuer le propriétaire d'un Bien réécrivait auparavant
+      // silencieusement tout son historique financier (voir `property_owner_history`, migration 078) —
+      // la comptabilité ne regarde QUE `properties.owner_id`, jamais quand il a changé. Clôture la
+      // période en vigueur et en ouvre une nouvelle à la date d'aujourd'hui : tout ce qui a déjà été
+      // réellement perçu/dépensé reste attribué à l'ANCIEN propriétaire, seul l'avenir appartient au
+      // nouveau. `FOR UPDATE` sérialise deux réattributions concurrentes du même Bien.
+      await conn.beginTransaction();
+      const [[openPeriod]] = await conn.query(
+        'SELECT id FROM property_owner_history WHERE property_id = :id AND ends_on IS NULL FOR UPDATE',
+        { id },
+      );
+      if (openPeriod) {
+        await conn.query('UPDATE property_owner_history SET ends_on = CURDATE() WHERE id = :id', { id: openPeriod.id });
+      }
+      await conn.query(
+        `INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on, set_by)
+         VALUES (:tenantId, :propertyId, :ownerId, CURDATE(), :setBy)`,
+        { tenantId: req.user.tenantId, propertyId: id, ownerId: data.ownerId, setBy: req.user.id },
+      );
     }
+
+    if (fields.length > 0) {
+      await conn.query(`UPDATE properties SET ${fields.join(', ')} WHERE id = :id`, params);
+    }
+
+    if (ownerChanging) await conn.commit();
 
     const updated = await loadProperty(pool, req.user.tenantId, id);
     res.json({ property: toPublicProperty(updated) });
   } catch (err) {
+    if (ownerChanging) await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 

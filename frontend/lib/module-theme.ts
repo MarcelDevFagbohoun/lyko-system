@@ -32,7 +32,7 @@ export interface CadreTheme {
 export const CADRES: Record<Cadre, CadreTheme> = {
   apercu: {
     label: "Vue d'ensemble",
-    meaning: "Bleu — l'identité Lyko : le regard d'ensemble sur le cabinet.",
+    meaning: "Bleu — l'identité Lyko : le regard d'ensemble sur l'entreprise.",
     tone: "blue",
     solid: "bg-tint-blue-solid",
     text: "text-tint-blue-solid",
@@ -64,7 +64,7 @@ export const CADRES: Record<Cadre, CadreTheme> = {
   },
   administration: {
     label: "Administration",
-    meaning: "Ardoise — le fonctionnement du cabinet : équipe, réglages, journal, compte personnel.",
+    meaning: "Ardoise — le fonctionnement de l'entreprise : équipe, réglages, journal, compte personnel.",
     tone: "slate",
     solid: "bg-tint-slate-solid",
     text: "text-tint-slate-solid",

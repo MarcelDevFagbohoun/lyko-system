@@ -170,6 +170,10 @@ test('getOwnersWithoutCommissionRate — signale un propriétaire avec des loyer
     'INSERT INTO properties (tenant_id, code, owner_id, created_by) VALUES (:t, :code, :o, :by)',
     { t: fx.tenantId, code: 'SANS-TAUX-001', o: ownerId, by: fx.dgId },
   );
+  await pool.query(
+    "INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on) VALUES (:t, :p, :o, '2020-01-01')",
+    { t: fx.tenantId, p: property.insertId, o: ownerId },
+  );
   const [unit] = await pool.query(
     "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'SANS-TAUX-U1', 'studio', 'loue', 45000, :by)",
     { t: fx.tenantId, p: property.insertId, by: fx.dgId },
@@ -219,6 +223,10 @@ test('assertPayoutWithinBalance — rejette un reversement qui dépasse le solde
   const [property] = await pool.query(
     'INSERT INTO properties (tenant_id, code, owner_id, created_by) VALUES (:t, :code, :o, :by)',
     { t: fx.tenantId, code: 'A2-001', o: ownerId, by: fx.dgId },
+  );
+  await pool.query(
+    "INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on) VALUES (:t, :p, :o, '2020-01-01')",
+    { t: fx.tenantId, p: property.insertId, o: ownerId },
   );
   const [unit] = await pool.query(
     "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'A2-U1', 'studio', 'loue', 50000, :by)",
@@ -272,6 +280,10 @@ test('assertPayoutWithinBalance — verrou + vérification DANS la transaction :
   const [property] = await pool.query(
     'INSERT INTO properties (tenant_id, code, owner_id, created_by) VALUES (:t, :code, :o, :by)',
     { t: fx.tenantId, code: 'CONC-001', o: ownerId, by: fx.dgId },
+  );
+  await pool.query(
+    "INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on) VALUES (:t, :p, :o, '2020-01-01')",
+    { t: fx.tenantId, p: property.insertId, o: ownerId },
   );
   const [unit] = await pool.query(
     "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'CONC-U1', 'studio', 'loue', 50000, :by)",
@@ -422,6 +434,10 @@ test("getCabinetRevenue — commission sommée sur TOUS les propriétaires + fra
     'INSERT INTO properties (tenant_id, code, owner_id, created_by) VALUES (:t, :code, :o, :by)',
     { t: fx.tenantId, code: 'CAB-B-001', o: ownerB.insertId, by: fx.dgId },
   );
+  await pool.query(
+    "INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on) VALUES (:t, :p, :o, '2020-01-01')",
+    { t: fx.tenantId, p: propertyB.insertId, o: ownerB.insertId },
+  );
   const [unitB] = await pool.query(
     "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'CAB-B-U1', 'studio', 'loue', 50000, :by)",
     { t: fx.tenantId, p: propertyB.insertId, by: fx.dgId },
@@ -553,6 +569,10 @@ test(
         'INSERT INTO properties (tenant_id, code, owner_id, address, created_by) VALUES (:t, :code, :o, :address, :by)',
         { t: iso.tenantId, code: 'GLT-002', o: iso.ownerId, address: 'Adresse test 2', by: iso.dgId },
       );
+      await pool.query(
+        "INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on) VALUES (:t, :p, :o, '2020-01-01')",
+        { t: iso.tenantId, p: property2.insertId, o: iso.ownerId },
+      );
       const [unit2] = await pool.query(
         "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'U2', 'studio', 'loue', 33333, :by)",
         { t: iso.tenantId, p: property2.insertId, by: iso.dgId },
@@ -651,6 +671,100 @@ test(
       assert.equal(recetteJuillet.totalExpenses, 0, 'le mois d\'engagement (juillet) reste à 0 : le règlement a eu lieu en août');
       const recetteAout = await getRecetteNetteMaison(iso.tenantId, iso.propertyId, '2026-08');
       assert.equal(recetteAout.totalExpenses, 15000, 'le mois de règlement réel (août) porte désormais la déduction');
+    } finally {
+      await teardown(iso.tenantId);
+    }
+  },
+);
+
+// ───── bug corrigé (étape 51bis) : réattribuer le propriétaire d'un Bien réécrivait silencieusement tout son historique financier ─────
+
+test(
+  "getEscrowBalances / getRecetteProprietaire — réattribuer le propriétaire d'un Bien NE CHANGE PAS à qui appartenaient les loyers déjà encaissés sous l'ancien",
+  async () => {
+    const iso = await createBareFixture();
+    try {
+      await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10); // Propriétaire A (fixture), 10 %
+      const [ownerB] = await pool.query('INSERT INTO owners (tenant_id, name, created_by) VALUES (:t, :n, :by)', {
+        t: iso.tenantId,
+        n: 'Propriétaire B (étape 51bis)',
+        by: iso.dgId,
+      });
+      await setCommissionRate(iso.tenantId, ownerB.insertId, iso.dgId, 20); // Propriétaire B, 20 %
+
+      // Loyer de janvier encaissé pendant que A est encore propriétaire.
+      await pool.query(
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l, '2026-01', 100000, 'especes', '2026-01-05', :by)`,
+        { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
+      );
+
+      // Réattribution à B le 1er février (frontière de mois nette : la convention « dernier jour du
+      // mois » déjà utilisée pour le taux de commission — voir `getTauxCommissionActif` — s'applique de
+      // la même façon à l'attribution du propriétaire au niveau mensuel de `getRecetteProprietaire` ; une
+      // réattribution EN COURS de mois partagerait un seul mois entre deux propriétaires à ce niveau,
+      // scénario volontairement hors de ce test). Reproduit ici ce que fait désormais
+      // `PATCH /api/properties/:id` (clôture la période ouverte, en ouvre une nouvelle) en SQL direct
+      // (pas de supertest dans ce projet, voir les autres fichiers de ce dossier).
+      await pool.query(
+        "UPDATE property_owner_history SET ends_on = '2026-02-01' WHERE property_id = :p AND ends_on IS NULL",
+        { p: iso.propertyId },
+      );
+      await pool.query(
+        "INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on, set_by) VALUES (:t, :p, :o, '2026-02-01', :by)",
+        { t: iso.tenantId, p: iso.propertyId, o: ownerB.insertId, by: iso.dgId },
+      );
+      await pool.query('UPDATE properties SET owner_id = :o WHERE id = :p', { o: ownerB.insertId, p: iso.propertyId });
+
+      // Loyer de février encaissé APRÈS la réattribution, donc sous B.
+      await pool.query(
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l, '2026-02', 100000, 'especes', '2026-02-05', :by)`,
+        { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
+      );
+
+      const balances = await getEscrowBalances(iso.tenantId);
+      assert.equal(balances.get(iso.ownerId)?.totalCollected, 90000, 'A garde le loyer de janvier (100000 - 10% de commission), jamais réécrit par la réattribution');
+      assert.equal(balances.get(ownerB.insertId)?.totalCollected, 80000, 'B ne reçoit QUE le loyer de février (100000 - 20%), jamais celui de janvier qui appartenait à A');
+
+      // Même vérification au niveau de la fiche du Bien, mois par mois.
+      const janvier = await getRecetteProprietaire(iso.tenantId, iso.propertyId, '2026-01');
+      assert.equal(janvier.ownerId, iso.ownerId, "janvier reste attribué à A, même si le Bien appartient désormais à B");
+      assert.equal(janvier.rate, 10);
+      const fevrier = await getRecetteProprietaire(iso.tenantId, iso.propertyId, '2026-02');
+      assert.equal(fevrier.ownerId, ownerB.insertId, 'février est bien attribué à B');
+      assert.equal(fevrier.rate, 20);
+    } finally {
+      await teardown(iso.tenantId);
+    }
+  },
+);
+
+test(
+  "getEscrowBalances — un paiement antidaté à AVANT la plus ancienne période de property_owner_history retombe sur le propriétaire ACTUEL, jamais perdu du total",
+  async () => {
+    // Cas réel rencontré en vérifiant ce correctif en direct (tenant 1594) : un paiement de loyer
+    // enregistré avec un `paidAt` antérieur à la création du Bien (onboarding d'un locataire déjà en
+    // place avant l'usage de Lyko System, saisie rétroactive). Avant le `LEFT JOIN` + `COALESCE`
+    // ci-dessus, un tel paiement disparaissait silencieusement du solde séquestre (JOIN strict, aucune
+    // période ne le couvrant).
+    const iso = await createBareFixture();
+    try {
+      await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10);
+      // La fixture ouvre sa période dès 2020-01-01 (voir fixtures.js) — on simule ici un Bien dont la
+      // période la plus ancienne démarre PLUS TARD que ce paiement, pour reproduire le trou.
+      await pool.query("UPDATE property_owner_history SET starts_on = '2026-06-01' WHERE property_id = :p", { p: iso.propertyId });
+
+      await pool.query(
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l, '2026-01', 60000, 'especes', '2026-01-05', :by)`,
+        { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
+      );
+
+      const balances = await getEscrowBalances(iso.tenantId);
+      const b = balances.get(iso.ownerId);
+      assert.ok(b, "le paiement doit retomber sur le propriétaire actuel, jamais disparaître de l'agrégat");
+      assert.equal(b.totalCollected, 54000, '60000 - 10% de commission, comme un paiement normal');
     } finally {
       await teardown(iso.tenantId);
     }

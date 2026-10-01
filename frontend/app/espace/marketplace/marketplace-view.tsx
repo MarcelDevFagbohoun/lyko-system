@@ -57,7 +57,7 @@ function MarketplaceContent() {
         <div>
           <h1 className="font-display text-headline-xl text-ink">Marketplace</h1>
           <p className="text-body-md text-ink-soft">
-            Les annonces publiées ici sont affichées sur le site externe relié à votre cabinet.
+            Les annonces publiées ici sont affichées sur le site externe relié à votre entreprise.
           </p>
         </div>
 

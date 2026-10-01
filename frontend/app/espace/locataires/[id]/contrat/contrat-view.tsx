@@ -178,7 +178,7 @@ function ContractArticles({ data }: { data: LeaseContractData }) {
       title: "Les parties",
       body:
         `Entre les soussignés : d'une part, ${data.owner.name}${data.owner.address ? `, domicilié à ${data.owner.address}` : ""}, ` +
-        `propriétaire du bien désigné à l'article 2, représenté aux fins des présentes par le cabinet, ci-après dénommé « le Bailleur » ; ` +
+        `propriétaire du bien désigné à l'article 2, représenté aux fins des présentes par l'entreprise, ci-après dénommé « le Bailleur » ; ` +
         `et d'autre part, ${data.renter.firstName} ${data.renter.lastName}, joignable au ${data.renter.phone}, ci-après dénommé « le Locataire ».`,
     },
     {
@@ -197,7 +197,7 @@ function ContractArticles({ data }: { data: LeaseContractData }) {
       body:
         `Le loyer mensuel est fixé à ${formatFcfa(data.lease.monthlyRent)}, payable ${data.lease.rentTimingLabel.toLowerCase()}, ` +
         `au plus tard le ${data.lease.rentDueDay} de chaque mois.` +
-        (data.lease.entryFeeAmount > 0 ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)} restent acquis au cabinet.` : ""),
+        (data.lease.entryFeeAmount > 0 ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)} restent acquis à l'entreprise.` : ""),
     },
     {
       title: "Caution(s)",

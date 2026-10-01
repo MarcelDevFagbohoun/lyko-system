@@ -33,7 +33,7 @@ export function UtilitiesSpotlight() {
             align="left"
             eyebrow="Charges SONEB & SBEE"
             title="Le propriétaire ne perd plus d'argent sur l'eau et l'électricité"
-            description="Le propriétaire paie la facture mère, le cabinet encaisse les locataires. Lyko fait la différence à votre place, mois par mois."
+            description="Le propriétaire paie la facture mère, l'entreprise encaisse les locataires. Lyko fait la différence à votre place, mois par mois."
           />
           <ol className="mt-8 flex flex-col gap-5">
             {STEPS.map((step, i) => (

@@ -57,6 +57,25 @@ function pickRateValidAt(rates, atDate) {
 }
 
 /**
+ * Propriétaire d'un Bien EN VIGUEUR à une date précise (pas forcément le propriétaire ACTUEL) — voir
+ * `property_owner_history` (migration 078, étape 51bis : réattribuer un Bien via `PATCH
+ * /api/properties/:id` ne doit jamais réécrire rétroactivement à qui appartenaient les loyers/dépenses
+ * déjà réels avant ce changement). Un Bien jamais réattribué n'a qu'UNE période ouverte depuis sa
+ * création : ce calcul reste alors identique à `properties.owner_id` pour toute date après sa création.
+ * Renvoie `null` si aucune période ne couvre cette date (mois antérieur à la création du Bien).
+ */
+async function resolveOwnerAtDate(tenantId, propertyId, atDate, db = pool) {
+  const [rows] = await db.query(
+    `SELECT owner_id FROM property_owner_history
+     WHERE tenant_id = :tenantId AND property_id = :propertyId
+       AND starts_on <= :atDate AND (ends_on IS NULL OR ends_on > :atDate)
+     LIMIT 1`,
+    { tenantId, propertyId, atDate },
+  );
+  return rows[0] ? rows[0].owner_id : null;
+}
+
+/**
  * Taux de commission d'un propriétaire VALIDE à une date précise (pas
  * forcément le taux actuel) : celui dont l'intervalle [starts_on, ends_on]
  * contient cette date (`ends_on IS NULL` = taux actif depuis `starts_on`,
@@ -169,7 +188,11 @@ async function getRecetteProprietaire(tenantId, propertyId, yearMonth) {
     err.status = 404;
     throw err;
   }
-  const ownerId = propertyRows[0].owner_id;
+  // Étape 51bis : le propriétaire EN VIGUEUR ce mois-là (`property_owner_history`), jamais le
+  // propriétaire ACTUEL — sinon réattribuer un Bien changerait rétroactivement à qui appartient la
+  // recette d'un mois déjà passé. Repli sur le propriétaire actuel seulement si aucune période ne couvre
+  // cette date (mois antérieur à la création du Bien : aucune recette possible, sans conséquence).
+  const ownerId = (await resolveOwnerAtDate(tenantId, propertyId, lastDayOfMonth(yearMonth))) ?? propertyRows[0].owner_id;
 
   const { totalPayments, totalExpenses, recetteNette, breakdown } = await getRecetteNetteMaison(tenantId, propertyId, yearMonth);
   const rateInfo = await getTauxCommissionActif(tenantId, ownerId, yearMonth);
@@ -231,14 +254,25 @@ async function getEscrowBalances(tenantId, db = pool) {
   });
   const commissionDeductedAtCollection = (timingRows[0]?.gl_commission_timing ?? 'encaissement') === 'encaissement';
 
+  // Étape 51bis : chaque montant est désormais attribué au propriétaire EN VIGUEUR à la date réelle de
+  // l'événement (`property_owner_history`, migration 078), jamais au propriétaire ACTUEL de `properties`
+  // — réattribuer un Bien à un autre propriétaire ne doit plus réécrire silencieusement l'historique déjà
+  // perçu/dépensé sous l'ancien. Un Bien jamais réattribué n'a qu'une période ouverte depuis sa création :
+  // ce JOIN produit alors exactement le même résultat qu'avant pour tout tenant qui n'a jamais réattribué.
+  // `LEFT JOIN` + `COALESCE(poh.owner_id, p.owner_id)` : un évènement daté AVANT la plus ancienne période
+  // suivie pour ce Bien (ex. un paiement backdaté à l'onboarding, antérieur à la création du Bien dans
+  // l'app) retombe sur le propriétaire ACTUEL plutôt que de disparaître silencieusement du total — mieux
+  // vaut l'ancien comportement (imprécis) que de perdre de l'argent dans l'agrégat.
   const [paymentRows] = await db.query(
-    `SELECT p.owner_id, p.id AS property_id, rp.covers_month AS ym, SUM(rp.amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, rp.covers_month AS ym, SUM(rp.amount) AS total
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= rp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > rp.paid_at)
      WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL
-     GROUP BY p.owner_id, p.id, rp.covers_month`,
+     GROUP BY owner_id, p.id, rp.covers_month`,
     { tenantId },
   );
   // Dette initiale réglée (étape 42, demande explicite de l'utilisateur : « lorsqu'un impayé est payé
@@ -248,37 +282,43 @@ async function getEscrowBalances(tenantId, db = pool) {
   // par mois de loyer (cette dette n'en a pas) — même traitement comptable qu'un loyer (voir
   // `dette_initiale_encaissee`, glOperationTypes).
   const [openingDebtRows] = await db.query(
-    `SELECT p.owner_id, p.id AS property_id, DATE_FORMAT(lodp.paid_at, '%Y-%m') AS ym, SUM(lodp.amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, DATE_FORMAT(lodp.paid_at, '%Y-%m') AS ym, SUM(lodp.amount) AS total
      FROM lease_opening_debt_payments lodp
      JOIN leases l ON l.id = lodp.lease_id
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= lodp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > lodp.paid_at)
      WHERE lodp.tenant_id = :tenantId
-     GROUP BY p.owner_id, p.id, ym`,
+     GROUP BY owner_id, p.id, ym`,
     { tenantId },
   );
   // Prorata d'entrée réglé (étape 42) — un seul montant par bail (pas un historique de paiements comme
   // la dette initiale ci-dessus), groupé par mois de règlement effectif (`entry_prorata_received_at`) ;
   // absent tant que rien n'a été concrètement encaissé (`IS NOT NULL`).
   const [prorataRows] = await db.query(
-    `SELECT p.owner_id, p.id AS property_id, DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') AS ym, SUM(l.entry_prorata_amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') AS ym, SUM(l.entry_prorata_amount) AS total
      FROM leases l
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= l.entry_prorata_received_at AND (poh.ends_on IS NULL OR poh.ends_on > l.entry_prorata_received_at)
      WHERE l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL
-     GROUP BY p.owner_id, p.id, ym`,
+     GROUP BY owner_id, p.id, ym`,
     { tenantId },
   );
   // Haute #7 (étape 51) : groupée par mois de RÈGLEMENT réel (`paid_at`), jamais la date d'engagement
   // (`expense_date`) — une dépense « à crédit » encore impayée ne doit réduire aucun solde séquestre tant
   // qu'aucun argent n'est réellement sorti (même principe de base caisse que le reste de cette fonction).
   const [expenseRows] = await db.query(
-    `SELECT p.owner_id, p.id AS property_id, DATE_FORMAT(e.paid_at, '%Y-%m') AS ym, SUM(e.amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, DATE_FORMAT(e.paid_at, '%Y-%m') AS ym, SUM(e.amount) AS total
      FROM expenses e
      JOIN properties p ON p.id = e.property_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= e.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > e.paid_at)
      WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.property_id IS NOT NULL
        AND e.payment_status = 'paid'
-     GROUP BY p.owner_id, p.id, ym`,
+     GROUP BY owner_id, p.id, ym`,
     { tenantId },
   );
   const [rateRows] = await db.query(
@@ -385,34 +425,42 @@ async function getEscrowBalances(tenantId, db = pool) {
 async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
   const atDate = lastDayOfMonth(yearMonth);
 
+  // Étape 51bis : propriétaire EN VIGUEUR à la date réelle de chaque événement (`property_owner_history`,
+  // migration 078), jamais le propriétaire ACTUEL — voir le même correctif dans `getEscrowBalances`.
   const [paymentRows] = await db.query(
-    `SELECT p.owner_id, SUM(rp.amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, SUM(rp.amount) AS total
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= rp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > rp.paid_at)
      WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL AND rp.covers_month = :yearMonth
-     GROUP BY p.owner_id`,
+     GROUP BY owner_id`,
     { tenantId, yearMonth },
   );
   const [openingDebtRows] = await db.query(
-    `SELECT p.owner_id, SUM(lodp.amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, SUM(lodp.amount) AS total
      FROM lease_opening_debt_payments lodp
      JOIN leases l ON l.id = lodp.lease_id
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= lodp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > lodp.paid_at)
      WHERE lodp.tenant_id = :tenantId AND DATE_FORMAT(lodp.paid_at, '%Y-%m') = :yearMonth
-     GROUP BY p.owner_id`,
+     GROUP BY owner_id`,
     { tenantId, yearMonth },
   );
   const [prorataRows] = await db.query(
-    `SELECT p.owner_id, SUM(l.entry_prorata_amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, SUM(l.entry_prorata_amount) AS total
      FROM leases l
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= l.entry_prorata_received_at AND (poh.ends_on IS NULL OR poh.ends_on > l.entry_prorata_received_at)
      WHERE l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL
        AND DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') = :yearMonth
-     GROUP BY p.owner_id`,
+     GROUP BY owner_id`,
     { tenantId, yearMonth },
   );
   // Haute #7 (étape 51) : filtrée sur `paid_at` (règlement RÉEL), jamais `expense_date` (simple date
@@ -422,12 +470,14 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
   // `expense_date` pour une dépense payée immédiatement (voir POST /expenses) : comportement inchangé
   // dans ce cas, seul le cas « à crédit » est corrigé.
   const [propertyExpenseRows] = await db.query(
-    `SELECT p.owner_id, SUM(e.amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, SUM(e.amount) AS total
      FROM expenses e
      JOIN properties p ON p.id = e.property_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= e.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > e.paid_at)
      WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.property_id IS NOT NULL
        AND e.payment_status = 'paid' AND DATE_FORMAT(e.paid_at, '%Y-%m') = :yearMonth
-     GROUP BY p.owner_id`,
+     GROUP BY owner_id`,
     { tenantId, yearMonth },
   );
   const [rateRows] = await db.query(
@@ -577,6 +627,7 @@ async function assertPayoutWithinBalance(tenantId, ownerId, amount, db = pool) {
 module.exports = {
   lastDayOfMonth,
   pickRateValidAt,
+  resolveOwnerAtDate,
   assertPayoutWithinBalance,
   getActiveCommissionRate,
   getTauxCommissionActif,

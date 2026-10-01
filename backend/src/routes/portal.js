@@ -336,7 +336,7 @@ router.get('/:token/contract.pdf', async (req, res, next) => {
       "SELECT first_name, last_name, role, stamp_path, signature_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
       { tenantId },
     );
-    const issuer = dgRows[0] || { first_name: tenantRows[0]?.company_name ?? 'Le cabinet', last_name: '' };
+    const issuer = dgRows[0] || { first_name: tenantRows[0]?.company_name ?? "L'entreprise", last_name: '' };
 
     // Un contrat par BAIL (pas par génération) — même principe que l'ancienne attestation.
     const issuance = await getOrCreateIssuance(tenantId, 'contrat', lease.id);

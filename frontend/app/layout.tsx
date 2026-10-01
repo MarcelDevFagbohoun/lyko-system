@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     template: "%s · Lyko System",
   },
   description:
-    "Logiciel de gestion locative pour cabinets et agences immobilières au Bénin : loyers, charges SONEB/SBEE, relances WhatsApp, quittances, relevés propriétaires et comptabilité SYSCOHADA.",
+    "Logiciel de gestion locative pour entreprises et agences immobilières au Bénin : loyers, charges SONEB/SBEE, relances WhatsApp, quittances, relevés propriétaires et comptabilité SYSCOHADA.",
   openGraph: {
     type: "website",
     locale: "fr_BJ",

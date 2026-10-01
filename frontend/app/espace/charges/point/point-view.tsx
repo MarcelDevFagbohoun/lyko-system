@@ -18,7 +18,7 @@ export function PointView() {
           <div>
             <h1 className="font-display text-headline-xl text-ink">Le point des charges</h1>
             <p className="text-body-md text-ink-soft">
-              Pour chaque propriétaire : la facture mère qu&apos;il a payée à la SONEB/SBEE face à ce que le cabinet a
+              Pour chaque propriétaire : la facture mère qu&apos;il a payée à la SONEB/SBEE face à ce que l&apos;entreprise a
               encaissé chez les locataires, et ce qu&apos;il reste à sa charge.
             </p>
           </div>

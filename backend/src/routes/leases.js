@@ -182,6 +182,32 @@ async function nextReceiptNumber(conn, tenantId) {
 }
 
 /**
+ * Insère la quittance d'un paiement — `nextReceiptNumber` ci-dessus n'est qu'un `COUNT(*)`, jamais un
+ * compteur verrouillé : deux paiements de BAUX DIFFÉRENTS enregistrés au même instant (deux employés, ou
+ * deux requêtes concurrentes) peuvent calculer le même numéro avant que l'un des deux ne commite. Le
+ * verrou posé sur le bail lui-même (plus haut dans `recordRentPayment`) ne sérialise que les paiements
+ * d'un MÊME bail, pas ce cas. `uq_receipts_number (tenant_id, receipt_number)` est le filet de sécurité
+ * final : un conflit ici signifie « un autre paiement vient de prendre ce numéro », jamais une vraie
+ * erreur — on retente avec le numéro suivant (étape 51bis, Basse #1).
+ */
+async function insertReceiptForPayment(conn, tenantId, paymentId, maxAttempts = 5) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const receiptNumber = await nextReceiptNumber(conn, tenantId);
+    try {
+      const [result] = await conn.query(
+        `INSERT INTO receipts (tenant_id, payment_id, receipt_number) VALUES (:tenantId, :paymentId, :number)`,
+        { tenantId, paymentId, number: receiptNumber },
+      );
+      return { receiptId: result.insertId, receiptNumber };
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY' && attempt < maxAttempts) continue;
+      throw err;
+    }
+  }
+  throw new Error('Impossible de générer un numéro de quittance unique après plusieurs tentatives.');
+}
+
+/**
  * Cœur commun de l'enregistrement d'un paiement de loyer : verrouille le
  * bail, calcule l'allocation multi-mois, insère les lignes `rent_payments` +
  * `receipts`. Seul endroit qui insère dans `rent_payments` — utilisé par la
@@ -255,11 +281,7 @@ async function recordRentPayment(
       },
     );
     const paymentId = paymentResult.insertId;
-    const receiptNumber = await nextReceiptNumber(conn, tenantId);
-    const [receiptResult] = await conn.query(
-      `INSERT INTO receipts (tenant_id, payment_id, receipt_number) VALUES (:tenantId, :paymentId, :number)`,
-      { tenantId, paymentId, number: receiptNumber },
-    );
+    const { receiptId, receiptNumber } = await insertReceiptForPayment(conn, tenantId, paymentId);
 
     // Module comptabilité SYSCOHADA (nouveau) — génère la contrepartie en
     // partie double dans LA MÊME transaction, SEULEMENT si l'entreprise a
@@ -288,7 +310,7 @@ async function recordRentPayment(
       coversMonth: alloc.coversMonth,
       amount: alloc.amount,
       isPartial: alloc.isPartial,
-      receipt: { id: receiptResult.insertId, number: receiptNumber },
+      receipt: { id: receiptId, number: receiptNumber },
     });
   }
 
@@ -1423,6 +1445,20 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
     const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
     assertDraft(report, 'état des lieux de sortie');
 
+    // Étape 51bis (Moyenne #7) : une retenue peinture saisie sur un bail SANS caution peinture n'avait
+    // jusqu'ici aucun effet réel — `checkAdditionalDepositRefunds`/`finalizeAdditionalDeposits` ignorent
+    // silencieusement tout type sans caution `held` correspondante (voir leaseDeposits.js), donc ce
+    // montant n'entrait jamais dans `totalDeductions`/`netRefund` ni dans aucune écriture GL, alors que le
+    // PV l'affichait comme une retenue bien réelle. Bloqué dès la saisie plutôt que de laisser un montant
+    // fantôme s'afficher sur un document officiel.
+    if (data.peintureDeductionAmount > 0) {
+      const deposits = await listLeaseDeposits(req.user.tenantId, leaseId, pool);
+      const heldPeinture = deposits.find((d) => d.type === 'peinture' && d.status === 'held');
+      if (!heldPeinture) {
+        throw new ApiError(400, "Aucune caution peinture n'est détenue sur ce bail — impossible d'y imputer une retenue.");
+      }
+    }
+
     // Un élément avec des lignes de facturation (catalogue) voit son montant
     // de retenue RECALCULÉ à partir de ces lignes, jamais celui envoyé tel
     // quel par le client (voir `computeItemDeduction`).
@@ -1584,12 +1620,22 @@ router.post(
         soneb: readRefundMethod('refundMethodSoneb'),
         peinture: readRefundMethod('refundMethodPeinture'),
       };
-      const { peintureOverflow } = await checkAdditionalDepositRefunds(conn, {
-        tenantId: req.user.tenantId,
-        leaseId,
-        peintureDeductionAmount: Number(report.peinture_deduction_amount),
-        refundMethods: additionalDepositRefundMethods,
-      });
+      // Étape 51bis (Moyenne #6) : `checkAdditionalDepositRefunds` ne regarde que les cautions encore
+      // `held` — sur une CORRECTION (`isCorrection`), elles sont déjà `returned` depuis la PREMIÈRE
+      // finalisation (`finalizeAdditionalDeposits` n'est jamais rejouée sur correction, juste en dessous),
+      // donc un recalcul retomberait TOUJOURS à 0, perdant silencieusement un dépassement pourtant
+      // légitimement facturé la première fois. Sur correction, on relit la valeur PERSISTÉE
+      // (`move_out_reports.peinture_overflow_amount`, migration 079) au lieu de la recalculer.
+      const peintureOverflow = isCorrection
+        ? Number(report.peinture_overflow_amount)
+        : (
+            await checkAdditionalDepositRefunds(conn, {
+              tenantId: req.user.tenantId,
+              leaseId,
+              peintureDeductionAmount: Number(report.peinture_deduction_amount),
+              refundMethods: additionalDepositRefundMethods,
+            })
+          ).peintureOverflow;
 
       const itemsDeductions = sumDeductions(zones);
       const totalDeductions = itemsDeductions + Number(report.other_deductions_amount) + peintureOverflow;
@@ -1627,6 +1673,7 @@ router.post(
              tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
              tenant_reserves = :tenantReserves,
              total_deductions = :totalDeductions, net_refund = :netRefund, refund_payment_method = :refundMethod,
+             peinture_overflow_amount = :peintureOverflow,
              gl_regularized_at = NULL, gl_regularized_by = NULL
          WHERE lease_id = :leaseId`,
         {
@@ -1637,6 +1684,7 @@ router.post(
           totalDeductions,
           netRefund,
           refundMethod: netRefund > 0 ? refundPaymentMethod : null,
+          peintureOverflow,
           leaseId,
         },
       );
@@ -2028,7 +2076,7 @@ router.get('/:leaseId/contract.pdf', canPayments, async (req, res, next) => {
       tenant,
       data,
       contract: toPublicContract(contract),
-      issuer: dg || { first_name: tenant?.company_name ?? 'Le cabinet', last_name: '' },
+      issuer: dg || { first_name: tenant?.company_name ?? "L'entreprise", last_name: '' },
       leaseId: lease.id,
     });
   } catch (err) {
@@ -2091,3 +2139,4 @@ module.exports = router;
 // dans `rent_payments`, jamais dupliqué.
 module.exports.loadLease = loadLease;
 module.exports.recordRentPayment = recordRentPayment;
+module.exports.insertReceiptForPayment = insertReceiptForPayment;

@@ -62,22 +62,54 @@ async function getOrCreateThirdParty(conn, { tenantId, partyType, sourceTable, s
   const controlAccountId = accountRows[0].id;
   const controlCode = accountRows[0].code;
 
-  const [existing] = await conn.query(
-    `SELECT * FROM gl_third_parties
-     WHERE tenant_id = :tenantId AND party_type = :partyType AND source_table = :sourceTable AND source_id = :sourceId
-       AND control_account_id = :controlAccountId
-     LIMIT 1`,
-    { tenantId, partyType, sourceTable, sourceId, controlAccountId },
-  );
-  if (existing[0]) return existing[0];
+  const findExisting = () =>
+    conn.query(
+      `SELECT * FROM gl_third_parties
+       WHERE tenant_id = :tenantId AND party_type = :partyType AND source_table = :sourceTable AND source_id = :sourceId
+         AND control_account_id = :controlAccountId
+       LIMIT 1`,
+      { tenantId, partyType, sourceTable, sourceId, controlAccountId },
+    );
 
-  // Code auxiliaire lisible, ex. "411-000042" — jamais réutilisé (basé sur
-  // l'id auto-incrémenté de gl_third_parties lui-même, unique par nature).
-  const [result] = await conn.query(
-    `INSERT INTO gl_third_parties (tenant_id, control_account_id, party_type, source_table, source_id, auxiliary_code, display_name)
-     VALUES (:tenantId, :controlAccountId, :partyType, :sourceTable, :sourceId, '', :displayName)`,
-    { tenantId, controlAccountId, partyType, sourceTable, sourceId, displayName },
-  );
+  const [existing] = await findExisting();
+  if (existing[0]) {
+    // Étape 51bis (Basse #5) : `display_name` n'était écrit qu'à la création de la ligne — un locataire/
+    // propriétaire/fournisseur renommé par la suite (pas supprimé, juste renommé) gardait indéfiniment
+    // son ANCIEN nom sur tous les rapports comptables (grand livre auxiliaire, détail d'écriture).
+    // Rafraîchi ici à chaque appel si le nom a changé, plutôt que de le figer pour toujours.
+    if (displayName && existing[0].display_name !== displayName) {
+      await conn.query('UPDATE gl_third_parties SET display_name = :displayName WHERE id = :id', {
+        displayName,
+        id: existing[0].id,
+      });
+      existing[0].display_name = displayName;
+    }
+    return existing[0];
+  }
+
+  // Étape 51bis (Moyenne #3) : deux opérations concernant le MÊME tiers jamais encore vu en comptabilité
+  // (ex. deux loyers du même locataire enregistrés au même instant) peuvent toutes deux passer le SELECT
+  // ci-dessus avant que l'une des deux ne commite — la contrainte UNIQUE `uq_gl_third_parties_source`
+  // (migration 046) empêcherait alors la SECONDE transaction d'insérer, faisant échouer en bloc un
+  // paiement par ailleurs parfaitement valide. `ER_DUP_ENTRY` ici veut dire « un autre appel concurrent
+  // vient de créer ce même tiers » — jamais une vraie erreur, même principe que `backfillOne`
+  // (glActivationService.js) pour `gl_entries`.
+  let result;
+  try {
+    // Code auxiliaire lisible, ex. "411-000042" — jamais réutilisé (basé sur
+    // l'id auto-incrémenté de gl_third_parties lui-même, unique par nature).
+    [result] = await conn.query(
+      `INSERT INTO gl_third_parties (tenant_id, control_account_id, party_type, source_table, source_id, auxiliary_code, display_name)
+       VALUES (:tenantId, :controlAccountId, :partyType, :sourceTable, :sourceId, '', :displayName)`,
+      { tenantId, controlAccountId, partyType, sourceTable, sourceId, displayName },
+    );
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      const [winner] = await findExisting();
+      if (winner[0]) return winner[0];
+    }
+    throw err;
+  }
   const auxiliaryCode = `${controlCode}-${String(result.insertId).padStart(6, '0')}`;
   await conn.query('UPDATE gl_third_parties SET auxiliary_code = :code WHERE id = :id', {
     code: auxiliaryCode,

@@ -385,7 +385,7 @@ function RecetteCard({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>Recette du mois</CardTitle>
-            <CardDescription>Loyers encaissés, dépenses rattachées à ce Bien, part cabinet / propriétaire.</CardDescription>
+            <CardDescription>Loyers encaissés, dépenses rattachées à ce Bien, part entreprise / propriétaire.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -437,7 +437,7 @@ function RecetteCard({
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <StatCard
-                label={`Commission cabinet (${recette.rate} %)`}
+                label={`Commission entreprise (${recette.rate} %)`}
                 value={formatFcfa(recette.commissionCabinet, { withSuffix: false })}
                 unit="FCFA"
                 tone="info"

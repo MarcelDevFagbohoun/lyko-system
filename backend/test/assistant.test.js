@@ -16,7 +16,7 @@ const { createApp } = require('../src/app');
 const { signAccessToken } = require('../src/utils/jwt');
 const { setClientForTests, Anthropic } = require('../src/services/assistant/client');
 const { runChat } = require('../src/services/assistant/chat');
-const { getUsageSummary } = require('../src/services/assistant/usage');
+const { getUsageSummary, setQuotaForTests } = require('../src/services/assistant/usage');
 const { getConversation } = require('../src/services/assistant/conversations');
 const { buildSystem } = require('../src/services/assistant/systemPrompt');
 const { getProfile, saveProfile } = require('../src/services/assistant/profile');
@@ -75,8 +75,8 @@ async function makeUser(tenantId, role, permissions = [], status = 'active') {
 
 const authOf = (id, tenantId, role = 'agent') => ({ id, tenantId, role });
 
-async function setTenant(tenantId, { enabled = 1, quota = 300 } = {}) {
-  await pool.query('UPDATE tenants SET assistant_enabled = :enabled, assistant_monthly_quota = :quota WHERE id = :t', { enabled, quota, t: tenantId });
+async function setTenant(tenantId, { enabled = 1 } = {}) {
+  await pool.query('UPDATE tenants SET assistant_enabled = :enabled WHERE id = :t', { enabled, t: tenantId });
 }
 
 async function clearAssistantData() {
@@ -100,6 +100,7 @@ before(async () => {
 beforeEach(async () => {
   await clearAssistantData();
   await setTenant(fx.tenantId);
+  setQuotaForTests(null);
   installClient();
 });
 
@@ -155,7 +156,7 @@ test("l'entreprise vient du jeton : un employé ne peut pas parler « au nom » 
 // ───────────────────────────── quota ─────────────────────────────
 
 test('quota mensuel : le message au-delà du quota est refusé (429) et le compteur est exact', async () => {
-  await setTenant(fx.tenantId, { quota: 2 });
+  setQuotaForTests(2);
   for (let i = 0; i < 2; i++) await runChat({ auth: authOf(agentId, fx.tenantId), message: `Question ${i}`, emit: () => {} });
   await assert.rejects(runChat({ auth: authOf(agentId, fx.tenantId), message: 'Trop', emit: () => {} }), (e) => e.status === 429);
   const usage = await getUsageSummary(fx.tenantId);
@@ -357,7 +358,7 @@ test('HTTP : authentification obligatoire', async () => {
 test('HTTP : /status dit si le bouton doit apparaître, avec le quota', async () => {
   const ok = await (await fetch(`${baseUrl}/api/assistant/status`, { headers: bearer(agentId, fx.tenantId) })).json();
   assert.equal(ok.available, true);
-  assert.equal(ok.usage.quota, 300);
+  assert.equal(ok.usage.quota, 150);
   await setTenant(fx.tenantId, { enabled: 0 });
   const off = await (await fetch(`${baseUrl}/api/assistant/status`, { headers: bearer(agentId, fx.tenantId) })).json();
   assert.deepEqual([off.available, off.reason], [false, 'disabled']);
@@ -395,7 +396,7 @@ test('HTTP : message vide, trop long ou invalide → 400 (aucun appel au modèle
 });
 
 test('HTTP : quota atteint → vraie erreur 429 avant même le flux', async () => {
-  await setTenant(fx.tenantId, { quota: 0 });
+  setQuotaForTests(0);
   const res = await fetch(`${baseUrl}/api/assistant/chat`, { method: 'POST', headers: bearer(agentId, fx.tenantId), body: JSON.stringify({ message: 'Bonjour' }) });
   assert.equal(res.status, 429);
 });
@@ -405,16 +406,15 @@ test("HTTP : réglages réservés à la direction ; l'activation exige la confir
   const put = (id, role, body) => fetch(`${baseUrl}/api/assistant/settings`, { method: 'PUT', headers: bearer(id, fx.tenantId, role), body: JSON.stringify(body) });
   assert.equal((await put(agentId, 'agent', { enabled: true, acknowledge: true })).status, 403);
   assert.equal((await put(fx.dgId, 'dg', { enabled: true })).status, 400, 'sans confirmation explicite');
-  const on = await put(fx.dgId, 'dg', { enabled: true, acknowledge: true, monthlyQuota: 50 });
+  const on = await put(fx.dgId, 'dg', { enabled: true, acknowledge: true });
   assert.equal(on.status, 200);
   const body = await on.json();
   assert.equal(body.enabled, true);
   assert.ok(body.consentAt);
-  assert.equal(body.usage.quota, 50);
-  // Déjà actif : régler le quota ne redemande pas la confirmation (elle a déjà été donnée et datée).
-  const quotaOnly = await put(fx.dgId, 'dg', { enabled: true, monthlyQuota: 75 });
-  assert.equal(quotaOnly.status, 200);
-  assert.equal((await quotaOnly.json()).usage.quota, 75);
+  assert.equal(body.usage.quota, 150);
+  // Déjà actif : une nouvelle désactivation/réactivation ne redemande pas la confirmation (elle a déjà été donnée et datée).
+  const stillOn = await put(fx.dgId, 'dg', { enabled: true });
+  assert.equal(stillOn.status, 200);
   const off = await put(fx.dgId, 'dg', { enabled: false });
   assert.equal(off.status, 200);
   assert.equal((await off.json()).enabled, false);

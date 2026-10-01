@@ -20,11 +20,12 @@ import {
   deleteCatalogItem,
   type CatalogItem,
 } from "@/lib/api/inspectionCatalog";
-import { formatFcfa } from "@/lib/utils";
+import { formatFcfa, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, CardToneProvider } from "@/components/ui/card";
+import { CADRES, type Cadre } from "@/lib/module-theme";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { AuthenticatedImage } from "@/components/ui/authenticated-image";
@@ -40,6 +41,25 @@ export function ParametresView() {
     <RequireAuth roles={["dg"]}>
       <ParametresContent />
     </RequireAuth>
+  );
+}
+
+/**
+ * En-tête de groupe — même langage visuel que les rubriques de la barre latérale (`espace-sidebar.tsx`) :
+ * libellé neutre (la couleur vient de la pastille, jamais du texte), infobulle sur le sens de la couleur.
+ * Regroupe les réglages de cette page par rubrique de l'application plutôt que de les empiler sans
+ * distinction — une caution/un loyer se range sous « Patrimoine », une écriture comptable sous
+ * « Finances », etc., exactement comme dans le menu.
+ */
+function SectionLabel({ cadre }: { cadre: Cadre }) {
+  const theme = CADRES[cadre];
+  return (
+    <div className="mt-2 flex items-center gap-2 px-1 first:mt-0">
+      <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", theme.solid)} />
+      <p title={theme.meaning} className="font-label-sm uppercase tracking-wider text-ink-faint">
+        {theme.label}
+      </p>
+    </div>
   );
 }
 
@@ -194,11 +214,18 @@ function ParametresContent() {
         {/* Action immédiate (active/suspend tout de suite, avec reprise de
             l'historique) — volontairement HORS du formulaire ci-dessous, qui
             ne fait qu'enregistrer des champs au clic sur "Enregistrer". */}
-        <AdvancedAccountingSection accessToken={accessToken} />
+        <SectionLabel cadre="finances" />
+        <CardToneProvider tone={CADRES.finances.tone}>
+          <div className="flex flex-col gap-6">
+            <AdvancedAccountingSection accessToken={accessToken} />
+            <InspectionCatalogSection accessToken={accessToken} />
+          </div>
+        </CardToneProvider>
 
-        <InspectionCatalogSection accessToken={accessToken} />
-
-        <AssistantSection accessToken={accessToken} />
+        <SectionLabel cadre="administration" />
+        <CardToneProvider tone={CADRES.administration.tone}>
+          <AssistantSection accessToken={accessToken} />
+        </CardToneProvider>
 
         <form onSubmit={handleSave} className="flex flex-col gap-6">
           {error && (
@@ -212,6 +239,8 @@ function ParametresContent() {
             </div>
           )}
 
+          <SectionLabel cadre="administration" />
+          <CardToneProvider tone={CADRES.administration.tone}>
           <Card>
             <CardHeader>
               <CardTitle>Noms des postes</CardTitle>
@@ -261,6 +290,61 @@ function ParametresContent() {
             </CardContent>
           </Card>
 
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Cachet de l&apos;entreprise</CardTitle>
+                <CardDescription>Apposé automatiquement sur le contrat de bail et la quittance générés.</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col items-center gap-3">
+                <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
+                  {currentStamp && accessToken ? (
+                    <AuthenticatedImage
+                      src={currentStamp}
+                      accessToken={accessToken}
+                      alt="Cachet"
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  ) : (
+                    <Stamp size={28} className="text-ink-faint" />
+                  )}
+                </div>
+                <label className="cursor-pointer font-label-sm text-primary hover:underline">
+                  {currentStamp ? "Remplacer le cachet" : "Téléverser un cachet"}
+                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleStampChange} className="hidden" />
+                </label>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Signature</CardTitle>
+                <CardDescription>Apposée automatiquement près de « Pour l&apos;entreprise, ».</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col items-center gap-3">
+                <div className="flex h-28 w-full items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
+                  {currentSignature && accessToken ? (
+                    <AuthenticatedImage
+                      src={currentSignature}
+                      accessToken={accessToken}
+                      alt="Signature"
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  ) : (
+                    <PenTool size={28} className="text-ink-faint" />
+                  )}
+                </div>
+                <label className="cursor-pointer font-label-sm text-primary hover:underline">
+                  {currentSignature ? "Remplacer la signature" : "Téléverser une signature"}
+                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleSignatureChange} className="hidden" />
+                </label>
+              </CardContent>
+            </Card>
+          </div>
+          </CardToneProvider>
+
+          <SectionLabel cadre="patrimoine" />
+          <CardToneProvider tone={CADRES.patrimoine.tone}>
           <Card>
             <CardHeader>
               <CardTitle>Convention de paiement du loyer</CardTitle>
@@ -291,7 +375,7 @@ function ParametresContent() {
               <CardDescription>
                 Un locataire qui entre en cours de mois — après l&apos;échéance habituelle — peut régler,
                 à la signature, les jours réellement occupés (loyer ÷ 30 × jours). Appartient au
-                propriétaire (compte séquestre), pas au cabinet. Réglage par défaut, modifiable bail par
+                propriétaire (compte séquestre), pas à l&apos;entreprise. Réglage par défaut, modifiable bail par
                 bail à la création.
               </CardDescription>
             </CardHeader>
@@ -350,63 +434,14 @@ function ParametresContent() {
               </label>
             </CardContent>
           </Card>
+          </CardToneProvider>
 
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Cachet de l&apos;entreprise</CardTitle>
-                <CardDescription>Apposé automatiquement sur le contrat de bail et la quittance générés.</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col items-center gap-3">
-                <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
-                  {currentStamp && accessToken ? (
-                    <AuthenticatedImage
-                      src={currentStamp}
-                      accessToken={accessToken}
-                      alt="Cachet"
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  ) : (
-                    <Stamp size={28} className="text-ink-faint" />
-                  )}
-                </div>
-                <label className="cursor-pointer font-label-sm text-primary hover:underline">
-                  {currentStamp ? "Remplacer le cachet" : "Téléverser un cachet"}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleStampChange} className="hidden" />
-                </label>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Signature</CardTitle>
-                <CardDescription>Apposée automatiquement près de « Pour le cabinet, ».</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col items-center gap-3">
-                <div className="flex h-28 w-full items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
-                  {currentSignature && accessToken ? (
-                    <AuthenticatedImage
-                      src={currentSignature}
-                      accessToken={accessToken}
-                      alt="Signature"
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  ) : (
-                    <PenTool size={28} className="text-ink-faint" />
-                  )}
-                </div>
-                <label className="cursor-pointer font-label-sm text-primary hover:underline">
-                  {currentSignature ? "Remplacer la signature" : "Téléverser une signature"}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleSignatureChange} className="hidden" />
-                </label>
-              </CardContent>
-            </Card>
-          </div>
-
+          <SectionLabel cadre="finances" />
+          <CardToneProvider tone={CADRES.finances.tone}>
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">
-                <CreditCard size={18} className="text-primary" />
+                <CreditCard size={18} className={CADRES.finances.text} />
                 <CardTitle>Paiement en ligne (KKiaPay)</CardTitle>
               </div>
               <CardDescription>
@@ -492,6 +527,7 @@ function ParametresContent() {
               )}
             </CardContent>
           </Card>
+          </CardToneProvider>
 
           <Card>
             <CardFooter className="justify-end">
@@ -547,7 +583,7 @@ function AdvancedAccountingSection({ accessToken }: { accessToken: string | null
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <Landmark size={18} className="text-primary" />
+          <Landmark size={18} className={CADRES.finances.text} />
           <CardTitle>Comptabilité avancée (SYSCOHADA)</CardTitle>
         </div>
         <CardDescription>
@@ -618,7 +654,7 @@ function InspectionCatalogSection({ accessToken }: { accessToken: string | null 
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <Receipt size={18} className="text-primary" />
+          <Receipt size={18} className={CADRES.finances.text} />
           <CardTitle>Catalogue de facturation (états des lieux)</CardTitle>
         </div>
         <CardDescription>
@@ -812,7 +848,7 @@ function ActivationCard({
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <Landmark size={18} className="text-primary" />
+          <Landmark size={18} className={CADRES.finances.text} />
           <CardTitle>Comptabilité avancée (SYSCOHADA)</CardTitle>
         </div>
         <CardDescription>
@@ -940,23 +976,19 @@ function AssistantSection({ accessToken }: { accessToken: string | null }) {
   const [settings, setSettings] = React.useState<AssistantSettings | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [acknowledged, setAcknowledged] = React.useState(false);
-  const [quota, setQuota] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const toast = useToast();
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
     fetchAssistantSettings(accessToken)
-      .then((s) => {
-        setSettings(s);
-        setQuota(String(s.usage.quota));
-      })
+      .then((s) => setSettings(s))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les réglages de l'assistant."));
   }, [accessToken]);
 
   React.useEffect(() => load(), [load]);
 
-  async function apply(input: { enabled: boolean; acknowledge?: boolean; monthlyQuota?: number }, successMessage: string) {
+  async function apply(input: { enabled: boolean; acknowledge?: boolean }, successMessage: string) {
     if (!accessToken) return;
     setBusy(true);
     try {
@@ -982,53 +1014,20 @@ function AssistantSection({ accessToken }: { accessToken: string | null }) {
     );
   }
 
-  const parsedQuota = Number(quota);
-  const quotaValid = quota !== "" && Number.isInteger(parsedQuota) && parsedQuota >= 0 && parsedQuota <= 100000;
-
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <Sparkles size={18} className="text-primary" />
+          <Sparkles size={18} className={CADRES.administration.text} />
           <CardTitle>Assistant IA</CardTitle>
         </div>
-        <CardDescription>
-          Un assistant de discussion (Claude) qui guide vos employés dans la plateforme et répond à leurs questions de gestion locative.
-        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={settings.enabled ? "success" : "neutral"}>{settings.enabled ? "Activé" : "Désactivé"}</Badge>
-          <span className="text-body-sm text-ink-soft">
-            {settings.usage.used} / {settings.usage.quota} messages utilisés ce mois-ci
-          </span>
-        </div>
-
-        {!settings.keyConfigured && (
-          <p className="rounded-lg border border-warning-border bg-warning-bg px-3 py-2 text-body-sm text-warning-fg">
-            Aucune clé API n&apos;est configurée sur ce serveur : l&apos;assistant ne sera pas disponible tant que l&apos;administrateur technique ne l&apos;a pas renseignée.
-          </p>
-        )}
-
         {!settings.enabled ? (
-          <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-3 text-body-sm text-ink-soft">
-            <p className="font-label-md text-ink">À lire avant d&apos;activer</p>
-            <ul className="ml-5 list-disc space-y-1">
-              <li>
-                Les messages écrits à l&apos;assistant sont envoyés à <strong>Anthropic</strong>, le fournisseur de l&apos;intelligence artificielle, pour produire les réponses.
-              </li>
-              <li>
-                Dans cette première version, l&apos;assistant <strong>n&apos;a pas accès aux données de votre cabinet</strong> (locataires, loyers, montants, propriétaires). Seuls sont transmis le texte des questions, le nom d&apos;usage et la fonction que chaque employé indique lui-même à l&apos;assistant (mémorisés jusqu&apos;à ce qu&apos;il les efface), son rôle, et le nom de votre entreprise.
-              </li>
-              <li>Demandez à vos employés de ne pas saisir d&apos;informations personnelles sensibles dans la discussion.</li>
-              <li>
-                Les conversations sont privées à chaque employé, conservées {settings.retentionDays} jours puis supprimées ; chacun peut les supprimer à tout moment.
-              </li>
-              <li>Les réponses peuvent contenir des erreurs : elles ne remplacent ni un expert-comptable ni un juriste.</li>
-            </ul>
-            <label className="flex items-start gap-2 text-ink">
+          <div className="flex flex-col gap-3">
+            <label className="flex items-start gap-2 text-body-sm text-ink">
               <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} className="mt-1 h-4 w-4" />
-              <span>J&apos;ai lu ces informations et j&apos;autorise l&apos;activation de l&apos;assistant pour mon entreprise.</span>
+              <span>J&apos;autorise l&apos;envoi des messages de mes employés à Anthropic pour faire fonctionner cet assistant.</span>
             </label>
             <div>
               <Button disabled={!acknowledged || busy} onClick={() => apply({ enabled: true, acknowledge: true }, "Assistant activé.")}>
@@ -1039,20 +1038,9 @@ function AssistantSection({ accessToken }: { accessToken: string | null }) {
         ) : (
           <div className="flex flex-col gap-3">
             <p className="text-body-sm text-ink-soft">
-              Autorisez ensuite chaque employé depuis sa fiche (case « Assistant IA ») : la direction y a toujours accès.
-              {settings.consentAt && <> Activé le {new Date(settings.consentAt).toLocaleDateString("fr-FR")}.</>}
+              {settings.usage.used} / {settings.usage.quota} messages utilisés ce mois-ci.
             </p>
-            <div className="flex flex-wrap items-end gap-3">
-              <Field label="Quota mensuel (messages)" htmlFor="assistant-quota">
-                <Input id="assistant-quota" type="number" min={0} max={100000} value={quota} onChange={(e) => setQuota(e.target.value)} className="w-40" />
-              </Field>
-              <Button
-                variant="secondary"
-                disabled={busy || !quotaValid || parsedQuota === settings.usage.quota}
-                onClick={() => apply({ enabled: true, monthlyQuota: parsedQuota }, "Quota enregistré.")}
-              >
-                Enregistrer le quota
-              </Button>
+            <div>
               <Button variant="danger" disabled={busy} onClick={() => apply({ enabled: false }, "Assistant désactivé.")}>
                 Désactiver
               </Button>

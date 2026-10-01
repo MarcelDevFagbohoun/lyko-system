@@ -447,7 +447,7 @@ export function AssistantWidget() {
                       </p>
                       <p className="mt-1">
                         Je vous guide dans la plateforme et je réponds à vos questions de gestion locative. Je n&apos;ai pas encore accès aux
-                        données de votre cabinet (locataires, loyers, montants).
+                        données de votre entreprise (locataires, loyers, montants).
                       </p>
                     </div>
                     <div className="flex flex-col gap-1.5">

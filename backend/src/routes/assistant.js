@@ -41,7 +41,6 @@ const settingsSchema = z.object({
   // Confirmation explicite requise pour ACTIVER (voir le gestionnaire) : les données envoyées à
   // l'assistant quittent la plateforme.
   acknowledge: z.boolean().optional(),
-  monthlyQuota: z.coerce.number().int().min(0).max(100000).optional(),
 });
 
 const profileSchema = z.object({
@@ -82,11 +81,12 @@ router.get('/settings', requireRole('dg'), async (req, res, next) => {
   }
 });
 
-// PUT /api/assistant/settings — activer / désactiver, régler le quota (direction).
+// PUT /api/assistant/settings — activer / désactiver (direction). Le quota mensuel n'est pas
+// réglable ici : fixe pour toutes les entreprises, voir `services/assistant/usage.js`.
 router.put('/settings', requireRole('dg'), async (req, res, next) => {
   const parsed = settingsSchema.safeParse(req.body);
   if (!parsed.success) return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
-  const { enabled, monthlyQuota } = parsed.data;
+  const { enabled } = parsed.data;
   try {
     const [[before]] = await pool.query('SELECT assistant_enabled FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
     const activating = enabled && !before.assistant_enabled;
@@ -101,10 +101,6 @@ router.put('/settings', requireRole('dg'), async (req, res, next) => {
       // Consentement daté et attribué, conservé tant que l'assistant est actif.
       fields.push('assistant_consent_at = NOW()', 'assistant_consent_by = :by');
       params.by = req.user.id;
-    }
-    if (monthlyQuota !== undefined) {
-      fields.push('assistant_monthly_quota = :quota');
-      params.quota = monthlyQuota;
     }
     await pool.query(`UPDATE tenants SET ${fields.join(', ')} WHERE id = :id`, params);
     logger.info('Assistant IA : réglage modifié', { tenantId: req.user.tenantId, by: req.user.id, enabled });

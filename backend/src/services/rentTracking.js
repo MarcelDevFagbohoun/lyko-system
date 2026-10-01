@@ -280,6 +280,34 @@ function isPaymentLate(coversMonth, rentDueDay, paidAt, rentTiming) {
 }
 
 /**
+ * Parmi `payments` (`{coversMonth, paidAt}`, un versement = une ligne), les 3 derniers MOIS COUVERTS
+ * DISTINCTS les plus récents et le nombre de ces mois réglés en retard — jamais un simple décompte de
+ * versements bruts. Fonction PURE (aucun accès base), extraite pour `listPredictiveLateAlerts`.
+ *
+ * Bug corrigé (étape 51bis, Moyenne #8) : `allocateRentPayment` autorise plusieurs versements pour le
+ * MÊME `coversMonth` (règlement partiel, puis complément plus tard — voir son propre commentaire). Sans
+ * cette agrégation par mois, un seul mois réglé en deux fois comptait pour 2 « retards » distincts dans
+ * `lateCount`, déclenchant à tort une alerte de « retard récurrent » sur la base d'un SEUL évènement réel
+ * — contraire à la règle documentée (« au moins 2 des 3 derniers MOIS »). La date retenue pour juger un
+ * mois en retard est celle du DERNIER versement qui l'a soldé : un mois payé en partie à temps puis
+ * complété en retard n'a pas été réglé à temps.
+ */
+function recentMonthlyLateCount(payments, rentDueDay, rentTiming) {
+  const latestPaymentByMonth = new Map();
+  for (const p of payments) {
+    const current = latestPaymentByMonth.get(p.coversMonth);
+    if (!current || new Date(p.paidAt) > new Date(current.paidAt)) {
+      latestPaymentByMonth.set(p.coversMonth, p);
+    }
+  }
+  const recentMonths = [...latestPaymentByMonth.values()]
+    .sort((a, b) => (a.coversMonth < b.coversMonth ? 1 : -1))
+    .slice(0, 3);
+  const lateCount = recentMonths.filter((p) => isPaymentLate(p.coversMonth, rentDueDay, p.paidAt, rentTiming)).length;
+  return { recentMonths, lateCount };
+}
+
+/**
  * Liste tous les baux actifs en retard de paiement pour l'ensemble du
  * portefeuille d'un tenant (pas seulement une période) — utilisée par le
  * tableau de bord comptable (étape 8, impayés locataires) et le centre de
@@ -536,9 +564,12 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
     const daysUntilDue = Math.round((dueDateUtc - todayUtc) / 86_400_000);
     if (daysUntilDue > daysAhead) continue;
 
-    const recentPayments = leasePayments.slice(0, 3);
-    if (recentPayments.length < 2) continue;
-    const lateCount = recentPayments.filter((p) => isPaymentLate(p.covers_month, lease.rent_due_day, p.paid_at, lease.rent_timing)).length;
+    const { recentMonths, lateCount } = recentMonthlyLateCount(
+      leasePayments.map((p) => ({ coversMonth: p.covers_month, paidAt: p.paid_at })),
+      lease.rent_due_day,
+      lease.rent_timing,
+    );
+    if (recentMonths.length < 2) continue;
     if (lateCount < 2) continue;
 
     results.push({
@@ -552,7 +583,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
       dueDate: arrears.dueDate,
       daysUntilDue,
       lateCount,
-      recentPaymentsCount: recentPayments.length,
+      recentPaymentsCount: recentMonths.length,
     });
   }
   // Échéance la plus proche en premier — la plus urgente à relancer.
@@ -729,6 +760,7 @@ module.exports = {
   allocateRentPayment,
   monthsBetweenInclusive,
   isPaymentLate,
+  recentMonthlyLateCount,
   listPortfolioArrears,
   listPredictiveLateAlerts,
   snapshotLeaseBalances,
