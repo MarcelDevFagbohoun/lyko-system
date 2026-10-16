@@ -25,6 +25,7 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, CardToneProvider } from "@/components/ui/card";
+import { StartDateCard } from "@/components/accounting/start-date-card";
 import { CADRES, type Cadre } from "@/lib/module-theme";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
@@ -217,6 +218,7 @@ function ParametresContent() {
         <SectionLabel cadre="finances" />
         <CardToneProvider tone={CADRES.finances.tone}>
           <div className="flex flex-col gap-6">
+            <StartDateCard accessToken={accessToken} isDg />
             <AdvancedAccountingSection accessToken={accessToken} />
             <InspectionCatalogSection accessToken={accessToken} />
           </div>

@@ -307,6 +307,51 @@ export function listOwnerPayouts(accessToken: string, from: string, to: string) 
   );
 }
 
+// Vue d'ensemble de la clôture (étape 54) : prochain mois à clôturer, frise des mois, vérifications.
+export type ClosingMonthStatus = "cloture" | "pret" | "en_attente" | "en_cours" | "a_suivre" | "hors_suivi";
+export type ClosingCheck =
+  | {
+      key: "echeances";
+      status: "ok" | "bloquant";
+      closableFrom: string;
+      pendingLeases: { leaseId: number; renterName: string; unitCode: string; dueDay: number }[];
+    }
+  | {
+      key: "loyers";
+      status: "ok" | "attention";
+      expected: number;
+      collected: number;
+      remaining: number;
+      lateRemaining: number;
+      unpaidLeases: number;
+    }
+  | {
+      key: "releves";
+      status: "ok" | "attention";
+      batches: { id: number; utilityType: string; periodStart: string; periodEnd: string; propertyCode: string }[];
+    }
+  | { key: "justificatifs"; status: "ok" | "attention"; count: number; total: number };
+
+export type ClosingOverview = {
+  currentMonth: string;
+  /** Prochain mois à clôturer (« AAAA-MM ») ; `null` si rien n'a encore été enregistré. */
+  nextMonth: string | null;
+  accountingStartDate: string | null;
+  months: { month: string; status: ClosingMonthStatus; forced: boolean; closableFrom: string | null }[];
+  /** Détail du prochain mois s'il n'est pas dans le futur. */
+  next: {
+    month: string;
+    isCurrentMonth: boolean;
+    isClosable: boolean;
+    closableFrom: string;
+    checks: ClosingCheck[];
+  } | null;
+};
+
+export function getClosingOverview(accessToken: string) {
+  return apiFetch<ClosingOverview>("/api/accounting/closing-overview", { accessToken });
+}
+
 export type AccountingPeriod = {
   /** « AAAA-MM » pour une période calendaire, `null` pour un rythme « jour fixe »/« libre ». */
   period: string | null;

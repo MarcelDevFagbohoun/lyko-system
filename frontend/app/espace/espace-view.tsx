@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { MyTasksCard } from "@/components/espace/my-tasks-card";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
+import { ClosingReminderBanner } from "@/components/accounting/closing-reminder-banner";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CADRES } from "@/lib/module-theme";
@@ -24,7 +25,7 @@ export function EspaceView() {
 }
 
 function EspaceContent() {
-  const { user, tenant } = useAuth();
+  const { user, tenant, accessToken } = useAuth();
   const isDg = user?.role === "dg";
   const canLocataires = isDg || (user?.permissions.includes("locataires") ?? false);
   const canPayments = canLocataires || (user?.permissions.includes("comptabilite") ?? false);
@@ -40,6 +41,8 @@ function EspaceContent() {
             Votre espace {tenant?.companyName} est prêt. Voici pour commencer :
           </p>
         </div>
+
+        {isDg && <ClosingReminderBanner accessToken={accessToken} />}
 
         {!isDg && <MyTasksCard />}
 

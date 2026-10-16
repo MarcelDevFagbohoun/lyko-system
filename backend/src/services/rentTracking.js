@@ -1022,10 +1022,61 @@ function summarizeRentMonth(leases, month, today = new Date(), rhythm, currentPe
   return out;
 }
 
+/**
+ * Récapitulatif « Loyers du mois » d'un mois civil (attendu, encaissé, reste, en retard) — partagé
+ * par `GET /api/accounting/rent-month` et la liste de vérifications de la clôture
+ * (`services/closingOverview.js`). `scopeAgentId` : portée « Biens gérés » d'un agent restreint, `null`
+ * pour tout le portefeuille.
+ */
+async function computeRentMonthSummary(tenantId, month, scopeAgentId = null) {
+  const [y, m] = month.split('-').map(Number);
+  const firstDay = `${month}-01`;
+  const lastDay = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const params = { tenantId, month, firstDay, lastDay };
+  let scopeClause = '';
+  if (scopeAgentId != null) {
+    scopeClause = 'AND p.agent_id = :scopeAgentId';
+    params.scopeAgentId = scopeAgentId;
+  }
+  // Encaissé lu par date de début de période (étape 2c) : 'AAAA-MM-01' pour un bail calendaire
+  // (identique à `covers_month = :month`), la période qui commence dans ce mois pour un bail
+  // non-calendaire (voir `summarizeRentMonth`).
+  const [leases] = await pool.query(
+    `SELECT l.start_date, l.end_date, l.created_at, l.up_to_date_at_onboarding, l.rent_due_day, l.rent_due_offset_days,
+            l.rent_timing, l.monthly_rent, l.entry_proration, COALESCE(pay.paid, 0) AS paid
+     FROM leases l
+     JOIN property_units u ON u.id = l.unit_id
+     JOIN properties p ON p.id = u.property_id
+     LEFT JOIN (
+       SELECT lease_id, SUM(amount) AS paid FROM rent_payments
+       WHERE covers_period_start BETWEEN :firstDay AND :lastDay AND deleted_at IS NULL GROUP BY lease_id
+     ) pay ON pay.lease_id = l.id
+     WHERE l.tenant_id = :tenantId AND l.start_date <= :lastDay
+       AND (l.status = 'active' OR (l.end_date IS NOT NULL AND l.end_date >= :firstDay)) ${scopeClause}`,
+    params,
+  );
+  return summarizeRentMonth(
+    leases.map((l) => ({
+      startDate: l.start_date,
+      endDate: l.end_date,
+      createdAt: l.created_at,
+      upToDateAtOnboarding: !!l.up_to_date_at_onboarding,
+      rentDueDay: l.rent_due_day,
+      rentDueOffsetDays: l.rent_due_offset_days,
+      rentTiming: l.rent_timing,
+      monthlyRent: Number(l.monthly_rent),
+      entryProration: l.entry_proration,
+      paid: Number(l.paid),
+    })),
+    month,
+  );
+}
+
 module.exports = {
   computeArrears,
   buildRentStrip,
   summarizeRentMonth,
+  computeRentMonthSummary,
   rentMonthState,
   addMonth,
   addPeriod,

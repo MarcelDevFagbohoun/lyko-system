@@ -12,30 +12,21 @@
  */
 
 const { pool } = require('../config/db');
-const { isPeriodClosed, getPeriodClosability } = require('../services/accountingPeriods');
+const { getPeriodClosability } = require('../services/accountingPeriods');
+const { getNextMonthToClose } = require('../services/closingOverview');
 const { notifyDg } = require('../services/gl/glNotificationService');
 const logger = require('../utils/logger');
 
-// On ne vérifie que le mois EN COURS et le précédent : un mois plus ancien
-// encore ouvert a déjà été signalé (ou volontairement laissé ouvert par le
-// DG) — pas besoin de remonter indéfiniment dans le temps chaque jour.
-function candidatePeriods() {
-  const now = new Date();
-  const current = now.toISOString().slice(0, 7);
-  const prevDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-  const previous = prevDate.toISOString().slice(0, 7);
-  return [previous, current];
-}
-
 async function runClosingReminderJob() {
   const [tenants] = await pool.query('SELECT id FROM tenants');
-  const periods = candidatePeriods();
+  const currentMonth = new Date().toISOString().slice(0, 7);
 
   for (const { id: tenantId } of tenants) {
-    for (const period of periods) {
+    // Étape 54 : seul le PROCHAIN mois à clôturer compte (les mois se clôturent dans l'ordre) — avant,
+    // le mois en cours et le précédent étaient vérifiés, ce qui pouvait signaler un mois que la
+    // clôture aurait refusé faute d'avoir clôturé le précédent.
+    for (const period of [await getNextMonthToClose(tenantId)].filter((p) => p && p <= currentMonth)) {
       try {
-        if (await isPeriodClosed(tenantId, `${period}-01`)) continue;
-
         const closability = await getPeriodClosability(tenantId, period);
         if (!closability.isClosable) continue;
 
@@ -49,7 +40,7 @@ async function runClosingReminderJob() {
         await notifyDg(pool, {
           tenantId,
           type: 'closing_reminder',
-          message: `Le mois ${period} est clôturable — pensez à clôturer la période depuis Comptabilité`,
+          message: `Le mois ${period} est clôturable — pensez à le clôturer depuis la page Clôture`,
           entityTable: 'tenants',
           entityId: tenantId,
         });

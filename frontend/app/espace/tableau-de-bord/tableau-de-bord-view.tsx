@@ -21,6 +21,7 @@ import { ApiError } from "@/lib/api/client";
 import { getDashboardOverview, type DashboardOverview } from "@/lib/api/dashboard";
 import { getDashboard, type AccountingDashboard } from "@/lib/api/accounting";
 import { formatFcfa, cn } from "@/lib/utils";
+import { ClosingReminderBanner } from "@/components/accounting/closing-reminder-banner";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -91,6 +92,8 @@ function TableauDeBordContent() {
             {error}
           </div>
         )}
+
+        <ClosingReminderBanner accessToken={accessToken} />
 
         {overview && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

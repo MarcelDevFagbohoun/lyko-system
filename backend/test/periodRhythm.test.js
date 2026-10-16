@@ -83,7 +83,7 @@ test(
 
 test(
   'POST /api/accounting/periods — continuité stricte : impossible de sauter un mois, le message ' +
-    "indique la date de début attendue",
+    "indique le mois à clôturer d'abord",
   async () => {
     const fx = await createBareFixture();
     try {
@@ -102,7 +102,7 @@ test(
       });
       assert.equal(mars.status, 409);
       const marsBody = await mars.json();
-      assert.match(marsBody.error, /2026-02-01/);
+      assert.match(marsBody.error, /Clôturez d'abord février 2026/);
 
       // Février, dans l'ordre : accepté.
       const fev = await fetch(`${baseUrl}/api/accounting/periods`, {

@@ -50,12 +50,13 @@ const {
   lastDayOfPeriod,
 } = require('../services/accountingPeriods');
 const { isLastPeriodOfFiscalYear } = require('../services/gl/glClosingService');
-const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, summarizeRentMonth, paymentPeriodKey } = require('../services/rentTracking');
+const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, computeRentMonthSummary, paymentPeriodKey } = require('../services/rentTracking');
 const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate, getCabinetRevenue } = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
 const { resolvePropertyScope } = require('../services/scope');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
-const { streamAccountingReportPdf } = require('../services/pdf');
+const { streamAccountingReportPdf, formatMonthLabel } = require('../services/pdf');
+const { getClosingOverview } = require('../services/closingOverview');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -1635,48 +1636,8 @@ router.get('/rent-month', canAccounting, async (req, res, next) => {
     const month = typeof req.query.month === 'string' && req.query.month ? req.query.month : currentMonth;
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new ApiError(400, 'Mois invalide (AAAA-MM)');
 
-    const [y, m] = month.split('-').map(Number);
-    const firstDay = `${month}-01`;
-    const lastDay = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-    const params = { tenantId: req.user.tenantId, month, firstDay, lastDay };
-    let scopeClause = '';
     const scopeAgentId = await resolvePropertyScope(req.user);
-    if (scopeAgentId != null) {
-      scopeClause = 'AND p.agent_id = :scopeAgentId';
-      params.scopeAgentId = scopeAgentId;
-    }
-    // Encaissé lu par date de début de période (étape 2c) : 'AAAA-MM-01' pour un bail calendaire
-    // (identique à `covers_month = :month`), la période qui commence dans ce mois pour un bail
-    // non-calendaire (voir `summarizeRentMonth`).
-    const [leases] = await pool.query(
-      `SELECT l.start_date, l.end_date, l.created_at, l.up_to_date_at_onboarding, l.rent_due_day, l.rent_due_offset_days,
-              l.rent_timing, l.monthly_rent, l.entry_proration, COALESCE(pay.paid, 0) AS paid
-       FROM leases l
-       JOIN property_units u ON u.id = l.unit_id
-       JOIN properties p ON p.id = u.property_id
-       LEFT JOIN (
-         SELECT lease_id, SUM(amount) AS paid FROM rent_payments
-         WHERE covers_period_start BETWEEN :firstDay AND :lastDay AND deleted_at IS NULL GROUP BY lease_id
-       ) pay ON pay.lease_id = l.id
-       WHERE l.tenant_id = :tenantId AND l.start_date <= :lastDay
-         AND (l.status = 'active' OR (l.end_date IS NOT NULL AND l.end_date >= :firstDay)) ${scopeClause}`,
-      params,
-    );
-    const summary = summarizeRentMonth(
-      leases.map((l) => ({
-        startDate: l.start_date,
-        endDate: l.end_date,
-        createdAt: l.created_at,
-        upToDateAtOnboarding: !!l.up_to_date_at_onboarding,
-        rentDueDay: l.rent_due_day,
-        rentDueOffsetDays: l.rent_due_offset_days,
-        rentTiming: l.rent_timing,
-        monthlyRent: Number(l.monthly_rent),
-        entryProration: l.entry_proration,
-        paid: Number(l.paid),
-      })),
-      month,
-    );
+    const summary = await computeRentMonthSummary(req.user.tenantId, month, scopeAgentId);
     res.json({ ...summary, isCurrentMonth: month === currentMonth });
   } catch (err) {
     next(err);
@@ -1856,6 +1817,16 @@ router.get('/owner-payouts', canAccounting, async (req, res, next) => {
   }
 });
 
+// GET /api/accounting/closing-overview — page Clôture (étape 54) : prochain mois à clôturer, frise
+// des mois et liste de vérifications (voir `services/closingOverview.js`). Lecture seule.
+router.get('/closing-overview', canAccounting, async (req, res, next) => {
+  try {
+    res.json(await getClosingOverview(req.user.tenantId));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/accounting/periods — mois déjà clôturés (traçabilité).
 router.get('/periods', requireAnyPermission('comptabilite', 'charges'), async (req, res, next) => {
   try {
@@ -2011,7 +1982,21 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
     // chevauchement. Revérifiée SOUS VERROU (la valeur lue plus haut, hors transaction, n'était pas
     // protégée contre une clôture concurrente qui aurait changé la réponse entre les deux lectures).
     const expectedStart = await getOpenPeriodStart(conn, req.user.tenantId);
-    if (expectedStart && periodStart !== expectedStart) {
+    if (expectedStart && legacyPeriod) {
+      // Calendaire : la continuité se juge au MOIS (étape 54). Une date de démarrage de la
+      // comptabilité en milieu de mois (ex. le 5 août) faisait refuser la clôture d'août, qui
+      // commence forcément le 1er ; et le message ne disait pas quel mois clôturer d'abord.
+      const expectedMonth = expectedStart.slice(0, 7);
+      if (legacyPeriod > expectedMonth) {
+        throw new ApiError(
+          409,
+          `Clôturez d'abord ${formatMonthLabel(expectedMonth)} : les mois se clôturent dans l'ordre, sans en sauter.`,
+        );
+      }
+      if (legacyPeriod < expectedMonth) {
+        throw new ApiError(409, `${formatMonthLabel(legacyPeriod)} est déjà clôturé ou antérieur au démarrage de la comptabilité.`);
+      }
+    } else if (expectedStart && periodStart !== expectedStart) {
       throw new ApiError(409, `La période à clôturer doit commencer le ${expectedStart} (continuité avec la dernière clôture).`);
     }
     const [existing] = await conn.query(

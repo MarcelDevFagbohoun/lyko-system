@@ -17,7 +17,8 @@ const { requireAuth } = require('../middleware/auth');
 const { getPermissions } = require('../services/permissions');
 const { resolvePropertyScope } = require('../services/scope');
 const { listPortfolioArrears, listPredictiveLateAlerts } = require('../services/rentTracking');
-const { getPeriodClosability, isPeriodClosed } = require('../services/accountingPeriods');
+const { getPeriodClosability } = require('../services/accountingPeriods');
+const { getNextMonthToClose } = require('../services/closingOverview');
 const { isModuleActive } = require('../services/gl/glPostingService');
 const { listPendingDepositRegularizations } = require('../services/inspection');
 
@@ -185,17 +186,19 @@ router.get('/', async (req, res, next) => {
 
     let accountant = null;
     if (hasComptabilite) {
-      const period = currentPeriod();
       const glActive = await isModuleActive(pool, tenantId);
-      const [pendingBatches, expensesWithoutReceipt, alreadyClosed, pendingDepositRegularizations] = await Promise.all([
+      const [pendingBatches, expensesWithoutReceipt, nextMonth, pendingDepositRegularizations] = await Promise.all([
         listPendingBatches(tenantId),
         listExpensesWithoutReceipt(tenantId),
-        isPeriodClosed(tenantId, `${period}-01`),
+        getNextMonthToClose(tenantId),
         glActive ? listPendingDepositRegularizations(tenantId) : Promise.resolve([]),
       ]);
-      const currentMonthClosability = alreadyClosed
-        ? null
-        : await getPeriodClosability(tenantId, period).then((c) => ({ period, isClosable: c.isClosable }));
+      // Étape 54 : le PROCHAIN mois à clôturer (les mois se clôturent dans l'ordre), plus le mois en
+      // cours — qui n'est presque jamais clôturable. Nom du champ conservé pour le frontend.
+      const currentMonthClosability =
+        nextMonth && nextMonth <= currentPeriod()
+          ? await getPeriodClosability(tenantId, nextMonth).then((c) => ({ period: nextMonth, isClosable: c.isClosable }))
+          : null;
       accountant = { pendingBatches, expensesWithoutReceipt, currentMonthClosability, pendingDepositRegularizations };
     }
 

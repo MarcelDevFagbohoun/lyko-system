@@ -6256,3 +6256,48 @@ aucun ne peut être créé, mais un bail de ce type déjà enregistré continue 
 le règlent désormais en base ; nouveau test de non-régression (route de rythme et d'archive absentes,
 note conservée et aucune archive après une clôture). Suite backend **367/367** (360 passent, 7 ignorés
 faute de `pdftotext`). `tsc`/`eslint` frontend propres. Page Clôture vérifiée dans le navigateur.
+
+## Étape 54 — Une clôture des mois facile et claire (points 1 à 6 des propositions)
+
+🟡 À valider (2026-10-16).
+
+**Demande** : « que la clôture de mois soit facile et claire à utiliser, c'est une fonctionnalité très
+importante ». Six propositions faites à partir du fonctionnement réel, toutes validées (« de 1 à 6 »).
+
+**Problèmes constatés** : la page s'ouvrait sur le mois en cours (presque jamais clôturable) ; l'ordre
+de clôture était imposé par le serveur mais invisible à l'écran (refus découvert après le clic) ;
+« clôturable » ne regardait que les dates d'échéance ; aucun récapitulatif de ce que l'on fige ; page
+mêlant explication, date de démarrage et clôture.
+
+**Ce qui a été fait**
+1. **Prochain mois à clôturer** : la page s'ouvre directement dessus (plus de sélecteur de mois).
+   Nouveau service `services/closingOverview.js` (`getNextMonthToClose` : lendemain de la dernière
+   clôture → date de démarrage → première opération enregistrée) et route
+   `GET /api/accounting/closing-overview`.
+2. **Frise des mois** : clôturé, prêt à clôturer, en attente des échéances (avec la date), à clôturer
+   ensuite, mois en cours, avant le démarrage (un seul gardé comme repère).
+3. **Vérifications avant de clôturer** : échéances passées (seul point bloquant, outrepassable par une
+   clôture forcée tracée) ; loyers du mois restant à encaisser (lien vers les relances) ; relevés
+   SONEB/SBEE en brouillon sur le mois (liens directs) ; dépenses du mois sans justificatif. Les points
+   « attention » préviennent sans bloquer. Calcul « Loyers du mois » sorti de la route vers
+   `computeRentMonthSummary` (rentTracking.js) pour être partagé.
+4. **Récapitulatif** : « Ce que vous allez figer » (loyers encaissés, frais d'agence, dépenses,
+   reversements) sur la carte et dans la confirmation (modale `ConfirmDialog`), avec le rappel que
+   c'est définitif et le nombre de points restant à vérifier.
+5. **Rappel** : bandeau sur l'accueil et le tableau de bord du DG quand le prochain mois est prêt ou que
+   plusieurs mois s'accumulent, lien direct vers la page. Le rappel automatique quotidien et la carte
+   « Mois clôturable » des tâches visent désormais le PROCHAIN mois à clôturer (avant : le mois en cours
+   et le précédent, sans tenir compte de l'ordre) ; lien corrigé vers `/espace/cloture`.
+6. **Page simplifiée** : explication ouverte à la première visite seulement, puis repliée ; la date de
+   démarrage de la comptabilité déménage dans Paramètres (« Finances », `StartDateCard`).
+
+**Bug corrigé au passage** : avec une date de démarrage en milieu de mois (ex. le 5 août), la clôture
+d'août était refusée (« doit commencer le …-05 ») — un mois civil commence toujours le 1er. La
+continuité se juge désormais au mois, avec un message clair : « Clôturez d'abord septembre 2026 : les
+mois se clôturent dans l'ordre, sans en sauter. » Prouvé en échec sur l'ancien code.
+
+**Tests** : nouveau `test/closingOverview.test.js` (5 tests, dates relatives au jour d'exécution) ;
+message de continuité mis à jour dans `periodRhythm.test.js`. Suite backend **372/372** (365 passent,
+7 ignorés faute de `pdftotext`). `tsc`/`eslint` frontend propres. Parcours navigateur réel : frise,
+vérifications, récapitulatif, confirmation, clôture puis passage automatique au mois suivant,
+historique, Paramètres, bandeaux accueil et tableau de bord.

@@ -19,7 +19,7 @@ import {
 import { useAuth } from "@/lib/auth/auth-context";
 import { getMyTasks, type MyTasks } from "@/lib/api/tasks";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
-import { formatFcfa, formatDateLabel, formatTaskDueLabel, buildRentReminderMessage, cn } from "@/lib/utils";
+import { formatFcfa, formatDateLabel, formatTaskDueLabel, buildRentReminderMessage, cn, monthLabelFr } from "@/lib/utils";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -246,9 +246,9 @@ export function MyTasksCard() {
               </CategoryCard>
 
               {monthClosable && tasks.accountant.currentMonthClosability && (
-                <CategoryCard icon={<CalendarClock size={14} />} title="Mois clôturable" tone="primary" count={1} href="/espace/comptabilite">
+                <CategoryCard icon={<CalendarClock size={14} />} title="Mois clôturable" tone="primary" count={1} href="/espace/cloture">
                   <Row
-                    label={`${tasks.accountant.currentMonthClosability.period} est prêt à être clôturé`}
+                    label={`${monthLabelFr(tasks.accountant.currentMonthClosability.period)} est prêt à être clôturé`}
                     detail="Signalez-le à la direction générale, seule habilitée à clôturer."
                   />
                 </CategoryCard>
