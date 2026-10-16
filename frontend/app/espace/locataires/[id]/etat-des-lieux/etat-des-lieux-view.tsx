@@ -106,6 +106,7 @@ function EtatDesLieuxContent() {
             accessToken={accessToken}
             onReportChange={setReport}
             onFinalized={() => router.push(`/espace/locataires/${renterId}`)}
+            renterName={renterName}
           />
         )}
       </div>
@@ -163,7 +164,9 @@ function DraftEditor({
   accessToken,
   onReportChange,
   onFinalized,
+  renterName,
 }: {
+  renterName: string;
   leaseId: number;
   lease: Lease;
   report: InspectionReport;
@@ -275,7 +278,7 @@ function DraftEditor({
           </Button>
         </div>
 
-        <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} />
+        <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
       </CardContent>
     </Card>
   );

@@ -124,6 +124,7 @@ function SortieContent() {
             accessToken={accessToken}
             onReportChange={setReport}
             onFinalized={() => router.push(`/espace/locataires/${renterId}`)}
+            renterName={renterName}
           />
         ) : lease.status !== "active" ? (
           <Card className="max-w-2xl">
@@ -191,7 +192,9 @@ function DraftEditor({
   accessToken,
   onReportChange,
   onFinalized,
+  renterName,
 }: {
+  renterName: string;
   leaseId: number;
   lease: Lease;
   report: MoveOutReport;
@@ -245,6 +248,18 @@ function DraftEditor({
   // Postes dégradés par rapport à l'entrée ("zoneKey::itemKey") — utilisé
   // pour mettre en évidence l'invite à facturer directement dans le
   // formulaire, sans dépendre du dépliement de la section de comparaison.
+  // Pièces et éléments de la fiche d'entrée : non retirables à la sortie (étape 56), sinon leur
+  // comparaison entrée/sortie disparaîtrait. Ce qui est ajouté à la sortie reste retirable.
+  const lockedKeys = React.useMemo(() => {
+    if (!lease.moveInReport) return undefined;
+    const keys = new Set<string>();
+    for (const zone of lease.moveInReport.zones) {
+      keys.add(zone.key);
+      for (const item of zone.items) keys.add(`${zone.key}::${item.key}`);
+    }
+    return keys;
+  }, [lease.moveInReport]);
+
   const degradedKeys = React.useMemo(() => {
     if (!lease.moveInReport) return undefined;
     const results = compareInspectionReports(lease.moveInReport, { ...report, zones });
@@ -383,6 +398,7 @@ function DraftEditor({
           showDeductions
           catalog={catalog}
           degradedKeys={degradedKeys}
+          lockedKeys={lockedKeys}
           onUploadPhoto={handleUploadPhoto}
           onDeletePhoto={handleDeletePhoto}
           accessToken={accessToken}
@@ -530,7 +546,7 @@ function DraftEditor({
           </Button>
         </div>
 
-        <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} />
+        <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
       </CardContent>
     </Card>
   );

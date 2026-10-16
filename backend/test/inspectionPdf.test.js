@@ -76,7 +76,10 @@ test('streamMoveInPdf — PDF valide, sans colonne de retenue (constat, pas de f
   const pdf = await capturePdf((res) => streamMoveInPdf(res, { tenant, renter, property, lease, report }));
   const text = pdfText(pdf);
   assert.match(text, /ÉTAT DES LIEUX D'ENTRÉE/);
-  assert.match(text, /Porte — Bon état/);
+  // Mise en page en tableau (étape 56) : l'élément et son état figurent sur la même ligne du tableau.
+  assert.match(text, /Porte\s+Bon état/);
+  assert.match(text, /PIÈCES/);
+  assert.match(text, /Lu et approuvé/);
   // Constat d'entrée : jamais de montant de retenue, cette notion n'existe pas ici.
   assert.doesNotMatch(text, /FCFA/);
 });
@@ -97,7 +100,7 @@ test('streamMoveInPdf — réserves du locataire mises en avant, réouverture me
   assert.match(text, /corrigé le/);
 });
 
-test('streamMoveOutPdf — transition Bon état -> Mauvais état, facturation, mode de règlement de la caution (bug corrigé)', { skip: !hasPdftotext && 'pdftotext indisponible' }, async () => {
+test('streamMoveOutPdf — transition Bon état vers Mauvais état, facturation, mode de règlement de la caution (bug corrigé)', { skip: !hasPdftotext && 'pdftotext indisponible' }, async () => {
   const moveInZones = [zoneWithItems([{ key: 'carrelage', label: 'Carrelage', condition: 'BE' }])];
   const report = {
     conductedAt: '2026-06-01',
@@ -129,7 +132,9 @@ test('streamMoveOutPdf — transition Bon état -> Mauvais état, facturation, m
   const text = pdfText(
     await capturePdf((res) => streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveInZones, additionalDeposits: [] })),
   );
-  assert.match(text, /Bon état -> Mauvais état/);
+  // Étape 56 : l'état d'entrée est rappelé sous l'état de sortie quand il a changé.
+  assert.match(text, /Mauvais état/);
+  assert.match(text, /Entrée : Bon état/);
   assert.match(text, /Reprise carrelage/);
   assert.match(text, /35 000 FCFA/);
   // Bug corrigé (audit étape 48) : le mode de règlement n'apparaissait nulle part sur ce PV signé.

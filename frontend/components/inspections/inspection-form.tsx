@@ -1,13 +1,40 @@
 "use client";
 
 import * as React from "react";
-import { Camera, Plus, Trash2, X, Search, Receipt } from "lucide-react";
+import {
+  Camera,
+  Plus,
+  Trash2,
+  X,
+  Search,
+  Receipt,
+  Check,
+  Pencil,
+  Home,
+  BedDouble,
+  Sofa,
+  CookingPot,
+  ShowerHead,
+  DoorOpen,
+  Bath,
+  Sun,
+  Trees,
+  Car,
+  Briefcase,
+  LayoutGrid,
+  type LucideIcon,
+} from "lucide-react";
 import { cn, formatFcfa } from "@/lib/utils";
 import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import {
   INSPECTION_CONDITIONS,
   CONDITION_LABELS,
   generateCustomKey,
+  ROOM_PRESETS,
+  COMMON_ITEM_SUGGESTIONS,
+  presetForZoneKey,
+  nextRoomIdentity,
+  itemKeyFromLabel,
   type InspectionCondition,
 } from "@/lib/constants/inspection";
 import type { InspectionZone, InspectionItem, BillingLine } from "@/lib/api/renters";
@@ -24,7 +51,16 @@ type InspectionFormProps = {
   catalog?: CatalogItem[];
   /** Postes dégradés par rapport à l'entrée ("zoneKey::itemKey") — mis en évidence avec une invite à facturer. */
   degradedKeys?: Set<string>;
+  /**
+   * Pièces (« zoneKey ») et éléments (« zoneKey::itemKey ») qu'on ne peut pas retirer — à la sortie, ceux
+   * de la fiche d'entrée : les retirer ferait disparaître leur comparaison. Absent à l'entrée : tout se retire.
+   */
+  lockedKeys?: Set<string>;
   accessToken: string | null;
+}
+
+function newItem(key: string, label: string): InspectionItem {
+  return { key, label, custom: true, condition: null, comment: null, photoUrls: [], deduction: 0, billing: null };
 }
 
 /**
@@ -32,6 +68,10 @@ type InspectionFormProps = {
  * zones) — partagé entre l'entrée et la sortie. Purement présentationnel :
  * ne parle jamais directement à l'API (sauf les photos, immédiates par
  * nature) — l'appelant décide quand persister `zones` (bouton Enregistrer).
+ *
+ * Étape 56 : chaque pièce se compose librement — ajouter une pièce type (Salon, Chambre 2…) avec ses
+ * éléments habituels ou une pièce libre, la renommer, la retirer, et ajouter ou retirer ses éléments
+ * en un clic (suggestions), sauf ce que `lockedKeys` protège.
  */
 export function InspectionForm({
   zones,
@@ -41,96 +81,136 @@ export function InspectionForm({
   onDeletePhoto,
   catalog = [],
   degradedKeys,
+  lockedKeys,
   accessToken,
 }: InspectionFormProps) {
+  const [lastAddedZone, setLastAddedZone] = React.useState<string | null>(null);
+
+  function updateZone(zoneKey: string, update: (zone: InspectionZone) => InspectionZone) {
+    onChange(zones.map((zone) => (zone.key !== zoneKey ? zone : update(zone))));
+  }
+
   function updateItem(zoneKey: string, itemKey: string, patch: Partial<InspectionItem>) {
-    onChange(
-      zones.map((zone) =>
-        zone.key !== zoneKey
-          ? zone
-          : { ...zone, items: zone.items.map((item) => (item.key !== itemKey ? item : { ...item, ...patch })) },
-      ),
-    );
+    updateZone(zoneKey, (zone) => ({ ...zone, items: zone.items.map((item) => (item.key !== itemKey ? item : { ...item, ...patch })) }));
   }
 
   function removeItem(zoneKey: string, itemKey: string) {
-    onChange(
-      zones.map((zone) => (zone.key !== zoneKey ? zone : { ...zone, items: zone.items.filter((it) => it.key !== itemKey) })),
-    );
+    updateZone(zoneKey, (zone) => ({ ...zone, items: zone.items.filter((it) => it.key !== itemKey) }));
   }
 
-  function addItem(zoneKey: string, label: string) {
-    const key = generateCustomKey("item");
-    onChange(
-      zones.map((zone) =>
-        zone.key !== zoneKey
-          ? zone
-          : { ...zone, items: [...zone.items, { key, label, custom: true, condition: null, comment: null, photoUrls: [], deduction: 0, billing: null }] },
-      ),
-    );
+  function addItems(zoneKey: string, labels: string[]) {
+    updateZone(zoneKey, (zone) => {
+      const keys = zone.items.map((it) => it.key);
+      const added: InspectionItem[] = [];
+      for (const label of labels) {
+        const key = itemKeyFromLabel(label, [...keys, ...added.map((a) => a.key)]);
+        added.push(newItem(key, label));
+      }
+      return { ...zone, items: [...zone.items, ...added] };
+    });
   }
 
-  function addZone(label: string, firstItemLabel: string) {
-    const zoneKey = generateCustomKey("zone");
-    const itemKey = generateCustomKey("item");
-    onChange([
-      ...zones,
-      {
-        key: zoneKey,
-        label,
-        custom: true,
-        items: [{ key: itemKey, label: firstItemLabel, custom: true, condition: null, comment: null, photoUrls: [], deduction: 0, billing: null }],
-      },
-    ]);
+  function addRoom(room: { key: string; label: string; items: { key: string; label: string }[] }) {
+    onChange([...zones, { key: room.key, label: room.label, custom: true, items: room.items.map((it) => newItem(it.key, it.label)) }]);
+    setLastAddedZone(room.key);
   }
 
-  function removeZone(zoneKey: string) {
-    onChange(zones.filter((z) => z.key !== zoneKey));
-  }
+  const doneCount = zones.reduce((n, z) => n + z.items.filter((it) => it.condition).length, 0);
+  const totalCount = zones.reduce((n, z) => n + z.items.length, 0);
 
   return (
     <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface-muted px-4 py-3">
+        <span className="font-label-md text-ink">
+          {zones.length} pièce{zones.length > 1 ? "s" : ""} · {doneCount}/{totalCount} élément{totalCount > 1 ? "s" : ""} renseigné
+          {doneCount > 1 ? "s" : ""}
+        </span>
+        <div className="h-2 min-w-[120px] flex-1 overflow-hidden rounded-full bg-surface">
+          <div
+            className={cn("h-full rounded-full transition-[width] duration-500", doneCount === totalCount && totalCount > 0 ? "bg-success" : "bg-primary")}
+            style={{ width: `${totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0}%` }}
+          />
+        </div>
+        {doneCount === totalCount && totalCount > 0 && (
+          <span className="inline-flex items-center gap-1 text-body-sm font-semibold text-success-fg">
+            <Check size={15} />
+            Prêt à signer
+          </span>
+        )}
+      </div>
+
       {zones.map((zone) => (
         <ZoneSection
           key={zone.key}
           zone={zone}
+          highlight={zone.key === lastAddedZone}
+          removable={!lockedKeys?.has(zone.key)}
+          isItemLocked={(itemKey) => lockedKeys?.has(`${zone.key}::${itemKey}`) ?? false}
           showDeductions={showDeductions}
           catalog={catalog}
           degradedKeys={degradedKeys}
           onUpdateItem={(itemKey, patch) => updateItem(zone.key, itemKey, patch)}
           onRemoveItem={(itemKey) => removeItem(zone.key, itemKey)}
-          onAddItem={(label) => addItem(zone.key, label)}
-          onRemoveZone={() => removeZone(zone.key)}
+          onAddItems={(labels) => addItems(zone.key, labels)}
+          onRename={(label) => updateZone(zone.key, (z) => ({ ...z, label }))}
+          onRemoveZone={() => onChange(zones.filter((z) => z.key !== zone.key))}
           onUploadPhoto={(itemKey, file) => onUploadPhoto(zone.key, itemKey, file)}
           onDeletePhoto={(itemKey, photoIndex) => onDeletePhoto(zone.key, itemKey, photoIndex)}
           accessToken={accessToken}
         />
       ))}
-      <AddZoneForm onAdd={addZone} />
+      <AddRoomPanel existingKeys={zones.map((z) => z.key)} onAdd={addRoom} />
     </div>
   );
 }
 
+const ROOM_ICONS: Record<string, LucideIcon> = {
+  devanture: Home,
+  chambre: BedDouble,
+  salon: Sofa,
+  cuisine: CookingPot,
+  douche_sdb: ShowerHead,
+  entree_couloir: DoorOpen,
+  wc: Bath,
+  balcon: Sun,
+  cour: Trees,
+  garage: Car,
+  bureau: Briefcase,
+};
+
+function roomIcon(zoneKey: string): LucideIcon {
+  const preset = presetForZoneKey(zoneKey);
+  return (preset && ROOM_ICONS[preset.key]) || LayoutGrid;
+}
+
 function ZoneSection({
   zone,
+  highlight,
+  removable,
+  isItemLocked,
   showDeductions,
   catalog,
   degradedKeys,
   onUpdateItem,
   onRemoveItem,
-  onAddItem,
+  onAddItems,
+  onRename,
   onRemoveZone,
   onUploadPhoto,
   onDeletePhoto,
   accessToken,
 }: {
   zone: InspectionZone;
+  highlight: boolean;
+  removable: boolean;
+  isItemLocked: (itemKey: string) => boolean;
   showDeductions: boolean;
   catalog: CatalogItem[];
   degradedKeys?: Set<string>;
   onUpdateItem: (itemKey: string, patch: Partial<InspectionItem>) => void;
   onRemoveItem: (itemKey: string) => void;
-  onAddItem: (label: string) => void;
+  onAddItems: (labels: string[]) => void;
+  onRename: (label: string) => void;
   onRemoveZone: () => void;
   onUploadPhoto: (itemKey: string, file: File) => void | Promise<void>;
   onDeletePhoto: (itemKey: string, photoIndex: number) => void | Promise<void>;
@@ -138,27 +218,105 @@ function ZoneSection({
 }) {
   const [addingItem, setAddingItem] = React.useState(false);
   const [newItemLabel, setNewItemLabel] = React.useState("");
+  const [renaming, setRenaming] = React.useState(false);
+  const [labelDraft, setLabelDraft] = React.useState(zone.label);
+  const [confirmingRemove, setConfirmingRemove] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+  const Icon = roomIcon(zone.key);
+
+  // Une pièce qui vient d'être ajoutée défile à l'écran, pour que l'agent la voie tout de suite.
+  React.useEffect(() => {
+    if (highlight) ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [highlight]);
+
+  const existingLabels = new Set(zone.items.map((it) => it.label.toLowerCase()));
+  const preset = presetForZoneKey(zone.key);
+  const suggestions = [...(preset?.items.map((it) => it.label) ?? []), ...COMMON_ITEM_SUGGESTIONS]
+    .filter((label, i, all) => all.indexOf(label) === i && !existingLabels.has(label.toLowerCase()))
+    .slice(0, 10);
+
+  const done = zone.items.filter((it) => it.condition).length;
 
   function confirmAddItem() {
     if (!newItemLabel.trim()) return;
-    onAddItem(newItemLabel.trim());
+    onAddItems([newItemLabel.trim()]);
     setNewItemLabel("");
-    setAddingItem(false);
+  }
+
+  function confirmRename() {
+    if (labelDraft.trim()) onRename(labelDraft.trim());
+    setRenaming(false);
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h3 className="font-label-lg text-ink">{zone.label}</h3>
-          {zone.custom && <span className="rounded-full bg-info-bg px-2 py-0.5 text-body-xs text-info-fg">Zone personnalisée</span>}
+    <div
+      ref={ref}
+      className={cn(
+        "flex scroll-mt-24 flex-col gap-3 rounded-lg border border-border bg-surface p-4 shadow-sm",
+        highlight && "animate-card-in border-primary/40 ring-2 ring-primary/15",
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-bg text-primary">
+            <Icon size={18} />
+          </span>
+          {renaming ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                autoFocus
+                value={labelDraft}
+                onChange={(e) => setLabelDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") confirmRename();
+                  if (e.key === "Escape") setRenaming(false);
+                }}
+                aria-label="Nom de la pièce"
+                className="h-9 w-48 rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              />
+              <Button type="button" size="sm" onClick={confirmRename}>
+                OK
+              </Button>
+            </div>
+          ) : (
+            <div className="min-w-0">
+              <h3 className="flex items-center gap-1.5 font-label-lg text-ink">
+                {zone.label}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLabelDraft(zone.label);
+                    setRenaming(true);
+                  }}
+                  aria-label={`Renommer ${zone.label}`}
+                  className="rounded p-1 text-ink-muted hover:bg-surface-muted hover:text-ink"
+                >
+                  <Pencil size={13} />
+                </button>
+              </h3>
+              <p className="text-body-xs text-ink-muted">
+                {done}/{zone.items.length} élément{zone.items.length > 1 ? "s" : ""} renseigné{done > 1 ? "s" : ""}
+              </p>
+            </div>
+          )}
         </div>
-        {zone.custom && (
-          <Button type="button" variant="ghost" size="sm" onClick={onRemoveZone}>
-            <Trash2 size={14} />
-            Supprimer la zone
-          </Button>
-        )}
+        {removable &&
+          (confirmingRemove ? (
+            <div className="flex items-center gap-1.5 rounded-lg border border-danger-border bg-danger-bg px-2 py-1">
+              <span className="text-body-xs text-danger-fg">Retirer « {zone.label} » ?</span>
+              <Button type="button" size="sm" variant="destructive" onClick={onRemoveZone}>
+                Oui
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmingRemove(false)}>
+                Non
+              </Button>
+            </div>
+          ) : (
+            <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmingRemove(true)}>
+              <Trash2 size={14} />
+              Retirer la pièce
+            </Button>
+          ))}
       </div>
 
       <div className="flex flex-col gap-3">
@@ -170,7 +328,7 @@ function ZoneSection({
             catalog={catalog}
             degraded={degradedKeys?.has(`${zone.key}::${item.key}`) ?? false}
             onUpdate={(patch) => onUpdateItem(item.key, patch)}
-            onRemove={item.custom ? () => onRemoveItem(item.key) : undefined}
+            onRemove={!isItemLocked(item.key) && zone.items.length > 1 ? () => onRemoveItem(item.key) : undefined}
             onUploadPhoto={(file) => onUploadPhoto(item.key, file)}
             onDeletePhoto={(photoIndex) => onDeletePhoto(item.key, photoIndex)}
             accessToken={accessToken}
@@ -179,24 +337,45 @@ function ZoneSection({
       </div>
 
       {addingItem ? (
-        <div className="flex items-center gap-2">
-          <input
-            autoFocus
-            value={newItemLabel}
-            onChange={(e) => setNewItemLabel(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && confirmAddItem()}
-            placeholder="Nom de l'élément (ex. Garage)"
-            className="h-9 flex-1 rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          />
-          <Button type="button" size="sm" onClick={confirmAddItem}>Ajouter</Button>
-          <Button type="button" variant="ghost" size="sm" onClick={() => { setAddingItem(false); setNewItemLabel(""); }}>
-            <X size={14} />
-          </Button>
+        <div className="flex flex-col gap-2.5 rounded-lg border border-dashed border-border-strong bg-surface-muted p-3">
+          <div className="flex items-center gap-2">
+            <input
+              autoFocus
+              value={newItemLabel}
+              onChange={(e) => setNewItemLabel(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && confirmAddItem()}
+              placeholder="Nom de l'élément (ex. Tableau électrique)"
+              aria-label="Nom de l'élément"
+              className="h-9 flex-1 rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            />
+            <Button type="button" size="sm" onClick={confirmAddItem} disabled={!newItemLabel.trim()}>
+              Ajouter
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => { setAddingItem(false); setNewItemLabel(""); }} aria-label="Fermer">
+              <X size={14} />
+            </Button>
+          </div>
+          {suggestions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-body-xs text-ink-muted">En un clic :</span>
+              {suggestions.map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => onAddItems([label])}
+                  className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-surface px-2.5 py-1 text-body-xs text-ink-soft transition-colors hover:border-primary hover:text-primary"
+                >
+                  <Plus size={12} />
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         <Button type="button" variant="ghost" size="sm" className="self-start" onClick={() => setAddingItem(true)}>
           <Plus size={14} />
-          Ajouter un élément
+          Ajouter un élément à {zone.label}
         </Button>
       )}
     </div>
@@ -499,55 +678,160 @@ function conditionButtonClass(c: InspectionCondition) {
   return "border-danger bg-danger-bg text-danger-fg";
 }
 
-function AddZoneForm({ onAdd }: { onAdd: (label: string, firstItemLabel: string) => void }) {
-  const [adding, setAdding] = React.useState(false);
-  const [zoneLabel, setZoneLabel] = React.useState("");
-  const [itemLabel, setItemLabel] = React.useState("");
+/**
+ * Ajout d'une pièce (étape 56) : une pièce type pré-remplie de ses éléments habituels (« Chambre 2 » si
+ * une chambre existe déjà), ou une pièce libre dont l'agent choisit le nom et les éléments.
+ */
+function AddRoomPanel({
+  existingKeys,
+  onAdd,
+}: {
+  existingKeys: string[];
+  onAdd: (room: { key: string; label: string; items: { key: string; label: string }[] }) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [customName, setCustomName] = React.useState("");
+  const [customItems, setCustomItems] = React.useState<string[]>([]);
+  const [customItemDraft, setCustomItemDraft] = React.useState("");
 
-  function confirm() {
-    if (!zoneLabel.trim() || !itemLabel.trim()) return;
-    onAdd(zoneLabel.trim(), itemLabel.trim());
-    setZoneLabel("");
-    setItemLabel("");
-    setAdding(false);
+  function reset() {
+    setOpen(false);
+    setCustomName("");
+    setCustomItems([]);
+    setCustomItemDraft("");
   }
 
-  if (!adding) {
+  function addPreset(preset: (typeof ROOM_PRESETS)[number]) {
+    const { key, label } = nextRoomIdentity(preset, existingKeys);
+    onAdd({ key, label, items: preset.items });
+    reset();
+  }
+
+  function toggleCustomItem(label: string) {
+    setCustomItems((items) => (items.includes(label) ? items.filter((l) => l !== label) : [...items, label]));
+  }
+
+  function addCustomItemDraft() {
+    const label = customItemDraft.trim();
+    if (label && !customItems.includes(label)) setCustomItems((items) => [...items, label]);
+    setCustomItemDraft("");
+  }
+
+  function addCustomRoom() {
+    if (!customName.trim() || customItems.length === 0) return;
+    const keys: string[] = [];
+    const items = customItems.map((label) => {
+      const key = itemKeyFromLabel(label, keys);
+      keys.push(key);
+      return { key, label };
+    });
+    onAdd({ key: generateCustomKey("zone"), label: customName.trim(), items });
+    reset();
+  }
+
+  if (!open) {
     return (
-      <Button type="button" variant="secondary" size="sm" className="self-start" onClick={() => setAdding(true)}>
-        <Plus size={14} />
-        Ajouter une zone (garage, cour, couloir…)
-      </Button>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="group flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border-strong bg-surface px-4 py-5 font-label-md text-ink-soft transition-colors hover:border-primary hover:bg-primary-bg/40 hover:text-primary"
+      >
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-bg text-primary transition-transform group-hover:scale-110">
+          <Plus size={18} />
+        </span>
+        Ajouter une pièce (salon, chambre, cuisine…)
+      </button>
     );
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-4 sm:flex-row sm:items-end">
-      <div className="flex-1">
-        <label className="mb-1 block text-body-xs text-ink-muted">Nom de la zone</label>
-        <input
-          autoFocus
-          value={zoneLabel}
-          onChange={(e) => setZoneLabel(e.target.value)}
-          placeholder="Ex. Garage"
-          className="h-9 w-full rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        />
-      </div>
-      <div className="flex-1">
-        <label className="mb-1 block text-body-xs text-ink-muted">Premier élément à vérifier</label>
-        <input
-          value={itemLabel}
-          onChange={(e) => setItemLabel(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && confirm()}
-          placeholder="Ex. Porte de garage"
-          className="h-9 w-full rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        />
-      </div>
-      <div className="flex items-center gap-2">
-        <Button type="button" size="sm" onClick={confirm}>Ajouter</Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => setAdding(false)}>
-          <X size={14} />
+    <div className="flex animate-card-in flex-col gap-4 rounded-lg border border-primary/30 bg-surface p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h3 className="font-label-lg text-ink">Ajouter une pièce</h3>
+          <p className="text-body-xs text-ink-muted">Une pièce type arrive avec ses éléments habituels, que vous pourrez modifier.</p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={reset} aria-label="Fermer">
+          <X size={16} />
         </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {ROOM_PRESETS.map((preset, i) => {
+          const Icon = ROOM_ICONS[preset.key] ?? LayoutGrid;
+          const next = nextRoomIdentity(preset, existingKeys);
+          return (
+            <button
+              key={preset.key}
+              type="button"
+              onClick={() => addPreset(preset)}
+              className="flex animate-cell-pop items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-2.5 text-left transition-[border-color,transform,box-shadow] hover:-translate-y-0.5 hover:border-primary hover:shadow-md"
+              style={{ animationDelay: `${i * 25}ms` }}
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-bg text-primary">
+                <Icon size={16} />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate font-label-md text-ink">{next.label}</span>
+                <span className="block text-body-xs text-ink-muted">{preset.items.length} éléments</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-col gap-2.5 border-t border-border pt-4">
+        <p className="font-label-md text-ink">Ou une pièce libre</p>
+        <input
+          value={customName}
+          onChange={(e) => setCustomName(e.target.value)}
+          placeholder="Nom de la pièce (ex. Buanderie, Chambre d'enfant)"
+          aria-label="Nom de la pièce libre"
+          className="h-9 w-full rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {[...COMMON_ITEM_SUGGESTIONS, ...customItems.filter((l) => !COMMON_ITEM_SUGGESTIONS.includes(l))].map((label) => {
+            const selected = customItems.includes(label);
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() => toggleCustomItem(label)}
+                aria-pressed={selected}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-body-xs transition-colors",
+                  selected ? "border-primary bg-primary text-white" : "border-border-strong bg-surface text-ink-soft hover:border-primary",
+                )}
+              >
+                {selected ? <Check size={12} /> : <Plus size={12} />}
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={customItemDraft}
+            onChange={(e) => setCustomItemDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addCustomItemDraft()}
+            placeholder="Autre élément (ex. Chauffe-eau)"
+            aria-label="Autre élément"
+            className="h-9 flex-1 rounded border border-border-strong bg-surface px-2.5 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+          <Button type="button" variant="secondary" size="sm" onClick={addCustomItemDraft} disabled={!customItemDraft.trim()}>
+            <Plus size={14} />
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" onClick={addCustomRoom} disabled={!customName.trim() || customItems.length === 0}>
+            <Plus size={16} />
+            Ajouter {customName.trim() ? `« ${customName.trim()} »` : "la pièce"}
+            {customItems.length > 0 && ` (${customItems.length} élément${customItems.length > 1 ? "s" : ""})`}
+          </Button>
+          {(!customName.trim() || customItems.length === 0) && (
+            <span className="text-body-xs text-ink-muted">Donnez un nom et choisissez au moins un élément.</span>
+          )}
+        </div>
       </div>
     </div>
   );

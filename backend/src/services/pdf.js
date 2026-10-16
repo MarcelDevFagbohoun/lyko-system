@@ -761,99 +761,224 @@ const ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS = {
   cheque: 'Chèque',
 };
 
+const CONDITION_BG = { BE: '#ECFDF5', ME: '#FEF2F2', SR: '#FFFBEB' };
+const ZEBRA = '#F8FAFC';
+const CONTENT_LEFT = 50;
+const CONTENT_WIDTH = 495;
+
+/** Passe à une nouvelle page si `needed` points ne tiennent plus sous `y` ; renvoie le `y` utilisable. */
+function ensureSpace(doc, y, needed) {
+  if (y + needed > doc.page.height - doc.page.margins.bottom) {
+    doc.addPage();
+    return doc.page.margins.top;
+  }
+  return y;
+}
+
+/** Pastille d'état (pastille de couleur + libellé sur fond teinté). Renvoie sa largeur. */
+function drawConditionPill(doc, condition, x, y) {
+  const label = condition ? CONDITION_LABELS[condition] : 'Non renseigné';
+  const color = condition ? CONDITION_COLORS[condition] : MUTED;
+  const bg = condition ? CONDITION_BG[condition] : SURFACE_MUTED;
+  doc.font(FONT_SANS_BOLD).fontSize(7.5);
+  const w = doc.widthOfString(label) + 19;
+  doc.roundedRect(x, y, w, 15, 7.5).fill(bg);
+  doc.circle(x + 7.5, y + 7.5, 2.4).fill(color);
+  doc.fillColor(color).text(label, x + 13, y + 4.2, { lineBreak: false });
+  return w;
+}
+
 /**
- * Grille zones/éléments partagée entre le PV d'entrée et celui de sortie
- * (étape 48) — évite de dupliquer ~100 lignes entre les deux. `showBilling`
- * (sortie uniquement) affiche la colonne de retenue et le détail des lignes
- * de facturation ; `moveInConditionByKey` (sortie uniquement) permet
- * d'expliquer la transition d'état ("Bon état -> Mauvais état"). Retourne le
- * `y` après la dernière zone dessinée.
+ * Cadre d'identification d'une fiche (étape 56) : grille deux colonnes libellé/valeur, plus lisible
+ * qu'une suite de lignes. `rows` : paires [libellé, valeur] lues de gauche à droite.
+ */
+function drawInfoPanel(doc, rows, y) {
+  const colWidth = (CONTENT_WIDTH - 30) / 2;
+  const lines = [];
+  for (let k = 0; k < rows.length; k += 2) lines.push(rows.slice(k, k + 2));
+  const lineHeights = lines.map((pair) =>
+    Math.max(
+      ...pair.map(([, value]) => doc.font(FONT_SANS_BOLD).fontSize(10).heightOfString(String(value ?? '—'), { width: colWidth })),
+    ) + 18,
+  );
+  const height = lineHeights.reduce((a, b) => a + b, 0) + 16;
+  y = ensureSpace(doc, y, height);
+  drawPanel(doc, CONTENT_LEFT, y, CONTENT_WIDTH, height);
+  let ly = y + 12;
+  lines.forEach((pair, idx) => {
+    pair.forEach(([label, value], col) => {
+      const x = CONTENT_LEFT + 15 + col * (colWidth + 0);
+      doc.font(FONT_SANS_BOLD).fontSize(7).fillColor(MUTED).text(String(label).toUpperCase(), x, ly, { width: colWidth, characterSpacing: 0.4 });
+      doc.font(FONT_SANS_BOLD).fontSize(10).fillColor(INK).text(String(value ?? '—'), x, ly + 10, { width: colWidth });
+    });
+    ly += lineHeights[idx];
+  });
+  return y + height + 14;
+}
+
+/** Résumé chiffré d'une fiche : pièces, puis éléments par état — l'essentiel lisible en un coup d'œil. */
+function drawInspectionSummary(doc, zones, y) {
+  const counts = { BE: 0, SR: 0, ME: 0 };
+  for (const zone of zones) for (const item of zone.items) if (item.condition) counts[item.condition] += 1;
+  const boxes = [
+    { label: 'Pièces', value: zones.length, color: PRIMARY, bg: PRIMARY_BG },
+    { label: 'Bon état', value: counts.BE, color: SUCCESS_FG, bg: CONDITION_BG.BE },
+    { label: 'Sous réserve', value: counts.SR, color: WARNING_FG, bg: CONDITION_BG.SR },
+    { label: 'Mauvais état', value: counts.ME, color: DANGER_FG, bg: CONDITION_BG.ME },
+  ];
+  y = ensureSpace(doc, y, 52);
+  const gap = 8;
+  const w = (CONTENT_WIDTH - gap * 3) / 4;
+  boxes.forEach((b, k) => {
+    const x = CONTENT_LEFT + k * (w + gap);
+    doc.roundedRect(x, y, w, 44, 5).fill(b.bg);
+    doc.font(FONT_MONO_BOLD).fontSize(17).fillColor(b.color).text(String(b.value), x + 12, y + 8, { width: w - 24 });
+    doc.font(FONT_SANS_BOLD).fontSize(7.5).fillColor(b.color).text(b.label.toUpperCase(), x + 12, y + 29, { width: w - 24, characterSpacing: 0.4 });
+  });
+  return y + 44 + 18;
+}
+
+/**
+ * Grille zones/éléments partagée entre le PV d'entrée et celui de sortie (étape 48, refaite en tableau
+ * à l'étape 56 : « les PDF générés doivent être bien propres, bien designés »). Chaque pièce : un
+ * bandeau-titre, puis un tableau Élément / État / Observations (+ Retenue à la sortie), lignes zébrées,
+ * état en pastille de couleur, photos sous l'observation. Une pièce coupée par un saut de page reprend
+ * son bandeau « (suite) » et ses en-têtes de colonnes. `moveInConditionByKey` (sortie) affiche l'état
+ * d'entrée sous celui de sortie quand il a changé. Retourne le `y` après la dernière pièce.
  */
 function drawInspectionZones(doc, zones, y, { moveInConditionByKey = null, showBilling = false } = {}) {
-  const textWidth = showBilling ? 350 : 495;
-  for (const zone of zones) {
-    if (y > doc.page.height - doc.page.margins.bottom - 60) {
-      doc.addPage();
-      y = doc.page.margins.top;
-    }
-    doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(PRIMARY).text(zone.label.toUpperCase(), 50, y);
-    y = doc.y + 6;
+  const cols = showBilling
+    ? [
+        { key: 'label', title: 'Élément', x: CONTENT_LEFT, w: 135 },
+        { key: 'state', title: 'État', x: CONTENT_LEFT + 135, w: 115 },
+        { key: 'obs', title: 'Observations', x: CONTENT_LEFT + 250, w: 165 },
+        { key: 'amount', title: 'Retenue (FCFA)', x: CONTENT_LEFT + 415, w: 80 },
+      ]
+    : [
+        { key: 'label', title: 'Élément', x: CONTENT_LEFT, w: 165 },
+        { key: 'state', title: 'État', x: CONTENT_LEFT + 165, w: 105 },
+        { key: 'obs', title: 'Observations', x: CONTENT_LEFT + 270, w: 225 },
+      ];
+  const col = Object.fromEntries(cols.map((c) => [c.key, c]));
+  const PAD = 7;
 
-    for (const item of zone.items) {
-      if (y > doc.page.height - doc.page.margins.bottom - 40) {
-        doc.addPage();
-        y = doc.page.margins.top;
-      }
-      const conditionLabel = item.condition ? CONDITION_LABELS[item.condition] : 'Non renseigné';
+  function drawZoneHeader(zone, yy, continued) {
+    doc.roundedRect(CONTENT_LEFT, yy, CONTENT_WIDTH, 24, 4).fill(PRIMARY_BG);
+    doc.rect(CONTENT_LEFT, yy, 3, 24).fill(PRIMARY);
+    doc.font(FONT_SANS_BOLD).fontSize(10.5).fillColor(PRIMARY).text(`${zone.label}${continued ? ' (suite)' : ''}`, CONTENT_LEFT + 12, yy + 7, { width: 330, lineBreak: false });
+    const good = zone.items.filter((it) => it.condition === 'BE').length;
+    doc
+      .font(FONT_SANS)
+      .fontSize(8)
+      .fillColor(INK_SOFT)
+      .text(`${zone.items.length} élément${zone.items.length > 1 ? 's' : ''} · ${good} en bon état`, CONTENT_LEFT + 300, yy + 8.5, { width: 185, align: 'right', lineBreak: false });
+    yy += 24;
+    for (const c of cols) {
+      doc
+        .font(FONT_SANS_BOLD)
+        .fontSize(7)
+        .fillColor(MUTED)
+        .text(c.title.toUpperCase(), c.x + PAD, yy + 7, { width: c.w - PAD * 2, align: c.key === 'amount' ? 'right' : 'left', characterSpacing: 0.4, lineBreak: false });
+    }
+    yy += 20;
+    doc.moveTo(CONTENT_LEFT, yy).lineTo(CONTENT_LEFT + CONTENT_WIDTH, yy).strokeColor(BORDER_STRONG).lineWidth(0.75).stroke();
+    return yy;
+  }
+
+  for (const zone of zones) {
+    y = ensureSpace(doc, y, 90);
+    y = drawZoneHeader(zone, y, false);
+
+    zone.items.forEach((item, idx) => {
       const moveInCondition = moveInConditionByKey ? moveInConditionByKey.get(`${zone.key}::${item.key}`) ?? null : null;
-      const transition = compareCondition(moveInCondition, item.condition);
-      // "->" plutôt que le caractère "→" : hors de l'encodage standard des
-      // polices intégrées à PDFKit (Helvetica), qui l'affiche comme un
-      // glyphe cassé — même limite que documentée pour "Ð" (`\r` isolé)
-      // dans `normalizeLineBreaks`, ici propre au jeu de caractères de la police.
-      const conditionText =
-        transition === 'degraded'
-          ? `${CONDITION_LABELS[moveInCondition]} -> ${conditionLabel}`
-          : conditionLabel;
-      const line = `${item.label} — ${conditionText}`;
-      const h1 = doc.font(FONT_SANS).fontSize(9.5).heightOfString(line, { width: textWidth });
-      doc.font(FONT_SANS).fontSize(9.5).fillColor(item.condition ? CONDITION_COLORS[item.condition] : MUTED).text(line, 50, y, { width: textWidth });
-      if (showBilling) {
+      const showTransition = !!moveInCondition && moveInCondition !== item.condition;
+      const comment = item.comment ? normalizeLineBreaks(item.comment) : '';
+      const billingLines = showBilling && item.billing?.lines?.length > 0 ? item.billing.lines : [];
+      const photos = item.photoUrls ?? [];
+
+      const labelH = doc.font(FONT_SANS_BOLD).fontSize(9).heightOfString(item.label, { width: col.label.w - PAD * 2 });
+      const stateH = showTransition ? 32 : 15;
+      const commentH = comment ? doc.font(FONT_SANS).fontSize(8.5).heightOfString(comment, { width: col.obs.w - PAD * 2 }) : 10;
+      const billingTexts = billingLines.map((l) => `• ${l.label}${l.quantity > 1 ? ` × ${l.quantity}` : ''} : ${formatAmountPlain(l.unitPrice * l.quantity)}`);
+      const billingH = billingTexts.reduce(
+        (h, t) => h + doc.font(FONT_SANS).fontSize(7.5).heightOfString(t, { width: col.obs.w - PAD * 2 }) + 2,
+        billingTexts.length > 0 ? 3 : 0,
+      );
+      const photosH = photos.length > 0 ? 50 : 0;
+      const rowH = Math.max(labelH, stateH, commentH + billingH + (photosH ? photosH + 4 : 0)) + PAD * 2;
+
+      if (y + rowH > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = drawZoneHeader(zone, doc.page.margins.top, true);
+      }
+
+      if (idx % 2 === 1) doc.rect(CONTENT_LEFT, y, CONTENT_WIDTH, rowH).fill(ZEBRA);
+      const top = y + PAD;
+      doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(item.label, col.label.x + PAD, top, { width: col.label.w - PAD * 2 });
+
+      drawConditionPill(doc, item.condition, col.state.x + PAD, top - 1);
+      if (showTransition) {
         doc
-          .font(FONT_MONO_BOLD)
-          .fontSize(9.5)
-          .fillColor(item.deduction > 0 ? DANGER_FG : MUTED)
-          .text(item.deduction > 0 ? `- ${formatFcfa(item.deduction)}` : '—', 400, y, { width: 145, align: 'right' });
+          .font(FONT_SANS)
+          .fontSize(7.5)
+          .fillColor(MUTED)
+          .text(`Entrée : ${CONDITION_LABELS[moveInCondition]}`, col.state.x + PAD, top + 18, { width: col.state.w - PAD * 2, lineBreak: false });
       }
-      y += h1;
-      if (item.comment) {
-        const comment = normalizeLineBreaks(item.comment);
-        const h2 = doc.font(FONT_SANS).fontSize(8.5).heightOfString(comment, { width: textWidth });
-        doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(comment, 50, y, { width: textWidth });
-        y += h2;
+
+      let oy = top;
+      if (comment) {
+        doc.font(FONT_SANS).fontSize(8.5).fillColor(INK_SOFT).text(comment, col.obs.x + PAD, oy, { width: col.obs.w - PAD * 2 });
+        oy += commentH;
+      } else {
+        doc.font(FONT_SANS).fontSize(8.5).fillColor(FAINT).text('—', col.obs.x + PAD, oy, { lineBreak: false });
+        oy += 10;
       }
-      // Détail de facturation (catalogue) : une sous-ligne par élément
-      // choisi, pour que le décompte soit lisible ligne par ligne, pas
-      // seulement un total par poste.
-      if (showBilling && item.billing?.lines?.length > 0) {
-        for (const l of item.billing.lines) {
-          const qtyText = l.quantity > 1 ? ` × ${l.quantity}` : '';
-          const billingLine = `• ${l.label}${qtyText}`;
-          const h3 = doc.font(FONT_SANS).fontSize(8.5).heightOfString(billingLine, { width: 300 });
-          doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(billingLine, 60, y, { width: 300 });
-          doc
-            .font(FONT_MONO)
-            .fontSize(8.5)
-            .fillColor(MUTED)
-            .text(formatFcfa(l.unitPrice * l.quantity), 400, y, { width: 145, align: 'right' });
-          y += h3;
-        }
+      if (billingTexts.length > 0) oy += 3;
+      for (const t of billingTexts) {
+        doc.font(FONT_SANS).fontSize(7.5).fillColor(MUTED).text(t, col.obs.x + PAD, oy, { width: col.obs.w - PAD * 2 });
+        oy += doc.font(FONT_SANS).fontSize(7.5).heightOfString(t, { width: col.obs.w - PAD * 2 }) + 2;
       }
-      // Photos (étape 48, jusqu'à 3 par élément) — preuve visuelle directement
-      // sur le PV, pas seulement consultable dans l'app.
-      if (item.photoUrls?.length > 0) {
-        if (y > doc.page.height - doc.page.margins.bottom - 55) {
-          doc.addPage();
-          y = doc.page.margins.top;
-        }
-        let px = 50;
-        for (const url of item.photoUrls) {
+      if (photos.length > 0) {
+        let px = col.obs.x + PAD;
+        for (const url of photos) {
           const file = uploadedFile(url);
-          doc.rect(px, y, 46, 46).strokeColor(BORDER).lineWidth(1).stroke();
+          doc.roundedRect(px, oy + 4, 46, 46, 3).strokeColor(BORDER_STRONG).lineWidth(0.75).stroke();
           try {
-            if (file && fs.existsSync(file)) doc.image(file, px + 1, y + 1, { fit: [44, 44] });
+            if (file && fs.existsSync(file)) doc.image(file, px + 1, oy + 5, { fit: [44, 44], align: 'center', valign: 'center' });
           } catch {
             // Photo illisible : on continue sans (pas bloquant pour le PV, même principe que les signatures).
           }
           px += 52;
         }
-        y += 52;
       }
-      y += 8;
-    }
-    y += 6;
+
+      if (showBilling) {
+        doc
+          .font(FONT_MONO_BOLD)
+          .fontSize(9)
+          .fillColor(item.deduction > 0 ? DANGER_FG : FAINT)
+          .text(item.deduction > 0 ? `-${formatAmountPlain(item.deduction)}` : '—', col.amount.x, top, { width: col.amount.w - PAD, align: 'right', lineBreak: false });
+      }
+
+      y += rowH;
+      doc.moveTo(CONTENT_LEFT, y).lineTo(CONTENT_LEFT + CONTENT_WIDTH, y).strokeColor(BORDER).lineWidth(0.5).stroke();
+    });
+    y += 16;
   }
   return y;
+}
+
+/** Encadré « Observations générales » de la fiche. */
+function drawGeneralNotes(doc, notes, y) {
+  if (!notes) return y;
+  const text = normalizeLineBreaks(notes);
+  const h = doc.font(FONT_SANS).fontSize(9).heightOfString(text, { width: CONTENT_WIDTH - 30 });
+  const boxHeight = h + 34;
+  y = ensureSpace(doc, y, boxHeight);
+  drawPanel(doc, CONTENT_LEFT, y, CONTENT_WIDTH, boxHeight);
+  doc.font(FONT_SANS_BOLD).fontSize(7.5).fillColor(MUTED).text('OBSERVATIONS GÉNÉRALES', CONTENT_LEFT + 15, y + 12, { characterSpacing: 0.4 });
+  doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(text, CONTENT_LEFT + 15, y + 26, { width: CONTENT_WIDTH - 30 });
+  return y + boxHeight + 15;
 }
 
 /** Encadré "Réserves du locataire" (étape 48) — mis en avant, jamais mêlé aux notes générales. */
@@ -894,35 +1019,40 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
     { text: formatDateFr(report.conductedAt), mono: true },
   ]);
 
-  let y = doc.y + 20;
-  y += drawRow(doc, 'Locataire', `${renter.first_name} ${renter.last_name}`, y);
-  y += drawRow(
+  const tenantName = `${renter.first_name} ${renter.last_name}`;
+  const agentName = report.finalizedBy?.name ?? report.conductedBy?.name ?? null;
+  let y = doc.y + 18;
+  y = drawInfoPanel(
     doc,
-    'Bien loué',
-    `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`,
+    [
+      ['Locataire', tenantName],
+      ['Bien loué', `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`],
+      ['Unité', property.unit_code ?? '—'],
+      ['Durée du bail', `${formatDateFr(isoDateOnly(lease.start_date))} au ${formatDateFr(report.conductedAt)}`],
+      ['État des lieux réalisé le', formatDateFr(report.conductedAt)],
+      ['Réalisé par', report.conductedBy?.name ?? '—'],
+    ],
     y,
   );
-  y += drawRow(
-    doc,
-    'Durée du bail',
-    `${formatDateFr(isoDateOnly(lease.start_date))} au ${formatDateFr(report.conductedAt)}`,
-    y,
-    { mono: true },
-  );
-
-  y += 15;
-
+  y = drawInspectionSummary(doc, report.zones, y);
   y = drawInspectionZones(doc, report.zones, y, { moveInConditionByKey, showBilling: true });
 
   if (report.otherDeductionsAmount > 0) {
+    // Retenues hors grille (arriérés, factures…) : même présentation qu'une ligne de tableau, dans
+    // son propre encadré — jamais un texte isolé entre la grille et le décompte.
     const line = report.otherDeductionsNote || 'Autres retenues';
-    doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(line, 50, y, { width: 350 });
+    y = ensureSpace(doc, y, 60);
+    doc.font(FONT_SANS_BOLD).fontSize(7).fillColor(MUTED).text('AUTRES RETENUES', CONTENT_LEFT, y, { characterSpacing: 0.4 });
+    y += 13;
+    const h = doc.font(FONT_SANS).fontSize(9).heightOfString(line, { width: 360 }) + 16;
+    doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, h, 4).lineWidth(0.75).strokeColor(BORDER).stroke();
+    doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(line, CONTENT_LEFT + 12, y + 8, { width: 360 });
     doc
       .font(FONT_MONO_BOLD)
       .fontSize(9.5)
       .fillColor(DANGER_FG)
-      .text(`- ${formatFcfa(report.otherDeductionsAmount)}`, 400, y, { width: 145, align: 'right' });
-    y += 20;
+      .text(`- ${formatFcfa(report.otherDeductionsAmount)}`, CONTENT_LEFT + 330, y + 8, { width: CONTENT_WIDTH - 342, align: 'right', lineBreak: false });
+    y += h + 16;
   }
 
   y += 10;
@@ -1002,15 +1132,10 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
     y += 10;
   }
 
-  if (report.generalNotes) {
-    const h = doc.font(FONT_SANS).fontSize(9).heightOfString(normalizeLineBreaks(report.generalNotes), { width: 495 });
-    doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(normalizeLineBreaks(report.generalNotes), 50, y, { width: 495 });
-    y += h + 15;
-  }
-
+  y = drawGeneralNotes(doc, report.generalNotes, y);
   y = drawTenantReserves(doc, report.tenantReserves, y);
   y = drawReopenedNotice(doc, report, y);
-  drawSignatureBlock(doc, report, y);
+  drawSignatureBlock(doc, report, y, { tenantName, agentName });
 
   drawFooter(doc, { verificationCode });
   doc.end();
@@ -1034,28 +1159,45 @@ function drawReopenedNotice(doc, report, y) {
   return y + 16;
 }
 
-/** Bloc de signatures (locataire + agent) — partagé entre le PV de sortie et celui d'entrée. */
-function drawSignatureBlock(doc, report, y) {
-  const sigHeight = 110;
-  if (y > doc.page.height - doc.page.margins.bottom - sigHeight) {
-    doc.addPage();
-    y = doc.page.margins.top;
+/**
+ * Bloc de signatures (locataire + agent), partagé entre les PV d'entrée et de sortie — refait à
+ * l'étape 56 : deux cartes côte à côte, mention « Lu et approuvé », signature centrée sur une ligne
+ * d'appui, nom du signataire et date de signature. Jamais coupé par un saut de page.
+ */
+function drawSignatureBlock(doc, report, y, { tenantName = null, agentName = null } = {}) {
+  const cardH = 150;
+  y = ensureSpace(doc, y + 10, cardH + 10);
+  const cardW = (CONTENT_WIDTH - 15) / 2;
+  const signedOn = report.finalizedAt ? formatDateFr(report.finalizedAt.slice(0, 10)) : null;
+  const cards = [
+    { title: 'Le locataire', name: tenantName, file: uploadedFile(report.tenantSignatureUrl), x: CONTENT_LEFT },
+    { title: "Pour l'entreprise", name: agentName, file: uploadedFile(report.agentSignatureUrl), x: CONTENT_LEFT + cardW + 15 },
+  ];
+  for (const c of cards) {
+    doc.roundedRect(c.x, y, cardW, cardH, 6).lineWidth(0.75).strokeColor(BORDER_STRONG).stroke();
+    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text(c.title, c.x + 14, y + 12, { width: cardW - 28 });
+    doc.font('Helvetica-Oblique').fontSize(7.5).fillColor(MUTED).text('Lu et approuvé', c.x + 14, y + 25, { width: cardW - 28 });
+    const sigTop = y + 38;
+    const sigH = 62;
+    try {
+      if (c.file && fs.existsSync(c.file)) doc.image(c.file, c.x + 14, sigTop, { fit: [cardW - 28, sigH], align: 'center', valign: 'center' });
+    } catch {
+      // Signature illisible : on continue sans (pas bloquant pour le PV).
+    }
+    doc.moveTo(c.x + 14, sigTop + sigH + 4).lineTo(c.x + cardW - 14, sigTop + sigH + 4).dash(2, { space: 2 }).strokeColor(BORDER_STRONG).lineWidth(0.75).stroke().undash();
+    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text(c.name || '—', c.x + 14, sigTop + sigH + 12, { width: cardW - 28, align: 'center' });
+    if (signedOn) {
+      // Centrage manuel : `align: 'center'` + `continued` de PDFKit superpose les deux morceaux.
+      const lead = 'Signé le ';
+      const leadW = doc.font(FONT_SANS).fontSize(7.5).widthOfString(lead);
+      const dateW = doc.font(FONT_MONO_BOLD).fontSize(7.5).widthOfString(signedOn);
+      const startX = c.x + (cardW - leadW - dateW) / 2;
+      const lineY = sigTop + sigH + 27;
+      doc.font(FONT_SANS).fontSize(7.5).fillColor(MUTED).text(lead, startX, lineY, { lineBreak: false });
+      doc.font(FONT_MONO_BOLD).fontSize(7.5).fillColor(INK_SOFT).text(signedOn, startX + leadW, lineY, { lineBreak: false });
+    }
   }
-  y += 15;
-  doc.font(FONT_SANS_BOLD).fontSize(10).fillColor(INK).text('Signature du locataire', 50, y, { width: 230 });
-  doc.font(FONT_SANS_BOLD).fontSize(10).fillColor(INK).text("Signature de l'agent", 315, y, { width: 230 });
-  const sigImgY = y + 16;
-  const tenantSigFile = uploadedFile(report.tenantSignatureUrl);
-  const agentSigFile = uploadedFile(report.agentSignatureUrl);
-  doc.rect(50, sigImgY, 230, 70).strokeColor(BORDER).lineWidth(1).stroke();
-  doc.rect(315, sigImgY, 230, 70).strokeColor(BORDER).lineWidth(1).stroke();
-  try {
-    if (tenantSigFile && fs.existsSync(tenantSigFile)) doc.image(tenantSigFile, 55, sigImgY + 5, { fit: [220, 60] });
-    if (agentSigFile && fs.existsSync(agentSigFile)) doc.image(agentSigFile, 320, sigImgY + 5, { fit: [220, 60] });
-  } catch {
-    // Signature illisible : on continue sans (pas bloquant pour le PV).
-  }
-  return sigImgY + 70;
+  return y + cardH;
 }
 
 /**
@@ -1079,32 +1221,27 @@ function streamMoveInPdf(res, { tenant, renter, property, lease, report, verific
     { text: formatDateFr(report.conductedAt), mono: true },
   ]);
 
-  let y = doc.y + 20;
-  y += drawRow(doc, 'Locataire', `${renter.first_name} ${renter.last_name}`, y);
-  y += drawRow(
+  const tenantName = `${renter.first_name} ${renter.last_name}`;
+  const agentName = report.finalizedBy?.name ?? report.conductedBy?.name ?? null;
+  let y = doc.y + 18;
+  y = drawInfoPanel(
     doc,
-    'Bien loué',
-    `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`,
+    [
+      ['Locataire', tenantName],
+      ['Bien loué', `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`],
+      ['Unité', property.unit_code ?? '—'],
+      ['Date d’entrée', formatDateFr(isoDateOnly(lease.start_date))],
+      ['État des lieux réalisé le', formatDateFr(report.conductedAt)],
+      ['Réalisé par', report.conductedBy?.name ?? '—'],
+    ],
     y,
   );
-  y += drawRow(doc, 'Date d’entrée', formatDateFr(isoDateOnly(lease.start_date)), y, { mono: true });
-
-  y += 15;
+  y = drawInspectionSummary(doc, report.zones, y);
   y = drawInspectionZones(doc, report.zones, y, { showBilling: false });
-
-  if (report.generalNotes) {
-    if (y > doc.page.height - doc.page.margins.bottom - 40) {
-      doc.addPage();
-      y = doc.page.margins.top;
-    }
-    const h = doc.font(FONT_SANS).fontSize(9).heightOfString(normalizeLineBreaks(report.generalNotes), { width: 495 });
-    doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(normalizeLineBreaks(report.generalNotes), 50, y, { width: 495 });
-    y += h + 15;
-  }
-
+  y = drawGeneralNotes(doc, report.generalNotes, y);
   y = drawTenantReserves(doc, report.tenantReserves, y);
   y = drawReopenedNotice(doc, report, y);
-  drawSignatureBlock(doc, report, y);
+  drawSignatureBlock(doc, report, y, { tenantName, agentName });
 
   drawFooter(doc, { verificationCode });
   doc.end();

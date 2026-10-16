@@ -6330,3 +6330,47 @@ pour tous les rôles (DG, comptable, agent), des messages très clairs qui font 
 **Tests** : suite backend **372/372** (365 passent, 7 ignorés faute de `pdftotext`) ; `tsc`/`eslint`
 frontend propres ; vérifié dans le navigateur (accueil, tableau de bord pendant l'animation,
 notification après une clôture, accueil sur téléphone sans débordement horizontal).
+
+## Étape 56 — État des lieux : pièces sur mesure, signature soignée, PDF refait
+
+🟡 À valider (2026-10-16).
+
+**Demande** : « on doit pouvoir ajouter par exemple un salon, ajouter les composants du salon nous-mêmes ;
+la signature doit être facile, bien propre ; les PDF générés doivent être bien propres, bien designés ».
+
+**Pièces et éléments** (`components/inspections/inspection-form.tsx`, `lib/constants/inspection.ts`)
+- « Ajouter une pièce » : 11 pièces types (les 5 standard + Entrée/Couloir, WC séparé, Balcon/Terrasse,
+  Cour, Garage, Bureau), chacune pré-remplie de ses éléments habituels ; « Chambre 2 », « Salon 2 »…
+  numérotés automatiquement (clé `chambre_2`). Ou une pièce libre : nom + éléments choisis parmi
+  16 suggestions ou saisis.
+- Chaque pièce : renommage, retrait (avec confirmation), compteur « x/y renseignés », ajout d'éléments en
+  un clic (suggestions de sa pièce type + éléments courants) ou par saisie. Barre de progression globale
+  et « Prêt à signer ».
+- Avant, une pièce ou un élément standard ne pouvait pas être retiré (un studio gardait « Salon »).
+  Désormais tout se retire à l'entrée ; à la sortie, ce qui vient de la fiche d'entrée est protégé
+  (`lockedKeys`) pour ne jamais casser la comparaison entrée/sortie.
+- Les clés d'éléments saisis restent lisibles et stables (« Prise TV/antenne » → `prise_tv_antenne`).
+  Aucun changement côté serveur : il acceptait déjà les pièces et éléments personnalisés.
+
+**Signature** (`components/inspections/signature-pad.tsx`, réécrit)
+- Trait lissé (courbes) à épaisseur variable selon la vitesse, points intermédiaires du stylet pris en
+  compte ; ligne d'appui et croix ; « Annuler le dernier trait » ; plein écran pour signer au téléphone ;
+  tracé conservé et redessiné si l'écran tourne (coordonnées relatives) ; nom du signataire sous la zone
+  (locataire, et agent connecté) ; pastille « Signé ».
+- Export recadré au plus près du tracé : la signature remplit son cadre dans le PDF.
+
+**PDF** (`services/pdf.js`, entrée et sortie)
+- Cadre d'identification en deux colonnes (locataire, bien, unité, dates, agent), résumé chiffré
+  (pièces, bon état, sous réserve, mauvais état), un tableau par pièce (bandeau, en-têtes, lignes
+  zébrées, état en pastille de couleur, observations, photos, retenue à la sortie avec le détail de
+  facturation), reprise « (suite) » après un saut de page, état d'entrée rappelé sous l'état de sortie,
+  « Autres retenues » dans leur encadré, observations générales encadrées.
+- Signatures : deux cartes « Le locataire » / « Pour l'entreprise », « Lu et approuvé », signature centrée
+  sur une ligne d'appui, nom et date de signature, jamais coupées par un saut de page.
+
+**Tests** : assertions de `test/inspectionPdf.test.js` adaptées à la mise en page en tableau (et
+complétées : résumé, « Lu et approuvé », « Entrée : Bon état ») ; `pdftotext` installé dans
+l'environnement, ces 4 tests tournent désormais au lieu d'être ignorés. Suite backend **372/372**, 0
+ignoré. `tsc`/`eslint` frontend propres. Parcours navigateur réel : retrait de la Devanture, ajout de
+« Chambre 2 », d'une pièce libre « Buanderie » (Robinetterie + Machine à laver), d'un élément en un clic
+au Salon, signatures dont une en plein écran, finalisation, puis PDF réel vérifié page par page.

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Lock } from "lucide-react";
 import { SignaturePad, type SignaturePadHandle } from "./signature-pad";
+import { useAuth } from "@/lib/auth/auth-context";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -15,11 +16,16 @@ export function FinalizeSection({
   onFinalize,
   submitting,
   error,
+  tenantName,
 }: {
   onFinalize: (tenantSignature: Blob, agentSignature: Blob, tenantReserves: string) => void | Promise<void>;
   submitting: boolean;
   error: string | null;
+  /** Nom du locataire, affiché sous sa zone de signature (étape 56). */
+  tenantName?: string;
 }) {
+  const { user } = useAuth();
+  const agentName = user ? `${user.firstName} ${user.lastName}` : undefined;
   const tenantPadRef = React.useRef<SignaturePadHandle | null>(null);
   const agentPadRef = React.useRef<SignaturePadHandle | null>(null);
   const [localError, setLocalError] = React.useState<string | null>(null);
@@ -66,8 +72,8 @@ export function FinalizeSection({
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <SignaturePad ref={tenantPadRef} label="Signature du locataire" />
-        <SignaturePad ref={agentPadRef} label="Signature de l'agent" />
+        <SignaturePad ref={tenantPadRef} label="Signature du locataire" signerName={tenantName} />
+        <SignaturePad ref={agentPadRef} label="Signature de l'agent" signerName={agentName} />
       </div>
 
       <Button type="button" size="lg" onClick={handleFinalize} disabled={submitting} className="self-start">
