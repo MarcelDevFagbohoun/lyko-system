@@ -10,18 +10,18 @@ export function SiteFooter() {
           <LykoLogo />
           <p className="text-body-sm text-ink-muted">
             Le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE,
-            propriétaires, plaintes et comptabilité, dans un espace cloisonné par entreprise.
+            propriétaires, plaintes et comptabilité, pour toute votre équipe.
           </p>
         </div>
 
         <div className="grid grid-cols-2 gap-8 sm:grid-cols-3">
           <div className="flex flex-col gap-2">
             <span className="font-label-sm uppercase tracking-wider text-ink-muted">Plateforme</span>
+            <Link href="/" className="text-body-sm text-ink-soft hover:text-ink">
+              Accueil
+            </Link>
             <a href="#fonctionnalites" className="text-body-sm text-ink-soft hover:text-ink">
               Pour qui
-            </a>
-            <a href="#charges" className="text-body-sm text-ink-soft hover:text-ink">
-              Charges SONEB/SBEE
             </a>
             <a href="#argent" className="text-body-sm text-ink-soft hover:text-ink">
               Comptabilité

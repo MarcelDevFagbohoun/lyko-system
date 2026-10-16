@@ -411,9 +411,11 @@ async function getEscrowBalances(tenantId, db = pool) {
  * `netCashFlow` du tableau de bord (trésorerie brute, mélange recette propriétaire et cabinet).
  *
  * Quatre sources 100 % cabinet, jamais reversées à un propriétaire :
- *   1. Commission sur la recette nette de CHAQUE Bien, au taux en vigueur ce mois-là pour son
- *      propriétaire — même calcul cellule par cellule que `getEscrowBalances`, mais SOMMÉ (jamais
- *      soustrait) et restreint à ce seul mois, en 4 requêtes agrégées (jamais une boucle par Bien).
+ *   1. Commission — base dépend de `tenants.gl_commission_timing` (même réglage que la Comptabilité
+ *      avancée) : en mode 'encaissement' (défaut), sur la recette nette de CHAQUE Bien encaissée ce
+ *      mois-ci, au taux en vigueur ce mois-là pour son propriétaire ; en mode 'reversement', sur les
+ *      VERSEMENTS propriétaire réglés ce mois-ci — jamais les deux à la fois, pour rester cohérent
+ *      avec le moment où le grand livre SYSCOHADA reconnaît cette même commission en produit.
  *   2. Frais d'agence à l'entrée (`leases.entry_fee_amount`, 100 % cabinet, voir `frais_agence_encaisse`).
  *   3. Pénalités de retard RÉELLEMENT réglées (étape 44bis, `late_fee_payments.paid_at`) — jamais la
  *      date d'application (`late_fees.applied_at`), qui n'est qu'une créance tant que rien n'est payé.
@@ -424,6 +426,19 @@ async function getEscrowBalances(tenantId, db = pool) {
  */
 async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
   const atDate = lastDayOfMonth(yearMonth);
+
+  // Bug corrigé (audit comptabilité avancée du 02/10/2026) : cette fonction calculait TOUJOURS la
+  // commission au fil du loyer encaissé, même quand l'entreprise a activé `gl_commission_timing =
+  // 'reversement'` (Comptabilité avancée → Règles comptables) — où le grand livre, lui, ne reconnaît
+  // la commission en produit qu'AU MOMENT du reversement effectif au propriétaire (voir
+  // `computeReversementDeductions`, `services/gl/glAccountResolver.js`). Le tableau de bord
+  // "comptabilité simple" annonçait donc un revenu du cabinet différent de celui du compte de résultat
+  // SYSCOHADA pour le même mois — déjà corrigé pour le solde séquestre (`getEscrowBalances`), jamais
+  // propagé ici.
+  const [timingRows] = await db.query('SELECT gl_commission_timing FROM tenants WHERE id = :tenantId LIMIT 1', {
+    tenantId,
+  });
+  const commissionAtCollection = (timingRows[0]?.gl_commission_timing ?? 'encaissement') === 'encaissement';
 
   // Étape 51bis : propriétaire EN VIGUEUR à la date réelle de chaque événement (`property_owner_history`,
   // migration 078), jamais le propriétaire ACTUEL — voir le même correctif dans `getEscrowBalances`.
@@ -502,10 +517,27 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
   }
 
   let commission = 0;
-  for (const [ownerId, m] of byOwner) {
-    const recetteNette = m.rent + m.openingDebt + m.prorata - m.expenses;
-    const rate = pickRateValidAt(ratesByOwner.get(ownerId) || [], atDate)?.rate ?? 0;
-    commission += Math.round(recetteNette * (rate / 100));
+  if (commissionAtCollection) {
+    for (const [ownerId, m] of byOwner) {
+      const recetteNette = m.rent + m.openingDebt + m.prorata - m.expenses;
+      const rate = pickRateValidAt(ratesByOwner.get(ownerId) || [], atDate)?.rate ?? 0;
+      commission += Math.round(recetteNette * (rate / 100));
+    }
+  } else {
+    // 'reversement' : la commission du mois est celle prélevée sur les VERSEMENTS effectivement
+    // réglés ce mois-ci (même base que l'écriture GL `reversement_proprietaire`,
+    // `taux_commission_reversement`), jamais sur le loyer encaissé — sans quoi un cabinet en mode
+    // reversement ne verrait JAMAIS sa commission apparaître ici, même une fois le versement fait.
+    const [payoutRows] = await db.query(
+      `SELECT owner_id, SUM(amount) AS total FROM owner_payouts
+       WHERE tenant_id = :tenantId AND DATE_FORMAT(paid_at, '%Y-%m') = :yearMonth
+       GROUP BY owner_id`,
+      { tenantId, yearMonth },
+    );
+    for (const r of payoutRows) {
+      const rate = pickRateValidAt(ratesByOwner.get(r.owner_id) || [], atDate)?.rate ?? 0;
+      commission += Math.round(Number(r.total) * (rate / 100));
+    }
   }
 
   const [entryFeeRows] = await db.query(

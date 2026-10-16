@@ -71,21 +71,21 @@ test('claimIdempotencyKey — deux réclamations simultanées de la même clé :
   assert.equal(results.filter((r) => r.status === 'rejected' && r.reason.status === 409).length, 2);
 });
 
-test('hasRecentIdenticalRentPayment — compare mois, date, mode ET montant ; le reste d\'un mois partiel n\'est jamais un doublon', async () => {
+test('hasRecentIdenticalRentPayment — compare la période couverte, date, mode ET montant ; le reste d\'un mois partiel n\'est jamais un doublon', async () => {
   // Premier versement partiel : 30 000 sur septembre, le 25/09, en espèces.
   await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, '2026-09', 30000, 'especes', '2026-09-25', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-09', '2026-09-01', 30000, 'especes', '2026-09-25', :by)`,
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
-  const base = { leaseId: fx.leaseId, coversMonth: '2026-09', paidAt: '2026-09-25', paymentMethod: 'especes', amount: 30000 };
+  const base = { leaseId: fx.leaseId, coversPeriodStart: '2026-09-01', paidAt: '2026-09-25', paymentMethod: 'especes', amount: 30000 };
 
   assert.equal(await hasRecentIdenticalRentPayment(pool, base), true, 'strictement identique → doublon probable');
   // Le cas signalé : payer le RESTE (45 000) juste après, même mois, même date, même mode.
   assert.equal(await hasRecentIdenticalRentPayment(pool, { ...base, amount: 45000 }), false, 'montant différent → pas un doublon');
   assert.equal(await hasRecentIdenticalRentPayment(pool, { ...base, paymentMethod: 'virement' }), false, 'autre mode');
   assert.equal(await hasRecentIdenticalRentPayment(pool, { ...base, paidAt: '2026-09-26' }), false, 'autre date');
-  assert.equal(await hasRecentIdenticalRentPayment(pool, { ...base, coversMonth: '2026-10' }), false, 'autre mois');
+  assert.equal(await hasRecentIdenticalRentPayment(pool, { ...base, coversPeriodStart: '2026-10-01' }), false, 'autre mois');
 
   // Au-delà de 2 minutes : plus considéré comme un doublon.
   await pool.query("UPDATE rent_payments SET created_at = NOW() - INTERVAL 3 MINUTE WHERE lease_id = :l", { l: fx.leaseId });

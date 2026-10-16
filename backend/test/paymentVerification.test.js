@@ -101,11 +101,15 @@ test('verifyAndRecordKkiapay — montant confirmé suffisant (ou supérieur) : l
 
 test('verifyAndRecordKkiapay — refuse un paiement (loyer) si le mois en cours est déjà clôturé (Haute #4, étape 51)', async (t) => {
   const period = new Date().toISOString().slice(0, 7);
-  await pool.query('INSERT INTO accounting_periods (tenant_id, period, closed_by) VALUES (:t, :period, :by)', {
-    t: fx.tenantId,
-    period,
-    by: fx.dgId,
-  });
+  // Refonte de la clôture (étape 1/5, 2026-10-16) : `period_start`/`period_end` sont désormais
+  // NOT NULL (migration 084) — fournis ici comme le ferait la vraie route pour un rythme calendaire.
+  const [y, m] = period.split('-').map(Number);
+  const periodStart = `${period}-01`;
+  const periodEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  await pool.query(
+    'INSERT INTO accounting_periods (tenant_id, period, period_start, period_end, closed_by) VALUES (:t, :period, :periodStart, :periodEnd, :by)',
+    { t: fx.tenantId, period, periodStart, periodEnd, by: fx.dgId },
+  );
   t.mock.method(kkiapay, 'verifyTransaction', async () => ({ success: true, status: 'SUCCESS', amount: 15000, raw: {} }));
   const [[before]] = await pool.query(
     'SELECT COUNT(*) AS n FROM rent_payments WHERE lease_id = :leaseId AND kkiapay_transaction_id IS NOT NULL',
@@ -133,11 +137,13 @@ test('verifyAndRecordKkiapay — refuse un paiement (charge SONEB/SBEE) si le mo
      VALUES (:t, :l, 'sbee', '2026-08-01', '2026-08-31', 0, 10, 100, 5000, '2026-08-31', 'impayee', :by)`,
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
-  await pool.query('INSERT INTO accounting_periods (tenant_id, period, closed_by) VALUES (:t, :period, :by)', {
-    t: fx.tenantId,
-    period,
-    by: fx.dgId,
-  });
+  const [y2, m2] = period.split('-').map(Number);
+  const periodStart2 = `${period}-01`;
+  const periodEnd2 = new Date(Date.UTC(y2, m2, 0)).toISOString().slice(0, 10);
+  await pool.query(
+    'INSERT INTO accounting_periods (tenant_id, period, period_start, period_end, closed_by) VALUES (:t, :period, :periodStart, :periodEnd, :by)',
+    { t: fx.tenantId, period, periodStart: periodStart2, periodEnd: periodEnd2, by: fx.dgId },
+  );
   t.mock.method(kkiapay, 'verifyTransaction', async () => ({ success: true, status: 'SUCCESS', amount: 5000, raw: {} }));
   try {
     await assert.rejects(

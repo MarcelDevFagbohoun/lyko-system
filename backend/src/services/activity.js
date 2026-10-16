@@ -173,7 +173,7 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
       p,
     ),
     pool.query(
-      `SELECT rp.id, rp.amount, rp.covers_month, rp.created_at, rp.payment_method, r.first_name AS r_fn, r.last_name AS r_ln,
+      `SELECT rp.id, rp.amount, rp.covers_month, rp.covers_period_start, rp.created_at, rp.payment_method, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM rent_payments rp
        JOIN leases l ON l.id = rp.lease_id
@@ -344,7 +344,11 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
     })),
     ...rentPayments[0].map((r) => ({
       type: 'rent_payment_recorded',
-      label: `Paiement loyer : ${r.r_fn} ${r.r_ln} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA (${r.covers_month})`,
+      // `covers_month` ('AAAA-MM') n'est renseignée que pour un bail calendaire (migration 085) —
+      // repli sur `covers_period_start` sinon, plutôt qu'afficher littéralement "(null)".
+      label: `Paiement loyer : ${r.r_fn} ${r.r_ln} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA (${
+        r.covers_month ?? (r.covers_period_start instanceof Date ? r.covers_period_start.toISOString().slice(0, 10) : r.covers_period_start)
+      })`,
       // `recorded_by` est NULL pour un paiement confirmé par KKiaPay (aucun
       // employé ne l'a saisi) — un intitulé explicite plutôt que le
       // « Auteur inconnu » générique de `toActor(null, ...)`, qui suggérerait

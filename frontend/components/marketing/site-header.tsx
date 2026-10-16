@@ -8,8 +8,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
+  { href: "/", label: "Accueil" },
   { href: "#fonctionnalites", label: "Pour qui" },
-  { href: "#charges", label: "Charges SONEB/SBEE" },
   { href: "#argent", label: "Comptabilité" },
   { href: "#securite", label: "Sécurité" },
   { href: "#questions", label: "Questions" },

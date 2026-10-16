@@ -18,6 +18,7 @@ const { toPublicInspectionReport, toPublicMoveOutReport } = require('../services
 const { toActor } = require('../utils/actor');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { resolvePropertyScope, assertRenterInScope } = require('../services/scope');
+const { assertPeriodOpen, assertPeriodOpenLocked, getTenantRhythm } = require('../services/accountingPeriods');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { recordAdditionalDeposits, listLeaseDeposits, toPublic: toPublicLeaseDeposit } = require('../services/leaseDeposits');
 const { ADDITIONAL_DEPOSIT_TYPE_KEYS } = require('../constants/leaseDeposits');
@@ -58,6 +59,12 @@ async function assertRenterPhoneAvailable(conn, tenantId, phone) {
 async function recordDepositReceived(conn, { tenantId, leaseId, amount, paymentMethod, paidAt, renterName, createdBy }) {
   if (!amount || amount <= 0 || !paymentMethod) return;
 
+  // Bug corrigé (audit fermeture du mois, point 1, 16/10/2026) : cette caution — un vrai mouvement de
+  // trésorerie — ne vérifiait jamais la clôture du mois. Toujours appelée DANS la transaction déjà
+  // ouverte par l'appelant : la version verrouillée (`FOR UPDATE`) suffit ici, la pré-vérification
+  // non verrouillée a déjà eu lieu avant `beginTransaction` (voir le routeur).
+  await assertPeriodOpenLocked(conn, tenantId, paidAt);
+
   await conn.query('UPDATE leases SET deposit_received_at = :paidAt, deposit_received_method = :method WHERE id = :id', {
     paidAt,
     method: paymentMethod,
@@ -94,6 +101,9 @@ async function recordDepositReceived(conn, { tenantId, leaseId, amount, paymentM
  */
 async function recordEntryFeeReceived(conn, { tenantId, leaseId, amount, paymentMethod, paidAt, renterName, createdBy }) {
   if (!amount || amount <= 0 || !paymentMethod) return;
+
+  // Bug corrigé (audit fermeture du mois, point 1) — voir `recordDepositReceived` ci-dessus.
+  await assertPeriodOpenLocked(conn, tenantId, paidAt);
 
   await conn.query(
     'UPDATE leases SET entry_fee_received_at = :paidAt, entry_fee_received_method = :method WHERE id = :id',
@@ -149,6 +159,41 @@ function withDefaultPaidAt(entries, startDate) {
   );
 }
 
+/**
+ * Audit fermeture du mois (point 1, 16/10/2026) : caution, frais d'agence, prorata d'entrée et
+ * cautions supplémentaires sont tous de vrais mouvements de trésorerie à la signature d'un bail,
+ * jamais vérifiés contre la clôture du mois jusqu'ici. Chacun peut avoir sa PROPRE date (jamais
+ * supposée identique à `startDate`) — toutes les dates distinctes effectivement utilisées (montant >
+ * 0 ET mode de règlement fourni, sinon rien n'est écrit) sont vérifiées AVANT d'ouvrir la transaction
+ * (échec rapide, jamais une transaction partiellement construite puis annulée).
+ */
+function collectLeaseEntryPaidDates({
+  depositAmount,
+  depositPaymentMethod,
+  depositPaidAt,
+  entryFeeAmount,
+  entryFeePaymentMethod,
+  entryFeePaidAt,
+  entryProrataAmount,
+  entryProrataPaymentMethod,
+  entryProrataPaidAt,
+  additionalDeposits,
+  startDate,
+}) {
+  const dates = new Set();
+  if (depositAmount > 0 && depositPaymentMethod) dates.add(depositPaidAt || startDate);
+  if (entryFeeAmount > 0 && entryFeePaymentMethod) dates.add(entryFeePaidAt || startDate);
+  if (entryProrataAmount > 0 && entryProrataPaymentMethod) dates.add(entryProrataPaidAt || startDate);
+  for (const entry of Object.values(additionalDeposits ?? {})) {
+    if (Number(entry?.amount) > 0 && entry?.paymentMethod) dates.add(entry.paidAt || startDate);
+  }
+  return [...dates];
+}
+
+async function assertLeaseEntryPeriodsOpen(tenantId, dates) {
+  for (const date of dates) await assertPeriodOpen(tenantId, date);
+}
+
 /** Types de cautions supplémentaires (SBEE/SONEB/peinture) activés par CETTE entreprise (étape 43). */
 async function loadDepositTogglesRow(conn, tenantId) {
   const [rows] = await conn.query(
@@ -168,6 +213,9 @@ async function loadDepositTogglesRow(conn, tenantId) {
  */
 async function recordEntryProrataReceived(conn, { tenantId, leaseId, amount, paymentMethod, paidAt, renterName, createdBy }) {
   if (!amount || amount <= 0 || !paymentMethod) return;
+
+  // Bug corrigé (audit fermeture du mois, point 1) — voir `recordDepositReceived` ci-dessus.
+  await assertPeriodOpenLocked(conn, tenantId, paidAt);
 
   await conn.query(
     'UPDATE leases SET entry_prorata_received_at = :paidAt, entry_prorata_received_method = :method WHERE id = :id',
@@ -280,6 +328,7 @@ function toPublicLease(row) {
     entryProrataReceivedAt: row.entry_prorata_received_at ? isoDate(row.entry_prorata_received_at) : null,
     entryProrataReceivedMethod: row.entry_prorata_received_method ?? null,
     rentDueDay: row.rent_due_day,
+    rentDueOffsetDays: row.rent_due_offset_days,
     rentTiming: row.rent_timing,
     startDate: isoDate(row.start_date),
     endDate: isoDate(row.end_date),
@@ -327,7 +376,7 @@ const LEASE_UNIT_PROPERTY_SELECT = `
   l.entry_fee_amount, l.entry_fee_received_at, l.entry_fee_received_method,
   l.entry_proration, l.entry_prorata_amount, l.entry_prorata_days, l.entry_prorata_due_date,
   l.entry_prorata_received_at, l.entry_prorata_received_method,
-  l.rent_due_day, l.rent_timing, l.start_date, l.end_date, l.status AS lease_status,
+  l.rent_due_day, l.rent_due_offset_days, l.rent_timing, l.start_date, l.end_date, l.status AS lease_status,
   l.created_at AS lease_created_at,
   lu.first_name AS lease_creator_first_name, lu.last_name AS lease_creator_last_name, lu.role AS lease_creator_role,
   u.id AS unit_id, u.code AS unit_code, u.designation, u.designation_custom,
@@ -379,16 +428,24 @@ router.get('/', canRead, async (req, res, next) => {
     );
 
     const leaseIds = rows.filter((r) => r.lease_id).map((r) => r.lease_id);
+    // Rythme de CHAQUE bail (étape 2/5) : dérivé de ses propres colonnes (`rent_due_day` renseigné =
+    // calendaire), jamais besoin de requêter le tenant — un bail garde son rythme pour toute sa durée.
+    const isCalendaireByLease = new Map(rows.filter((r) => r.lease_id).map((r) => [r.lease_id, r.rent_due_day != null]));
     const paymentsByLease = new Map();
     if (leaseIds.length > 0) {
       const placeholders = leaseIds.map(() => '?').join(',');
       const [payments] = await pool.query(
-        `SELECT lease_id, covers_month, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
+        `SELECT lease_id, covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
         leaseIds,
       );
       for (const p of payments) {
         if (!paymentsByLease.has(p.lease_id)) paymentsByLease.set(p.lease_id, []);
-        paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month, amount: Number(p.amount) });
+        const coversMonth = isCalendaireByLease.get(p.lease_id)
+          ? p.covers_month
+          : p.covers_period_start instanceof Date
+            ? p.covers_period_start.toISOString().slice(0, 10)
+            : String(p.covers_period_start).slice(0, 10);
+        paymentsByLease.get(p.lease_id).push({ coversMonth, amount: Number(p.amount) });
       }
     }
 
@@ -396,16 +453,19 @@ router.get('/', canRead, async (req, res, next) => {
       const renter = toPublicRenter(row);
       if (!row.lease_id) return { ...renter, activeLease: null, arrears: null, rentStrip: null };
       const lease = toPublicLease(row);
+      const rhythm = { mode: lease.rentDueDay != null ? 'calendaire' : 'jour_fixe' };
       const leasePayments = paymentsByLease.get(row.lease_id) || [];
       const arrears = computeArrears({
         startDate: lease.startDate,
         createdAt: lease.createdAt,
         upToDateAtOnboarding: lease.upToDateAtOnboarding,
         rentDueDay: lease.rentDueDay,
+        rentDueOffsetDays: lease.rentDueOffsetDays,
         rentTiming: lease.rentTiming,
         monthlyRent: lease.monthlyRent,
         entryProration: lease.entryProration,
         payments: leasePayments,
+        rhythm,
       });
       // Frise des 12 mois (état de chaque mois) — même source que le retard ci-dessus.
       const rentStrip = buildRentStrip({
@@ -414,10 +474,12 @@ router.get('/', canRead, async (req, res, next) => {
         createdAt: lease.createdAt,
         upToDateAtOnboarding: lease.upToDateAtOnboarding,
         rentDueDay: lease.rentDueDay,
+        rentDueOffsetDays: lease.rentDueOffsetDays,
         rentTiming: lease.rentTiming,
         monthlyRent: lease.monthlyRent,
         entryProration: lease.entryProration,
         payments: leasePayments,
+        rhythm,
       });
       return { ...renter, activeLease: lease, arrears, rentStrip };
     });
@@ -524,7 +586,11 @@ router.get('/:id', canRead, async (req, res, next) => {
         const receipt = receiptsByPayment.get(p.id);
         paymentsByLease.get(p.lease_id).push({
           id: p.id,
+          // `coversMonth` ('AAAA-MM') reste la valeur normale pour un bail calendaire ; `coversPeriodStart`
+          // (toujours renseignée, voir migration 085) couvre aussi les baux non-calendaire — pas encore
+          // affichée différemment côté frontend (aucune interface ne crée ce type de bail encore, étape 2/5).
           coversMonth: p.covers_month,
+          coversPeriodStart: isoDate(p.covers_period_start),
           amount: Number(p.amount),
           paymentMethod: p.payment_method,
           paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
@@ -648,6 +714,45 @@ router.post('/', canManage, async (req, res, next) => {
     const unit = await loadAvailableUnit(conn, req.user.tenantId, data.unitId, scopeAgentId);
     await assertRenterPhoneAvailable(conn, req.user.tenantId, data.phone);
 
+    const rent = data.monthlyRent ?? Number(unit.monthly_rent);
+    const rentTiming = await resolveRentTiming(conn, req.user.tenantId, data.rentTiming);
+    // Refonte de la clôture (étape 2/5) : rythme du TENANT (pas du bail, qui n'existe pas encore) —
+    // décide quelle colonne d'échéance ce nouveau bail reçoit. `rent_due_day` (jour du mois civil)
+    // pour une entreprise calendaire (toutes, pour l'instant — aucune interface n'expose encore un
+    // autre choix) ; `rent_due_offset_days` sinon, voir `validators/renters.js`.
+    const tenantRhythm = await getTenantRhythm(req.user.tenantId);
+    const isCalendaireLease = tenantRhythm.mode === 'calendaire';
+    // Prorata d'entrée (étape 42) : jours + montant TOUJOURS calculés par le serveur, jamais transmis
+    // par le client. `days`/`dueDate` gardés même si la politique est 'aucun' (transparence/affichage) ;
+    // seul `entryProrataAmount` retombe à 0 pour ne rien facturer dans ce cas. Généralisation à un bail
+    // non-calendaire hors scope de cette étape (voir `rentTracking.js`, doc de `computeEntryProrata`) :
+    // un tel bail n'a simplement jamais de prorata d'entrée, quelle que soit la politique choisie.
+    const entryProration = await resolveEntryProration(conn, req.user.tenantId, data.entryProration);
+    const prorata = isCalendaireLease
+      ? computeEntryProrata({ startDate: data.startDate, monthlyRent: rent, rentDueDay: data.rentDueDay })
+      : { days: 0, amount: 0, dueDate: data.startDate };
+    const entryProrataAmount = entryProration === 'prorata' && isCalendaireLease ? prorata.amount : 0;
+
+    // Audit fermeture du mois (point 1) : pré-vérification AVANT d'ouvrir la transaction — voir
+    // `collectLeaseEntryPaidDates` ci-dessus. La version verrouillée (dans la transaction) reste le
+    // vrai garde-fou contre une course ; celle-ci n'est qu'un échec rapide.
+    await assertLeaseEntryPeriodsOpen(
+      req.user.tenantId,
+      collectLeaseEntryPaidDates({
+        depositAmount: data.depositAmount,
+        depositPaymentMethod: data.depositPaymentMethod,
+        depositPaidAt: data.depositPaidAt,
+        entryFeeAmount: data.entryFeeAmount,
+        entryFeePaymentMethod: data.entryFeePaymentMethod,
+        entryFeePaidAt: data.entryFeePaidAt,
+        entryProrataAmount,
+        entryProrataPaymentMethod: data.entryProrataPaymentMethod,
+        entryProrataPaidAt: data.entryProrataPaidAt,
+        additionalDeposits: data.additionalDeposits,
+        startDate: data.startDate,
+      }),
+    );
+
     await conn.beginTransaction();
 
     const [renterResult] = await conn.query(
@@ -666,24 +771,17 @@ router.post('/', canManage, async (req, res, next) => {
     );
     const renterId = renterResult.insertId;
 
-    const rent = data.monthlyRent ?? Number(unit.monthly_rent);
-    const rentTiming = await resolveRentTiming(conn, req.user.tenantId, data.rentTiming);
-    // Prorata d'entrée (étape 42) : jours + montant TOUJOURS calculés par le serveur, jamais transmis
-    // par le client. `days`/`dueDate` gardés même si la politique est 'aucun' (transparence/affichage) ;
-    // seul `entryProrataAmount` retombe à 0 pour ne rien facturer dans ce cas.
-    const entryProration = await resolveEntryProration(conn, req.user.tenantId, data.entryProration);
-    const prorata = computeEntryProrata({ startDate: data.startDate, monthlyRent: rent, rentDueDay: data.rentDueDay });
-    const entryProrataAmount = entryProration === 'prorata' ? prorata.amount : 0;
     const [leaseResult] = await conn.query(
-      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,
+      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_due_offset_days, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :dueOffsetDays, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,
       {
         tenantId: req.user.tenantId,
         unitId: data.unitId,
         renterId,
         rent,
         deposit: data.depositAmount,
-        dueDay: data.rentDueDay,
+        dueDay: isCalendaireLease ? data.rentDueDay : null,
+        dueOffsetDays: isCalendaireLease ? null : data.rentDueOffsetDays,
         rentTiming,
         startDate: data.startDate,
         createdBy: req.user.id,
@@ -892,23 +990,49 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
 
     const unit = await loadAvailableUnit(conn, req.user.tenantId, data.unitId, scopeAgentId);
 
-    await conn.beginTransaction();
-
     const rent = data.monthlyRent ?? Number(unit.monthly_rent);
     const rentTiming = await resolveRentTiming(conn, req.user.tenantId, data.rentTiming);
+    // Refonte de la clôture (étape 2/5) : même traitement que `POST /` ci-dessus.
+    const tenantRhythm = await getTenantRhythm(req.user.tenantId);
+    const isCalendaireLease = tenantRhythm.mode === 'calendaire';
     const entryProration = await resolveEntryProration(conn, req.user.tenantId, data.entryProration);
-    const prorata = computeEntryProrata({ startDate: data.startDate, monthlyRent: rent, rentDueDay: data.rentDueDay });
-    const entryProrataAmount = entryProration === 'prorata' ? prorata.amount : 0;
+    const prorata = isCalendaireLease
+      ? computeEntryProrata({ startDate: data.startDate, monthlyRent: rent, rentDueDay: data.rentDueDay })
+      : { days: 0, amount: 0, dueDate: data.startDate };
+    const entryProrataAmount = entryProration === 'prorata' && isCalendaireLease ? prorata.amount : 0;
+
+    // Audit fermeture du mois (point 1) : voir le commentaire détaillé sur `collectLeaseEntryPaidDates`
+    // (POST / ci-dessus, même principe).
+    await assertLeaseEntryPeriodsOpen(
+      req.user.tenantId,
+      collectLeaseEntryPaidDates({
+        depositAmount: data.depositAmount,
+        depositPaymentMethod: data.depositPaymentMethod,
+        depositPaidAt: data.depositPaidAt,
+        entryFeeAmount: data.entryFeeAmount,
+        entryFeePaymentMethod: data.entryFeePaymentMethod,
+        entryFeePaidAt: data.entryFeePaidAt,
+        entryProrataAmount,
+        entryProrataPaymentMethod: data.entryProrataPaymentMethod,
+        entryProrataPaidAt: data.entryProrataPaidAt,
+        additionalDeposits: data.additionalDeposits,
+        startDate: data.startDate,
+      }),
+    );
+
+    await conn.beginTransaction();
+
     const [leaseResult] = await conn.query(
-      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,
+      `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_due_offset_days, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :dueOffsetDays, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,
       {
         tenantId: req.user.tenantId,
         unitId: data.unitId,
         renterId: id,
         rent,
         deposit: data.depositAmount,
-        dueDay: data.rentDueDay,
+        dueDay: isCalendaireLease ? data.rentDueDay : null,
+        dueOffsetDays: isCalendaireLease ? null : data.rentDueOffsetDays,
         rentTiming,
         startDate: data.startDate,
         createdBy: req.user.id,

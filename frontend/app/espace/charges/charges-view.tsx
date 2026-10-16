@@ -24,6 +24,7 @@ import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
 import { ChargeMonthCard } from "@/components/charges/charge-month-card";
 import { PaymentLinkCard } from "@/components/payments/payment-link-card";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { MonthGroupsToolbar, MonthHeaderRow, countLabel, useMonthGroups } from "@/components/ui/month-group";
 import { sumBy } from "@/lib/group-by-month";
 import { Button } from "@/components/ui/button";
@@ -295,6 +296,8 @@ function ChargeRow({
   const [unitPrice, setUnitPrice] = React.useState(String(charge.unitPrice));
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Confirmation avant envoi (demande explicite de l'utilisateur, 2026-10-16) — voir `confirm-dialog.tsx`.
+  const [confirmingPay, setConfirmingPay] = React.useState(false);
 
   const editedConsumption =
     readingStart !== "" && readingEnd !== "" && Number(readingEnd) >= Number(readingStart)
@@ -302,16 +305,22 @@ function ChargeRow({
       : null;
   const editedAmount = editedConsumption !== null && unitPrice ? Math.round(editedConsumption * Number(unitPrice)) : null;
 
-  async function handlePay() {
-    if (!accessToken) return;
+  function handlePay() {
     const amount = Number(payAmount);
     if (!amount || amount <= 0 || amount > charge.remainingAmount) {
       return setError(`Montant invalide (solde restant : ${formatFcfa(charge.remainingAmount)}).`);
     }
+    setError(null);
+    setConfirmingPay(true);
+  }
+
+  async function doPay() {
+    if (!accessToken) return;
+    setConfirmingPay(false);
     setSubmitting(true);
     setError(null);
     try {
-      await recordChargePayment(accessToken, charge.id, { amount, paymentMethod: method, paidAt, idempotencyKey });
+      await recordChargePayment(accessToken, charge.id, { amount: Number(payAmount), paymentMethod: method, paidAt, idempotencyKey });
       setIdempotencyKey(newIdempotencyKey());
       setPaying(false);
       onChanged();
@@ -450,6 +459,27 @@ function ChargeRow({
                 onGenerate={() => generateChargePaymentLink(accessToken!, charge.id)}
               />
             )}
+            <ConfirmDialog
+              open={confirmingPay}
+              icon={Droplets}
+              title="Enregistrer ce règlement ?"
+              description={
+                <>
+                  <span className="font-label-md text-ink">{formatFcfa(Number(payAmount) || 0)}</span> pour{" "}
+                  <span className="font-label-md text-ink">
+                    {charge.renter.firstName} {charge.renter.lastName}
+                  </span>{" "}
+                  — facture {UTILITY_TYPE_LABELS[charge.utilityType]}, par{" "}
+                  {PAYMENT_METHODS.find((m) => m.value === method)?.label.toLowerCase() ?? method}, daté du{" "}
+                  {new Date(`${paidAt}T00:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.
+                </>
+              }
+              confirmLabel="Confirmer le règlement"
+              confirmVariant="success"
+              busy={submitting}
+              onConfirm={doPay}
+              onCancel={() => setConfirmingPay(false)}
+            />
           </div>
         </TableCell>
       </TableRow>

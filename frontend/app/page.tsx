@@ -4,7 +4,6 @@ import { Hero } from "@/components/marketing/hero";
 import { MadeForBenin } from "@/components/marketing/made-for-benin";
 import { ProblemSolution } from "@/components/marketing/problem-solution";
 import { Roles } from "@/components/marketing/roles";
-import { UtilitiesSpotlight } from "@/components/marketing/utilities-spotlight";
 import { MoneyCompliance } from "@/components/marketing/money-compliance";
 import { SecurityBand } from "@/components/marketing/security-band";
 import { HowItWorks } from "@/components/marketing/how-it-works";
@@ -13,9 +12,9 @@ import { CtaBanner } from "@/components/marketing/cta-banner";
 
 /**
  * Landing page publique — accessible sans connexion. Parcours : promesse (héros) → ancrage local →
- * avant/après → un espace par métier → vitrine des charges SONEB/SBEE → argent et comptabilité →
- * confiance → démarrage → questions → appel à l'action. Aucun tarif, aucun témoignage, aucun chiffre
- * de performance inventé : chaque affirmation correspond à une fonction réellement construite.
+ * avant/après → un espace par métier → argent et comptabilité → confiance → démarrage → questions →
+ * appel à l'action. Aucun tarif, aucun témoignage, aucun chiffre de performance inventé : chaque
+ * affirmation correspond à une fonction réellement construite.
  */
 
 // Données structurées (référencement) : uniquement des faits vérifiables — pas de prix, pas de note.
@@ -52,7 +51,6 @@ export default function LandingPage() {
         <MadeForBenin />
         <ProblemSolution />
         <Roles />
-        <UtilitiesSpotlight />
         <MoneyCompliance />
         <SecurityBand />
         <HowItWorks />

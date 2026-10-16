@@ -23,6 +23,7 @@ const { runBalanceAlertJob } = require('./balanceAlertJob');
 const { runClosingReminderJob } = require('./closingReminderJob');
 const { runUtilityAlertsJob } = require('./utilityAlertsJob');
 const { runAssistantPurgeJob } = require('./assistantPurgeJob');
+const { runFiscalYearExpiryJob } = require('./fiscalYearExpiryJob');
 
 function runSafely(label, fn) {
   return async () => {
@@ -54,8 +55,10 @@ function startScheduler() {
   cron.schedule('20 7 * * *', runSafely('alertes du suivi des charges SONEB/SBEE', runUtilityAlertsJob));
   // 03h00 chaque jour, heure creuse — purge des conversations de l'assistant IA (complète la purge opportuniste).
   cron.schedule('0 3 * * *', runSafely("purge des conversations de l'assistant IA", runAssistantPurgeJob));
+  // 07h15 chaque jour — rappel de fin d'exercice comptable (module SYSCOHADA).
+  cron.schedule('15 7 * * *', runSafely("rappel de fin d'exercice comptable", runFiscalYearExpiryJob));
 
-  logger.info('Tâches planifiées (node-cron) démarrées : 6 tâches actives');
+  logger.info('Tâches planifiées (node-cron) démarrées : 7 tâches actives');
 }
 
 module.exports = { startScheduler };

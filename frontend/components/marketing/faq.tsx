@@ -4,11 +4,6 @@ import { SectionHeading } from "@/components/marketing/section-heading";
 /** Exporté pour produire aussi les données structurées (FAQPage) de la page d'accueil. */
 export const FAQ_ITEMS = [
   {
-    question: "Mes données sont-elles visibles par d'autres entreprises ?",
-    answer:
-      "Non. Chaque entreprise dispose d'un espace cloisonné : ses locataires, ses biens, ses employés et ses chiffres ne sont jamais accessibles aux autres entreprises inscrites.",
-  },
-  {
     question: "Est-ce que ça fonctionne sans internet ?",
     answer:
       "En partie. Les pages que vous avez déjà ouvertes restent consultables sans réseau, et vous pouvez enregistrer un paiement de loyer ou signaler une plainte hors connexion : ils sont envoyés automatiquement au retour du réseau. La création d'un bien, d'un locataire ou d'un employé demande une connexion.",

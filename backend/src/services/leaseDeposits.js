@@ -19,6 +19,7 @@
 
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
+const { assertPeriodOpen, assertPeriodOpenLocked } = require('./accountingPeriods');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { ADDITIONAL_DEPOSIT_TYPES, ADDITIONAL_DEPOSIT_LABELS, enabledAdditionalDepositTypes } = require('../constants/leaseDeposits');
 const { UTILITY_TYPES } = require('../constants/charges');
@@ -73,6 +74,10 @@ async function recordAdditionalDeposits(conn, { tenantId, leaseId, renterName, c
 
     const paymentMethod = entry.paymentMethod;
     const paidAt = entry.paidAt;
+    // Bug corrigé (audit fermeture du mois, point 1, 16/10/2026) : une caution supplémentaire — un vrai
+    // mouvement de trésorerie — ne vérifiait jamais la clôture du mois. Toujours appelée DANS la
+    // transaction déjà ouverte par l'appelant (création du bail) : la version verrouillée suffit ici.
+    await assertPeriodOpenLocked(conn, tenantId, paidAt);
     const [result] = await conn.query(
       `INSERT INTO lease_deposits (tenant_id, lease_id, type, amount, status, received_at, received_method, created_by)
        VALUES (:tenantId, :leaseId, :type, :amount, 'held', :paidAt, :paymentMethod, :createdBy)`,

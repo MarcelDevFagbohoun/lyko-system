@@ -322,6 +322,57 @@ export function closePeriod(accessToken: string, period: string, force?: boolean
   });
 }
 
+// Archive mensuelle (demande explicite de l'utilisateur, 16/10/2026) : "le point du mois" de
+// chaque locataire, figé à la clôture — consultable mais jamais modifiable.
+export type MonthlyArchiveRent = {
+  status: "paye" | "partiel" | "en_retard" | "a_payer" | "a_venir" | "avant_suivi" | "hors_bail";
+  late: boolean;
+  dueDate: string;
+  due: number;
+  paid: number;
+  remaining: number;
+};
+
+export type MonthlyArchiveCharge = {
+  id: number;
+  utilityType: UtilityType;
+  amount: number;
+  paid: number;
+  status: "impayee" | "partiellement_payee" | "payee";
+  billedAt: string;
+  paidAt: string | null;
+};
+
+export type MonthlyArchiveLateFee = {
+  id: number;
+  amount: number;
+  paid: number;
+  appliedAt: string;
+  reason: string | null;
+  status: "impayee" | "partielle" | "payee";
+};
+
+export type MonthlyArchiveRenterEntry = {
+  leaseId: number;
+  renterId: number;
+  renterName: string;
+  phone: string;
+  unitCode: string;
+  propertyCode: string;
+  rent: MonthlyArchiveRent;
+  charges: MonthlyArchiveCharge[];
+  lateFees: MonthlyArchiveLateFee[];
+  notesSnapshot: string | null;
+  archivedAt: string;
+};
+
+export function getMonthlyArchive(accessToken: string, period: string) {
+  return apiFetch<{ period: string; renters: MonthlyArchiveRenterEntry[] }>(
+    `/api/accounting/periods/${period}/archive`,
+    { accessToken },
+  );
+}
+
 // Date de démarrage de la comptabilité — bornée par le DG, modifiable à tout
 // moment (contrairement à une clôture). Avant cette date, aucune écriture ne
 // peut être créée ; la consultation des périodes anciennes reste toujours
@@ -338,6 +389,25 @@ export function setAccountingStartDate(accessToken: string, startDate: string | 
     accessToken,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ startDate }),
+  });
+}
+
+// Rythme de période (étape 2b/5, 2026-10-16) : 'calendaire' (par défaut, zéro changement visible),
+// 'jour_fixe' (jour de départ 1-28) ou 'libre' (date de fin saisie à chaque clôture). Change
+// uniquement les PROCHAINES clôtures — aucune période déjà clôturée ne bouge jamais.
+export type PeriodRhythmMode = "calendaire" | "jour_fixe" | "libre";
+export type TenantRhythm = { mode: PeriodRhythmMode; startDay: number | null };
+
+export function getTenantRhythm(accessToken: string) {
+  return apiFetch<TenantRhythm>("/api/accounting/rhythm", { accessToken });
+}
+
+export function setTenantRhythm(accessToken: string, mode: PeriodRhythmMode, startDay: number | null) {
+  return apiFetch<TenantRhythm>("/api/accounting/rhythm", {
+    method: "PATCH",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, startDay }),
   });
 }
 

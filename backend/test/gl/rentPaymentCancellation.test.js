@@ -38,8 +38,8 @@ test("annulation d'un paiement de loyer — l'échéance qu'il avait réglée re
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [result] = await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, :m, 50000, 'especes', :paidAt, :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, :m, STR_TO_DATE(CONCAT(:m, '-01'), '%Y-%m-%d'), 50000, 'especes', :paidAt, :by)`,
     { t: fx.tenantId, l: fx.leaseId, m: currentMonth, paidAt: `${currentMonth}-01`, by: fx.dgId },
   );
   const paymentId = result.insertId;
@@ -67,8 +67,8 @@ test("annulation d'un paiement de loyer — l'échéance qu'il avait réglée re
 
 test("annulation d'un paiement de loyer — exclu de la recette nette et du solde séquestre du propriétaire", async () => {
   const [result] = await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, '2026-04', 50000, 'especes', '2026-04-05', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-04', '2026-04-01', 50000, 'especes', '2026-04-05', :by)`,
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
   const paymentId = result.insertId;

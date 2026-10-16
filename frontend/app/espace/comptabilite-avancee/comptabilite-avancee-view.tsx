@@ -94,6 +94,7 @@ import {
   type GlFiscalYear,
   type GlPostingRule,
   type GlEntry,
+  type GlEntryStatus,
   type GlEntryLine,
   type CreateManualEntryLineInput,
   type TrialBalanceLine,
@@ -511,14 +512,36 @@ function JournalTab({
   const [error, setError] = React.useState<string | null>(null);
   const [expandedId, setExpandedId] = React.useState<number | null>(null);
 
+  // Filtrage du journal (audit comptabilité avancée, point 5, 16/10/2026) : le backend accepte déjà
+  // `from`/`to`/`journalId`/`status` (voir `listGlEntries`), jamais branché côté interface — un cabinet
+  // actif ne pouvait pas consulter, par ex., le seul journal de banque d'un mois donné, sans tout
+  // parcourir (plafonné à 500 lignes, voir la route).
+  const [journalId, setJournalId] = React.useState<number | "">("");
+  const [status, setStatus] = React.useState<GlEntryStatus | "">("");
+  const [from, setFrom] = React.useState("");
+  const [to, setTo] = React.useState("");
+
   const load = React.useCallback(() => {
     if (!accessToken) return;
-    listGlEntries(accessToken)
+    listGlEntries(accessToken, {
+      journalId: journalId || undefined,
+      status: status || undefined,
+      from: from || undefined,
+      to: to || undefined,
+    })
       .then((res) => setEntries(res.entries))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger le journal."));
-  }, [accessToken]);
+  }, [accessToken, journalId, status, from, to]);
 
   React.useEffect(() => load(), [load]);
+
+  const hasFilters = journalId !== "" || status !== "" || from !== "" || to !== "";
+  function resetFilters() {
+    setJournalId("");
+    setStatus("");
+    setFrom("");
+    setTo("");
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -530,11 +553,57 @@ function JournalTab({
         onCreated={load}
       />
 
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Journal" htmlFor="journalFilter">
+          <select
+            id="journalFilter"
+            value={journalId}
+            onChange={(e) => setJournalId(e.target.value ? Number(e.target.value) : "")}
+            className={`${SELECT_CLASS} max-w-[220px]`}
+          >
+            <option value="">Tous</option>
+            {journals.map((j) => (
+              <option key={j.id} value={j.id}>
+                {j.code} — {j.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Statut" htmlFor="statusFilter">
+          <select
+            id="statusFilter"
+            value={status}
+            onChange={(e) => setStatus(e.target.value as GlEntryStatus | "")}
+            className={`${SELECT_CLASS} max-w-[160px]`}
+          >
+            <option value="">Tous</option>
+            {(Object.keys(STATUS_BADGE) as GlEntryStatus[]).map((s) => (
+              <option key={s} value={s}>
+                {STATUS_BADGE[s].label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Du" htmlFor="fromFilter">
+          <Input id="fromFilter" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="max-w-[160px]" />
+        </Field>
+        <Field label="Au" htmlFor="toFilter">
+          <Input id="toFilter" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="max-w-[160px]" />
+        </Field>
+        {hasFilters && (
+          <Button type="button" variant="ghost" size="sm" onClick={resetFilters}>
+            Réinitialiser
+          </Button>
+        )}
+      </div>
+
       {error && <p className="text-body-sm text-danger-fg">{error}</p>}
       {!entries ? (
         <p className="text-body-sm text-ink-muted">Chargement…</p>
       ) : entries.length === 0 ? (
-        <p className="text-body-sm text-ink-muted">Aucune écriture pour l&apos;instant.</p>
+        <p className="text-body-sm text-ink-muted">
+          {hasFilters ? "Aucune écriture ne correspond à ces filtres." : "Aucune écriture pour l'instant."}
+        </p>
       ) : (
         <Table>
           <TableHeader>
@@ -705,6 +774,10 @@ function EntryRow({
   );
 }
 
+// Ligne du formulaire : `partyType` est un champ purement local (pilote quelle liste de tiers
+// proposer), jamais envoyé au serveur — voir `toSubmittedLines` ci-dessous.
+type ManualLineState = CreateManualEntryLineInput & { partyType?: ThirdPartyType };
+
 function ManualEntryForm({
   accessToken,
   accounts,
@@ -719,19 +792,21 @@ function ManualEntryForm({
   onCreated: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
-  // Comptes de tiers exclus : pas de sélecteur de tiers dans ce formulaire de
-  // saisie diverse (ils sont gérés automatiquement par les paiements/
-  // versements habituels) — éviter un 400 déroutant côté serveur.
-  const selectableAccounts = accounts.filter((a) => !a.isControlAccount && a.isActive);
+  // Bug corrigé (audit comptabilité avancée, point 6, 16/10/2026) : les comptes de tiers étaient
+  // jusqu'ici exclus de ce formulaire (éviter un 400 déroutant côté serveur, qui exige un tiers sur
+  // ces comptes) — aucun moyen de corriger/reclasser une écriture tiers à la main. Tous les comptes
+  // actifs sont désormais proposés ; un compte collectif ouvre un sélecteur de tiers EXISTANT dédié.
+  const selectableAccounts = accounts.filter((a) => a.isActive);
   const odJournal = journals.find((j) => j.code === "OD") ?? journals[0] ?? null;
 
   const [journalId, setJournalId] = React.useState<number | null>(odJournal?.id ?? null);
   const [entryDate, setEntryDate] = React.useState(todayIso());
   const [narration, setNarration] = React.useState("");
-  const [lines, setLines] = React.useState<CreateManualEntryLineInput[]>([
+  const [lines, setLines] = React.useState<ManualLineState[]>([
     { accountId: 0, side: "debit", amount: 0 },
     { accountId: 0, side: "credit", amount: 0 },
   ]);
+  const [tiersByType, setTiersByType] = React.useState<Partial<Record<ThirdPartyType, ThirdPartyBalanceLine[]>>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
@@ -740,12 +815,42 @@ function ManualEntryForm({
     if (journalId === null && odJournal) setJournalId(odJournal.id);
   }, [odJournal, journalId]);
 
+  function ensureTiersLoaded(partyType: ThirdPartyType) {
+    if (!accessToken || tiersByType[partyType]) return;
+    getThirdPartyBalance(accessToken, partyType)
+      .then((res) => setTiersByType((prev) => ({ ...prev, [partyType]: res.thirdParties })))
+      .catch(() => {}); // la ligne affichera simplement une liste vide ; l'erreur globale couvre déjà le formulaire
+  }
+
   const totalDebit = lines.filter((l) => l.side === "debit").reduce((s, l) => s + (l.amount || 0), 0);
   const totalCredit = lines.filter((l) => l.side === "credit").reduce((s, l) => s + (l.amount || 0), 0);
   const balanced = totalDebit === totalCredit && totalDebit > 0;
+  // Toute ligne sur un compte collectif doit avoir son tiers choisi — même exigence que le serveur
+  // (`routes/gl/glEntries.js`), vérifiée ici pour ne jamais soumettre une écriture qui serait de toute
+  // façon refusée.
+  const allTiersSelected = lines.every((l) => {
+    const account = accounts.find((a) => a.id === l.accountId);
+    return !account?.isControlAccount || !!l.thirdPartyId;
+  });
 
-  function updateLine(i: number, patch: Partial<CreateManualEntryLineInput>) {
+  function updateLine(i: number, patch: Partial<ManualLineState>) {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  }
+
+  function selectAccountForLine(i: number, accountId: number) {
+    const account = accounts.find((a) => a.id === accountId);
+    if (account?.isControlAccount) {
+      const partyType: ThirdPartyType = "renter";
+      ensureTiersLoaded(partyType);
+      updateLine(i, { accountId, partyType, thirdPartyId: undefined });
+    } else {
+      updateLine(i, { accountId, partyType: undefined, thirdPartyId: undefined });
+    }
+  }
+
+  function selectPartyTypeForLine(i: number, partyType: ThirdPartyType) {
+    ensureTiersLoaded(partyType);
+    updateLine(i, { partyType, thirdPartyId: undefined });
   }
 
   function addLine() {
@@ -762,7 +867,14 @@ function ManualEntryForm({
     setSubmitting(true);
     setError(null);
     try {
-      await createManualGlEntry(accessToken, { journalId, entryDate, narration: narration.trim(), lines });
+      // `partyType` est un champ local uniquement (pilote le sélecteur ci-dessous) — jamais transmis.
+      const submittedLines: CreateManualEntryLineInput[] = lines.map(({ accountId, thirdPartyId, side, amount }) => ({
+        accountId,
+        thirdPartyId,
+        side,
+        amount,
+      }));
+      await createManualGlEntry(accessToken, { journalId, entryDate, narration: narration.trim(), lines: submittedLines });
       toast.success("Écriture manuelle enregistrée.");
       setOpen(false);
       setNarration("");
@@ -816,55 +928,102 @@ function ManualEntryForm({
           </div>
 
           <div className="flex flex-col gap-2">
-            {lines.map((line, i) => (
-              <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_120px_140px_32px] sm:items-end">
-                <Field label="Compte" htmlFor={`mAccount-${i}`}>
-                  <select
-                    id={`mAccount-${i}`}
-                    value={line.accountId || ""}
-                    onChange={(e) => updateLine(i, { accountId: Number(e.target.value) })}
-                    className={SELECT_CLASS}
-                  >
-                    <option value="" disabled>
-                      Choisir…
-                    </option>
-                    {selectableAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} — {a.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Sens" htmlFor={`mSide-${i}`}>
-                  <select
-                    id={`mSide-${i}`}
-                    value={line.side}
-                    onChange={(e) => updateLine(i, { side: e.target.value as "debit" | "credit" })}
-                    className={SELECT_CLASS}
-                  >
-                    <option value="debit">Débit</option>
-                    <option value="credit">Crédit</option>
-                  </select>
-                </Field>
-                <Field label="Montant" htmlFor={`mAmount-${i}`}>
-                  <Input
-                    id={`mAmount-${i}`}
-                    inputMode="numeric"
-                    value={line.amount || ""}
-                    onChange={(e) => updateLine(i, { amount: Number(e.target.value.replace(/\D/g, "")) })}
-                  />
-                </Field>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  disabled={lines.length <= 2}
-                  onClick={() => removeLine(i)}
-                >
-                  <Trash2 size={14} />
-                </Button>
-              </div>
-            ))}
+            {lines.map((line, i) => {
+              const account = accounts.find((a) => a.id === line.accountId);
+              const tiersOptions = line.partyType ? (tiersByType[line.partyType] ?? []) : [];
+              return (
+                <div key={i} className="flex flex-col gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_120px_140px_32px] sm:items-end">
+                    <Field label="Compte" htmlFor={`mAccount-${i}`}>
+                      <select
+                        id={`mAccount-${i}`}
+                        value={line.accountId || ""}
+                        onChange={(e) => selectAccountForLine(i, Number(e.target.value))}
+                        className={SELECT_CLASS}
+                      >
+                        <option value="" disabled>
+                          Choisir…
+                        </option>
+                        {selectableAccounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code} — {a.label}
+                            {a.isControlAccount ? " (tiers)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Sens" htmlFor={`mSide-${i}`}>
+                      <select
+                        id={`mSide-${i}`}
+                        value={line.side}
+                        onChange={(e) => updateLine(i, { side: e.target.value as "debit" | "credit" })}
+                        className={SELECT_CLASS}
+                      >
+                        <option value="debit">Débit</option>
+                        <option value="credit">Crédit</option>
+                      </select>
+                    </Field>
+                    <Field label="Montant" htmlFor={`mAmount-${i}`}>
+                      <Input
+                        id={`mAmount-${i}`}
+                        inputMode="numeric"
+                        value={line.amount || ""}
+                        onChange={(e) => updateLine(i, { amount: Number(e.target.value.replace(/\D/g, "")) })}
+                      />
+                    </Field>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      disabled={lines.length <= 2}
+                      onClick={() => removeLine(i)}
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </div>
+
+                  {account?.isControlAccount && (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[160px_1fr] sm:items-end">
+                      <Field label="Type de tiers" htmlFor={`mPartyType-${i}`}>
+                        <select
+                          id={`mPartyType-${i}`}
+                          value={line.partyType ?? ""}
+                          onChange={(e) => selectPartyTypeForLine(i, e.target.value as ThirdPartyType)}
+                          className={SELECT_CLASS}
+                        >
+                          {THIRD_PARTY_TYPES.map((t) => (
+                            <option key={t.value} value={t.value}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field
+                        label="Tiers"
+                        htmlFor={`mThirdParty-${i}`}
+                        hint={tiersOptions.length === 0 ? "Aucun tiers existant de ce type pour l'instant." : undefined}
+                      >
+                        <select
+                          id={`mThirdParty-${i}`}
+                          value={line.thirdPartyId ?? ""}
+                          onChange={(e) => updateLine(i, { thirdPartyId: Number(e.target.value) || undefined })}
+                          className={SELECT_CLASS}
+                        >
+                          <option value="" disabled>
+                            Choisir…
+                          </option>
+                          {tiersOptions.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.displayName} — {t.controlAccount.code} ({formatFcfa(t.balance)})
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <Button type="button" variant="ghost" size="sm" className="self-start" onClick={addLine}>
               <Plus size={14} />
               Ajouter une ligne
@@ -875,8 +1034,11 @@ function ManualEntryForm({
             Débit {formatFcfa(totalDebit)} — Crédit {formatFcfa(totalCredit)}
             {!balanced && " (déséquilibrée)"}
           </p>
+          {!allTiersSelected && (
+            <p className="text-body-sm text-danger-fg">Choisissez un tiers pour chaque ligne sur un compte collectif.</p>
+          )}
 
-          <Button type="submit" disabled={submitting || !balanced || !narration.trim()} className="self-start">
+          <Button type="submit" disabled={submitting || !balanced || !allTiersSelected || !narration.trim()} className="self-start">
             {submitting ? "Enregistrement…" : "Enregistrer l'écriture"}
           </Button>
         </form>

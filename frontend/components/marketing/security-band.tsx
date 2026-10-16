@@ -1,12 +1,12 @@
-import { BadgeCheck, History, KeySquare, Lock, ShieldCheck, WifiOff } from "lucide-react";
+import { BadgeCheck, FileDown, History, KeySquare, Lock, WifiOff } from "lucide-react";
 import { SectionHeading } from "@/components/marketing/section-heading";
 
 const POINTS = [
   {
-    icon: ShieldCheck,
-    title: "Un espace cloisonné par entreprise",
+    icon: FileDown,
+    title: "Vos données ne restent jamais enfermées",
     description:
-      "Chaque entreprise dispose de ses propres locataires, biens, employés et données financières, invisibles des autres entreprises.",
+      "Registre comptable en Excel, rapports mensuels et relevés en PDF : exportables à tout moment, prêts pour votre expert-comptable.",
   },
   {
     icon: KeySquare,
@@ -46,7 +46,7 @@ export function SecurityBand() {
       <SectionHeading
         eyebrow="Confiance"
         title="Sécurité, traçabilité et fiabilité"
-        description="Conçu pour que plusieurs entreprises partagent la même plateforme sans jamais partager leurs données."
+        description="Chaque paiement, chaque document et chaque action sont protégés, tracés et vérifiables — pour que vous puissiez faire confiance à vos chiffres."
       />
       <div className="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
         {POINTS.map(({ icon: Icon, title, description }) => (

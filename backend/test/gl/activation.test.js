@@ -24,11 +24,11 @@ before(async () => {
   // directement, sans passer par genererEcriture, pour simuler fidèlement
   // ce que produit le suivi simple seul.
   const [rp1] = await pool.query(
-    "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-01', 50000, 'especes', '2026-01-05', :by)",
+    "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-01', '2026-01-01', 50000, 'especes', '2026-01-05', :by)",
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
   const [rp2] = await pool.query(
-    "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-02', 50000, 'especes', '2026-02-05', :by)",
+    "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-02', '2026-02-01', 50000, 'especes', '2026-02-05', :by)",
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
   await pool.query(
@@ -105,7 +105,7 @@ test('réactivation après suspension — rattrape uniquement le manqué pendant
   // Simule un paiement enregistré PENDANT la suspension (comme le ferait
   // vraiment leases.js : isModuleActive=false -> aucune écriture générée).
   const [rp3] = await pool.query(
-    "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-03', 50000, 'especes', '2026-03-05', :by)",
+    "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-03', '2026-03-01', 50000, 'especes', '2026-03-05', :by)",
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
 
@@ -154,11 +154,11 @@ test('rattrapage — applique le taux de commission EN VIGUEUR à la date du pai
       { t: fx3.tenantId, o: fx3.ownerId, by: fx3.dgId },
     );
     const [rpJan] = await pool.query(
-      "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-01', 100000, 'especes', '2026-01-10', :by)",
+      "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-01', '2026-01-01', 100000, 'especes', '2026-01-10', :by)",
       { t: fx3.tenantId, l: fx3.leaseId, by: fx3.dgId },
     );
     const [rpMar] = await pool.query(
-      "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-03', 100000, 'especes', '2026-03-10', :by)",
+      "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-03', '2026-03-01', 100000, 'especes', '2026-03-10', :by)",
       { t: fx3.tenantId, l: fx3.leaseId, by: fx3.dgId },
     );
 
@@ -389,7 +389,7 @@ test("Haute #8 (étape 51) — deux rattrapages lancés en VRAIE concurrence sur
     // Puis un paiement inséré directement (comme si le module avait momentanément raté cette écriture) :
     // la seule opération que les deux rattrapages concurrents ci-dessous vont se disputer.
     await pool.query(
-      "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-04', 50000, 'especes', '2026-04-05', :by)",
+      "INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by) VALUES (:t, :l, '2026-04', '2026-04-01', 50000, 'especes', '2026-04-05', :by)",
       { t: fx7.tenantId, l: fx7.leaseId, by: fx7.dgId },
     );
 

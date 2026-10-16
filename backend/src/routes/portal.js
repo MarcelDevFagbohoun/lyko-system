@@ -137,6 +137,13 @@ router.get('/:token', async (req, res, next) => {
     let rentStrip = null;
     let unpaidCharges = [];
     if (activeLease) {
+      // Refonte de la clôture (étape 2/5) : rythme DU BAIL (pas du tenant), dérivé de ses propres
+      // colonnes — voir le même raisonnement dans `routes/leases.js` (`recordRentPayment`). Les
+      // libellés/plages affichés restent calendaire-only pour l'instant (pas encore de bail
+      // non-calendaire créable via l'interface — limitation documentée, étape 2c du plan) ; ce
+      // branchement évite seulement un calcul FAUX si un tel bail existe déjà (créé par API directe).
+      const isCalendaireLease = activeLease.rent_due_day != null;
+      const portalRhythm = { mode: isCalendaireLease ? 'calendaire' : 'jour_fixe' };
       const [payRows] = await pool.query(
         `SELECT rp.*, rc.id AS receipt_id, rc.receipt_number
          FROM rent_payments rp
@@ -155,15 +162,25 @@ router.get('/:token', async (req, res, next) => {
       }));
       const startDate =
         activeLease.start_date instanceof Date ? activeLease.start_date.toISOString().slice(0, 10) : activeLease.start_date;
+      const mappedPayRows = payRows.map((p) => ({
+        coversMonth: isCalendaireLease
+          ? p.covers_month
+          : p.covers_period_start instanceof Date
+            ? p.covers_period_start.toISOString().slice(0, 10)
+            : String(p.covers_period_start).slice(0, 10),
+        amount: Number(p.amount),
+      }));
       arrears = computeArrears({
         startDate,
         createdAt: activeLease.created_at,
         upToDateAtOnboarding: !!activeLease.up_to_date_at_onboarding,
         rentDueDay: activeLease.rent_due_day,
+        rentDueOffsetDays: activeLease.rent_due_offset_days,
         rentTiming: activeLease.rent_timing,
         monthlyRent: activeLease.monthly_rent,
         entryProration: activeLease.entry_proration,
-        payments: payRows.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
+        payments: mappedPayRows,
+        rhythm: portalRhythm,
       });
       // Frise des 12 mois : ses propres paiements, mois par mois.
       rentStrip = buildRentStrip({
@@ -171,10 +188,12 @@ router.get('/:token', async (req, res, next) => {
         createdAt: activeLease.created_at,
         upToDateAtOnboarding: !!activeLease.up_to_date_at_onboarding,
         rentDueDay: activeLease.rent_due_day,
+        rentDueOffsetDays: activeLease.rent_due_offset_days,
         rentTiming: activeLease.rent_timing,
         monthlyRent: activeLease.monthly_rent,
         entryProration: activeLease.entry_proration,
-        payments: payRows.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
+        payments: mappedPayRows,
+        rhythm: portalRhythm,
       });
 
       // Charges SONEB/SBEE non entièrement réglées de ce bail — nouveauté :

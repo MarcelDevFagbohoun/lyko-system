@@ -16,6 +16,7 @@ const {
   closePeriodSchema,
   deleteReasonSchema,
   startDateSchema,
+  rhythmSchema,
 } = require('../validators/expenses');
 const {
   createFixedAssetSchema,
@@ -32,7 +33,7 @@ const {
   FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE,
 } = require('../constants/glOperationTypes');
-const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
+const { genererEcriture, isModuleActive, resolveOpenFiscalYear } = require('../services/gl/glPostingService');
 const { extourneEcriture } = require('../services/gl/glReversalService');
 const { computeMonthlyDepreciation } = require('../services/gl/glDepreciationService');
 const { notifyDg } = require('../services/gl/glNotificationService');
@@ -42,8 +43,16 @@ const {
   assertPeriodOpenLocked,
   isPeriodClosed,
   getPeriodClosability,
+  getTenantRhythm,
+  getOpenPeriodStart,
+  computeProposedPeriodEnd,
+  getPeriodClosabilityForRhythm,
+  firstDayOfPeriod,
+  lastDayOfPeriod,
 } = require('../services/accountingPeriods');
+const { isLastPeriodOfFiscalYear } = require('../services/gl/glClosingService');
 const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, summarizeRentMonth } = require('../services/rentTracking');
+const { archiveMonth, getMonthlyArchive } = require('../services/monthlyArchive');
 const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate, getCabinetRevenue } = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
 const { resolvePropertyScope } = require('../services/scope');
@@ -242,6 +251,11 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
   const data = parsed.data;
 
   const conn = await pool.getConnection();
+  // Bug corrigé (audit comptabilité avancée du 06/10/2026) : le justificatif est écrit sur disque AVANT
+  // l'écriture GL (voir plus bas) — si celle-ci échoue (ex. aucun exercice comptable ouvert) et fait
+  // échouer toute la transaction, le fichier restait orphelin sur disque, sans jamais être rattaché à
+  // aucune dépense réelle. Suit le chemin écrit pour le nettoyer si la transaction ne va pas au bout.
+  let writtenReceiptPath = null;
   try {
     await assertPeriodOpen(req.user.tenantId, data.expenseDate);
 
@@ -320,6 +334,7 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
       await fs.mkdir(dir, { recursive: true });
       const rel = `tenants/${req.user.tenantId}/expenses/${randomFileName(String(expenseId), ext)}`;
       await fs.writeFile(path.join(UPLOADS_ROOT, rel), req.file.buffer);
+      writtenReceiptPath = rel;
       await conn.query('UPDATE expenses SET receipt_path = :path WHERE id = :id', { path: rel, id: expenseId });
     }
 
@@ -370,6 +385,10 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
     res.status(201).json({ expenseId });
   } catch (err) {
     await conn.rollback().catch(() => {});
+    // Le justificatif a été écrit sur disque AVANT ce point (voir plus haut) — hors de la transaction
+    // SQL, donc jamais annulé par le rollback : nettoyé explicitement ici pour ne pas laisser un
+    // fichier orphelin (ex. échec de l'écriture GL faute d'exercice comptable ouvert).
+    if (writtenReceiptPath) await fs.unlink(path.join(UPLOADS_ROOT, writtenReceiptPath)).catch(() => {});
     next(err);
   } finally {
     conn.release();
@@ -837,6 +856,22 @@ router.post('/fixed-assets/:id/depreciate', canAccounting, async (req, res, next
     // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
     await assertPeriodOpenLocked(conn, req.user.tenantId, entryDate);
 
+    // Bug corrigé (signalé par l'utilisateur, 2026-10-17, même famille que la facture SONEB/SBEE
+    // en double) : le contrôle `existingPeriod` ci-dessus se fait AVANT la transaction, sans verrou —
+    // un double-clic pouvait passer deux fois cette vérification. On verrouille la ligne de
+    // l'immobilisation (FOR UPDATE) pour sérialiser les tentatives concurrentes, puis on revérifie.
+    await conn.query('SELECT id FROM fixed_assets WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
+      id,
+      tenantId: req.user.tenantId,
+    });
+    const [[existingPeriodLocked]] = await conn.query(
+      'SELECT id FROM fixed_asset_depreciations WHERE fixed_asset_id = :id AND period = :period LIMIT 1',
+      { id, period },
+    );
+    if (existingPeriodLocked) {
+      throw new ApiError(409, `L'amortissement de ${period} a déjà été enregistré pour cette immobilisation.`);
+    }
+
     const [result] = await conn.query(
       'INSERT INTO fixed_asset_depreciations (tenant_id, fixed_asset_id, period, amount, recorded_by) VALUES (:tenantId, :id, :period, :amount, :by)',
       { tenantId: req.user.tenantId, id, period, amount, by: req.user.id },
@@ -915,12 +950,25 @@ router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) =
     // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
     await assertPeriodOpenLocked(conn, req.user.tenantId, disposedAt);
 
-    await conn.query(
+    // Bug corrigé (signalé par l'utilisateur, 2026-10-17, même famille que la facture SONEB/SBEE en
+    // double) : le contrôle `existing.status === 'disposed'` ci-dessus se fait AVANT la transaction,
+    // sans verrou, et l'UPDATE n'était pas conditionné au statut — un double-clic pouvait poster DEUX
+    // écritures GL de sortie pour la même immobilisation. Même schéma que POST /fixed-assets/:id/pay.
+    const [[lockedAsset]] = await conn.query(
+      'SELECT status FROM fixed_assets WHERE id = :id AND tenant_id = :tenantId FOR UPDATE',
+      { id, tenantId: req.user.tenantId },
+    );
+    if (!lockedAsset || lockedAsset.status === 'disposed') {
+      throw new ApiError(409, 'Cette immobilisation a déjà été sortie du patrimoine.');
+    }
+
+    const [disposeResult] = await conn.query(
       `UPDATE fixed_assets
        SET status = 'disposed', disposed_at = :disposedAt, disposed_reason = :reason, disposed_by = :by
-       WHERE id = :id`,
+       WHERE id = :id AND status <> 'disposed'`,
       { id, disposedAt, reason, by: req.user.id },
     );
+    if (disposeResult.affectedRows === 0) throw new ApiError(409, 'Cette immobilisation a déjà été sortie du patrimoine.');
 
     if (await isModuleActive(conn, req.user.tenantId)) {
       const operationType = FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE[existing.category];
@@ -986,10 +1034,24 @@ router.delete('/expenses/:id', canAccounting, async (req, res, next) => {
   try {
     const existing = await loadExpense(pool, req.user.tenantId, id);
     await assertPeriodOpen(req.user.tenantId, existing.expense_date);
+
+    // Bug corrigé (audit fermeture du mois, point 5, 16/10/2026) : SI une écriture GL validée existe
+    // pour cette dépense, son extourne plus bas est datée AUJOURD'HUI (date de l'écriture MIROIR
+    // elle-même, jamais celle de la dépense annulée, déjà vérifiée ci-dessus) — jamais vérifiée contre
+    // la clôture du mois jusqu'ici. Même principe que le correctif déjà en place sur l'extourne MANUELLE.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const [existingGlEntries] = await pool.query(
+      `SELECT id FROM gl_entries
+       WHERE tenant_id = :tenantId AND source_table IN ('expenses', 'expense_settlements') AND source_id = :id AND status = 'validee'`,
+      { tenantId: req.user.tenantId, id },
+    );
+    if (existingGlEntries.length > 0) await assertPeriodOpen(req.user.tenantId, todayIso);
+
     await conn.beginTransaction();
     // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
     // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
     await assertPeriodOpenLocked(conn, req.user.tenantId, existing.expense_date);
+    if (existingGlEntries.length > 0) await assertPeriodOpenLocked(conn, req.user.tenantId, todayIso);
     await conn.query(
       'UPDATE expenses SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason WHERE id = :id',
       { by: req.user.id, reason, id },
@@ -1796,19 +1858,44 @@ router.get('/owner-payouts', canAccounting, async (req, res, next) => {
 router.get('/periods', requireAnyPermission('comptabilite', 'charges'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT ap.period, ap.closed_at, ap.forced, u.first_name, u.last_name, u.role
+      `SELECT ap.period, ap.period_start, ap.period_end, ap.closed_at, ap.forced, u.first_name, u.last_name, u.role
        FROM accounting_periods ap JOIN users u ON u.id = ap.closed_by
-       WHERE ap.tenant_id = :tenantId ORDER BY ap.period DESC`,
+       WHERE ap.tenant_id = :tenantId ORDER BY ap.period_start DESC`,
       { tenantId: req.user.tenantId },
     );
     res.json({
       periods: rows.map((r) => ({
+        // `period` reste 'AAAA-MM' pour les entreprises au rythme calendaire (toutes, pour
+        // l'instant) ; null pour un autre rythme (pas encore d'UI, voir le plan — étape 2).
         period: r.period,
+        periodStart: isoDate(r.period_start),
+        periodEnd: isoDate(r.period_end),
         closedAt: r.closed_at,
         closedBy: toActor(r.first_name, r.last_name, r.role),
         forced: !!r.forced,
       })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/periods/:period/archive — vue portefeuille, lecture seule, du "point du
+// mois" de chaque locataire pour un mois DÉJÀ CLÔTURÉ (demande explicite de l'utilisateur,
+// 16/10/2026). Un mois non clôturé n'a pas d'archive — rien n'est jamais figé avant la clôture.
+router.get('/periods/:period/archive', canAccounting, async (req, res, next) => {
+  const { period } = req.params;
+  if (!/^\d{4}-\d{2}$/.test(period)) return next(new ApiError(400, 'Mois invalide (AAAA-MM)'));
+  try {
+    const [[closed]] = await pool.query(
+      'SELECT id FROM accounting_periods WHERE tenant_id = :tenantId AND period = :period LIMIT 1',
+      { tenantId: req.user.tenantId, period },
+    );
+    if (!closed) throw new ApiError(404, "Ce mois n'est pas encore clôturé — aucune archive n'existe.");
+
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const renters = await getMonthlyArchive(req.user.tenantId, period, scopeAgentId);
+    res.json({ period, renters });
   } catch (err) {
     next(err);
   }
@@ -1831,15 +1918,79 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
-  const { period, force } = parsed.data;
+  const { force } = parsed.data;
 
   const conn = await pool.getConnection();
   try {
-    const closability = await getPeriodClosability(req.user.tenantId, period);
+    const rhythm = await getTenantRhythm(req.user.tenantId);
+    const todayIso = new Date().toISOString().slice(0, 10);
+
+    // `legacyPeriod` ('AAAA-MM') n'existe que pour les entreprises restées au rythme calendaire —
+    // c'est le cas de TOUTES les entreprises aujourd'hui (aucune interface n'expose encore un autre
+    // choix, voir le plan — étape 1/5). Ce chemin est VOLONTAIREMENT inchangé par rapport à avant
+    // cette étape : mêmes vérifications, même message, même donnée insérée.
+    let legacyPeriod = null;
+    let periodStart;
+    let periodEnd;
+    let closability;
+
+    if (rhythm.mode === 'calendaire') {
+      if (!parsed.data.period) {
+        return next(new ApiError(400, 'Formulaire invalide', { period: ['Requis'] }));
+      }
+      legacyPeriod = parsed.data.period;
+      // Bug corrigé (audit fermeture du mois, point 9, 16/10/2026) : rien n'empêchait, même avec
+      // `force`, de clôturer un mois FUTUR (qui n'a même pas encore commencé) — un DG pouvait ainsi
+      // bloquer définitivement (aucune réouverture n'existe, par choix assumé) un prépaiement de
+      // loyer légitime pour un mois à venir, par simple erreur de saisie. `force` sert à outrepasser
+      // la marge de sécurité (toutes les échéances pas encore passées), jamais à clôturer un mois qui
+      // n'existe pas encore dans le temps — ce garde-fou s'applique donc AVANT `force`, sans exception.
+      if (legacyPeriod > todayIso.slice(0, 7)) {
+        return next(new ApiError(400, `Impossible de clôturer un mois futur (${legacyPeriod}) : il n'a pas encore commencé.`));
+      }
+      periodStart = firstDayOfPeriod(legacyPeriod);
+      periodEnd = lastDayOfPeriod(legacyPeriod);
+      closability = await getPeriodClosability(req.user.tenantId, legacyPeriod);
+    } else {
+      // Rythmes 'jour_fixe'/'libre' (étape 1/5) : pas encore d'interface, testable par appel API
+      // direct uniquement — voir le plan. `periodStart` est TOUJOURS déduit (jamais fourni par le
+      // client) pour garantir la continuité : impossible de choisir où commence une période.
+      periodStart = await getOpenPeriodStart(pool, req.user.tenantId);
+      if (!periodStart) {
+        return next(new ApiError(400, "Définissez d'abord une date de démarrage de la comptabilité avant de clôturer une première période."));
+      }
+      if (periodStart > todayIso) {
+        return next(new ApiError(400, `Impossible de clôturer une période qui n'a pas encore commencé (${periodStart}).`));
+      }
+      if (rhythm.mode === 'libre') {
+        if (!parsed.data.periodEnd) {
+          return next(new ApiError(400, 'Formulaire invalide', { periodEnd: ['Requis en rythme libre'] }));
+        }
+        periodEnd = parsed.data.periodEnd;
+      } else {
+        periodEnd = parsed.data.periodEnd ?? computeProposedPeriodEnd(rhythm, periodStart);
+      }
+      if (periodEnd < periodStart) {
+        return next(new ApiError(400, 'La date de fin doit être postérieure à la date de début.'));
+      }
+      if (periodEnd > todayIso) {
+        return next(new ApiError(400, `Impossible de clôturer une période qui n'est pas encore terminée (jusqu'au ${periodEnd}).`));
+      }
+      // Étape 2/5 : la marge de sécurité par échéance de loyer est désormais calculée aussi pour
+      // les rythmes non-calendaire (`rent_due_offset_days` existe maintenant) — voir
+      // `getPeriodClosabilityForRhythm`. En rythme 'libre' spécifiquement, aucune date future n'est
+      // prévisible par construction (voir `rentTracking.js`), donc le DG reste seul juge ; la
+      // fonction gère déjà ce cas (comportement identique à avant pour 'libre').
+      closability =
+        rhythm.mode === 'libre'
+          ? { isClosable: true, closableFrom: periodStart, maxDueDay: null, pendingLeases: [] }
+          : await getPeriodClosabilityForRhythm(req.user.tenantId, rhythm, periodStart, periodEnd);
+    }
+
     if (!closability.isClosable && !force) {
       throw new ApiError(
         409,
-        `Ce mois n'est pas encore clôturable en toute sécurité (à partir du ${closability.closableFrom}).`,
+        `Cette période n'est pas encore clôturable en toute sécurité (à partir du ${closability.closableFrom}).`,
         {
           closableFrom: closability.closableFrom,
           maxDueDay: closability.maxDueDay,
@@ -1849,43 +2000,104 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
     }
     const forced = !closability.isClosable && force;
 
+    // Emboîtement avec l'exercice SYSCOHADA (décision utilisateur, étape 1/5) : si le module est
+    // actif, cette période doit appartenir à UN SEUL exercice ouvert — jamais chevaucher deux
+    // exercices (configuration incohérente, rejetée explicitement plutôt que de deviner), jamais un
+    // exercice déjà clôturé.
+    let fiscalYearId = null;
+    if (await isModuleActive(pool, req.user.tenantId)) {
+      const startFiscalYearId = await resolveOpenFiscalYear(pool, req.user.tenantId, periodStart);
+      const endFiscalYearId = await resolveOpenFiscalYear(pool, req.user.tenantId, periodEnd);
+      if (startFiscalYearId !== endFiscalYearId) {
+        throw new ApiError(
+          409,
+          "Cette période chevauche deux exercices comptables — ajustez les dates de l'exercice avant de clôturer.",
+        );
+      }
+      fiscalYearId = startFiscalYearId;
+    }
+
     await conn.beginTransaction();
-    // Bug corrigé (audit sécurité/logique) : `SELECT ... FOR UPDATE` sur la
-    // même clé que `assertPeriodOpenLocked` — sérialise cette clôture contre
-    // toute écriture financière en cours de saisie pour ce mois (celle-ci
-    // attend que l'écriture en cours commette avant de clôturer par-dessous
-    // elle) ET contre une seconde clôture concurrente du même mois (qui
-    // voit alors la ligne déjà insérée et reçoit un 409 propre plutôt qu'une
-    // exception de clé dupliquée non gérée).
+    // Refonte de la clôture (étape 1/5) : l'ancien verrou posait un `SELECT ... FOR UPDATE` sur la
+    // clé UNIQUE exacte `accounting_periods (tenant_id, period)` — un « gap lock » qui n'a plus de
+    // sens une fois la recherche basée sur un intervalle de dates (voir `accountingPeriods.js`,
+    // commentaire détaillé sur `assertPeriodOpenLocked`). Le même nouveau point de verrouillage
+    // (la ligne du tenant) sérialise ici aussi bien une écriture financière en cours qu'une seconde
+    // clôture concurrente du même tenant.
+    await conn.query('SELECT 1 FROM tenants WHERE id = :tenantId FOR UPDATE', { tenantId: req.user.tenantId });
+
+    // Continuité stricte (décision utilisateur, étape 1/5) : la nouvelle période doit commencer
+    // exactement le lendemain de la fin de la précédente clôture — jamais de trou, jamais de
+    // chevauchement. Revérifiée SOUS VERROU (la valeur lue plus haut, hors transaction, n'était pas
+    // protégée contre une clôture concurrente qui aurait changé la réponse entre les deux lectures).
+    const expectedStart = await getOpenPeriodStart(conn, req.user.tenantId);
+    if (expectedStart && periodStart !== expectedStart) {
+      throw new ApiError(409, `La période à clôturer doit commencer le ${expectedStart} (continuité avec la dernière clôture).`);
+    }
     const [existing] = await conn.query(
-      'SELECT id FROM accounting_periods WHERE tenant_id = :tenantId AND period = :period LIMIT 1 FOR UPDATE',
-      { tenantId: req.user.tenantId, period },
+      'SELECT id FROM accounting_periods WHERE tenant_id = :tenantId AND period_start = :periodStart LIMIT 1',
+      { tenantId: req.user.tenantId, periodStart },
     );
-    if (existing[0]) throw new ApiError(409, 'Ce mois est déjà clôturé.');
+    if (existing[0]) throw new ApiError(409, 'Cette période est déjà clôturée.');
 
     await conn.query(
-      'INSERT INTO accounting_periods (tenant_id, period, closed_by, forced) VALUES (:tenantId, :period, :by, :forced)',
-      { tenantId: req.user.tenantId, period, by: req.user.id, forced: forced ? 1 : 0 },
+      `INSERT INTO accounting_periods (tenant_id, period, period_start, period_end, fiscal_year_id, closed_by, forced)
+       VALUES (:tenantId, :legacyPeriod, :periodStart, :periodEnd, :fiscalYearId, :by, :forced)`,
+      {
+        tenantId: req.user.tenantId,
+        legacyPeriod,
+        periodStart,
+        periodEnd,
+        fiscalYearId,
+        by: req.user.id,
+        forced: forced ? 1 : 0,
+      },
     );
     await conn.commit();
 
-    // Fige le solde de chaque bail concerné pour l'audit (voir
-    // `lease_balance_snapshots`) — après la clôture elle-même, et dans son
-    // propre try/catch : la clôture n'est pas transactionnelle avec ceci
-    // (déjà en base à ce stade), un échec ici ne doit jamais faire croire au
-    // DG que la clôture elle-même a échoué, seule la photo serait manquante.
+    // Étape 2/5 : les deux figements ci-dessous s'exécutent désormais pour TOUT rythme (plus
+    // seulement calendaire) — ils reçoivent `rhythm` + les bornes réelles déjà calculées plus haut,
+    // au lieu de dépendre d'un `period` 'AAAA-MM'. Après la clôture elle-même, chacun dans son propre
+    // try/catch : la clôture n'est pas transactionnelle avec ceci (déjà en base à ce stade), un échec
+    // ici ne doit jamais faire croire au DG que la clôture elle-même a échoué, seule la photo serait
+    // manquante.
     try {
-      await snapshotLeaseBalances(req.user.tenantId, period);
+      await snapshotLeaseBalances(req.user.tenantId, rhythm, periodStart, periodEnd);
     } catch (snapshotErr) {
-      logger.error('Échec de la photo de solde à la clôture (mois tout de même clôturé)', {
+      logger.error('Échec de la photo de solde à la clôture (période tout de même clôturée)', {
         tenantId: req.user.tenantId,
-        period,
+        periodStart,
+        periodEnd,
         error: snapshotErr.message,
       });
     }
 
-    logger.info('Mois comptable clôturé', { tenantId: req.user.tenantId, period, by: req.user.id, forced });
-    res.status(201).json({ period, forced });
+    // Archive mensuelle complète par locataire (demande explicite de l'utilisateur, 16/10/2026) —
+    // même raisonnement que `snapshotLeaseBalances` ci-dessus.
+    try {
+      await archiveMonth(req.user.tenantId, rhythm, periodStart, periodEnd);
+    } catch (archiveErr) {
+      logger.error("Échec de l'archive mensuelle à la clôture (période tout de même clôturée)", {
+        tenantId: req.user.tenantId,
+        periodStart,
+        periodEnd,
+        error: archiveErr.message,
+      });
+    }
+
+    // Exercice SYSCOHADA : si cette période est la dernière d'un exercice encore ouvert, le signale
+    // (sans jamais le clôturer automatiquement — décision toujours humaine, étape 3 pour l'UX réelle).
+    const fiscalYearClosable = fiscalYearId ? await isLastPeriodOfFiscalYear(pool, req.user.tenantId, fiscalYearId, periodEnd) : false;
+
+    logger.info('Période comptable clôturée', {
+      tenantId: req.user.tenantId,
+      period: legacyPeriod,
+      periodStart,
+      periodEnd,
+      by: req.user.id,
+      forced,
+    });
+    res.status(201).json({ period: legacyPeriod, periodStart, periodEnd, forced, fiscalYearClosable });
   } catch (err) {
     await conn.rollback().catch(() => {});
     next(err);
@@ -1939,6 +2151,43 @@ router.patch('/start-date', requireRole('dg'), async (req, res, next) => {
     );
     logger.info('Date de démarrage comptabilité modifiée', { tenantId: req.user.tenantId, startDate, by: req.user.id });
     res.json({ startDate });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/rhythm — rythme de période de ce tenant (étape 1/5, 2026-10-16). Lecture
+// ouverte à comptabilite OU charges, même raisonnement que /start-date : un employé doit pouvoir
+// comprendre les limites qui s'appliquent avant de tenter un enregistrement.
+router.get('/rhythm', requireAnyPermission('comptabilite', 'charges'), async (req, res, next) => {
+  try {
+    const rhythm = await getTenantRhythm(req.user.tenantId);
+    res.json({ mode: rhythm.mode, startDay: rhythm.startDay });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/accounting/rhythm — changer le rythme de période (DG uniquement). Pas encore exposé
+// par aucune interface (étape 1/5 — voir le plan : le sélecteur n'arrive qu'à l'étape 2, en même
+// temps que le moteur de loyer généralisé, pour ne jamais désynchroniser clôture et loyer dû).
+// Changer de rythme n'affecte QUE les prochaines clôtures : la période actuellement ouverte n'a de
+// date de fin qu'au moment où elle est réellement close, avec le rythme alors en vigueur — aucune
+// période déjà clôturée ne bouge jamais.
+router.patch('/rhythm', requireRole('dg'), async (req, res, next) => {
+  const parsed = rhythmSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const { mode, startDay } = parsed.data;
+
+  try {
+    await pool.query(
+      'UPDATE tenants SET period_rhythm_mode = :mode, period_start_day = :startDay WHERE id = :tenantId',
+      { mode, startDay: mode === 'jour_fixe' ? startDay : null, tenantId: req.user.tenantId },
+    );
+    logger.info('Rythme de période modifié', { tenantId: req.user.tenantId, mode, startDay, by: req.user.id });
+    res.json({ mode, startDay: mode === 'jour_fixe' ? startDay : null });
   } catch (err) {
     next(err);
   }

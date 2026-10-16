@@ -53,4 +53,22 @@ async function cloturerExercice(conn, { tenantId, fiscalYearId, userId }) {
   return { totalDebit, totalCredit };
 }
 
-module.exports = { cloturerExercice, computeTrialBalanceTotals };
+/**
+ * Refonte de la clôture (étape 1/5, 2026-10-16) : emboîtement décidé par l'utilisateur entre la
+ * nouvelle clôture (période ~mensuelle, configurable) et l'exercice SYSCOHADA (toujours annuel) —
+ * les deux restent des tables distinctes, mais clôturer la DERNIÈRE période d'un exercice encore
+ * ouvert doit pouvoir proposer (jamais forcer) de clôturer l'exercice dans le même geste perçu par
+ * l'utilisateur comme « une seule clôture ». Vrai seulement quand `periodEnd` atteint ou dépasse la
+ * fin de l'exercice — pas avant.
+ */
+async function isLastPeriodOfFiscalYear(conn, tenantId, fiscalYearId, periodEnd) {
+  const [[fiscalYear]] = await conn.query(
+    'SELECT end_date FROM gl_fiscal_years WHERE id = :fiscalYearId AND tenant_id = :tenantId LIMIT 1',
+    { fiscalYearId, tenantId },
+  );
+  if (!fiscalYear) return false;
+  const endDate = fiscalYear.end_date instanceof Date ? fiscalYear.end_date.toISOString().slice(0, 10) : String(fiscalYear.end_date).slice(0, 10);
+  return endDate <= periodEnd;
+}
+
+module.exports = { cloturerExercice, computeTrialBalanceTotals, isLastPeriodOfFiscalYear };

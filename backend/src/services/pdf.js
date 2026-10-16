@@ -368,7 +368,16 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
   doc.text('MONTANT', colAmount.x, y + 8, { width: colAmount.width, align: 'right', characterSpacing: 0.3 });
   y += headerHeight + 14;
 
-  doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(`Loyer — ${formatMonthLabel(payment.covers_month)}`, colDesc.x, y, {
+  // `covers_month` ('AAAA-MM') n'est renseignée que pour un bail calendaire (migration 085, étape
+  // 2/5) — repli sur `covers_period_start` (date complète) si absente, plutôt que de planter sur un
+  // `.split()` d'une valeur `null`. Généraliser l'affichage lui-même (plage de dates au lieu d'un
+  // nom de mois) reste hors scope de cette étape, limitation documentée.
+  const monthLabel = payment.covers_month
+    ? formatMonthLabel(payment.covers_month)
+    : payment.covers_period_start
+      ? isoDateOnly(payment.covers_period_start)
+      : '';
+  doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(`Loyer — ${monthLabel}`, colDesc.x, y, {
     width: colDesc.width,
   });
   doc
@@ -1809,14 +1818,16 @@ function streamFinancialStatementsPdf(res, { tenant, fiscalYear, incomeStatement
     doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(MUTED).text('ACTIF', 50, y);
     y = doc.y + 4;
     for (const a of balanceSheet.actif) line(`${a.code} — ${a.label}`, a.amount);
-    // Cumulé depuis toujours, jamais seulement cet exercice — voir le commentaire détaillé sur
-    // `computeBalanceSheet` (pas d'écriture de report à nouveau distincte dans ce module).
-    if (balanceSheet.resultatNet < 0) line('Perte cumulée non affectée', -balanceSheet.resultatNet);
     line('Total actif', balanceSheet.totalActif, { bold: true });
     y += 6;
     doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(MUTED).text('PASSIF', 50, y);
     y = doc.y + 4;
     for (const p of balanceSheet.passif) line(`${p.code} — ${p.label}`, p.amount);
+    // Bug corrigé (audit comptabilité avancée du 16/10/2026) : le résultat net (bénéfice OU perte) est
+    // une ligne des CAPITAUX PROPRES (passif), jamais de l'actif — une perte le réduit, elle ne
+    // s'ajoute pas à l'actif. Cumulé depuis toujours, jamais seulement cet exercice — voir le
+    // commentaire détaillé sur `computeBalanceSheet` (pas d'écriture de report à nouveau distincte).
+    if (balanceSheet.resultatNet < 0) line('Perte cumulée non affectée', balanceSheet.resultatNet);
     if (balanceSheet.resultatNet > 0) line('Bénéfice cumulé non affecté', balanceSheet.resultatNet);
     line('Total passif', balanceSheet.totalPassif, { bold: true });
   }

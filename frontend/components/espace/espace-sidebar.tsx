@@ -18,6 +18,7 @@ import {
   Briefcase,
   History,
   Clock,
+  Lock,
   Settings,
   Stamp,
   LogOut,
@@ -104,6 +105,7 @@ export function EspaceSidebar() {
       cadre: "finances",
       items: [
         canAccounting && { href: "/espace/comptabilite", label: "Comptabilité", icon: Wallet },
+        canAccounting && { href: "/espace/cloture", label: "Clôture", icon: Lock },
         canAccounting && { href: "/espace/comptabilite#depenses", label: "Dépenses", icon: Banknote },
         canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité avancée", icon: Calculator },
         canCharges && { href: "/espace/charges", label: "Charges", icon: Receipt },

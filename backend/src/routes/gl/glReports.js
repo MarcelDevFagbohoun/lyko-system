@@ -344,12 +344,6 @@ router.get('/financial-statements.xlsx', canAdvanced, async (req, res, next) => 
         heading: 'Actif',
         lines: [
           ...balanceSheet.actif.map((a) => ({ label: `${a.code} — ${a.label}`, amount: a.amount })),
-          // Bug corrigé (audit comptable du 30/09/2026) : `balanceSheet.resultatNet` est désormais
-          // CUMULÉ depuis toujours (jamais seulement l'exercice consulté — voir `computeBalanceSheet`),
-          // faute d'écriture de report à nouveau distincte (121/129) dans ce module. Le libellé « de
-          // l'exercice » induisait donc en erreur dès le 2ᵉ exercice — voir `incomeStatement.resultatNet`
-          // ci-dessus pour le résultat du SEUL exercice consulté.
-          ...(balanceSheet.resultatNet < 0 ? [{ label: 'Perte cumulée non affectée', amount: -balanceSheet.resultatNet }] : []),
           { label: 'Total actif', amount: balanceSheet.totalActif },
         ],
       },
@@ -357,6 +351,13 @@ router.get('/financial-statements.xlsx', canAdvanced, async (req, res, next) => 
         heading: 'Passif',
         lines: [
           ...balanceSheet.passif.map((p) => ({ label: `${p.code} — ${p.label}`, amount: p.amount })),
+          // Bug corrigé (audit comptabilité avancée du 16/10/2026) : le résultat net (bénéfice OU
+          // perte) est une ligne des CAPITAUX PROPRES (passif), jamais de l'actif — une perte le
+          // réduit, elle ne s'ajoute pas à l'actif. `balanceSheet.resultatNet` est CUMULÉ depuis
+          // toujours (jamais seulement l'exercice consulté — voir `computeBalanceSheet`), faute
+          // d'écriture de report à nouveau distincte (121/129) dans ce module — voir
+          // `incomeStatement.resultatNet` ci-dessus pour le résultat du SEUL exercice consulté.
+          ...(balanceSheet.resultatNet < 0 ? [{ label: 'Perte cumulée non affectée', amount: balanceSheet.resultatNet }] : []),
           ...(balanceSheet.resultatNet > 0 ? [{ label: 'Bénéfice cumulé non affecté', amount: balanceSheet.resultatNet }] : []),
           { label: 'Total passif', amount: balanceSheet.totalPassif },
         ],

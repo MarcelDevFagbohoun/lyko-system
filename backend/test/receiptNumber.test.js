@@ -28,8 +28,8 @@ after(async () => {
 
 async function insertRentPayment(coversMonth) {
   const [p] = await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, :coversMonth, 50000, 'especes', '2026-01-05', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, :coversMonth, STR_TO_DATE(CONCAT(:coversMonth, '-01'), '%Y-%m-%d'), 50000, 'especes', '2026-01-05', :by)`,
     { t: fx.tenantId, l: fx.leaseId, coversMonth, by: fx.dgId },
   );
   return p.insertId;

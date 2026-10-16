@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ShieldCheck, Smartphone, WifiOff } from "lucide-react";
+import { BadgeCheck, Smartphone, WifiOff } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -60,8 +60,8 @@ export function Hero() {
           </div>
           <div className="flex flex-col gap-2 pt-2 text-body-sm text-ink-muted sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
             <span className="inline-flex items-center gap-1.5">
-              <ShieldCheck size={16} className="text-primary" />
-              Espace cloisonné par entreprise
+              <BadgeCheck size={16} className="text-primary" />
+              Quittances et contrats vérifiables en ligne
             </span>
             <span className="inline-flex items-center gap-1.5">
               <WifiOff size={16} className="text-primary" />

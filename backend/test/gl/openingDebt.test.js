@@ -130,7 +130,9 @@ test('snapshotLeaseBalances — fige le solde (loyer en retard + dette initiale)
   const remainingBefore = 30000 - Number(current.paid); // suite du test précédent : 10000 restants
 
   const period = '2026-09';
-  await snapshotLeaseBalances(fx.tenantId, period);
+  // Refonte de la clôture (étape 2/5) : signature généralisée (tenantId, rhythm, periodStart, periodEnd).
+  const rhythm = { mode: 'calendaire' };
+  await snapshotLeaseBalances(fx.tenantId, rhythm, '2026-09-01', '2026-09-30');
 
   const [rows] = await pool.query(
     'SELECT amount_due FROM lease_balance_snapshots WHERE tenant_id = :t AND period = :p AND lease_id = :l',
@@ -141,5 +143,5 @@ test('snapshotLeaseBalances — fige le solde (loyer en retard + dette initiale)
 
   // Rejouer sur le même mois ne doit jamais dupliquer (contrainte UNIQUE) —
   // vérifie que la fonction ne plante pas si jamais rappelée par erreur.
-  await assert.rejects(() => snapshotLeaseBalances(fx.tenantId, period));
+  await assert.rejects(() => snapshotLeaseBalances(fx.tenantId, rhythm, '2026-09-01', '2026-09-30'));
 });

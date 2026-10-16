@@ -36,6 +36,7 @@ const createChargeSchema = z
     unitPrice: unitPriceSchema,
     billedAt: dateSchema,
     notes: optionalText(255),
+    idempotencyKey: idempotencyKeySchema,
   })
   .refine((data) => data.periodEnd >= data.periodStart, {
     message: 'La fin de période doit être postérieure ou égale au début',

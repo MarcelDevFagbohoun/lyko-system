@@ -86,7 +86,7 @@ before(async () => {
   // défaut de `createBareFixture`) : il doit apparaître dans « propriétaires sans taux ».
   const thisMonth = new Date().toISOString().slice(0, 7);
   await pool.query(
-    "INSERT INTO rent_payments (tenant_id, lease_id, amount, covers_month, payment_method, paid_at, recorded_by) VALUES (:t, :l, 50000, :m, 'especes', CURDATE(), :by)",
+    "INSERT INTO rent_payments (tenant_id, lease_id, amount, covers_month, covers_period_start, payment_method, paid_at, recorded_by) VALUES (:t, :l, 50000, :m, STR_TO_DATE(CONCAT(:m, '-01'), '%Y-%m-%d'), 'especes', CURDATE(), :by)",
     { t: fx.tenantId, l: fx.leaseId, m: thisMonth, by: fx.dgId },
   );
 

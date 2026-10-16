@@ -16,8 +16,10 @@ const { computeTrialBalanceTotals } = require('../services/gl/glClosingService')
 const { notifyDg } = require('../services/gl/glNotificationService');
 const logger = require('../utils/logger');
 
-async function runBalanceAlertJob() {
-  const [tenants] = await pool.query('SELECT id FROM tenants');
+// `tenantIds` : uniquement pour les tests (cibler un cabinet jetable) — le planificateur l'appelle
+// sans argument : tous les cabinets.
+async function runBalanceAlertJob({ tenantIds = null } = {}) {
+  const tenants = tenantIds ? tenantIds.map((id) => ({ id })) : (await pool.query('SELECT id FROM tenants'))[0];
 
   for (const { id: tenantId } of tenants) {
     try {

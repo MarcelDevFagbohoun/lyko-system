@@ -77,6 +77,7 @@ export type CreateChargeInput = {
   unitPrice: number;
   billedAt: string;
   notes?: string;
+  idempotencyKey?: string;
 };
 
 export function createCharge(accessToken: string, input: CreateChargeInput) {

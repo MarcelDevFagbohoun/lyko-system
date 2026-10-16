@@ -118,7 +118,14 @@ async function genererEcriture(
     resolvedLines.push({ side: line.side, accountId, thirdPartyId, amount: Math.round(lineAmount), isTreasuryLine });
   }
 
-  // Refus de toute écriture déséquilibrée — LA garantie centrale du moteur.
+  // Refus de toute écriture déséquilibrée — LA garantie centrale du moteur. Audit comptabilité
+  // avancée, point 8 (16/10/2026) : cette garantie n'existe qu'ICI, en code applicatif — MySQL ne
+  // permet pas de CHECK portant sur une somme multi-lignes (`gl_entry_lines`), donc rien n'empêche un
+  // accès direct à la base (script, correctif manuel hors de cette fonction) de créer un déséquilibre.
+  // Deuxième filet, après coup : `jobs/balanceAlertJob.js` (06h00 chaque jour) détecte et notifie le DG
+  // si un exercice ouvert devient déséquilibré malgré tout — testé (`test/gl/balanceAlertJob.test.js`)
+  // en injectant un déséquilibre directement en base, exactement le scénario que cette garde-ci ne
+  // couvre pas.
   const totalDebit = resolvedLines.filter((l) => l.side === 'debit').reduce((s, l) => s + l.amount, 0);
   const totalCredit = resolvedLines.filter((l) => l.side === 'credit').reduce((s, l) => s + l.amount, 0);
   if (totalDebit !== totalCredit) {

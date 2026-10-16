@@ -14,6 +14,7 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { RenterLeasePicker } from "@/components/complaints/renter-lease-picker";
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -67,6 +68,7 @@ function NouveauContent() {
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const idem = useIdempotencyKey();
 
   // Index de début préremplible : jamais besoin de le ressaisir, il
   // correspond à l'index de fin de la dernière facture de ce bail pour ce
@@ -110,7 +112,9 @@ function NouveauContent() {
         unitPrice: Number(unitPrice),
         billedAt,
         notes: notes.trim() || undefined,
+        idempotencyKey: idem.key,
       });
+      idem.renew();
       toast.success("Charge enregistrée.");
       router.push("/espace/charges");
     } catch (err) {

@@ -43,6 +43,7 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { DocumentDownloadStatus } from "@/components/documents/document-download-status";
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
 import { Attribution } from "@/components/ui/attribution";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { MonthGroupsToolbar, MonthHeaderRow, countLabel, useMonthGroups } from "@/components/ui/month-group";
 import { RentStrip } from "@/components/renters/rent-strip";
@@ -1472,6 +1473,9 @@ function PaymentRegister({
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Confirmation avant envoi (demande explicite de l'utilisateur, 2026-10-16) : le bouton « Enregistrer
+  // le paiement » ouvre ce récapitulatif plutôt que d'envoyer directement — voir `components/ui/confirm-dialog.tsx`.
+  const [confirming, setConfirming] = React.useState(false);
   // Clé d'idempotence de l'envoi en cours : renouvelée après chaque paiement enregistré, conservée si
   // l'envoi échoue (réessayer avec la même clé est sans risque : une clé n'est consommée que si le
   // paiement est enregistré). Deux paiements voulus ont donc toujours deux clés différentes.
@@ -1496,9 +1500,14 @@ function PaymentRegister({
     setOpen(true);
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setConfirming(true);
+  }
+
+  async function doSubmit() {
     if (!accessToken) return;
+    setConfirming(false);
     setSubmitting(true);
     setError(null);
     try {
@@ -1545,6 +1554,7 @@ function PaymentRegister({
   }
 
   return (
+    <>
     <div className="flex flex-col gap-3 border-t border-border pt-4">
       <div className="flex items-center justify-between">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Registre des paiements</span>
@@ -1781,6 +1791,25 @@ function PaymentRegister({
         </div>
       )}
     </div>
+    <ConfirmDialog
+      open={confirming}
+      icon={Receipt}
+      title="Enregistrer ce paiement ?"
+      description={
+        <>
+          <span className="font-label-md text-ink">{formatFcfa(Number(amount) || 0)}</span> pour{" "}
+          <span className="font-label-md text-ink">{renterFirstName}</span>, par{" "}
+          {PAYMENT_METHODS.find((m) => m.value === method)?.label.toLowerCase() ?? method}, daté du{" "}
+          {new Date(`${paidAt}T00:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.
+        </>
+      }
+      confirmLabel="Confirmer le paiement"
+      confirmVariant="success"
+      busy={submitting}
+      onConfirm={doSubmit}
+      onCancel={() => setConfirming(false)}
+    />
+    </>
   );
 }
 

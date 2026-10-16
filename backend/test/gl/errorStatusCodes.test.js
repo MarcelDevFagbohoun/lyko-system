@@ -94,7 +94,7 @@ test('resolveRenterFromLease / resolveOwnerFromLease — bail inexistant -> 404'
   const conn = await pool.getConnection();
   try {
     await assert.rejects(() => resolveRenterFromLease(conn, fx.tenantId, 999999999), assertApiError(404));
-    await assert.rejects(() => resolveOwnerFromLease(conn, fx.tenantId, 999999999), assertApiError(404));
+    await assert.rejects(() => resolveOwnerFromLease(conn, fx.tenantId, 999999999, '2026-01-01'), assertApiError(404));
   } finally {
     conn.release();
   }

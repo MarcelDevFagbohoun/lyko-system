@@ -290,6 +290,11 @@ router.post('/', async (req, res, next) => {
     // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
     // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
     await assertPeriodOpenLocked(conn, req.user.tenantId, data.billedAt);
+    // Bug corrigé (signalé par l'utilisateur, 2026-10-17) : la création d'une facture SONEB/SBEE
+    // était la SEULE écriture financière sans clé d'idempotence — un double-clic (ou un réseau lent
+    // suivi d'un second clic impatient) créait deux factures identiques, jamais détecté ni bloqué.
+    // Même garde-fou que partout ailleurs (loyer, dépense, versement...) — voir `paymentGuards.js`.
+    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'charge_created', data.idempotencyKey);
     const [result] = await conn.query(
       `INSERT INTO utility_charges
          (tenant_id, lease_id, utility_type, period_start, period_end, reading_start, reading_end,
@@ -458,6 +463,13 @@ async function recordUtilityPayment(
   conn,
   { tenantId, charge, amount, paymentMethod, paidAt, notes, recordedBy, kkiapayTransactionId = null, settledFromDeposit = false },
 ) {
+  // Bug corrigé (audit fermeture du mois, point 3, 16/10/2026) : ce point d'insertion UNIQUE dans
+  // `utility_payments` ne vérifiait jamais lui-même la clôture du mois — seul l'appelant "route directe"
+  // (`POST /:id/payments`) le faisait, jamais le règlement par caution à la sortie
+  // (`settleUnpaidUtilityCharges`/`finalizeAdditionalDeposits`). Vérifié ICI, une fois pour toutes :
+  // toujours appelée DANS une transaction déjà ouverte par l'appelant, la version verrouillée suffit.
+  await assertPeriodOpenLocked(conn, tenantId, paidAt);
+
   const [[{ paidTotal }]] = await conn.query(
     'SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id',
     { id: charge.id },

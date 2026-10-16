@@ -81,8 +81,14 @@ const dashboardQuerySchema = z.object({
 // marge de sécurité pas encore passée) — sans ce drapeau, la clôture
 // anticipée est refusée explicitement (409) pour que le frontend affiche
 // l'avertissement avant toute confirmation.
+// Refonte de la clôture (étape 1/5) : `period` ('AAAA-MM') reste le chemin normal pour les
+// entreprises restées au rythme calendaire (toutes, pour l'instant — aucune interface n'expose
+// encore un autre choix). `periodEnd` (date réelle) sert aux rythmes 'jour_fixe'/'libre', pas
+// encore testables que par appel API direct — voir le plan. Les deux sont optionnels ici ; la
+// route choisit lequel est requis selon le rythme réel du tenant (lu en base, pas dans le payload).
 const closePeriodSchema = z.object({
-  period: z.string().regex(/^\d{4}-\d{2}$/, 'Période invalide (AAAA-MM)'),
+  period: z.string().regex(/^\d{4}-\d{2}$/, 'Période invalide (AAAA-MM)').optional(),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date de fin invalide (AAAA-MM-JJ)').optional(),
   force: z.coerce.boolean().optional().default(false),
 });
 
@@ -91,6 +97,19 @@ const closePeriodSchema = z.object({
 const startDateSchema = z.object({
   startDate: dateSchema.nullable(),
 });
+
+// Rythme de période (étape 1/5, 2026-10-16) : `startDay` obligatoire seulement en 'jour_fixe' —
+// vérifié ici en plus de la contrainte `CHECK` déjà posée en base (migration 083), pour un message
+// d'erreur clair avant même d'atteindre la base.
+const rhythmSchema = z
+  .object({
+    mode: z.enum(['calendaire', 'jour_fixe', 'libre'], { errorMap: () => ({ message: 'Rythme invalide' }) }),
+    startDay: z.coerce.number().int().min(1).max(28).nullable().optional(),
+  })
+  .refine((d) => d.mode !== 'jour_fixe' || (d.startDay != null && d.startDay >= 1 && d.startDay <= 28), {
+    message: 'Jour de départ requis (1 à 28) en rythme "jour fixe"',
+    path: ['startDay'],
+  });
 
 // Suppression = suppression logique (traçabilité) : une justification est
 // systématiquement exigée, quel que soit le rôle de qui supprime.
@@ -106,4 +125,5 @@ module.exports = {
   closePeriodSchema,
   deleteReasonSchema,
   startDateSchema,
+  rhythmSchema,
 };

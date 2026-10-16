@@ -10,6 +10,99 @@ function addMonth(yearMonth) {
 }
 
 /**
+ * Refonte de la clôture (étape 2/5, 2026-10-16) : primitives de progression généralisées à un
+ * "rythme" de tenant (`{mode: 'calendaire'|'jour_fixe'|'libre', startDay}`, voir
+ * `accountingPeriods.getTenantRhythm`) au lieu de toujours supposer un mois civil. `rhythm` est
+ * TOUJOURS un paramètre optionnel partout dans ce fichier : omis (ou `{mode:'calendaire'}`), tout
+ * se comporte EXACTEMENT comme avant cette étape — aucun appelant existant n'a besoin de changer.
+ *
+ * Représentation d'une "clé de période" (`periodKey`) : pour un bail calendaire, une étiquette
+ * 'AAAA-MM' (inchangé, c'est `covers_month`) ; pour un bail non-calendaire, une date complète
+ * 'AAAA-MM-JJ' qui est le DÉBUT de la période (c'est `covers_period_start`). Les deux se comparent/
+ * trient correctement en chaîne (préfixe commun 'AAAA-MM') et ne sont jamais mélangées pour un même
+ * bail — chaque bail a un rythme fixe pour toute sa durée (celui de son tenant au moment de sa
+ * création, voir `leases.rent_due_offset_days` vs `rent_due_day`).
+ *
+ * `jour_fixe` ET `libre` avancent par le MÊME calcul : un mois plein, ancré sur le jour de la clé
+ * de départ elle-même (jamais sur un jour global du tenant) — décision explicite pour `libre`
+ * (aucune autre estimation n'est possible sans donnée supplémentaire, et l'imprécision éventuelle
+ * ne s'accumule jamais : dès qu'une période `libre` clôture réellement, la suivante repart de la
+ * vraie date de fin, voir `accountingPeriods.getOpenPeriodStart` — jamais de cette estimation).
+ * Décision assumée : aucune machinerie de réconciliation automatique n'est construite pour ce cas,
+ * conformément au choix explicite de l'utilisateur.
+ */
+function addPeriod(periodStartIso) {
+  const d = new Date(`${periodStartIso}T00:00:00Z`);
+  const day = d.getUTCDate();
+  const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, day));
+  return next.toISOString().slice(0, 10);
+}
+
+/** Symétrique de `addPeriod` : un mois AVANT, ancré sur le même jour. */
+function subPeriod(periodStartIso) {
+  const d = new Date(`${periodStartIso}T00:00:00Z`);
+  const day = d.getUTCDate();
+  const prev = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, day));
+  return prev.toISOString().slice(0, 10);
+}
+
+/** Avance d'une période quel que soit le rythme — calendaire retombe sur `addMonth` (inchangé). */
+function nextPeriodKey(rhythm, periodKey) {
+  return (rhythm?.mode ?? 'calendaire') === 'calendaire' ? addMonth(periodKey) : addPeriod(periodKey);
+}
+
+/** Recule d'une période quel que soit le rythme — calendaire retombe sur l'ancien calcul inline. */
+function previousPeriodKey(rhythm, periodKey) {
+  if ((rhythm?.mode ?? 'calendaire') === 'calendaire') {
+    const [y, m] = periodKey.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 2, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  }
+  return subPeriod(periodKey);
+}
+
+/** Recule de `n` périodes — calendaire retombe sur `shiftMonth` (inchangé). */
+function stepBackPeriods(rhythm, periodKey, n) {
+  if ((rhythm?.mode ?? 'calendaire') === 'calendaire') return shiftMonth(periodKey, -n);
+  let key = periodKey;
+  for (let i = 0; i < n; i += 1) key = subPeriod(key);
+  return key;
+}
+
+/**
+ * Quelle période (parmi celles de CE bail, ancrées sur son `baselineKey`) contient `todayIso` ?
+ * Calendaire : dérivable directement de `todayIso` (inchangé, aucune marche nécessaire). Sinon :
+ * marche depuis `baselineKey` — jamais d'accès base, jamais plus de quelques dizaines d'itérations
+ * même pour un bail actif depuis des années.
+ */
+function periodKeyContainingToday(rhythm, baselineKey, todayIso) {
+  if ((rhythm?.mode ?? 'calendaire') === 'calendaire') return todayIso.slice(0, 7);
+  let key = baselineKey;
+  while (nextPeriodKey(rhythm, key) <= todayIso) key = nextPeriodKey(rhythm, key);
+  return key;
+}
+
+/**
+ * Résout l'échéance d'un loyer pour la période `periodKey` — fonction UNIQUE qui remplace les
+ * anciennes réimplémentations indépendantes du décalage avance/terme_échu dispersées dans
+ * `computeArrears`/`isPaymentLate`/`rentMonthState`. Si `rentDueDay` est fourni (bail calendaire,
+ * ou bail créé avant cette étape) : calcul IDENTIQUE à avant, byte pour byte. Sinon
+ * (`rentDueOffsetDays`, bail créé sous un tenant non-calendaire) : ancre sur `periodKey` (ou sur la
+ * période SUIVANTE si `terme_echu`) + un nombre de jours.
+ */
+function resolveRentDueDate({ rhythm, periodKey, rentDueDay, rentDueOffsetDays, rentTiming }) {
+  if (rentDueDay != null) {
+    const dueMonth = rentTiming === 'terme_echu' ? addMonth(periodKey) : periodKey;
+    const [y, m] = dueMonth.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, rentDueDay)).toISOString().slice(0, 10);
+  }
+  const base = rentTiming === 'terme_echu' ? addPeriod(periodKey) : periodKey;
+  const d = new Date(`${base}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Number(rentDueOffsetDays));
+  return d.toISOString().slice(0, 10);
+}
+
+/**
  * Décompose un nombre de jours de retard en mois pleins + jours restants,
  * de façon exacte au calendrier (jamais une simple division par ~30) : le
  * nombre de mois pleins écoulés entre `dueDate` et `todayUtc`, puis le
@@ -50,6 +143,11 @@ function toIsoDateString(d) {
  * Payé à la signature (comme la caution et les frais d'agence), jamais différé à la première
  * échéance : ça ne touche donc JAMAIS `computeArrears`/`allocateRentPayment` (déjà audités) — c'est un
  * montant à part, une seule fois, indépendant du cycle mensuel qui démarre ensuite normalement.
+ *
+ * Refonte de la clôture (étape 2/5) : reste CALENDAIRE UNIQUEMENT (hypothèse `rentDueDay`) — généraliser
+ * le prorata d'entrée à un bail non-calendaire (`rentDueOffsetDays`) est hors scope de cette étape,
+ * limitation documentée. Un bail non-calendaire avec `entryProration: 'prorata'` démarre son suivi
+ * directement à `startDate` (voir `baselineMonthOf` ci-dessous), sans cet ajustement.
  */
 
 /**
@@ -90,14 +188,21 @@ function computeEntryProrata({ startDate, monthlyRent, rentDueDay }) {
  * échéance normale, jamais depuis `startDate` lui-même. Sans ce correctif,
  * un locataire entré le 25 avec échéance le 5 apparaissait « en retard »
  * dès le jour de son emménagement, sur un mois déjà couvert par le prorata.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm` optionnel (calendaire par défaut, inchangé). Pour un
+ * bail non-calendaire, la "clé de période" de base est directement `effectiveStartDate` lui-même
+ * (une date complète, jamais une étiquette 'AAAA-MM') — chaque bail non-calendaire porte sa PROPRE
+ * grille de périodes virtuelles, ancrée sur sa propre date de début, indépendante des périodes
+ * comptables réelles du tenant (qui ne servent qu'à la clôture, pas au calcul du loyer dû par bail).
  */
-function baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding, entryProration, rentDueDay }) {
+function baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding, entryProration, rentDueDay, rhythm }) {
+  const isCalendaire = (rhythm?.mode ?? 'calendaire') === 'calendaire';
   const effectiveStartDate =
-    entryProration === 'prorata' && rentDueDay != null ? firstRegularDueDate(startDate, rentDueDay) : startDate;
+    isCalendaire && entryProration === 'prorata' && rentDueDay != null ? firstRegularDueDate(startDate, rentDueDay) : startDate;
   const createdAtIso = createdAt ? toIsoDateString(createdAt) : null;
   const baselineDate = createdAtIso && createdAtIso > effectiveStartDate ? createdAtIso : effectiveStartDate;
-  const baselineMonth = baselineDate.slice(0, 7);
-  return upToDateAtOnboarding ? addMonth(baselineMonth) : baselineMonth;
+  const baselineKey = isCalendaire ? baselineDate.slice(0, 7) : baselineDate;
+  return upToDateAtOnboarding ? nextPeriodKey(rhythm, baselineKey) : baselineKey;
 }
 
 /**
@@ -130,12 +235,17 @@ function baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding, entryPror
  * le loyer dû. `monthlyRent` omis (compatibilité, appelant non encore mis à
  * jour) : comportement historique (buggé) inchangé — ne JAMAIS omettre pour
  * un nouvel appel.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm`/`rentDueOffsetDays` optionnels (calendaire par défaut,
+ * inchangé byte pour byte dans ce cas). `payments[i].coversMonth` devient, pour un bail non-calendaire,
+ * une date complète (voir le commentaire d'en-tête de fichier) — toujours nommé `coversMonth` pour ne
+ * pas multiplier les noms de champs, l'appelant choisit la bonne représentation selon le rythme du bail.
  */
 function computeArrears(
-  { startDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments, entryProration },
+  { startDate, createdAt, upToDateAtOnboarding, rentDueDay, rentDueOffsetDays, rentTiming, monthlyRent, payments, entryProration, rhythm },
   today = new Date(),
 ) {
-  const baselineMonth = baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding, entryProration, rentDueDay });
+  const baselineMonth = baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding, entryProration, rentDueDay, rhythm });
 
   const paidThrough = payments.length > 0 ? payments.map((p) => p.coversMonth).sort().at(-1) : null;
 
@@ -153,7 +263,7 @@ function computeArrears(
     // s'arrête donc au plus tard un mois après le dernier paiement connu.
     let month = baselineMonth;
     while ((paidByMonth.get(month) ?? 0) >= rent) {
-      month = addMonth(month);
+      month = nextPeriodKey(rhythm, month);
     }
     nextDueMonth = month;
     paidForNextDueMonth = paidByMonth.get(nextDueMonth) ?? 0;
@@ -161,7 +271,7 @@ function computeArrears(
     // Comportement historique (compatibilité, `monthlyRent` omis) : présence
     // d'AU MOINS UNE ligne pour un mois = mois considéré réglé, quel que
     // soit son montant réel.
-    nextDueMonth = paidThrough && paidThrough >= baselineMonth ? addMonth(paidThrough) : baselineMonth;
+    nextDueMonth = paidThrough && paidThrough >= baselineMonth ? nextPeriodKey(rhythm, paidThrough) : baselineMonth;
   }
 
   // Convention de paiement (demande directe de l'utilisateur, 2026-09-24) :
@@ -169,13 +279,13 @@ function computeArrears(
   // loyer de septembre ne se paie qu'en octobre) — 'avance' (défaut,
   // comportement historique) et l'omission de `rentTiming` restent
   // strictement identiques : l'échéance reste dans le mois facturé lui-même.
-  const dueMonthForDate = rentTiming === 'terme_echu' ? addMonth(nextDueMonth) : nextDueMonth;
-  const [y, m] = dueMonthForDate.split('-').map(Number);
-  const dueDate = new Date(Date.UTC(y, m - 1, rentDueDay));
+  const dueDate = resolveRentDueDate({ rhythm, periodKey: nextDueMonth, rentDueDay, rentDueOffsetDays, rentTiming });
+  const [dy, dm, dd] = dueDate.split('-').map(Number);
+  const dueDateUtc = new Date(Date.UTC(dy, dm - 1, dd));
   const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  const daysLate = Math.floor((todayUtc - dueDate) / 86_400_000);
+  const daysLate = Math.floor((todayUtc - dueDateUtc) / 86_400_000);
   const { months: monthsLate, remainderDays: remainderDaysLate } =
-    daysLate > 0 ? monthsAndDaysLate(dueDate, todayUtc) : { months: 0, remainderDays: 0 };
+    daysLate > 0 ? monthsAndDaysLate(dueDateUtc, todayUtc) : { months: 0, remainderDays: 0 };
 
   // « Payé jusqu'à » : le dernier mois réellement SOLDÉ, de façon consécutive
   // depuis le début du suivi — jamais un mois seulement entamé ni un mois payé
@@ -185,9 +295,7 @@ function computeArrears(
   // (compatibilité) : dernier mois ayant reçu un paiement, comme avant.
   let paidThroughMonth = paidThrough;
   if (rent != null && rent > 0) {
-    const [ny, nm] = nextDueMonth.split('-').map(Number);
-    const prev = new Date(Date.UTC(ny, nm - 2, 1));
-    const lastSettled = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
+    const lastSettled = previousPeriodKey(rhythm, nextDueMonth);
     paidThroughMonth =
       lastSettled >= baselineMonth
         ? lastSettled
@@ -201,7 +309,7 @@ function computeArrears(
     // `allocateRentPayment` de COMPLÉTER un mois déjà partiellement payé au
     // lieu de repartir de zéro sur ce même mois.
     paidForNextDueMonth,
-    dueDate: dueDate.toISOString().slice(0, 10),
+    dueDate,
     daysLate,
     monthsLate,
     remainderDaysLate,
@@ -221,8 +329,10 @@ function computeArrears(
  * propre quittance) — plusieurs lignes peuvent désormais partager le même
  * `coversMonth` (le complément d'un mois déjà partiel), sciemment : c'est
  * leur SOMME que `computeArrears` compare au loyer, jamais une ligne isolée.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm` optionnel (calendaire par défaut, inchangé).
  */
-function allocateRentPayment({ nextDueMonth, monthlyRent, alreadyPaidForNextDueMonth = 0, amount }) {
+function allocateRentPayment({ rhythm, nextDueMonth, monthlyRent, alreadyPaidForNextDueMonth = 0, amount }) {
   const rent = Number(monthlyRent);
   let remaining = Number(amount);
   const allocations = [];
@@ -240,7 +350,7 @@ function allocateRentPayment({ nextDueMonth, monthlyRent, alreadyPaidForNextDueM
         // Montant épuisé avant d'avoir complété même ce premier mois.
         return { fullMonths: 0, partialAmount: 0, monthsCovered: allocations.length, allocations };
       }
-      month = addMonth(month);
+      month = nextPeriodKey(rhythm, month);
     }
   }
 
@@ -248,7 +358,7 @@ function allocateRentPayment({ nextDueMonth, monthlyRent, alreadyPaidForNextDueM
   const partialAmount = rent > 0 ? remaining % rent : remaining;
   for (let i = 0; i < fullMonths; i += 1) {
     allocations.push({ coversMonth: month, amount: rent, isPartial: false });
-    month = addMonth(month);
+    month = nextPeriodKey(rhythm, month);
   }
   if (partialAmount > 0) {
     allocations.push({ coversMonth: month, amount: partialAmount, isPartial: true });
@@ -264,19 +374,38 @@ function monthsBetweenInclusive(fromYm, toYm) {
 }
 
 /**
+ * Généralisation de `monthsBetweenInclusive` à un rythme quelconque — calendaire retombe sur le
+ * calcul arithmétique direct (inchangé, rapide) ; sinon, marche pas à pas (listes courtes en
+ * pratique, jamais un souci de performance réel).
+ */
+function periodsBetweenInclusive(rhythm, fromKey, toKey) {
+  if ((rhythm?.mode ?? 'calendaire') === 'calendaire') return monthsBetweenInclusive(fromKey, toKey);
+  let count = 1;
+  let key = fromKey;
+  while (key < toKey) {
+    key = nextPeriodKey(rhythm, key);
+    count += 1;
+  }
+  return count;
+}
+
+/**
  * Un paiement a-t-il été réglé APRÈS l'échéance de son propre mois (même
  * convention que `computeArrears` : le jour de l'échéance lui-même n'est pas
  * en retard, seulement le lendemain) ? `paidAt` peut être un objet `Date`
  * (colonne DATE MySQL) ou une chaîne 'AAAA-MM-JJ'. `rentTiming` (voir
  * `computeArrears`) : 'terme_echu' repousse l'échéance au mois suivant.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm`/`rentDueOffsetDays` ajoutés en fin de liste
+ * (paramètres positionnels existants inchangés, donc tout appel existant reste identique).
  */
-function isPaymentLate(coversMonth, rentDueDay, paidAt, rentTiming) {
-  const dueMonthForDate = rentTiming === 'terme_echu' ? addMonth(coversMonth) : coversMonth;
-  const [y, m] = dueMonthForDate.split('-').map(Number);
-  const dueDate = new Date(Date.UTC(y, m - 1, rentDueDay));
+function isPaymentLate(coversMonth, rentDueDay, paidAt, rentTiming, rhythm, rentDueOffsetDays) {
+  const dueDate = resolveRentDueDate({ rhythm, periodKey: coversMonth, rentDueDay, rentDueOffsetDays, rentTiming });
+  const [y, m, d] = dueDate.split('-').map(Number);
+  const dueDateUtc = new Date(Date.UTC(y, m - 1, d));
   const paid = paidAt instanceof Date ? paidAt : new Date(paidAt);
   const paidUtc = new Date(Date.UTC(paid.getUTCFullYear(), paid.getUTCMonth(), paid.getUTCDate()));
-  return paidUtc > dueDate;
+  return paidUtc > dueDateUtc;
 }
 
 /**
@@ -291,8 +420,10 @@ function isPaymentLate(coversMonth, rentDueDay, paidAt, rentTiming) {
  * — contraire à la règle documentée (« au moins 2 des 3 derniers MOIS »). La date retenue pour juger un
  * mois en retard est celle du DERNIER versement qui l'a soldé : un mois payé en partie à temps puis
  * complété en retard n'a pas été réglé à temps.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm`/`rentDueOffsetDays` optionnels, ajoutés en fin de liste.
  */
-function recentMonthlyLateCount(payments, rentDueDay, rentTiming) {
+function recentMonthlyLateCount(payments, rentDueDay, rentTiming, rhythm, rentDueOffsetDays) {
   const latestPaymentByMonth = new Map();
   for (const p of payments) {
     const current = latestPaymentByMonth.get(p.coversMonth);
@@ -303,7 +434,7 @@ function recentMonthlyLateCount(payments, rentDueDay, rentTiming) {
   const recentMonths = [...latestPaymentByMonth.values()]
     .sort((a, b) => (a.coversMonth < b.coversMonth ? 1 : -1))
     .slice(0, 3);
-  const lateCount = recentMonths.filter((p) => isPaymentLate(p.coversMonth, rentDueDay, p.paidAt, rentTiming)).length;
+  const lateCount = recentMonths.filter((p) => isPaymentLate(p.coversMonth, rentDueDay, p.paidAt, rentTiming, rhythm, rentDueOffsetDays)).length;
   return { recentMonths, lateCount };
 }
 
@@ -316,8 +447,17 @@ function recentMonthlyLateCount(payments, rentDueDay, rentTiming) {
  *
  * `scopeAgentId` (étape 14) : un agent restreint ne voit que les impayés des
  * baux sur un Bien qui lui est attribué — voir services/scope.js.
+ *
+ * Refonte de la clôture (étape 2/5) : charge le rythme du tenant UNE FOIS (`getTenantRhythm`,
+ * `accountingPeriods.js`) et le propage à chaque bail — import différé (pas en tête de fichier) pour
+ * éviter tout risque de dépendance circulaire avec `accountingPeriods.js`, qui n'importe rien de ce
+ * fichier aujourd'hui mais reste un service de bas niveau à ne jamais coupler en dur.
  */
 async function listPortfolioArrears(tenantId, scopeAgentId = null) {
+  const { getTenantRhythm } = require('./accountingPeriods');
+  const rhythm = await getTenantRhythm(tenantId);
+  const isCalendaire = rhythm.mode === 'calendaire';
+
   const params = { tenantId };
   let scopeClause = '';
   if (scopeAgentId != null) {
@@ -325,7 +465,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
     params.scopeAgentId = scopeAgentId;
   }
   const [activeLeases] = await pool.query(
-    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing, l.opening_debt_amount,
+    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_due_offset_days, l.rent_timing, l.opening_debt_amount,
             l.created_at, l.up_to_date_at_onboarding, l.entry_proration,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
             un.code AS unit_code, p.code AS property_code
@@ -341,13 +481,14 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   const leaseIds = activeLeases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
+    `SELECT lease_id, covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
     leaseIds,
   );
   const paymentsByLease = new Map();
   for (const p of payments) {
     if (!paymentsByLease.has(p.lease_id)) paymentsByLease.set(p.lease_id, []);
-    paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month, amount: Number(p.amount) });
+    const coversMonth = isCalendaire ? p.covers_month : toIsoDateString(p.covers_period_start);
+    paymentsByLease.get(p.lease_id).push({ coversMonth, amount: Number(p.amount) });
   }
 
   const [openingDebtPaid] = await pool.query(
@@ -372,7 +513,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   const lateFeesAppliedByLease = new Map(lateFeesApplied.map((r) => [r.lease_id, Number(r.applied)]));
   const lateFeesPaidByLease = new Map(lateFeesPaid.map((r) => [r.lease_id, Number(r.paid)]));
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const todayIso = new Date().toISOString().slice(0, 10);
   const results = [];
   for (const lease of activeLeases) {
     const startDate = lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
@@ -381,10 +522,12 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
+      rentDueOffsetDays: lease.rent_due_offset_days,
       rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
       entryProration: lease.entry_proration,
       payments: paymentsByLease.get(lease.id) || [],
+      rhythm,
     });
     const openingDebtRemaining = Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0);
     const lateFeesRemaining = (lateFeesAppliedByLease.get(lease.id) || 0) - (lateFeesPaidByLease.get(lease.id) || 0);
@@ -393,7 +536,16 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
     // jamais soldé (onboarding), et/ou une pénalité de retard non réglée —
     // aucune n'empêche les autres d'apparaître dans la liste de relance.
     if (arrears.status === 'late' || openingDebtRemaining > 0 || lateFeesRemaining > 0) {
-      const unpaidMonths = arrears.status === 'late' ? Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth)) : 0;
+      const baselineKey = baselineMonthOf({
+        startDate,
+        createdAt: lease.created_at,
+        upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
+        entryProration: lease.entry_proration,
+        rentDueDay: lease.rent_due_day,
+        rhythm,
+      });
+      const currentKey = periodKeyContainingToday(rhythm, baselineKey, todayIso);
+      const unpaidMonths = arrears.status === 'late' ? Math.max(1, periodsBetweenInclusive(rhythm, arrears.nextDueMonth, currentKey)) : 0;
       // Audit comptable, anomalie A1 : le mois en cours (`nextDueMonth`)
       // peut déjà être partiellement réglé (`paidForNextDueMonth`) — ne
       // JAMAIS compter le loyer plein de ce mois sans en déduire ce qui est
@@ -420,27 +572,33 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
 }
 
 /**
- * Fige, pour chaque bail actif pendant le mois `period` clôturé, le montant
+ * Fige, pour chaque bail actif pendant la période `[periodStart, periodEnd]` clôturée, le montant
  * dû à cet instant (loyers en retard + reliquat de dette initiale non
  * soldé) dans `lease_balance_snapshots` — décision explicite de
- * l'utilisateur : un mois clôturé ne doit jamais changer de réponse à « que
+ * l'utilisateur : une période clôturée ne doit jamais changer de réponse à « que
  * devait-il à cette date-là », même si `computeArrears` évolue plus tard.
  * INSERT-only, appelé une seule fois par `POST /api/accounting/periods`
- * juste après la clôture — la contrainte UNIQUE (tenant_id, period,
+ * juste après la clôture — la contrainte UNIQUE (tenant_id, period_start,
  * lease_id) protège aussi contre un double appel accidentel.
  *
  * Portée des baux : même critère que `getPeriodClosability`
  * (`accountingPeriods.js`) — chevauche la période, actif ou déjà terminé,
  * jamais seulement `status = 'active'` (un bail terminé en cours de mois
  * devait encore quelque chose au moment de la clôture).
+ *
+ * Refonte de la clôture (étape 2/5) : prend désormais `rhythm` + les bornes RÉELLES déjà calculées
+ * par la route de clôture (`periodStart`/`periodEnd`), au lieu de dériver un mois civil depuis une
+ * chaîne 'AAAA-MM' — fonctionne pour tout rythme, plus seulement calendaire. `period` (étiquette
+ * 'AAAA-MM') reste renseignée pour affichage/compatibilité seulement en rythme calendaire.
  */
-async function snapshotLeaseBalances(tenantId, period) {
-  const [y, m] = period.split('-').map(Number);
-  const first = `${period}-01`;
-  const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+async function snapshotLeaseBalances(tenantId, rhythm, periodStart, periodEnd) {
+  const isCalendaire = (rhythm?.mode ?? 'calendaire') === 'calendaire';
+  const first = periodStart;
+  const last = periodEnd;
+  const legacyPeriod = isCalendaire ? first.slice(0, 7) : null;
 
   const [leases] = await pool.query(
-    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing, l.opening_debt_amount,
+    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_due_offset_days, l.rent_timing, l.opening_debt_amount,
             l.created_at, l.up_to_date_at_onboarding, l.entry_proration
      FROM leases l
      WHERE l.tenant_id = :tenantId AND l.start_date <= :last AND (l.end_date IS NULL OR l.end_date >= :first)`,
@@ -451,13 +609,14 @@ async function snapshotLeaseBalances(tenantId, period) {
   const leaseIds = leases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
+    `SELECT lease_id, covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
     leaseIds,
   );
   const paymentsByLease = new Map();
   for (const p of payments) {
     if (!paymentsByLease.has(p.lease_id)) paymentsByLease.set(p.lease_id, []);
-    paymentsByLease.get(p.lease_id).push({ coversMonth: p.covers_month, amount: Number(p.amount) });
+    const coversMonth = isCalendaire ? p.covers_month : toIsoDateString(p.covers_period_start);
+    paymentsByLease.get(p.lease_id).push({ coversMonth, amount: Number(p.amount) });
   }
   const [openingDebtPaid] = await pool.query(
     `SELECT lease_id, SUM(amount) AS paid FROM lease_opening_debt_payments WHERE lease_id IN (${placeholders}) GROUP BY lease_id`,
@@ -465,27 +624,43 @@ async function snapshotLeaseBalances(tenantId, period) {
   );
   const openingDebtPaidByLease = new Map(openingDebtPaid.map((r) => [r.lease_id, Number(r.paid)]));
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  // Bug corrigé (audit fermeture du mois, point 6, 16/10/2026) : ce figement doit répondre à « que
+  // devait-il à la fin DE LA PÉRIODE QU'ON FERME » (voir le commentaire de fonction ci-dessus), pas « que
+  // doit-il AUJOURD'HUI » — `computeArrears` prend par défaut la date système réelle (`today`). Closing
+  // n'étant jamais obligatoirement séquentiel ni prompt (une période peut être clôturée bien après coup,
+  // voir `getPeriodClosability`), cela gonflait l'arriéré figé de tout le temps écoulé entre `periodEnd`
+  // et aujourd'hui — faux exactement dans le cas (clôture tardive) où un instantané fidèle compte le plus.
+  const asOfPeriodEnd = new Date(`${last}T00:00:00Z`);
+  const periodKeyForCount = isCalendaire ? legacyPeriod : first;
   const rows = leases.map((lease) => {
     const startDate = lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
-    const arrears = computeArrears({
-      startDate,
-      createdAt: lease.created_at,
-      upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
-      rentDueDay: lease.rent_due_day,
-      rentTiming: lease.rent_timing,
-      monthlyRent: lease.monthly_rent,
-      entryProration: lease.entry_proration,
-      payments: paymentsByLease.get(lease.id) || [],
-    });
-    const unpaidMonths = arrears.status === 'late' ? Math.max(1, monthsBetweenInclusive(arrears.nextDueMonth, currentMonth)) : 0;
+    const arrears = computeArrears(
+      {
+        startDate,
+        createdAt: lease.created_at,
+        upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
+        rentDueDay: lease.rent_due_day,
+        rentDueOffsetDays: lease.rent_due_offset_days,
+        rentTiming: lease.rent_timing,
+        monthlyRent: lease.monthly_rent,
+        entryProration: lease.entry_proration,
+        payments: paymentsByLease.get(lease.id) || [],
+        rhythm,
+      },
+      asOfPeriodEnd,
+    );
+    const unpaidMonths =
+      arrears.status === 'late' ? Math.max(1, periodsBetweenInclusive(rhythm, arrears.nextDueMonth, periodKeyForCount)) : 0;
     const openingDebtRemaining = Math.max(0, Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0));
     const rentDue = Math.max(0, unpaidMonths * Number(lease.monthly_rent) - arrears.paidForNextDueMonth);
     const amountDue = rentDue + openingDebtRemaining;
-    return [tenantId, period, lease.id, amountDue];
+    return [tenantId, legacyPeriod, first, last, lease.id, amountDue];
   });
 
-  await pool.query('INSERT INTO lease_balance_snapshots (tenant_id, period, lease_id, amount_due) VALUES ?', [rows]);
+  await pool.query(
+    'INSERT INTO lease_balance_snapshots (tenant_id, period, period_start, period_end, lease_id, amount_due) VALUES ?',
+    [rows],
+  );
 }
 
 /**
@@ -502,8 +677,15 @@ async function snapshotLeaseBalances(tenantId, period) {
  * d'alerte sur un locataire trop récent faute de recul.
  *
  * `scopeAgentId` (étape 14) : même portée que `listPortfolioArrears`.
+ *
+ * Refonte de la clôture (étape 2/5) : même traitement que `listPortfolioArrears` (rythme chargé une
+ * fois, propagé à chaque bail).
  */
 async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead = 5) {
+  const { getTenantRhythm } = require('./accountingPeriods');
+  const rhythm = await getTenantRhythm(tenantId);
+  const isCalendaire = rhythm.mode === 'calendaire';
+
   const params = { tenantId };
   let scopeClause = '';
   if (scopeAgentId != null) {
@@ -511,7 +693,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
     params.scopeAgentId = scopeAgentId;
   }
   const [activeLeases] = await pool.query(
-    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_timing,
+    `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_due_offset_days, l.rent_timing,
             l.created_at, l.up_to_date_at_onboarding, l.entry_proration,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
             un.code AS unit_code, p.code AS property_code
@@ -527,8 +709,8 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
   const leaseIds = activeLeases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month, amount, paid_at FROM rent_payments
-     WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY covers_month DESC`,
+    `SELECT lease_id, covers_month, covers_period_start, amount, paid_at FROM rent_payments
+     WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY COALESCE(covers_period_start, STR_TO_DATE(CONCAT(covers_month,'-01'), '%Y-%m-%d')) DESC`,
     leaseIds,
   );
   const paymentsByLease = new Map();
@@ -544,15 +726,22 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
   for (const lease of activeLeases) {
     const startDate = lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
     const leasePayments = paymentsByLease.get(lease.id) || [];
+    const mappedPayments = leasePayments.map((p) => ({
+      coversMonth: isCalendaire ? p.covers_month : toIsoDateString(p.covers_period_start),
+      amount: Number(p.amount),
+      paidAt: p.paid_at,
+    }));
     const arrears = computeArrears({
       startDate,
       createdAt: lease.created_at,
       upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
       rentDueDay: lease.rent_due_day,
+      rentDueOffsetDays: lease.rent_due_offset_days,
       rentTiming: lease.rent_timing,
       monthlyRent: lease.monthly_rent,
       entryProration: lease.entry_proration,
-      payments: leasePayments.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
+      payments: mappedPayments,
+      rhythm,
     });
 
     // Déjà couvert par `listPortfolioArrears` : une alerte prédictive n'a de
@@ -565,9 +754,11 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
     if (daysUntilDue > daysAhead) continue;
 
     const { recentMonths, lateCount } = recentMonthlyLateCount(
-      leasePayments.map((p) => ({ coversMonth: p.covers_month, paidAt: p.paid_at })),
+      mappedPayments,
       lease.rent_due_day,
       lease.rent_timing,
+      rhythm,
+      lease.rent_due_offset_days,
     );
     if (recentMonths.length < 2) continue;
     if (lateCount < 2) continue;
@@ -599,14 +790,21 @@ function shiftMonth(yearMonth, delta) {
 }
 
 /**
- * État d'UN mois de loyer pour UN bail — la règle unique derrière la frise des
- * 12 mois et l'encadré « Ce mois-ci ». `paid` = cumul payé pour ce mois.
+ * État d'UNE période de loyer pour UN bail — la règle unique derrière la frise des
+ * 12 mois et l'encadré « Ce mois-ci ». `paid` = cumul payé pour cette période.
  * Renvoie { status, late, dueDate } ; statuts documentés sur `buildRentStrip`.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm`/`rentDueOffsetDays`/`currentPeriodKey` optionnels.
+ * `currentPeriodKey` : en calendaire, dérivable directement de `todayIso` (inchangé, l'appelant ne
+ * le fournit jamais) ; sinon, c'est l'APPELANT qui le résout (jamais cette fonction, qui reste pure)
+ * via `periodKeyContainingToday` — voir `buildRentStrip`.
  */
-function rentMonthState({ month, paid, rent, rentDueDay, rentTiming, startMonth, endMonth, baselineMonth }, todayIso) {
-  const currentMonth = todayIso.slice(0, 7);
-  const dueMonth = rentTiming === 'terme_echu' ? shiftMonth(month, 1) : month;
-  const dueDate = `${dueMonth}-${String(rentDueDay).padStart(2, '0')}`;
+function rentMonthState(
+  { month, paid, rent, rentDueDay, rentDueOffsetDays, rentTiming, startMonth, endMonth, baselineMonth, rhythm, currentPeriodKey },
+  todayIso,
+) {
+  const currentMonth = currentPeriodKey ?? todayIso.slice(0, 7);
+  const dueDate = resolveRentDueDate({ rhythm, periodKey: month, rentDueDay, rentDueOffsetDays, rentTiming });
   const overdue = todayIso > dueDate;
 
   let status;
@@ -637,37 +835,45 @@ const STRIP_MONTHS_BEFORE = 8;
 const STRIP_MONTHS = 12;
 
 /**
- * Frise des 12 mois d'un bail (« qui est à jour ? » d'un coup d'œil) : l'état
- * de CHAQUE mois, calculé mois par mois à partir des paiements — jamais
- * déduit de la seule prochaine échéance, pour qu'un mois payé après un trou,
- * ou seulement entamé, reste lisible.
+ * Frise des 12 "mois" (périodes) d'un bail (« qui est à jour ? » d'un coup d'œil) : l'état
+ * de CHAQUE période, calculé période par période à partir des paiements — jamais
+ * déduit de la seule prochaine échéance, pour qu'une période payée après un trou,
+ * ou seulement entamée, reste lisible.
  *
- *  - paye         : le cumul payé pour ce mois atteint le loyer
+ *  - paye         : le cumul payé pour cette période atteint le loyer
  *  - partiel      : payé en partie (`late` dit si l'échéance est passée)
  *  - en_retard    : rien payé et échéance dépassée
- *  - a_payer      : mois en cours (ou passé) rien payé, échéance pas encore passée
- *  - a_venir      : mois futur, rien payé
+ *  - a_payer      : période en cours (ou passée) rien payé, échéance pas encore passée
+ *  - a_venir      : période future, rien payé
  *  - avant_suivi  : le bail existait mais Lyko System ne le suivait pas encore
  *  - hors_bail    : avant le début ou après la fin du bail
  *
  * L'échéance suit la convention du bail (`rentTiming`) exactement comme
- * `computeArrears` : à terme échu, le loyer d'un mois est dû le mois suivant.
+ * `computeArrears` : à terme échu, le loyer d'une période est dû la période suivante.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm`/`rentDueOffsetDays` optionnels (calendaire par
+ * défaut, comportement byte pour byte inchangé dans ce cas — `currentMonth`/`firstMonth` restent
+ * dérivés directement de `todayIso` via `shiftMonth`, exactement comme avant). Pour un bail
+ * non-calendaire, "la période courante" n'est pas dérivable de la seule date du jour (pas d'ancre
+ * globale) : elle se trouve en marchant depuis la base propre à CE bail (`periodKeyContainingToday`,
+ * jamais d'accès base).
  */
 function buildRentStrip(
-  { startDate, endDate, createdAt, upToDateAtOnboarding, rentDueDay, rentTiming, monthlyRent, payments, entryProration },
+  { startDate, endDate, createdAt, upToDateAtOnboarding, rentDueDay, rentDueOffsetDays, rentTiming, monthlyRent, payments, entryProration, rhythm },
   today = new Date(),
 ) {
+  const isCalendaire = (rhythm?.mode ?? 'calendaire') === 'calendaire';
   const rent = Number(monthlyRent) || 0;
   const todayIso = today.toISOString().slice(0, 10);
-  const currentMonth = todayIso.slice(0, 7);
-  const startMonth = toIsoDateString(startDate).slice(0, 7);
-  const endMonth = endDate ? toIsoDateString(endDate).slice(0, 7) : null;
+  const startMonth = isCalendaire ? toIsoDateString(startDate).slice(0, 7) : toIsoDateString(startDate);
+  const endMonth = endDate ? (isCalendaire ? toIsoDateString(endDate).slice(0, 7) : toIsoDateString(endDate)) : null;
   const baselineMonth = baselineMonthOf({
     startDate: toIsoDateString(startDate),
     createdAt,
     upToDateAtOnboarding,
     entryProration,
     rentDueDay,
+    rhythm,
   });
 
   const paidByMonth = new Map();
@@ -675,12 +881,16 @@ function buildRentStrip(
     paidByMonth.set(p.coversMonth, (paidByMonth.get(p.coversMonth) ?? 0) + Number(p.amount ?? 0));
   }
 
-  const firstMonth = shiftMonth(currentMonth, -STRIP_MONTHS_BEFORE);
+  const currentMonth = isCalendaire ? todayIso.slice(0, 7) : periodKeyContainingToday(rhythm, baselineMonth, todayIso);
+  const firstMonth = stepBackPeriods(rhythm, currentMonth, STRIP_MONTHS_BEFORE);
   const months = [];
+  let month = firstMonth;
   for (let i = 0; i < STRIP_MONTHS; i += 1) {
-    const month = shiftMonth(firstMonth, i);
     const paid = paidByMonth.get(month) ?? 0;
-    const state = rentMonthState({ month, paid, rent, rentDueDay, rentTiming, startMonth, endMonth, baselineMonth }, todayIso);
+    const state = rentMonthState(
+      { month, paid, rent, rentDueDay, rentDueOffsetDays, rentTiming, startMonth, endMonth, baselineMonth, rhythm, currentPeriodKey: currentMonth },
+      todayIso,
+    );
     months.push({
       month,
       status: state.status,
@@ -691,8 +901,58 @@ function buildRentStrip(
       late: state.late,
       isCurrent: month === currentMonth,
     });
+    month = nextPeriodKey(rhythm, month);
   }
   return months;
+}
+
+/**
+ * État du loyer d'UN bail pour LA période `period`, figé « tel qu'il était à la fin de cette
+ * période » — utilisé par l'archive mensuelle (`monthlyArchive.js`) à la clôture. `asOfIso` doit
+ * être la dernière date de la période clôturée (même convention que `snapshotLeaseBalances`) :
+ * jamais la date du jour, pour que l'archive d'une période clôturée tardivement reste fidèle à
+ * CETTE période-là.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm` optionnel ajouté en dernier paramètre (compatible
+ * avec tout appel existant à 4 arguments). `period` reçu directement de l'appelant — en rythme
+ * calendaire c'est toujours `${legacyPeriod}` ('AAAA-MM'), sinon `periodStart` (date complète) ; la
+ * période qu'on archive EST par construction la période "courante" au moment du calcul.
+ */
+function buildMonthRentPayload(lease, period, paidForMonth, asOfIso, rhythm) {
+  const isCalendaire = (rhythm?.mode ?? 'calendaire') === 'calendaire';
+  const startDate = toIsoDateString(lease.start_date);
+  const rent = Number(lease.monthly_rent) || 0;
+  const state = rentMonthState(
+    {
+      month: period,
+      paid: paidForMonth,
+      rent,
+      rentDueDay: lease.rent_due_day,
+      rentDueOffsetDays: lease.rent_due_offset_days,
+      rentTiming: lease.rent_timing,
+      startMonth: isCalendaire ? startDate.slice(0, 7) : startDate,
+      endMonth: lease.end_date ? (isCalendaire ? toIsoDateString(lease.end_date).slice(0, 7) : toIsoDateString(lease.end_date)) : null,
+      baselineMonth: baselineMonthOf({
+        startDate,
+        createdAt: lease.created_at,
+        upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
+        entryProration: lease.entry_proration,
+        rentDueDay: lease.rent_due_day,
+        rhythm,
+      }),
+      rhythm,
+      currentPeriodKey: period,
+    },
+    asOfIso,
+  );
+  return {
+    status: state.status,
+    late: state.late,
+    dueDate: state.dueDate,
+    due: rent,
+    paid: paidForMonth,
+    remaining: Math.max(0, rent - paidForMonth),
+  };
 }
 
 /**
@@ -702,8 +962,14 @@ function buildRentStrip(
  * frise (`rentMonthState`) : un bail n'entre dans l'attendu que si le mois le
  * concerne (ni hors bail, ni antérieur au suivi). `leases[i].paid` = cumul
  * payé pour CE mois de loyer. Invariant : attendu = encaissé + reste.
+ *
+ * Refonte de la clôture (étape 2/5) : `rhythm`/`currentPeriodKey` optionnels, ajoutés en fin de
+ * liste de paramètres — comportement byte pour byte inchangé quand omis (calendaire). Cette
+ * fonction reste calendaire-only en pratique (voir `routes/accounting.js GET /rent-month`,
+ * limitation documentée du plan étape 2 — pas de sélecteur de période non-calendaire encore
+ * construit), mais sa généralisation interne ne coûte rien et évite une divergence future.
  */
-function summarizeRentMonth(leases, month, today = new Date()) {
+function summarizeRentMonth(leases, month, today = new Date(), rhythm, currentPeriodKey) {
   const todayIso = today.toISOString().slice(0, 10);
   const out = {
     month,
@@ -718,22 +984,27 @@ function summarizeRentMonth(leases, month, today = new Date()) {
     const rent = Number(lease.monthlyRent) || 0;
     const paid = Number(lease.paid) || 0;
     const startDate = toIsoDateString(lease.startDate);
+    const isCalendaire = (rhythm?.mode ?? 'calendaire') === 'calendaire';
     const state = rentMonthState(
       {
         month,
         paid,
         rent,
         rentDueDay: lease.rentDueDay,
+        rentDueOffsetDays: lease.rentDueOffsetDays,
         rentTiming: lease.rentTiming,
-        startMonth: startDate.slice(0, 7),
-        endMonth: lease.endDate ? toIsoDateString(lease.endDate).slice(0, 7) : null,
+        startMonth: isCalendaire ? startDate.slice(0, 7) : startDate,
+        endMonth: lease.endDate ? (isCalendaire ? toIsoDateString(lease.endDate).slice(0, 7) : toIsoDateString(lease.endDate)) : null,
         baselineMonth: baselineMonthOf({
           startDate,
           createdAt: lease.createdAt,
           upToDateAtOnboarding: lease.upToDateAtOnboarding,
           entryProration: lease.entryProration,
           rentDueDay: lease.rentDueDay,
+          rhythm,
         }),
+        rhythm,
+        currentPeriodKey,
       },
       todayIso,
     );
@@ -755,10 +1026,17 @@ module.exports = {
   computeArrears,
   buildRentStrip,
   summarizeRentMonth,
+  buildMonthRentPayload,
   rentMonthState,
   addMonth,
+  addPeriod,
+  nextPeriodKey,
+  previousPeriodKey,
+  periodKeyContainingToday,
+  resolveRentDueDate,
   allocateRentPayment,
   monthsBetweenInclusive,
+  periodsBetweenInclusive,
   isPaymentLate,
   recentMonthlyLateCount,
   listPortfolioArrears,
@@ -766,4 +1044,5 @@ module.exports = {
   snapshotLeaseBalances,
   firstRegularDueDate,
   computeEntryProrata,
+  baselineMonthOf,
 };

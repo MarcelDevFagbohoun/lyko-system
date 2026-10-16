@@ -234,8 +234,17 @@ async function recordRentPayment(
   });
   const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
 
+  // Refonte de la clôture (étape 2/5, 2026-10-16) : le rythme d'UN bail se déduit directement de ses
+  // propres colonnes (`rent_due_day` renseigné = calendaire, `rent_due_offset_days` renseigné =
+  // non-calendaire — les deux sont mutuellement exclusifs, contrainte CHECK en base) : jamais besoin
+  // de requêter le rythme du TENANT dans ce chemin critique, un bail garde le sien pour toute sa
+  // durée. `jour_fixe` et `libre` se comportent de façon identique dans `rentTracking.js` (même pas
+  // d'avancement, ancré sur le jour de la clé courante) — seul "calendaire vs le reste" compte ici.
+  const isCalendaire = lease.rent_due_day != null;
+  const rhythm = { mode: isCalendaire ? 'calendaire' : 'jour_fixe' };
+
   const [payRows] = await conn.query(
-    'SELECT covers_month, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
+    'SELECT covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
     { leaseId: lease.id },
   );
   const startDate =
@@ -245,10 +254,19 @@ async function recordRentPayment(
     createdAt: lease.created_at,
     upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
     rentDueDay: lease.rent_due_day,
+    rentDueOffsetDays: lease.rent_due_offset_days,
     rentTiming: lease.rent_timing,
     monthlyRent: lease.monthly_rent,
     entryProration: lease.entry_proration,
-    payments: payRows.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
+    payments: payRows.map((r) => ({
+      coversMonth: isCalendaire
+        ? r.covers_month
+        : r.covers_period_start instanceof Date
+          ? r.covers_period_start.toISOString().slice(0, 10)
+          : String(r.covers_period_start).slice(0, 10),
+      amount: Number(r.amount),
+    })),
+    rhythm,
   });
   const startMonth = coversMonth && coversMonth >= arrears.nextDueMonth ? coversMonth : arrears.nextDueMonth;
   // Le reliquat déjà réglé ne s'applique que si `startMonth` EST le mois en
@@ -261,17 +279,22 @@ async function recordRentPayment(
     monthlyRent: lease.monthly_rent,
     alreadyPaidForNextDueMonth: alreadyPaidForStartMonth,
     amount,
+    rhythm,
   });
 
   const created = [];
   for (const [i, alloc] of allocations.entries()) {
+    // `covers_month` ('AAAA-MM') reste renseignée uniquement pour un bail calendaire — voir migration
+    // 085 — `covers_period_start` (date réelle) est TOUJOURS renseignée, quel que soit le rythme.
+    const coversPeriodStart = isCalendaire ? `${alloc.coversMonth}-01` : alloc.coversMonth;
     const [paymentResult] = await conn.query(
-      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, notes, recorded_by, kkiapay_transaction_id)
-       VALUES (:tenantId, :leaseId, :coversMonth, :amount, :method, :paidAt, :notes, :recordedBy, :kkiapayTransactionId)`,
+      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, notes, recorded_by, kkiapay_transaction_id)
+       VALUES (:tenantId, :leaseId, :coversMonth, :coversPeriodStart, :amount, :method, :paidAt, :notes, :recordedBy, :kkiapayTransactionId)`,
       {
         tenantId,
         leaseId: lease.id,
-        coversMonth: alloc.coversMonth,
+        coversMonth: isCalendaire ? alloc.coversMonth : null,
+        coversPeriodStart,
         amount: alloc.amount,
         method: paymentMethod,
         paidAt,
@@ -442,13 +465,27 @@ router.delete('/:leaseId/payments/:paymentId', canPayments, async (req, res, nex
     // (rien ne bloquait, rien n'alertait). Verrouille la fiche du
     // propriétaire (même principe que `assertPayoutWithinBalance`, appelé
     // pour un NOUVEAU versement) avant de décider.
-    const owner = await resolveOwnerFromLease(conn, req.user.tenantId, leaseId);
+    // Propriétaire EN VIGUEUR à la date du paiement annulé (pas forcément l'actuel) : c'est son
+    // solde séquestre, pas celui du propriétaire courant du Bien, que ce loyer a réellement affecté.
+    const owner = await resolveOwnerFromLease(conn, req.user.tenantId, leaseId, paymentRows[0].paid_at);
+
+    // Bug corrigé (audit fermeture du mois, point 5, 16/10/2026) : SI une écriture GL validée existe
+    // pour ce paiement, son extourne plus bas est datée AUJOURD'HUI (date de l'écriture MIROIR
+    // elle-même, jamais celle du paiement annulé, déjà vérifiée ci-dessus) — jamais vérifiée contre la
+    // clôture du mois jusqu'ici. Même principe que le correctif déjà en place sur l'extourne MANUELLE.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const [[existingGlEntry]] = await conn.query(
+      "SELECT id FROM gl_entries WHERE tenant_id = :tenantId AND source_table = 'rent_payments' AND source_id = :paymentId AND status = 'validee' LIMIT 1",
+      { tenantId: req.user.tenantId, paymentId },
+    );
+    if (existingGlEntry) await assertPeriodOpen(req.user.tenantId, todayIso);
 
     await conn.beginTransaction();
     // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
     // transaction — la vérification ci-dessus (avant `beginTransaction`)
     // n'empêchait pas une clôture de mois de se glisser entre les deux.
     await assertPeriodOpenLocked(conn, req.user.tenantId, paymentRows[0].paid_at);
+    if (existingGlEntry) await assertPeriodOpenLocked(conn, req.user.tenantId, todayIso);
     await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
       id: owner.id,
       tenantId: req.user.tenantId,
@@ -537,8 +574,10 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
     if (data.idempotencyKey) {
       await claimIdempotencyKey(conn, req.user.tenantId, 'rent_payment', data.idempotencyKey);
     } else {
+      const isCalendaireForGuard = lease.rent_due_day != null;
+      const rhythmForGuard = { mode: isCalendaireForGuard ? 'calendaire' : 'jour_fixe' };
       const [payRowsForGuard] = await conn.query(
-        'SELECT covers_month, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
+        'SELECT covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
         { leaseId },
       );
       const startDateForGuard =
@@ -548,10 +587,19 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
         createdAt: lease.created_at,
         upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
         rentDueDay: lease.rent_due_day,
+        rentDueOffsetDays: lease.rent_due_offset_days,
         rentTiming: lease.rent_timing,
         monthlyRent: lease.monthly_rent,
         entryProration: lease.entry_proration,
-        payments: payRowsForGuard.map((r) => ({ coversMonth: r.covers_month, amount: Number(r.amount) })),
+        payments: payRowsForGuard.map((r) => ({
+          coversMonth: isCalendaireForGuard
+            ? r.covers_month
+            : r.covers_period_start instanceof Date
+              ? r.covers_period_start.toISOString().slice(0, 10)
+              : String(r.covers_period_start).slice(0, 10),
+          amount: Number(r.amount),
+        })),
+        rhythm: rhythmForGuard,
       });
       const startMonthForGuard =
         data.coversMonth && data.coversMonth >= arrearsForGuard.nextDueMonth
@@ -563,12 +611,13 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
         monthlyRent: lease.monthly_rent,
         alreadyPaidForNextDueMonth: startMonthForGuard === arrearsForGuard.nextDueMonth ? arrearsForGuard.paidForNextDueMonth : 0,
         amount: data.amount,
+        rhythm: rhythmForGuard,
       }).allocations[0];
       if (
         firstAllocation &&
         (await hasRecentIdenticalRentPayment(conn, {
           leaseId,
-          coversMonth: startMonthForGuard,
+          coversPeriodStart: isCalendaireForGuard ? `${startMonthForGuard}-01` : startMonthForGuard,
           paidAt: data.paidAt,
           paymentMethod: data.paymentMethod,
           amount: firstAllocation.amount,
@@ -1355,8 +1404,9 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
 
     let arrears = null;
     if (lease.status === 'active') {
+      const isCalendaireForArrears = lease.rent_due_day != null;
       const [payments] = await pool.query(
-        'SELECT covers_month, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
+        'SELECT covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
         { leaseId },
       );
       arrears = computeArrears({
@@ -1364,10 +1414,19 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
         createdAt: lease.created_at,
         upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
         rentDueDay: lease.rent_due_day,
+        rentDueOffsetDays: lease.rent_due_offset_days,
         rentTiming: lease.rent_timing,
         monthlyRent: lease.monthly_rent,
         entryProration: lease.entry_proration,
-        payments: payments.map((p) => ({ coversMonth: p.covers_month, amount: Number(p.amount) })),
+        payments: payments.map((p) => ({
+          coversMonth: isCalendaireForArrears
+            ? p.covers_month
+            : p.covers_period_start instanceof Date
+              ? p.covers_period_start.toISOString().slice(0, 10)
+              : String(p.covers_period_start).slice(0, 10),
+          amount: Number(p.amount),
+        })),
+        rhythm: { mode: isCalendaireForArrears ? 'calendaire' : 'jour_fixe' },
       });
     }
 
@@ -1665,7 +1724,14 @@ router.post(
       );
       const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
 
+      // Bug corrigé (audit fermeture du mois, point 2, 16/10/2026) : finaliser une sortie règle
+      // réellement de l'argent (restitution de caution, règlement SBEE/SONEB par la caution) daté
+      // `report.conducted_at` — jamais vérifié contre la clôture du mois jusqu'ici. `toPeriod`
+      // (services/accountingPeriods.js) accepte directement un objet Date tel que renvoyé par mysql2.
+      await assertPeriodOpen(req.user.tenantId, report.conducted_at);
+
       await conn.beginTransaction();
+      await assertPeriodOpenLocked(conn, req.user.tenantId, report.conducted_at);
 
       await conn.query(
         `UPDATE move_out_reports
@@ -1786,24 +1852,39 @@ router.post('/:leaseId/move-out-report/reopen', canReopenInspection, async (req,
     const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
     assertFinalized(report, 'état des lieux de sortie');
 
-    await conn.beginTransaction();
-
-    if (await isModuleActive(conn, req.user.tenantId)) {
+    // Bug corrigé (audit fermeture du mois, points 2 et 5, 16/10/2026) : SI une écriture "caution
+    // restituée" existe (module actif), l'extourne ci-dessous la reverse, datée AUJOURD'HUI (date de
+    // l'écriture MIROIR elle-même, jamais celle de l'état des lieux original) — jamais vérifiée contre
+    // la clôture du mois jusqu'ici. Même principe que le correctif déjà en place sur l'extourne
+    // MANUELLE (`routes/gl/glEntries.js POST /:id/extourne`), jamais propagé à celle-ci. Vérifié
+    // SEULEMENT si une écriture existe réellement à reverser : une réouverture sans aucun impact
+    // comptable (module inactif, ou aucune écriture postée) n'a pas à être bloquée par la clôture
+    // d'aujourd'hui.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const moduleActiveBeforeTx = await isModuleActive(conn, req.user.tenantId);
+    let entryToReverseId = null;
+    if (moduleActiveBeforeTx) {
       const [[entry]] = await conn.query(
         `SELECT id FROM gl_entries
          WHERE tenant_id = :tenantId AND source_table = 'move_out_reports' AND source_id = :reportId AND status = 'validee'
          LIMIT 1`,
         { tenantId: req.user.tenantId, reportId: report.id },
       );
-      if (entry) {
-        await extourneEcriture(conn, {
-          tenantId: req.user.tenantId,
-          entryId: entry.id,
-          entryDate: new Date().toISOString().slice(0, 10),
-          userId: req.user.id,
-          reason: `État des lieux de sortie rouvert pour correction : ${parsed.data.reason}`,
-        });
-      }
+      entryToReverseId = entry?.id ?? null;
+      if (entryToReverseId) await assertPeriodOpen(req.user.tenantId, todayIso);
+    }
+
+    await conn.beginTransaction();
+
+    if (entryToReverseId) {
+      await assertPeriodOpenLocked(conn, req.user.tenantId, todayIso);
+      await extourneEcriture(conn, {
+        tenantId: req.user.tenantId,
+        entryId: entryToReverseId,
+        entryDate: todayIso,
+        userId: req.user.id,
+        reason: `État des lieux de sortie rouvert pour correction : ${parsed.data.reason}`,
+      });
     }
 
     await conn.query(

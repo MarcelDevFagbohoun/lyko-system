@@ -55,8 +55,8 @@ test('getEscrowBalances — recette nette cumulée (commission 10%) moins versem
   // Deux mois de loyer encaissé (100 000 chacun), un mois avec une dépense
   // du Bien de 5 000 (déduite AVANT commission, comme getRecetteNetteMaison).
   await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, '2026-01', 100000, 'virement', '2026-01-05', :by), (:t, :l, '2026-02', 100000, 'virement', '2026-02-05', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-01', '2026-01-01', 100000, 'virement', '2026-01-05', :by), (:t, :l, '2026-02', '2026-02-01', 100000, 'virement', '2026-02-05', :by)`,
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
   await pool.query(
@@ -187,8 +187,8 @@ test('getOwnersWithoutCommissionRate — signale un propriétaire avec des loyer
     { t: fx.tenantId, r: renter.insertId, u: unit.insertId, by: fx.dgId },
   );
   await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, '2026-04', 45000, 'especes', '2026-04-05', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-04', '2026-04-01', 45000, 'especes', '2026-04-05', :by)`,
     { t: fx.tenantId, l: lease.insertId, by: fx.dgId },
   );
 
@@ -241,8 +241,8 @@ test('assertPayoutWithinBalance — rejette un reversement qui dépasse le solde
     { t: fx.tenantId, r: renter.insertId, u: unit.insertId, by: fx.dgId },
   );
   await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, '2026-05', 50000, 'especes', '2026-05-05', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-05', '2026-05-01', 50000, 'especes', '2026-05-05', :by)`,
     { t: fx.tenantId, l: lease.insertId, by: fx.dgId },
   );
   // Solde réel détenu pour ce propriétaire : 50000 (aucun taux -> 0% de commission, aucun versement déjà fait).
@@ -298,8 +298,8 @@ test('assertPayoutWithinBalance — verrou + vérification DANS la transaction :
     { t: fx.tenantId, r: renter.insertId, u: unit.insertId, by: fx.dgId },
   );
   await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, '2026-05', 50000, 'especes', '2026-05-05', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-05', '2026-05-01', 50000, 'especes', '2026-05-05', :by)`,
     { t: fx.tenantId, l: lease.insertId, by: fx.dgId },
   ); // solde réel détenu : 50 000 (aucun taux → 0 % de commission)
 
@@ -410,8 +410,8 @@ test("getCabinetRevenue — commission sommée sur TOUS les propriétaires + fra
   // (déduite de SA recette nette avant commission — ne doit JAMAIS apparaître dans les dépenses du
   // cabinet ci-dessous, sinon le même travaux serait compté deux fois).
   await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, '2026-06', 100000, 'especes', '2026-06-05', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-06', '2026-06-01', 100000, 'especes', '2026-06-05', :by)`,
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
   const [propertyExpense] = await pool.query(
@@ -455,8 +455,8 @@ test("getCabinetRevenue — commission sommée sur TOUS les propriétaires + fra
     { t: fx.tenantId, o: ownerB.insertId, by: fx.dgId },
   );
   await pool.query(
-    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-     VALUES (:t, :l, '2026-06', 50000, 'especes', '2026-06-05', :by)`,
+    `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+     VALUES (:t, :l, '2026-06', '2026-06-01', 50000, 'especes', '2026-06-05', :by)`,
     { t: fx.tenantId, l: leaseB.insertId, by: fx.dgId },
   );
 
@@ -535,8 +535,8 @@ test("getEscrowBalances — gl_commission_timing='reversement' : le solde reste 
     await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10); // 10 %
     await pool.query("UPDATE tenants SET gl_commission_timing = 'reversement' WHERE id = :t", { t: iso.tenantId });
     await pool.query(
-      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-       VALUES (:t, :l, '2027-01', 100000, 'virement', '2027-01-05', :by)`,
+      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+       VALUES (:t, :l, '2027-01', '2027-01-01', 100000, 'virement', '2027-01-05', :by)`,
       { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
     );
 
@@ -549,6 +549,65 @@ test("getEscrowBalances — gl_commission_timing='reversement' : le solde reste 
     // Un versement du plein montant brut doit donc être accepté (rejeté à tort si le bug était présent,
     // puisque le solde net calculé par erreur aurait été inférieur de 10000 FCFA à ce montant).
     await assert.doesNotReject(assertPayoutWithinBalance(iso.tenantId, iso.ownerId, 100000));
+  } finally {
+    await teardown(iso.tenantId);
+  }
+});
+
+// ───── bug corrigé (audit comptabilité avancée du 02/10/2026) : getCabinetRevenue ignorait gl_commission_timing ─────
+
+test("getCabinetRevenue — gl_commission_timing='reversement' : la commission du mois vient des VERSEMENTS réglés ce mois-ci, jamais du loyer encaissé", async () => {
+  // Même principe que le test précédent (`getEscrowBalances`) : avant ce correctif, cette fonction
+  // comptait TOUJOURS la commission au fil du loyer encaissé, même en mode 'reversement' — où le grand
+  // livre ne la reconnaît en produit qu'au reversement effectif. Le tableau de bord "comptabilité
+  // simple" affichait donc un revenu différent de celui du compte de résultat SYSCOHADA pour le même
+  // mois. Fixture isolée, même raison que ci-dessus (le réglage s'applique à tout l'historique du tenant).
+  const iso = await createBareFixture();
+  try {
+    await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10); // 10 %
+    await pool.query("UPDATE tenants SET gl_commission_timing = 'reversement' WHERE id = :t", { t: iso.tenantId });
+    await pool.query(
+      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+       VALUES (:t, :l, '2027-01', '2027-01-01', 100000, 'virement', '2027-01-05', :by)`,
+      { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
+    );
+
+    // Loyer encaissé en janvier, AUCUN versement encore réglé : le bug aurait donné 10000 (10 % de
+    // 100000, au fil de l'encaissement) — doit rester 0 tant que rien n'est reversé.
+    const revenueBeforePayout = await getCabinetRevenue(iso.tenantId, '2027-01');
+    assert.equal(revenueBeforePayout.breakdown.commission, 0);
+
+    // Versement de 100000 réglé en FÉVRIER : la commission (10 %, soit 10000) doit apparaître dans LE
+    // MOIS DU VERSEMENT, pas celui du loyer encaissé.
+    await pool.query(
+      `INSERT INTO owner_payouts (tenant_id, owner_id, amount, period_label, paid_at, payment_method, recorded_by)
+       VALUES (:t, :o, 100000, 'Janvier 2027', '2027-02-10', 'virement', :by)`,
+      { t: iso.tenantId, o: iso.ownerId, by: iso.dgId },
+    );
+    const revenueAfterPayout = await getCabinetRevenue(iso.tenantId, '2027-02');
+    assert.equal(revenueAfterPayout.breakdown.commission, 10000);
+    assert.equal(revenueAfterPayout.netCabinetIncome, 10000);
+
+    // Le mois du loyer encaissé (janvier) reste à 0 même après le versement de février — jamais compté
+    // deux fois, jamais rétroactivement modifié.
+    const revenueJanuaryAfter = await getCabinetRevenue(iso.tenantId, '2027-01');
+    assert.equal(revenueJanuaryAfter.breakdown.commission, 0);
+  } finally {
+    await teardown(iso.tenantId);
+  }
+});
+
+test("getCabinetRevenue — gl_commission_timing='encaissement' (défaut) : comportement inchangé, commission au loyer encaissé ce mois-ci", async () => {
+  const iso = await createBareFixture();
+  try {
+    await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10); // 10 %
+    await pool.query(
+      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+       VALUES (:t, :l, '2027-01', '2027-01-01', 100000, 'virement', '2027-01-05', :by)`,
+      { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
+    );
+    const revenue = await getCabinetRevenue(iso.tenantId, '2027-01');
+    assert.equal(revenue.breakdown.commission, 10000);
   } finally {
     await teardown(iso.tenantId);
   }
@@ -588,8 +647,8 @@ test(
 
       // Même mois, même recette nette (33333) sur les DEUX Biens de ce même propriétaire.
       await pool.query(
-        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-         VALUES (:t, :l1, '2026-05', 33333, 'especes', '2026-05-05', :by), (:t, :l2, '2026-05', 33333, 'especes', '2026-05-05', :by)`,
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l1, '2026-05', '2026-05-01', 33333, 'especes', '2026-05-05', :by), (:t, :l2, '2026-05', '2026-05-01', 33333, 'especes', '2026-05-05', :by)`,
         { t: iso.tenantId, l1: iso.leaseId, l2: lease2.insertId, by: iso.dgId },
       );
 
@@ -622,8 +681,8 @@ test(
     try {
       await setCommissionRate(iso.tenantId, iso.ownerId, iso.dgId, 10); // 10 %
       await pool.query(
-        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-         VALUES (:t, :l, '2026-07', 100000, 'especes', '2026-07-05', :by)`,
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l, '2026-07', '2026-07-01', 100000, 'especes', '2026-07-05', :by)`,
         { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
       );
       const [supplier] = await pool.query('INSERT INTO suppliers (tenant_id, name, created_by) VALUES (:t, :n, :by)', {
@@ -694,8 +753,8 @@ test(
 
       // Loyer de janvier encaissé pendant que A est encore propriétaire.
       await pool.query(
-        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-         VALUES (:t, :l, '2026-01', 100000, 'especes', '2026-01-05', :by)`,
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l, '2026-01', '2026-01-01', 100000, 'especes', '2026-01-05', :by)`,
         { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
       );
 
@@ -718,8 +777,8 @@ test(
 
       // Loyer de février encaissé APRÈS la réattribution, donc sous B.
       await pool.query(
-        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-         VALUES (:t, :l, '2026-02', 100000, 'especes', '2026-02-05', :by)`,
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l, '2026-02', '2026-02-01', 100000, 'especes', '2026-02-05', :by)`,
         { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
       );
 
@@ -756,8 +815,8 @@ test(
       await pool.query("UPDATE property_owner_history SET starts_on = '2026-06-01' WHERE property_id = :p", { p: iso.propertyId });
 
       await pool.query(
-        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, amount, payment_method, paid_at, recorded_by)
-         VALUES (:t, :l, '2026-01', 60000, 'especes', '2026-01-05', :by)`,
+        `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, recorded_by)
+         VALUES (:t, :l, '2026-01', '2026-01-01', 60000, 'especes', '2026-01-05', :by)`,
         { t: iso.tenantId, l: iso.leaseId, by: iso.dgId },
       );
 

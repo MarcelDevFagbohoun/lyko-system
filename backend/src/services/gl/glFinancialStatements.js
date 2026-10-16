@@ -143,13 +143,16 @@ async function computeBalanceSheet(conn, tenantId, fiscalYearId) {
   const produitsCumul = rows.filter((r) => r.accountType === 'produit').reduce((s, r) => s + (r.totalCredit - r.totalDebit), 0);
   const resultatNet = produitsCumul - chargesCumul;
 
-  const totalActifBrut = actif.reduce((s, r) => s + r.amount, 0);
-  const totalPassifBrut = passif.reduce((s, r) => s + r.amount, 0);
-
-  // Le résultat complète le côté le plus léger, comme dans un bilan papier :
-  // un bénéfice s'ajoute au passif (capitaux propres), une perte à l'actif.
-  const totalActif = totalActifBrut + (resultatNet < 0 ? -resultatNet : 0);
-  const totalPassif = totalPassifBrut + (resultatNet > 0 ? resultatNet : 0);
+  // Bug corrigé (audit comptabilité avancée du 16/10/2026) : une perte était ajoutée côté ACTIF pour
+  // équilibrer (gonflant le "Total actif" au-delà de la taille économique réelle du bilan), au lieu
+  // d'être déduite des capitaux propres côté PASSIF — présentation non standard SYSCOHADA/PCG, où le
+  // résultat net (bénéfice OU perte) est une ligne unique des capitaux propres, négative en cas de
+  // perte. Le total actif n'a en réalité JAMAIS besoin d'être ajusté : par construction de la partie
+  // double (chaque écriture équilibrée à l'insertion, `genererEcriture`), le total actif brut est
+  // TOUJOURS égal au total passif brut + le résultat net, que celui-ci soit positif ou négatif — qu'il
+  // s'agisse d'un bénéfice (qui accroît le passif) ou d'une perte (qui le réduit).
+  const totalActif = actif.reduce((s, r) => s + r.amount, 0);
+  const totalPassif = passif.reduce((s, r) => s + r.amount, 0) + resultatNet;
 
   return { actif, passif, resultatNet, totalActif, totalPassif, balanced: totalActif === totalPassif };
 }
@@ -160,6 +163,18 @@ async function computeBalanceSheet(conn, tenantId, fiscalYearId) {
  * libre, total encaissements/décaissements. Pas de ventilation par nature
  * d'activité (exploitation/investissement/financement) — nécessiterait un
  * classement compte par compte qui n'a pas été validé par un expert-comptable.
+ *
+ * Bug corrigé (audit comptabilité avancée du 06/10/2026) : un virement interne caisse↔banque (écriture
+ * manuelle "débit 571 / crédit 521", opération courante — rien n'empêche de saisir une ligne de
+ * trésorerie des DEUX côtés d'une écriture manuelle) touche DEUX comptes de classe 5 à la fois. Avant
+ * ce correctif, la requête `period` sommait chaque ligne de classe 5 indépendamment — un tel virement
+ * s'ajoutait donc EN ENTIER à `totalInflows` (débit 571) ET à `totalOutflows` (crédit 521), alors
+ * qu'aucun argent n'est réellement entré ni sorti du cabinet. Le solde de clôture restait juste (un
+ * virement interne s'annule déjà dans la somme classe 5), mais les lignes "Encaissements"/
+ * "Décaissements" du tableau de flux — les chiffres qu'un comptable regarde en premier — étaient
+ * gonflées par chaque virement interne. Exclut désormais toute écriture dont TOUTES les lignes sont en
+ * classe 5 (un vrai encaissement/décaissement a toujours une contrepartie HORS trésorerie — tiers,
+ * produit, charge...).
  */
 async function computeCashFlow(conn, tenantId, { from, to }) {
   const [[opening]] = await conn.query(
@@ -177,7 +192,12 @@ async function computeCashFlow(conn, tenantId, { from, to }) {
      FROM gl_entry_lines el
      JOIN gl_entries e ON e.id = el.entry_id
      JOIN gl_accounts a ON a.id = el.account_id
-     WHERE e.tenant_id = :tenantId AND a.class = 5 AND e.entry_date BETWEEN :from AND :to`,
+     WHERE e.tenant_id = :tenantId AND a.class = 5 AND e.entry_date BETWEEN :from AND :to
+       AND EXISTS (
+         SELECT 1 FROM gl_entry_lines el2
+         JOIN gl_accounts a2 ON a2.id = el2.account_id
+         WHERE el2.entry_id = e.id AND a2.class <> 5
+       )`,
     { tenantId, from, to },
   );
 

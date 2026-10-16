@@ -13,6 +13,8 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
+import { useTenantRhythm } from "@/lib/hooks/use-tenant-rhythm";
+import { RentDueField, buildRentDuePayload, validateRentDue } from "@/components/renters/rent-due-field";
 import { Field, Input } from "@/components/ui/input";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -193,8 +195,8 @@ function NouveauContent() {
     if (form.entryProration === "prorata" && prorataPreview.amount > 0 && !form.entryProrataPaymentMethod) {
       e.entryProrataPaymentMethod = "Comment le prorata d'entrée a-t-il été reçu ?";
     }
-    const day = Number(form.rentDueDay);
-    if (!Number.isInteger(day) || day < 1 || day > 28) e.rentDueDay = "Jour entre 1 et 28";
+    const rentDueError = validateRentDue(rhythm, form.rentDueDay);
+    if (rentDueError) e.rentDueDay = rentDueError;
     if (!form.startDate) e.startDate = "Date requise";
     const openingDebt = Number(form.openingDebtAmount || "0");
     if (!Number.isFinite(openingDebt) || openingDebt < 0) e.openingDebtAmount = "Montant invalide";
@@ -271,7 +273,7 @@ function NouveauContent() {
               ];
             }),
         ),
-        rentDueDay: Number(form.rentDueDay),
+        ...buildRentDuePayload(rhythm, form.rentDueDay),
         rentTiming: form.rentTiming,
         startDate: form.startDate,
         openingDebtAmount: Number(form.openingDebtAmount || "0"),
@@ -457,15 +459,22 @@ function NouveauContent() {
                   </div>
                 )}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="Jour d'échéance du loyer" htmlFor="rentDueDay" required hint="1 à 28" error={touched.rentDueDay ? errors.rentDueDay : undefined}>
-                    <Input id="rentDueDay" inputMode="numeric" value={form.rentDueDay} onChange={(e) => set("rentDueDay", e.target.value.replace(/\D/g, ""))} onBlur={() => setTouched((t) => ({ ...t, rentDueDay: true }))} />
-                  </Field>
+                  <RentDueField
+                    rhythm={rhythm}
+                    value={form.rentDueDay}
+                    onChange={(v) => set("rentDueDay", v)}
+                    onBlur={() => setTouched((t) => ({ ...t, rentDueDay: true }))}
+                    error={touched.rentDueDay ? errors.rentDueDay : undefined}
+                  />
                   <Field label="Date d'entrée" htmlFor="startDate" required error={touched.startDate ? errors.startDate : undefined}>
                     <Input id="startDate" type="date" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, startDate: true }))} />
                   </Field>
                 </div>
 
-                {prorataPreview.days > 0 && (
+                {/* Prorata d'entrée (étape 42) : calendaire uniquement (hypothèse "jour du mois",
+                    voir rentTracking.js) — pour un bail non-calendaire, ce bloc ne s'affiche pas,
+                    limitation documentée de l'étape 2. */}
+                {isCalendaireRhythm && prorataPreview.days > 0 && (
                   <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-3">
                     <p className="text-body-sm text-ink">
                       Entrée le <strong>{form.startDate.split("-").reverse().join("/")}</strong>, échéance habituelle le{" "}

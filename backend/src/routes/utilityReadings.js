@@ -611,7 +611,16 @@ router.post('/utility-batches/:id/validate', async (req, res, next) => {
     if (batch.main_reading_end < batch.main_reading_start) {
       throw new ApiError(400, 'Compteur principal : l\'index de fin doit être supérieur ou égal à l\'index de début.');
     }
-    await assertPeriodOpen(req.user.tenantId, isoDate(batch.period_end));
+    // Bug corrigé (audit fermeture du mois, point 4, 16/10/2026) : cette vérification portait sur
+    // `period_end` (fin de la période de CONSOMMATION), alors que les charges réellement créées
+    // ci-dessous sont datées `billed_at = CURDATE()` (AUJOURD'HUI) — un champ différent de celui
+    // vérifié, contrairement à toutes les autres routes de charges (`routes/charges.js`), qui
+    // vérifient systématiquement `billed_at`. Pouvait laisser passer une charge dans un mois fermé (si
+    // `period_end` était dans un mois ouvert mais qu'on valide aujourd'hui dans un mois fermé), ou
+    // bloquer à tort une validation légitime (si `period_end` tombait dans un mois fermé mais
+    // qu'aujourd'hui est ouvert).
+    const todayIso = new Date().toISOString().slice(0, 10);
+    await assertPeriodOpen(req.user.tenantId, todayIso);
 
     const [rows] = await conn.query(
       `SELECT r.id, r.unit_id, r.reading_start, r.reading_end, r.amount,
@@ -659,7 +668,7 @@ router.post('/utility-batches/:id/validate', async (req, res, next) => {
     await conn.beginTransaction();
     // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
     // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
-    await assertPeriodOpenLocked(conn, req.user.tenantId, isoDate(batch.period_end));
+    await assertPeriodOpenLocked(conn, req.user.tenantId, todayIso);
     let generated = 0;
     for (const r of rows) {
       if (r.active_lease_id && Number(r.amount) > 0) {

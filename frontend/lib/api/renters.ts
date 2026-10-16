@@ -282,7 +282,15 @@ export type CreateRenterInput = {
   // Requis côté serveur seulement si le prorata calculé est > 0 (voir routes/renters.js `recordEntryProrataReceived`).
   entryProrataPaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
   entryProrataPaidAt?: string;
-  rentDueDay: number;
+  /** Bail calendaire (tenant resté en rythme "calendaire", le seul cas aujourd'hui exposé à l'écran). */
+  rentDueDay?: number;
+  /**
+   * Étape 2b/5 : bail créé sous un tenant non-calendaire ("jour_fixe"/"libre") — jours après le début
+   * de la période où le loyer est dû, à la place de `rentDueDay`. Exactement un des deux doit être
+   * fourni (voir `components/renters/rent-due-field.tsx`, qui choisit lequel selon le rythme réel du
+   * tenant).
+   */
+  rentDueOffsetDays?: number;
   /** Optionnel — si omis, le serveur retombe sur le réglage par défaut de l'entreprise (Paramètres). */
   rentTiming?: RentTiming;
   startDate: string;

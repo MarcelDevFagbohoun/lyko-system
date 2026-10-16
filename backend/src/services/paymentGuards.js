@@ -36,14 +36,25 @@ async function claimIdempotencyKey(conn, tenantId, scope, key) {
   }
 }
 
-/** Vrai si un paiement strictement identique (mois, date, mode, montant) vient d'être enregistré sur ce bail. */
-async function hasRecentIdenticalRentPayment(conn, { leaseId, coversMonth, paidAt, paymentMethod, amount }) {
+/**
+ * Vrai si un paiement strictement identique (période couverte, date, mode, montant) vient d'être
+ * enregistré sur ce bail.
+ *
+ * Correctif de sécurité (refonte de la clôture, étape 2/5, 2026-10-16) : comparait auparavant sur
+ * `covers_month` ('AAAA-MM'), qui n'est plus renseignée que pour les baux calendaire (migration
+ * 085) — pour tout bail non-calendaire, la clause devenait `covers_month = NULL`, TOUJOURS fausse
+ * en SQL, rendant ce garde-fou hérité silencieusement inerte (jamais un faux-positif, mais plus
+ * aucune protection sur ce chemin de repli). Pivote désormais sur `covers_period_start`, TOUJOURS
+ * renseignée quel que soit le rythme — règle le problème pour tout le monde, et simplifie l'appelant
+ * (plus besoin de choisir quelle colonne comparer selon le bail).
+ */
+async function hasRecentIdenticalRentPayment(conn, { leaseId, coversPeriodStart, paidAt, paymentMethod, amount }) {
   const [rows] = await conn.query(
     `SELECT id FROM rent_payments
-     WHERE lease_id = :leaseId AND covers_month = :coversMonth AND paid_at = :paidAt AND payment_method = :paymentMethod
+     WHERE lease_id = :leaseId AND covers_period_start = :coversPeriodStart AND paid_at = :paidAt AND payment_method = :paymentMethod
        AND amount = :amount AND created_at > (NOW() - INTERVAL 2 MINUTE) AND deleted_at IS NULL
      LIMIT 1`,
-    { leaseId, coversMonth, paidAt, paymentMethod, amount },
+    { leaseId, coversPeriodStart, paidAt, paymentMethod, amount },
   );
   return rows.length > 0;
 }

@@ -137,6 +137,11 @@ const createRenterSchema = z
     ...entryProrationFields,
     ...additionalDepositsFields,
     rentDueDay: z.coerce.number().int().min(1).max(28).default(5),
+    // Refonte de la clôture (étape 2/5) : échéance pour un bail créé sous un tenant non-calendaire
+    // (voir `leases.rent_due_offset_days`, migration 087) — la route choisit laquelle des deux
+    // colonnes écrire selon le rythme réel du tenant (lu en base, pas dans ce payload), jamais les
+    // deux. Défaut à 0 pour rester toujours défini, comme `rentDueDay` ci-dessus.
+    rentDueOffsetDays: z.coerce.number().int().min(0).max(27).default(0),
     // Convention de paiement (avance/terme échu, demande directe de
     // l'utilisateur, 2026-09-24) : optionnel — si omis, la route retombe
     // sur le réglage par défaut de l'entreprise (tenants.default_rent_timing).
@@ -169,6 +174,8 @@ const createLeaseSchema = z
     ...entryProrationFields,
     ...additionalDepositsFields,
     rentDueDay: z.coerce.number().int().min(1).max(28).default(5),
+    // Refonte de la clôture (étape 2/5) : voir le commentaire détaillé sur `createRenterSchema`.
+    rentDueOffsetDays: z.coerce.number().int().min(0).max(27).default(0),
     // Convention de paiement (avance/terme échu, demande directe de
     // l'utilisateur, 2026-09-24) : optionnel — si omis, la route retombe
     // sur le réglage par défaut de l'entreprise (tenants.default_rent_timing).

@@ -17,16 +17,30 @@ async function resolveRenterFromLease(conn, tenantId, leaseId) {
   return rows[0];
 }
 
-/** Bail → Bien → propriétaire (pour `TIERS_PROPRIETAIRE` et le taux de commission). */
-async function resolveOwnerFromLease(conn, tenantId, leaseId) {
+/**
+ * Bail → Bien → propriétaire EN VIGUEUR À `atDate` (pour `TIERS_PROPRIETAIRE` et le taux de
+ * commission) — PAS forcément le propriétaire ACTUEL du Bien. Bug corrigé (audit comptabilité
+ * avancée) : ce moteur joignait directement `properties.owner_id` (propriétaire actuel), alors que
+ * `services/commission.js` (`resolveOwnerAtDate`, étape 51bis) avait déjà corrigé ce même calcul
+ * pour la comptabilité simple via `property_owner_history` (migration 078). Un Bien réattribué
+ * entre-temps faisait donc imputer, dans LE GRAND LIVRE lui-même, tout paiement antérieur au
+ * NOUVEAU propriétaire (compte 4671 et taux de commission) — y compris lors du rattrapage
+ * rétroactif à l'activation du module (`glActivationService`). `atDate` est obligatoire : chaque
+ * appelant doit le fournir explicitement (voir `context.entryDate`, injecté par `genererEcriture`)
+ * plutôt que de pouvoir l'omettre en silence et retomber sur le mauvais comportement.
+ */
+async function resolveOwnerFromLease(conn, tenantId, leaseId, atDate) {
+  if (!atDate) throw new Error('resolveOwnerFromLease : atDate requis (propriétaire EN VIGUEUR à cette date, jamais le propriétaire actuel par défaut)');
   const [rows] = await conn.query(
-    `SELECT o.id, o.name
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS id, o.name
      FROM leases l
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
-     JOIN owners o ON o.id = p.owner_id
+     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= :atDate AND (poh.ends_on IS NULL OR poh.ends_on > :atDate)
+     JOIN owners o ON o.id = COALESCE(poh.owner_id, p.owner_id)
      WHERE l.id = :leaseId AND l.tenant_id = :tenantId LIMIT 1`,
-    { leaseId, tenantId },
+    { leaseId, tenantId, atDate },
   );
   if (!rows[0]) throw new ApiError(404, `Propriétaire introuvable pour la résolution comptable (bail ${leaseId})`);
   return rows[0];
@@ -161,7 +175,7 @@ async function computeReversementDeductions(conn, tenantId, context, totalAmount
   const timing = await resolveCommissionTiming(conn, tenantId);
   let commissionAmount = 0;
   if (timing === 'reversement') {
-    const ownerId = context.ownerId ?? (await resolveOwnerFromLease(conn, tenantId, context.leaseId)).id;
+    const ownerId = context.ownerId ?? (await resolveOwnerFromLease(conn, tenantId, context.leaseId, context.entryDate)).id;
     const rate = await resolveCommissionRate(conn, tenantId, ownerId, context.entryDate);
     commissionAmount = Math.round((totalAmount * rate) / 100);
   }
@@ -239,7 +253,7 @@ async function resolveLineAccount(conn, { tenantId, line, context }) {
       return { accountId: thirdParty.control_account_id, thirdPartyId: thirdParty.id };
     }
     case GL_ACCOUNT_ROLES.TIERS_PROPRIETAIRE: {
-      const ownerId = context.ownerId ?? (await resolveOwnerFromLease(conn, tenantId, context.leaseId)).id;
+      const ownerId = context.ownerId ?? (await resolveOwnerFromLease(conn, tenantId, context.leaseId, context.entryDate)).id;
       const [ownerRows] = await conn.query('SELECT id, name FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
         id: ownerId,
         tenantId,
@@ -287,7 +301,7 @@ async function resolveLineAmount(conn, { tenantId, line, totalAmount, context })
         const timing = await resolveCommissionTiming(conn, tenantId);
         let rate = 0;
         if (timing === 'encaissement') {
-          const ownerId = context.ownerId ?? (await resolveOwnerFromLease(conn, tenantId, context.leaseId)).id;
+          const ownerId = context.ownerId ?? (await resolveOwnerFromLease(conn, tenantId, context.leaseId, context.entryDate)).id;
           rate = await resolveCommissionRate(conn, tenantId, ownerId, context.entryDate);
         }
         const commission = Math.round((totalAmount * rate) / 100);

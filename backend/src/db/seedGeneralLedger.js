@@ -97,6 +97,13 @@ const ACCOUNTS = [
     note: 'Numéro renommable par le DG (Comptabilité avancée → Réglages) une fois l\'avis de son expert-comptable obtenu — SYSCOHADA ne prévoit pas de compte officiel dédié au mandat de gestion locative (certains cabinets utilisent 4671, d\'autres un compte 46 "Associés").',
   },
   { code: '481', label: "Fournisseurs d'investissements", class: 4, type: 'passif', control: true },
+  {
+    code: '491',
+    label: 'Dépréciations des comptes clients',
+    class: 4,
+    type: 'actif',
+    note: "Audit comptabilité avancée, point 7 (16/10/2026) : absent jusqu'ici — un cabinet qui suit déjà les impayés locataires de près n'avait pourtant aucun compte pour provisionner une créance jugée douteuse en fin d'exercice. Compte SOUSTRACTIF (vient en déduction de 411 au bilan) — un solde créditeur, jamais une charge, même principe que 284XX pour les immobilisations. À VALIDER — provision GLOBALE en V1 (pas de sous-compte par locataire, contrairement à 411/165/4671) : le montant et le moment restent un jugement comptable, à poser via une écriture manuelle (Comptabilité avancée → Journal) — même logique que l'absence volontaire d'automatisation du report à nouveau (121/129).",
+  },
 
   // Classe 5 — Trésorerie
   { code: '521', label: 'Banques locales', class: 5, type: 'actif' },
@@ -128,6 +135,20 @@ const ACCOUNTS = [
   { code: '671', label: 'Intérêts des emprunts', class: 6, type: 'charge' },
   { code: '681', label: 'Dotations aux amortissements', class: 6, type: 'charge' },
   {
+    code: '6594',
+    label: 'Charges provisionnées — dépréciation des créances',
+    class: 6,
+    type: 'charge',
+    note: "Contrepartie de la provision pour créance douteuse (491, audit comptabilité avancée, point 7). Même principe que 681 : une saisie manuelle, jamais une règle automatique.",
+  },
+  {
+    code: '651',
+    label: 'Pertes sur créances irrécouvrables',
+    class: 6,
+    type: 'charge',
+    note: "Distinct de 6594 (provision — la créance reste douteuse mais pas encore abandonnée) : ici la créance est définitivement perdue (locataire introuvable, insolvable). Si une provision avait déjà été posée pour ce locataire, sa reprise (7594) l'annule EN MÊME TEMPS que ce constat de perte — deux écritures manuelles distinctes, jamais automatisées (même principe que 491/6594/7594).",
+  },
+  {
     code: '654',
     label: "Valeurs comptables des cessions d'immobilisations",
     class: 6,
@@ -153,6 +174,13 @@ const ACCOUNTS = [
     note: 'Numéro renommable par le DG (Comptabilité avancée → Réglages) une fois l\'avis de son expert-comptable obtenu — 758 "Produits divers" est une alternative courante.',
   },
   { code: '771', label: 'Intérêts et produits financiers', class: 7, type: 'produit' },
+  {
+    code: '7594',
+    label: 'Reprises de charges provisionnées — dépréciation des créances',
+    class: 7,
+    type: 'produit',
+    note: "Reprise d'une provision 491 devenue sans objet (créance finalement recouvrée ou définitivement irrécouvrable, voir 651). Saisie manuelle, comme sa contrepartie (6594).",
+  },
 ];
 
 // ────────────────────────────────────────────────────────────────────────
