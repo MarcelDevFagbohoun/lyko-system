@@ -335,76 +335,6 @@ export function closePeriod(accessToken: string, input: { period?: string; perio
   });
 }
 
-/** Période ouverte d'une entreprise en rythme « jour fixe »/« libre » (étape 2b). */
-export type OpenPeriod = {
-  mode: PeriodRhythmMode;
-  startDay: number | null;
-  /** `null` tant qu'aucune période n'a été clôturée ni aucune date de démarrage définie. */
-  periodStart: string | null;
-  /** Fin proposée (« jour fixe ») ; `null` en « libre », où le DG la saisit. */
-  proposedEnd: string | null;
-  closability: {
-    isClosable: boolean;
-    closableFrom: string;
-    pendingLeases: { leaseId: number; renterName: string; unitCode: string; dueDate: string }[];
-  } | null;
-};
-
-export function getOpenPeriod(accessToken: string) {
-  return apiFetch<OpenPeriod>("/api/accounting/open-period", { accessToken });
-}
-
-// Archive mensuelle (demande explicite de l'utilisateur, 16/10/2026) : "le point du mois" de
-// chaque locataire, figé à la clôture — consultable mais jamais modifiable.
-export type MonthlyArchiveRent = {
-  status: "paye" | "partiel" | "en_retard" | "a_payer" | "a_venir" | "avant_suivi" | "hors_bail";
-  late: boolean;
-  dueDate: string;
-  due: number;
-  paid: number;
-  remaining: number;
-};
-
-export type MonthlyArchiveCharge = {
-  id: number;
-  utilityType: UtilityType;
-  amount: number;
-  paid: number;
-  status: "impayee" | "partiellement_payee" | "payee";
-  billedAt: string;
-  paidAt: string | null;
-};
-
-export type MonthlyArchiveLateFee = {
-  id: number;
-  amount: number;
-  paid: number;
-  appliedAt: string;
-  reason: string | null;
-  status: "impayee" | "partielle" | "payee";
-};
-
-export type MonthlyArchiveRenterEntry = {
-  leaseId: number;
-  renterId: number;
-  renterName: string;
-  phone: string;
-  unitCode: string;
-  propertyCode: string;
-  rent: MonthlyArchiveRent;
-  charges: MonthlyArchiveCharge[];
-  lateFees: MonthlyArchiveLateFee[];
-  notesSnapshot: string | null;
-  archivedAt: string;
-};
-
-export function getMonthlyArchive(accessToken: string, period: string) {
-  return apiFetch<{ period: string; periodStart: string; periodEnd: string; renters: MonthlyArchiveRenterEntry[] }>(
-    `/api/accounting/periods/${period}/archive`,
-    { accessToken },
-  );
-}
-
 // Date de démarrage de la comptabilité — bornée par le DG, modifiable à tout
 // moment (contrairement à une clôture). Avant cette date, aucune écriture ne
 // peut être créée ; la consultation des périodes anciennes reste toujours
@@ -434,14 +364,6 @@ export function getTenantRhythm(accessToken: string) {
   return apiFetch<TenantRhythm>("/api/accounting/rhythm", { accessToken });
 }
 
-export function setTenantRhythm(accessToken: string, mode: PeriodRhythmMode, startDay: number | null) {
-  return apiFetch<TenantRhythm>("/api/accounting/rhythm", {
-    method: "PATCH",
-    accessToken,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, startDay }),
-  });
-}
 
 // Journal des suppressions (DG uniquement) : dépenses et charges SONEB/SBEE
 // supprimées logiquement — trace, auteur, justification, jamais dans les totaux.

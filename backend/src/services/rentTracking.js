@@ -944,55 +944,6 @@ function buildRentStrip(
 }
 
 /**
- * État du loyer d'UN bail pour LA période `period`, figé « tel qu'il était à la fin de cette
- * période » — utilisé par l'archive mensuelle (`monthlyArchive.js`) à la clôture. `asOfIso` doit
- * être la dernière date de la période clôturée (même convention que `snapshotLeaseBalances`) :
- * jamais la date du jour, pour que l'archive d'une période clôturée tardivement reste fidèle à
- * CETTE période-là.
- *
- * Refonte de la clôture (étape 2/5) : `rhythm` optionnel ajouté en dernier paramètre (compatible
- * avec tout appel existant à 4 arguments). `period` reçu directement de l'appelant — en rythme
- * calendaire c'est toujours `${legacyPeriod}` ('AAAA-MM'), sinon `periodStart` (date complète) ; la
- * période qu'on archive EST par construction la période "courante" au moment du calcul.
- */
-function buildMonthRentPayload(lease, period, paidForMonth, asOfIso, rhythm) {
-  const isCalendaire = (rhythm?.mode ?? 'calendaire') === 'calendaire';
-  const startDate = toIsoDateString(lease.start_date);
-  const rent = Number(lease.monthly_rent) || 0;
-  const state = rentMonthState(
-    {
-      month: period,
-      paid: paidForMonth,
-      rent,
-      rentDueDay: lease.rent_due_day,
-      rentDueOffsetDays: lease.rent_due_offset_days,
-      rentTiming: lease.rent_timing,
-      startMonth: isCalendaire ? startDate.slice(0, 7) : startDate,
-      endMonth: lease.end_date ? (isCalendaire ? toIsoDateString(lease.end_date).slice(0, 7) : toIsoDateString(lease.end_date)) : null,
-      baselineMonth: baselineMonthOf({
-        startDate,
-        createdAt: lease.created_at,
-        upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
-        entryProration: lease.entry_proration,
-        rentDueDay: lease.rent_due_day,
-        rhythm,
-      }),
-      rhythm,
-      currentPeriodKey: period,
-    },
-    asOfIso,
-  );
-  return {
-    status: state.status,
-    late: state.late,
-    dueDate: state.dueDate,
-    due: rent,
-    paid: paidForMonth,
-    remaining: Math.max(0, rent - paidForMonth),
-  };
-}
-
-/**
  * Loyers d'un mois donné, tous baux confondus (encadré « Ce mois-ci ») :
  * attendu, encaissé, reste — et parmi le reste, ce qui est déjà en retard
  * (échéance passée) et ce qui n'est pas encore dû. Même règle par bail que la
@@ -1075,7 +1026,6 @@ module.exports = {
   computeArrears,
   buildRentStrip,
   summarizeRentMonth,
-  buildMonthRentPayload,
   rentMonthState,
   addMonth,
   addPeriod,

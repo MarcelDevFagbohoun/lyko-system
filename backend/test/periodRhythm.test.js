@@ -56,31 +56,6 @@ test('GET /api/accounting/rhythm — une entreprise fraîche est en rythme "cale
   }
 });
 
-test('PATCH /api/accounting/rhythm — "jour_fixe" exige un jour de départ (1-28)', async () => {
-  const fx = await createBareFixture();
-  try {
-    const missing = await fetch(`${baseUrl}/api/accounting/rhythm`, {
-      method: 'PATCH',
-      headers: bearer(fx.dgId, fx.tenantId),
-      body: JSON.stringify({ mode: 'jour_fixe' }),
-    });
-    assert.equal(missing.status, 400);
-
-    const ok = await fetch(`${baseUrl}/api/accounting/rhythm`, {
-      method: 'PATCH',
-      headers: bearer(fx.dgId, fx.tenantId),
-      body: JSON.stringify({ mode: 'jour_fixe', startDay: 5 }),
-    });
-    assert.equal(ok.status, 200);
-    assert.deepEqual(await ok.json(), { mode: 'jour_fixe', startDay: 5 });
-
-    const getRes = await fetch(`${baseUrl}/api/accounting/rhythm`, { headers: bearer(fx.dgId, fx.tenantId) });
-    assert.deepEqual(await getRes.json(), { mode: 'jour_fixe', startDay: 5 });
-  } finally {
-    await teardown(fx.tenantId);
-  }
-});
-
 test(
   'POST /api/accounting/periods — rythme calendaire INCHANGÉ : clôture normale, la réponse ' +
     'inclut désormais periodStart/periodEnd en plus de period/forced',
@@ -196,11 +171,7 @@ test(
         headers: bearer(fx.dgId, fx.tenantId),
         body: JSON.stringify({ startDate: '2026-01-05' }),
       });
-      await fetch(`${baseUrl}/api/accounting/rhythm`, {
-        method: 'PATCH',
-        headers: bearer(fx.dgId, fx.tenantId),
-        body: JSON.stringify({ mode: 'jour_fixe', startDay: 5 }),
-      });
+      await pool.query("UPDATE tenants SET period_rhythm_mode = 'jour_fixe', period_start_day = 5 WHERE id = :t", { t: fx.tenantId });
 
       const first = await fetch(`${baseUrl}/api/accounting/periods`, {
         method: 'POST',
@@ -240,11 +211,7 @@ test(
         headers: bearer(fx.dgId, fx.tenantId),
         body: JSON.stringify({ startDate: '2026-01-10' }),
       });
-      await fetch(`${baseUrl}/api/accounting/rhythm`, {
-        method: 'PATCH',
-        headers: bearer(fx.dgId, fx.tenantId),
-        body: JSON.stringify({ mode: 'libre' }),
-      });
+      await pool.query("UPDATE tenants SET period_rhythm_mode = 'libre', period_start_day = NULL WHERE id = :t", { t: fx.tenantId });
 
       const missingEnd = await fetch(`${baseUrl}/api/accounting/periods`, {
         method: 'POST',
@@ -345,11 +312,7 @@ test(
       { t: fx.tenantId },
     );
     try {
-      await fetch(`${baseUrl}/api/accounting/rhythm`, {
-        method: 'PATCH',
-        headers: bearer(fx.dgId, fx.tenantId),
-        body: JSON.stringify({ mode: 'libre' }),
-      });
+      await pool.query("UPDATE tenants SET period_rhythm_mode = 'libre', period_start_day = NULL WHERE id = :t", { t: fx.tenantId });
       await pool.query('UPDATE tenants SET accounting_start_date = :d WHERE id = :t', { d: '2025-12-01', t: fx.tenantId });
 
       const straddling = await fetch(`${baseUrl}/api/accounting/periods`, {

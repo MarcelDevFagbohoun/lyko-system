@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
-import { Lock, LockOpen, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, CalendarClock, Pencil, History } from "lucide-react";
+import { Lock, LockOpen, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, CalendarClock, Pencil } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import {
@@ -11,15 +10,9 @@ import {
   closePeriod,
   getAccountingStartDate,
   setAccountingStartDate,
-  getTenantRhythm,
-  setTenantRhythm,
-  getOpenPeriod,
-  type OpenPeriod,
   type AccountingDashboard,
   type AccountingPeriod,
   type AccountingStartDate,
-  type TenantRhythm,
-  type PeriodRhythmMode,
 } from "@/lib/api/accounting";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +26,7 @@ function currentYearMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
-/** Libellé d'une période clôturée : « 2026-09 » en calendaire, sinon la plage réelle de dates. */
+/** Libellé d'une période clôturée : « 2026-09 » (une ancienne clôture hors mois civil garde sa plage de dates). */
 function closedPeriodLabel(p: AccountingPeriod): string {
   return p.period ?? `Du ${formatDateLabel(p.periodStart)} au ${formatDateLabel(p.periodEnd)}`;
 }
@@ -62,22 +55,14 @@ function ClotureContent() {
 
   const [dashboard, setDashboard] = React.useState<AccountingDashboard | null>(null);
   const [closedPeriods, setClosedPeriods] = React.useState<AccountingPeriod[] | null>(null);
-  const [rhythm, setRhythm] = React.useState<TenantRhythm | null>(null);
-  // Incrémenté après chaque clôture ou changement de rythme : recharge la carte de la période ouverte.
-  const [version, setVersion] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
-  // Rythme « jour fixe »/« libre » (étape 2b) : une période ne correspond pas à un mois civil — le
-  // sélecteur de mois et la bannière mensuelle laissent la place à la carte de la période ouverte.
-  const isCalendaire = !rhythm || rhythm.mode === "calendaire";
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
-    Promise.all([getDashboard(accessToken, from, to), listClosedPeriods(accessToken), getTenantRhythm(accessToken)])
-      .then(([dash, periods, rh]) => {
+    Promise.all([getDashboard(accessToken, from, to), listClosedPeriods(accessToken)])
+      .then(([dash, periods]) => {
         setDashboard(dash);
         setClosedPeriods(periods.periods);
-        setRhythm(rh);
-        setVersion((v) => v + 1);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger la clôture des mois."));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,17 +80,15 @@ function ClotureContent() {
               C&apos;est ici que chaque mois comptable se clôture, et l&apos;historique des clôtures déjà effectuées.
             </p>
           </div>
-          {isCalendaire && (
-            <Field label="Mois" htmlFor="yearMonth">
-              <input
-                id="yearMonth"
-                type="month"
-                value={yearMonth}
-                onChange={(e) => setYearMonth(e.target.value)}
-                className="h-[38px] rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              />
-            </Field>
-          )}
+          <Field label="Mois" htmlFor="yearMonth">
+            <input
+              id="yearMonth"
+              type="month"
+              value={yearMonth}
+              onChange={(e) => setYearMonth(e.target.value)}
+              className="h-[38px] rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            />
+          </Field>
         </div>
 
         {error && (
@@ -117,22 +100,19 @@ function ClotureContent() {
         {isDg && (
           <>
             <HowMonthsWorkCard />
-            <RhythmCard accessToken={accessToken} onSaved={load} />
             <StartDateCard accessToken={accessToken} isDg={isDg} />
           </>
         )}
 
-        {isCalendaire
-          ? dashboard && (
-              <ClotureBanner yearMonth={yearMonth} dashboard={dashboard} isDg={isDg} accessToken={accessToken} onChanged={load} />
-            )
-          : isDg && <OpenPeriodCard key={version} accessToken={accessToken} onChanged={load} />}
+        {dashboard && (
+          <ClotureBanner yearMonth={yearMonth} dashboard={dashboard} isDg={isDg} accessToken={accessToken} onChanged={load} />
+        )}
 
         {closedPeriods && closedPeriods.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle>Historique des clôtures</CardTitle>
-              <CardDescription>Périodes déjà clôturées, pour la traçabilité des recettes.</CardDescription>
+              <CardDescription>Mois déjà clôturés, pour la traçabilité des recettes.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               {closedPeriods.map((p) => (
@@ -141,18 +121,10 @@ function ClotureContent() {
                     {closedPeriodLabel(p)}
                     {p.forced && <Badge variant="warning">Clôture anticipée</Badge>}
                   </span>
-                  <div className="flex items-center gap-3">
-                    <span className="text-body-xs text-ink-muted">
-                      Clôturé le {p.closedAt.slice(0, 10)}
-                      {p.closedBy ? ` par ${p.closedBy.name} (${p.closedBy.roleLabel})` : ""}
-                    </span>
-                    <Link href={`/espace/cloture/archive/${p.period ?? p.periodStart}`}>
-                      <Button variant="secondary" size="sm">
-                        <History size={14} />
-                        {p.period ? "Archive du mois" : "Archive de la période"}
-                      </Button>
-                    </Link>
-                  </div>
+                  <span className="text-body-xs text-ink-muted">
+                    Clôturé le {p.closedAt.slice(0, 10)}
+                    {p.closedBy ? ` par ${p.closedBy.name} (${p.closedBy.roleLabel})` : ""}
+                  </span>
                 </div>
               ))}
             </CardContent>
@@ -225,124 +197,6 @@ function HowMonthsWorkCard() {
             </div>
           </div>
         )}
-      </CardContent>
-    </Card>
-  );
-}
-
-const RHYTHM_LABELS: Record<PeriodRhythmMode, string> = {
-  calendaire: "Mois calendaire (1er au dernier jour du mois)",
-  jour_fixe: "Jour fixe (ex. le 5 au 4 du mois suivant)",
-  libre: "Dates libres (saisies à chaque clôture)",
-};
-
-/**
- * Sélecteur de rythme de période (étape 2b/5, 2026-10-16) — le mécanisme existe côté serveur depuis
- * l'étape 1. Change uniquement les PROCHAINES clôtures, jamais celles déjà faites. Limite connue :
- * les écrans de synthèse mensuelle (tableau de bord, « loyers du mois », exports comptables)
- * restent découpés par mois civil, quel que soit le rythme choisi.
- */
-function RhythmCard({ accessToken, onSaved }: { accessToken: string | null; onSaved: () => void }) {
-  const [data, setData] = React.useState<TenantRhythm | null>(null);
-  const [editing, setEditing] = React.useState(false);
-  const [mode, setMode] = React.useState<PeriodRhythmMode>("calendaire");
-  const [startDay, setStartDay] = React.useState("5");
-  const [submitting, setSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const toast = useToast();
-
-  const load = React.useCallback(() => {
-    if (!accessToken) return;
-    getTenantRhythm(accessToken)
-      .then((res) => {
-        setData(res);
-        setMode(res.mode);
-        if (res.startDay) setStartDay(String(res.startDay));
-      })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger le rythme de période."));
-  }, [accessToken]);
-
-  React.useEffect(() => load(), [load]);
-
-  async function handleSave() {
-    if (!accessToken) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await setTenantRhythm(accessToken, mode, mode === "jour_fixe" ? Number(startDay) : null);
-      setEditing(false);
-      load();
-      onSaved();
-      toast.success("Rythme de période enregistré.");
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce rythme.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (!data) return null;
-
-  if (!editing) {
-    return (
-      <Card>
-        <CardContent className="flex items-center justify-between gap-3 py-4">
-          <p className="inline-flex items-center gap-2 text-body-sm text-ink-soft">
-            <CalendarClock size={16} className="text-ink-muted" />
-            Rythme de période : <span className="font-label-md text-ink">{RHYTHM_LABELS[data.mode]}</span>
-            {data.mode === "jour_fixe" && data.startDay && ` (jour ${data.startDay})`}
-          </p>
-          <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
-            <Pencil size={14} />
-            Modifier
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Rythme de période</CardTitle>
-        <CardDescription>
-          Change uniquement les prochaines clôtures — aucune période déjà clôturée ne bouge jamais.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {error && <p className="text-body-sm text-danger-fg">{error}</p>}
-        <div className="flex flex-wrap items-end gap-2">
-          <Field label="Rythme" htmlFor="rhythmMode">
-            <select
-              id="rhythmMode"
-              value={mode}
-              onChange={(e) => setMode(e.target.value as PeriodRhythmMode)}
-              className="h-[38px] w-full max-w-md rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            >
-              {Object.entries(RHYTHM_LABELS).map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
-            </select>
-          </Field>
-          {mode === "jour_fixe" && (
-            <Field label="Jour de départ (1-28)" htmlFor="rhythmStartDay">
-              <Input
-                id="rhythmStartDay"
-                type="number"
-                min={1}
-                max={28}
-                value={startDay}
-                onChange={(e) => setStartDay(e.target.value)}
-              />
-            </Field>
-          )}
-          <Button size="sm" onClick={handleSave} disabled={submitting}>
-            {submitting ? "Enregistrement…" : "Enregistrer"}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setError(null); }} disabled={submitting}>
-            Annuler
-          </Button>
-        </div>
       </CardContent>
     </Card>
   );
@@ -432,154 +286,6 @@ function StartDateCard({ accessToken, isDg }: { accessToken: string | null; isDg
             <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
               <Pencil size={14} />
               Modifier
-            </Button>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Clôture d'une entreprise en rythme « jour fixe »/« libre » (étape 2b). Le début de la période
- * ouverte est toujours déduit par le serveur (lendemain de la dernière clôture, ou date de démarrage
- * de la comptabilité) ; sa fin est proposée en « jour fixe » et saisie par le DG en « libre ». Même
- * marge de sécurité qu'en calendaire : une clôture avant la dernière échéance de loyer de la période
- * reste possible, mais forcée et tracée.
- */
-function OpenPeriodCard({ accessToken, onChanged }: { accessToken: string | null; onChanged: () => void }) {
-  const [data, setData] = React.useState<OpenPeriod | null>(null);
-  const [periodEnd, setPeriodEnd] = React.useState("");
-  const [confirming, setConfirming] = React.useState<"normal" | "forced" | null>(null);
-  const [submitting, setSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const toast = useToast();
-
-  React.useEffect(() => {
-    if (!accessToken) return;
-    getOpenPeriod(accessToken)
-      .then((res) => {
-        setData(res);
-        setPeriodEnd(res.proposedEnd ?? "");
-      })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger la période ouverte."));
-  }, [accessToken]);
-
-  if (error && !data) {
-    return <p className="text-body-sm text-danger-fg">{error}</p>;
-  }
-  if (!data) return null;
-
-  if (!data.periodStart) {
-    return (
-      <Card>
-        <CardContent className="flex items-center gap-3 py-4">
-          <CalendarClock size={18} className="text-ink-muted" />
-          <p className="text-body-sm text-ink-soft">
-            Définissez d&apos;abord la date de démarrage de la comptabilité (ci-dessus) : la première période commencera à
-            cette date.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const periodStart = data.periodStart;
-  const today = new Date().toISOString().slice(0, 10);
-  const end = data.mode === "libre" ? periodEnd : data.proposedEnd ?? "";
-  const rangeLabel = `du ${formatDateLabel(periodStart)} au ${end ? formatDateLabel(end) : "…"}`;
-  const notFinished = !!end && end > today;
-  const forcedNeeded = !!data.closability && !data.closability.isClosable;
-
-  async function handleClose(force: boolean) {
-    if (!accessToken || !end) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await closePeriod(accessToken, { periodEnd: end }, force);
-      setConfirming(null);
-      toast.success(`Période ${rangeLabel} clôturée${force ? " (clôture anticipée)" : ""}.`);
-      onChanged();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible de clôturer cette période.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Card className={forcedNeeded && !notFinished ? "border-warning-border bg-warning/10" : undefined}>
-      <CardContent className="flex flex-col gap-3 py-4">
-        {error && <p className="text-body-sm text-danger-fg">{error}</p>}
-        <p className="inline-flex items-center gap-2 font-label-md text-ink">
-          <LockOpen size={16} className="text-success" />
-          Période ouverte {rangeLabel}
-        </p>
-
-        {data.mode === "libre" && (
-          <Field label="Date de fin de la période" htmlFor="openPeriodEnd" hint="Rythme libre : vous fixez la fin à chaque clôture">
-            <Input
-              id="openPeriodEnd"
-              type="date"
-              min={periodStart}
-              max={today}
-              value={periodEnd}
-              onChange={(e) => {
-                setPeriodEnd(e.target.value);
-                setConfirming(null);
-              }}
-            />
-          </Field>
-        )}
-
-        {!end ? null : notFinished ? (
-          <p className="text-body-sm text-ink-soft">
-            Cette période se termine le {formatDateLabel(end)} : elle pourra être clôturée à partir de cette date.
-          </p>
-        ) : confirming ? (
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <p className="text-body-sm text-ink">
-              {confirming === "forced"
-                ? `Clôturer la période ${rangeLabel} maintenant, avant que toutes les échéances ne soient passées ? Cette clôture anticipée sera tracée comme forcée.`
-                : `Clôturer définitivement la période ${rangeLabel} ? Plus aucun paiement, versement, dépense ou charge daté dans cette période ne pourra être ajouté, modifié ou supprimé, par personne, y compris vous.`}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button variant="destructive" size="sm" onClick={() => handleClose(confirming === "forced")} disabled={submitting}>
-                {submitting ? "Clôture…" : confirming === "forced" ? "Oui, forcer la clôture" : "Oui, clôturer la période"}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirming(null)} disabled={submitting}>
-                Annuler
-              </Button>
-            </div>
-          </div>
-        ) : forcedNeeded && data.closability ? (
-          <div className="flex flex-col gap-2">
-            <p className="inline-flex items-center gap-2 text-body-sm text-ink">
-              <AlertTriangle size={16} className="text-warning" />
-              Pas encore clôturable en toute sécurité, à partir du {formatDateLabel(data.closability.closableFrom)}.
-            </p>
-            {data.closability.pendingLeases.length > 0 && (
-              <ul className="flex flex-col gap-0.5 text-body-xs text-ink-muted">
-                {data.closability.pendingLeases.map((l) => (
-                  <li key={l.leaseId}>
-                    {l.renterName} ({l.unitCode}), échéance le {formatDateLabel(l.dueDate)}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <Button variant="danger" size="sm" className="self-start" onClick={() => setConfirming("forced")}>
-              <Lock size={14} />
-              Forcer la clôture maintenant
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-body-sm text-ink-soft">
-              Période clôturable. Clôturez-la une fois toutes ses recettes enregistrées.
-            </p>
-            <Button variant="danger" size="sm" onClick={() => setConfirming("normal")}>
-              <Lock size={14} />
-              Clôturer la période
             </Button>
           </div>
         )}

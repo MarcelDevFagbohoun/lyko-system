@@ -126,11 +126,7 @@ test(
   async () => {
     const fx = await createBareFixture();
     try {
-      await fetch(`${baseUrl}/api/accounting/rhythm`, {
-        method: 'PATCH',
-        headers: bearer(fx.dgId, fx.tenantId),
-        body: JSON.stringify({ mode: 'jour_fixe', startDay: 5 }),
-      });
+      await pool.query("UPDATE tenants SET period_rhythm_mode = 'jour_fixe', period_start_day = 5 WHERE id = :t", { t: fx.tenantId });
 
       const [unit] = await pool.query(
         "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'U2', 'studio', 'libre', 50000, :by)",
@@ -195,16 +191,12 @@ test(
 
 test(
   'POST /api/accounting/periods — clôturer une période "jour_fixe" fige désormais aussi ' +
-    'lease_balance_snapshots ET monthly_renter_archive (plus seulement calendaire)',
+    'lease_balance_snapshots (plus seulement calendaire)',
   async () => {
     const fx = await createBareFixture();
     try {
       await pool.query('UPDATE tenants SET accounting_start_date = :d WHERE id = :t', { d: '2026-01-05', t: fx.tenantId });
-      await fetch(`${baseUrl}/api/accounting/rhythm`, {
-        method: 'PATCH',
-        headers: bearer(fx.dgId, fx.tenantId),
-        body: JSON.stringify({ mode: 'jour_fixe', startDay: 5 }),
-      });
+      await pool.query("UPDATE tenants SET period_rhythm_mode = 'jour_fixe', period_start_day = 5 WHERE id = :t", { t: fx.tenantId });
       await pool.query(
         'UPDATE leases SET rent_due_day = NULL, rent_due_offset_days = 10, start_date = :d WHERE id = :id',
         { d: '2026-01-05', id: fx.leaseId },
@@ -227,14 +219,6 @@ test(
       assert.ok(snapshot, 'lease_balance_snapshots doit désormais être figé même en rythme jour_fixe');
       assert.equal(snapshot.period, null);
       assert.equal(snapshot.period_start.toISOString().slice(0, 10), '2026-01-05');
-
-      const [[archive]] = await pool.query(
-        'SELECT period, period_start, period_end FROM monthly_renter_archive WHERE tenant_id = :t AND lease_id = :l',
-        { t: fx.tenantId, l: fx.leaseId },
-      );
-      assert.ok(archive, 'monthly_renter_archive doit désormais être figée même en rythme jour_fixe');
-      assert.equal(archive.period, null);
-      assert.equal(archive.period_start.toISOString().slice(0, 10), '2026-01-05');
     } finally {
       await pool.query('DELETE FROM accounting_periods WHERE tenant_id = :t', { t: fx.tenantId });
       await teardown(fx.tenantId);

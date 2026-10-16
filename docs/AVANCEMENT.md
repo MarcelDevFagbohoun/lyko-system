@@ -6160,7 +6160,7 @@ Suite backend finale : **305/305** (300 passent + les 5 échecs calendaires pré
 
 ## Étape 52 — Refonte de la clôture : rythme de période (étapes 1, 2a, 2b, 2c du plan)
 
-🟡 À valider (2026-10-16).
+⏪ Retirée à l'étape 53 (choix du rythme et archive du mois), sur demande de l'utilisateur.
 
 **Besoin** : chaque entreprise choisit son rythme de période au lieu du mois civil imposé — `calendaire`
 (1er → fin du mois, défaut, inchangé), `jour_fixe` (ex. du 5 au 4 du mois suivant) ou `libre` (le DG
@@ -6223,3 +6223,36 @@ tableau de bord). Suite backend **372/372** (365 passent, 7 ignorés faute de `p
 `eslint` frontend propres. **Parcours navigateur réel** (Chromium) sur un cabinet « jour fixe » :
 page Clôture, formulaire de création, fiche + frise, liste, comptabilité, clôture d'une période puis
 ouverture automatique de la suivante, historique, archive, portail locataire, texte de la quittance.
+
+## Étape 53 — Retour à la clôture par mois civil (choix du rythme et archive du mois retirés)
+
+🟡 À valider (2026-10-16).
+
+**Demande** : « revenir sur l'ancienne version de clôture du mois, comme cela se faisait au début ».
+Choix explicite de l'utilisateur parmi trois options : retirer le choix du rythme **et** l'archive du
+mois (pas seulement le rythme, et pas une suppression complète du mécanisme dans le code).
+
+**Ce qui revient comme au début** : la page Clôture redevient le sélecteur de mois + « Clôturer le mois »
+(marge de sécurité après la dernière échéance, clôture forcée tracée) ; la clôture ne fait plus que
+verrouiller le mois et photographier le solde dû de chaque bail (`lease_balance_snapshots`, antérieur
+à la refonte).
+
+**Retiré**
+- Choix du rythme : carte « Rythme de période », `PATCH /api/accounting/rhythm`, carte « Période
+  ouverte » et `GET /api/accounting/open-period`. Migration 089 : toute entreprise repasse en
+  `calendaire` (aucune colonne supprimée). `GET /rhythm` reste lu par les formulaires de bail, qui
+  affichent donc toujours « Jour d'échéance du loyer (1-28) ».
+- Archive du mois : plus de figement du « point du mois » ni de **remise à zéro de la note** des
+  locataires à la clôture ; page `/espace/cloture/archive/…`, `GET /periods/:period/archive` et
+  `services/monthlyArchive.js` supprimés. La table `monthly_renter_archive` reste en base (archives
+  déjà créées conservées, plus alimentée).
+
+**Conservé** (indépendant du choix du rythme) : correctifs de l'audit de clôture du commit `daf1cea`,
+plantages corrigés à l'étape 52 (fiche locataire, « Loyers du mois », tableau de bord comptable, export
+Excel), libellés de période. Le moteur de loyer garde sa prise en charge d'un bail non-calendaire — plus
+aucun ne peut être créé, mais un bail de ce type déjà enregistré continue d'être calculé juste.
+
+**Tests** : `monthlyArchive.test.js` supprimé ; les tests du moteur qui changeaient le rythme par l'API
+le règlent désormais en base ; nouveau test de non-régression (route de rythme et d'archive absentes,
+note conservée et aucune archive après une clôture). Suite backend **367/367** (360 passent, 7 ignorés
+faute de `pdftotext`). `tsc`/`eslint` frontend propres. Page Clôture vérifiée dans le navigateur.

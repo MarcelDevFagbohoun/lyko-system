@@ -16,7 +16,6 @@ const {
   closePeriodSchema,
   deleteReasonSchema,
   startDateSchema,
-  rhythmSchema,
 } = require('../validators/expenses');
 const {
   createFixedAssetSchema,
@@ -52,7 +51,6 @@ const {
 } = require('../services/accountingPeriods');
 const { isLastPeriodOfFiscalYear } = require('../services/gl/glClosingService');
 const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, summarizeRentMonth, paymentPeriodKey } = require('../services/rentTracking');
-const { archiveMonth, getMonthlyArchive } = require('../services/monthlyArchive');
 const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate, getCabinetRevenue } = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
 const { resolvePropertyScope } = require('../services/scope');
@@ -1884,36 +1882,6 @@ router.get('/periods', requireAnyPermission('comptabilite', 'charges'), async (r
   }
 });
 
-// GET /api/accounting/periods/:period/archive — vue portefeuille, lecture seule, du "point du
-// mois" de chaque locataire pour un mois DÉJÀ CLÔTURÉ (demande explicite de l'utilisateur,
-// 16/10/2026). Un mois non clôturé n'a pas d'archive — rien n'est jamais figé avant la clôture.
-//
-// Étape 2c : `:period` accepte aussi la date de DÉBUT d'une période non-calendaire ('AAAA-MM-JJ',
-// son identité réelle — `period` y est NULL), pour que l'historique des clôtures d'une entreprise
-// en rythme « jour fixe »/« libre » mène lui aussi à son archive.
-router.get('/periods/:period/archive', canAccounting, async (req, res, next) => {
-  const { period } = req.params;
-  const isPeriodStart = /^\d{4}-\d{2}-\d{2}$/.test(period);
-  if (!isPeriodStart && !/^\d{4}-\d{2}$/.test(period)) {
-    return next(new ApiError(400, 'Période invalide (AAAA-MM ou AAAA-MM-JJ)'));
-  }
-  try {
-    const [[closed]] = await pool.query(
-      `SELECT id, period_start, period_end FROM accounting_periods
-       WHERE tenant_id = :tenantId AND ${isPeriodStart ? 'period_start' : 'period'} = :period LIMIT 1`,
-      { tenantId: req.user.tenantId, period },
-    );
-    if (!closed) throw new ApiError(404, "Cette période n'est pas encore clôturée — aucune archive n'existe.");
-
-    const scopeAgentId = await resolvePropertyScope(req.user);
-    const periodStart = isoDate(closed.period_start);
-    const renters = await getMonthlyArchive(req.user.tenantId, periodStart, scopeAgentId);
-    res.json({ period, periodStart, periodEnd: isoDate(closed.period_end), renters });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // POST /api/accounting/periods — clôturer un mois (DG uniquement). Définitif :
 // plus aucune écriture financière (paiement, versement, dépense, charge) ne
 // pourra ensuite être créée, modifiée ou supprimée pour ce mois.
@@ -2084,19 +2052,6 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
       });
     }
 
-    // Archive mensuelle complète par locataire (demande explicite de l'utilisateur, 16/10/2026) —
-    // même raisonnement que `snapshotLeaseBalances` ci-dessus.
-    try {
-      await archiveMonth(req.user.tenantId, rhythm, periodStart, periodEnd);
-    } catch (archiveErr) {
-      logger.error("Échec de l'archive mensuelle à la clôture (période tout de même clôturée)", {
-        tenantId: req.user.tenantId,
-        periodStart,
-        periodEnd,
-        error: archiveErr.message,
-      });
-    }
-
     // Exercice SYSCOHADA : si cette période est la dernière d'un exercice encore ouvert, le signale
     // (sans jamais le clôturer automatiquement — décision toujours humaine, étape 3 pour l'UX réelle).
     const fiscalYearClosable = fiscalYearId ? await isLastPeriodOfFiscalYear(pool, req.user.tenantId, fiscalYearId, periodEnd) : false;
@@ -2169,70 +2124,12 @@ router.patch('/start-date', requireRole('dg'), async (req, res, next) => {
 });
 
 // GET /api/accounting/rhythm — rythme de période de ce tenant (étape 1/5, 2026-10-16). Lecture
-// ouverte à comptabilite OU charges, même raisonnement que /start-date : un employé doit pouvoir
-// comprendre les limites qui s'appliquent avant de tenter un enregistrement.
+// ouverte à comptabilite OU charges. Le rythme n'est plus modifiable depuis l'étape 53 (retour à la
+// clôture par mois civil, migration 089) : toujours 'calendaire', lu par les formulaires de bail.
 router.get('/rhythm', requireAnyPermission('comptabilite', 'charges'), async (req, res, next) => {
   try {
     const rhythm = await getTenantRhythm(req.user.tenantId);
     res.json({ mode: rhythm.mode, startDay: rhythm.startDay });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/accounting/open-period — la période actuellement OUVERTE (étape 2b), pour l'écran de
-// clôture d'une entreprise en rythme « jour fixe »/« libre » (le rythme calendaire garde son
-// sélecteur de mois et `GET /dashboard`). Mêmes calculs que `POST /periods` ci-dessus — début
-// toujours déduit, fin proposée (jamais en « libre », saisie par le DG), marge de sécurité par
-// échéance de loyer — pour que l'écran annonce exactement ce que la clôture fera.
-router.get('/open-period', requireAnyPermission('comptabilite', 'charges'), async (req, res, next) => {
-  try {
-    const rhythm = await getTenantRhythm(req.user.tenantId);
-    const periodStart = await getOpenPeriodStart(pool, req.user.tenantId);
-    if (rhythm.mode === 'calendaire' || !periodStart) {
-      return res.json({ mode: rhythm.mode, startDay: rhythm.startDay, periodStart, proposedEnd: null, closability: null });
-    }
-    const proposedEnd = rhythm.mode === 'libre' ? null : computeProposedPeriodEnd(rhythm, periodStart);
-    const closability =
-      rhythm.mode === 'libre'
-        ? null
-        : await getPeriodClosabilityForRhythm(req.user.tenantId, rhythm, periodStart, proposedEnd);
-    res.json({
-      mode: rhythm.mode,
-      startDay: rhythm.startDay,
-      periodStart,
-      proposedEnd,
-      closability: closability && {
-        isClosable: closability.isClosable,
-        closableFrom: closability.closableFrom,
-        pendingLeases: closability.pendingLeases,
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// PATCH /api/accounting/rhythm — changer le rythme de période (DG uniquement), depuis la page
-// Clôture (étape 2b — exposé en même temps que le moteur de loyer généralisé, pour ne jamais
-// désynchroniser clôture et loyer dû).
-// Changer de rythme n'affecte QUE les prochaines clôtures : la période actuellement ouverte n'a de
-// date de fin qu'au moment où elle est réellement close, avec le rythme alors en vigueur — aucune
-// période déjà clôturée ne bouge jamais.
-router.patch('/rhythm', requireRole('dg'), async (req, res, next) => {
-  const parsed = rhythmSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
-  }
-  const { mode, startDay } = parsed.data;
-
-  try {
-    await pool.query(
-      'UPDATE tenants SET period_rhythm_mode = :mode, period_start_day = :startDay WHERE id = :tenantId',
-      { mode, startDay: mode === 'jour_fixe' ? startDay : null, tenantId: req.user.tenantId },
-    );
-    logger.info('Rythme de période modifié', { tenantId: req.user.tenantId, mode, startDay, by: req.user.id });
-    res.json({ mode, startDay: mode === 'jour_fixe' ? startDay : null });
   } catch (err) {
     next(err);
   }
