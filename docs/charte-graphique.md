@@ -82,3 +82,27 @@ de bleu (`info`), réservé à un usage hors dashboard.
   jamais de colonnes fixes sans repli mobile.
 
 Tout nouveau module réutilise ces composants — pas de style ad hoc.
+
+## Animations (étape 55)
+
+Toujours courtes (0,3 à 0,9 s), jamais bloquantes, et coupées automatiquement si l'utilisateur a
+demandé moins d'animations dans son système (`prefers-reduced-motion`, règle globale dans
+`app/globals.css`). Une animation sert à guider l'œil, jamais à décorer.
+
+| Partie | Animation | Où |
+|---|---|---|
+| Partout | Apparition douce des cartes (`animate-card-in`) ; cascade sur une grille (classe `.stagger`) | `Card`, grilles d'accueil et de tableau de bord |
+| Cartes cliquables | Soulèvement + liseré primaire au survol (`<Card interactive>`) | raccourcis de l'accueil |
+| Finances | Les montants défilent jusqu'à leur valeur ; reflet qui balaie une fois les tuiles colorées (`animate-sheen`) | `StatCard` |
+| Locataires | Les cases de la frise apparaissent l'une après l'autre (`animate-cell-pop`), la jauge d'un mois partiel se remplit (`animate-gauge-fill`) | `RentStrip` |
+| Biens | La barre d'occupation se remplit de gauche à droite (`animate-bar-grow`) | `SegmentedBar` |
+| Clôture | Cascade des mois, cadenas qui se referme (`animate-lock-snap`), onde autour du mois prêt (`animate-ripple`) | page Clôture |
+| Charges | Onde autour de la cloche tant que des alertes attendent ; alertes qui glissent en place | `UtilityAlertsCard` |
+| Urgences | Pastille rouge qui émet une onde (`animate-urgent-ping`) | `Badge dot variant="danger"`, panneau « À faire maintenant » |
+
+## Messages
+
+- **Notifications** : pastille d'icône pleine, titre court qui dit d'emblée le résultat (« C'est fait »,
+  « À vérifier », « Action impossible », « Information »), liseré de couleur, barre de temps restant.
+- **« À faire maintenant »** (accueil, tous les rôles) : chaque action est une phrase qui dit quoi faire
+  et pourquoi, un niveau (Urgent / À faire / Conseillé) et un bouton qui y mène directement.

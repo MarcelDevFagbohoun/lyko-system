@@ -64,13 +64,31 @@ function CardToneProvider({ tone, children }: { tone: CardTone; children: React.
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Teinte de la carte ; absente = celle du module en cours (blanc hors espace connecté). */
   tone?: CardTone;
+  /** Carte cliquable (lien, raccourci) : se soulève au survol pour montrer qu'elle réagit. */
+  interactive?: boolean;
 }
 
-/** Carte / panneau — élévation niveau 1 de la charte (bordure hairline + shadow-sm), teintable. */
-const Card = React.forwardRef<HTMLDivElement, CardProps>(({ className, tone, ...props }, ref) => {
+/**
+ * Carte / panneau — élévation niveau 1 de la charte, teintable. Étape 55 : ombre double très fine
+ * (contact + diffusion) pour un rendu net et professionnel, et apparition douce à l'affichage
+ * (`animate-card-in`, coupée si l'utilisateur a demandé moins d'animations).
+ */
+const Card = React.forwardRef<HTMLDivElement, CardProps>(({ className, tone, interactive, ...props }, ref) => {
   const inherited = React.useContext(CardToneContext);
   const resolved = tone ?? inherited;
-  const card = <div ref={ref} className={cn("rounded-lg border shadow-sm", CARD_TONES[resolved], className)} {...props} />;
+  const card = (
+    <div
+      ref={ref}
+      className={cn(
+        "animate-card-in rounded-lg border shadow-[0_1px_2px_rgba(15,23,42,0.04),0_4px_12px_-6px_rgba(15,23,42,0.08)]",
+        interactive &&
+          "cursor-pointer transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_2px_4px_rgba(15,23,42,0.05),0_12px_24px_-10px_rgba(30,58,138,0.25)]",
+        CARD_TONES[resolved],
+        className,
+      )}
+      {...props}
+    />
+  );
   // Les enfants d'une carte teintée repartent de blanc (cartes imbriquées, tableaux, encarts).
   return resolved === "default" ? card : <CardToneContext.Provider value="default">{card}</CardToneContext.Provider>;
 });

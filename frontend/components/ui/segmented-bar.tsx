@@ -12,6 +12,8 @@ export function SegmentedBar({ segments, ariaLabel }: { segments: BarSegment[]; 
   const total = segments.reduce((s, x) => s + Math.max(0, x.value), 0);
   return (
     <div role="img" aria-label={ariaLabel} className="flex h-3 w-full overflow-hidden rounded-full bg-surface-muted">
+      {/* Étape 55 (partie Biens) : la barre se remplit de gauche à droite à l'affichage. */}
+      <div className="flex h-full w-full origin-left animate-bar-grow">
       {total > 0 &&
         segments
           .filter((x) => x.value > 0)
@@ -23,6 +25,7 @@ export function SegmentedBar({ segments, ariaLabel }: { segments: BarSegment[]; 
               style={{ width: `${(x.value / total) * 100}%` }}
             />
           ))}
+      </div>
     </div>
   );
 }

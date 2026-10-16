@@ -96,7 +96,7 @@ function TableauDeBordContent() {
         <ClosingReminderBanner accessToken={accessToken} />
 
         {overview && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <StatCard
               label="Taux d'occupation"
               icon={<Building2 size={16} />}
@@ -185,7 +185,7 @@ function TableauDeBordContent() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="stagger grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card
             tone={CADRES.operations.tone}
             className={cn(

@@ -160,8 +160,9 @@ async function listAssignedTasksFor(tenantId, userId) {
   }));
 }
 
-// GET /api/tasks — jamais pour le DG (son propre tableau de bord existe déjà) ;
-// chaque section se remplit selon les permissions réelles de l'utilisateur.
+// GET /api/tasks — chaque section se remplit selon les permissions réelles de l'utilisateur. Le DG
+// a toutes les permissions sans qu'elles soient enregistrées (`getPermissions` renvoie []) : depuis
+// l'étape 55, il reçoit lui aussi ses tâches, pour le panneau « À faire maintenant » de l'accueil.
 router.get('/', async (req, res, next) => {
   try {
     const { tenantId } = req.user;
@@ -169,8 +170,9 @@ router.get('/', async (req, res, next) => {
     // vivent dans `user_permissions`, jamais recopiées dans le token pour
     // rester à jour immédiatement si le DG les change (voir `requirePermission`).
     const permissions = await getPermissions(req.user.id, req.user.role);
-    const hasLocataires = permissions.includes('locataires');
-    const hasComptabilite = permissions.includes('comptabilite');
+    const isDg = req.user.role === 'dg';
+    const hasLocataires = isDg || permissions.includes('locataires');
+    const hasComptabilite = isDg || permissions.includes('comptabilite');
 
     let agent = null;
     if (hasLocataires) {

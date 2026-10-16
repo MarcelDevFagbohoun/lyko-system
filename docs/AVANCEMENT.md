@@ -6301,3 +6301,32 @@ message de continuité mis à jour dans `periodRhythm.test.js`. Suite backend **
 7 ignorés faute de `pdftotext`). `tsc`/`eslint` frontend propres. Parcours navigateur réel : frise,
 vérifications, récapitulatif, confirmation, clôture puis passage automatique au mois suivant,
 historique, Paramètres, bandeaux accueil et tableau de bord.
+
+## Étape 55 — Cartes professionnelles, animations par partie, « À faire maintenant »
+
+🟡 À valider (2026-10-16).
+
+**Demande** : garder le style d'origine (couleurs, polices), mais des cartes professionnelles et bien
+dessinées, des animations propres à chaque partie (« effet waouh »), des interactions plus faciles
+pour tous les rôles (DG, comptable, agent), des messages très clairs qui font réagir vite, et les
+éléments importants placés là où on les trouve tout de suite. Une maquette « style bancaire » avait
+été proposée puis écartée par l'utilisateur au profit de son style initial.
+
+**Ce qui a été fait** (composants partagés : profite à toutes les pages)
+- `Card` : ombre double très fine, apparition douce ; option `interactive` (survol soulevé).
+- `StatCard` : montants qui défilent jusqu'à leur valeur (valeur exacte pour les lecteurs d'écran),
+  reflet sur les tuiles colorées, icône qui s'anime au survol.
+- Animations par partie : frise des loyers, barre d'occupation, frise de clôture (cadenas, onde sur le
+  mois prêt), alertes des charges, pastilles urgentes — détail dans `docs/charte-graphique.md`.
+- Notifications : titre qui annonce le résultat, pastille d'icône, liseré, barre de temps restant.
+- **« À faire maintenant »** (`components/espace/priority-panel.tsx`) en haut de l'accueil de chaque
+  rôle : retards de loyer, plaintes urgentes, états des lieux à finaliser, retards prévus, clôture
+  (prête ou en retard), relevés à valider, retenues de caution à comptabiliser, dépenses sans
+  justificatif, tâches confiées en retard ou du jour. Trié par urgence, 5 au plus, bouton direct.
+  Remplace le bandeau de clôture sur l'accueil (gardé sur le tableau de bord). `GET /api/tasks`
+  répond désormais aussi au DG (il a toutes les permissions sans qu'elles soient enregistrées).
+- Accessibilité : toutes les animations sont coupées si le système demande moins d'animations.
+
+**Tests** : suite backend **372/372** (365 passent, 7 ignorés faute de `pdftotext`) ; `tsc`/`eslint`
+frontend propres ; vérifié dans le navigateur (accueil, tableau de bord pendant l'animation,
+notification après une clôture, accueil sur téléphone sans débordement horizontal).

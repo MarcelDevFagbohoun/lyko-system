@@ -34,7 +34,13 @@ export interface BadgeProps
 function Badge({ className, variant, dot = false, children, ...props }: BadgeProps) {
   return (
     <span className={cn(badgeVariants({ variant }), className)} {...props}>
-      {dot && <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+      {dot && (
+        <span className="relative flex h-1.5 w-1.5">
+          {/* Étape 55 : une pastille rouge (urgent, retard) émet une onde pour attirer l'œil. */}
+          {variant === "danger" && <span aria-hidden className="absolute inset-0 animate-urgent-ping rounded-full bg-current" />}
+          <span className="relative h-1.5 w-1.5 rounded-full bg-current" />
+        </span>
+      )}
       {children}
     </span>
   );

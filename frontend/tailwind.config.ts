@@ -158,12 +158,66 @@ const config: Config = {
           from: { opacity: "0", transform: "translateY(6px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
+        // Étape 55 — animations propres à chaque partie (voir `app/globals.css`, classes `.stagger`,
+        // et la charte graphique) : toujours courtes, jamais bloquantes, coupées si l'utilisateur a
+        // demandé moins d'animations (`prefers-reduced-motion`).
+        "card-in": {
+          from: { opacity: "0", transform: "translateY(10px) scale(0.985)" },
+          to: { opacity: "1", transform: "translateY(0) scale(1)" },
+        },
+        "cell-pop": {
+          "0%": { opacity: "0", transform: "scale(0.4)" },
+          "70%": { opacity: "1", transform: "scale(1.12)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        "gauge-fill": {
+          from: { transform: "scaleY(0)" },
+          to: { transform: "scaleY(1)" },
+        },
+        "bar-grow": {
+          from: { transform: "scaleX(0)" },
+          to: { transform: "scaleX(1)" },
+        },
+        "lock-snap": {
+          "0%": { transform: "translateY(-3px) rotate(-8deg)", opacity: "0.4" },
+          "60%": { transform: "translateY(1px) rotate(3deg)", opacity: "1" },
+          "100%": { transform: "translateY(0) rotate(0)", opacity: "1" },
+        },
+        sheen: {
+          from: { transform: "translateX(-120%) skewX(-18deg)" },
+          to: { transform: "translateX(320%) skewX(-18deg)" },
+        },
+        ripple: {
+          "0%": { transform: "scale(0.8)", opacity: "0.55" },
+          "100%": { transform: "scale(2.1)", opacity: "0" },
+        },
+        "urgent-ping": {
+          "0%": { transform: "scale(1)", opacity: "0.7" },
+          "80%, 100%": { transform: "scale(2.4)", opacity: "0" },
+        },
+        "slide-in-left": {
+          from: { opacity: "0", transform: "translateX(-12px)" },
+          to: { opacity: "1", transform: "translateX(0)" },
+        },
+        "toast-progress": {
+          from: { transform: "scaleX(1)" },
+          to: { transform: "scaleX(0)" },
+        },
       },
       animation: {
         "pulse-dot": "pulse-dot 1.6s ease-in-out infinite",
         "fade-in": "fade-in 0.18s ease-out",
         "sidebar-in": "sidebar-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
         "page-in": "page-in 0.28s cubic-bezier(0.16, 1, 0.3, 1)",
+        "card-in": "card-in 0.42s cubic-bezier(0.16, 1, 0.3, 1) both",
+        "cell-pop": "cell-pop 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) both",
+        "gauge-fill": "gauge-fill 0.7s cubic-bezier(0.16, 1, 0.3, 1) both",
+        "bar-grow": "bar-grow 0.9s cubic-bezier(0.16, 1, 0.3, 1) both",
+        "lock-snap": "lock-snap 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both",
+        sheen: "sheen 1.1s cubic-bezier(0.4, 0, 0.2, 1) 0.35s both",
+        ripple: "ripple 1.8s cubic-bezier(0, 0, 0.2, 1) infinite",
+        "urgent-ping": "urgent-ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite",
+        "slide-in-left": "slide-in-left 0.4s cubic-bezier(0.16, 1, 0.3, 1) both",
       },
     },
   },

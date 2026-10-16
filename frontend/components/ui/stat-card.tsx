@@ -1,6 +1,51 @@
+"use client";
+
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Card } from "./card";
+
+/**
+ * Chiffre qui défile jusqu'à sa valeur (étape 55, partie Finances) : un montant déjà formaté
+ * (« 4 860 000 », « 94 ») monte de 0 à sa valeur en ~0,8 s, avec le même format. Tout autre contenu
+ * (texte, élément) s'affiche tel quel. Valeur finale exacte dès le départ pour les lecteurs d'écran.
+ */
+function useCountUp(target: number | null, durationMs = 800) {
+  const [current, setCurrent] = React.useState<number | null>(target === null ? null : 0);
+  React.useEffect(() => {
+    if (target === null) return;
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || target === 0) {
+      setCurrent(target);
+      return;
+    }
+    let frame = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setCurrent(Math.round(target * eased));
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, durationMs]);
+  return current;
+}
+
+const NUMERIC_RE = /^-?[\d\s\u00a0\u202f]+$/;
+
+function AnimatedValue({ value }: { value: React.ReactNode }) {
+  const raw = typeof value === "number" ? String(value) : typeof value === "string" ? value : null;
+  const target = raw !== null && NUMERIC_RE.test(raw.trim()) ? Number(raw.replace(/[\s\u00a0\u202f]/g, "")) : null;
+  const current = useCountUp(Number.isFinite(target) ? target : null);
+  if (target === null || current === null) return <>{value}</>;
+  return (
+    <>
+      <span aria-hidden>{current.toLocaleString("fr-FR").replace(/[\s\u202f]/g, " ")}</span>
+      <span className="sr-only">{raw}</span>
+    </>
+  );
+}
 
 /**
  * Carte statistique (KPI) — libellé en label-sm, valeur en currency-display,
@@ -72,18 +117,31 @@ export function StatCard({ label, value, unit, icon, trend, tone = "default", cl
   return (
     <Card
       className={cn(
-        "flex flex-col justify-between p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5",
+        "group relative flex flex-col justify-between overflow-hidden p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5",
         s.card,
         className,
       )}
     >
+      {/* Reflet qui balaie une fois les tuiles colorées à l'affichage. */}
+      {tone !== "default" && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 left-0 w-1/3 animate-sheen bg-gradient-to-r from-transparent via-white/25 to-transparent"
+        />
+      )}
       <div className="flex items-start justify-between gap-3">
         <span className={cn("font-label-sm uppercase tracking-wider", s.label)}>{label}</span>
-        {icon && <span className={cn("rounded-md p-2", s.chip)}>{icon}</span>}
+        {icon && (
+          <span className={cn("rounded-md p-2 transition-transform duration-300 group-hover:-rotate-6 group-hover:scale-110", s.chip)}>
+            {icon}
+          </span>
+        )}
       </div>
 
       <div className="mt-3 flex items-end gap-1.5">
-        <span className={cn("tabular font-display text-currency-display tracking-tight", s.value)}>{value}</span>
+        <span className={cn("tabular font-display text-currency-display tracking-tight", s.value)}>
+          <AnimatedValue value={value} />
+        </span>
         {unit && <span className={cn("pb-0.5 text-body-sm", s.unit)}>{unit}</span>}
       </div>
 

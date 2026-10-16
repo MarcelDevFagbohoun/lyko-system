@@ -262,7 +262,8 @@ const STATUS_CELL: Record<ClosingMonthStatus, string> = {
 
 function StatusIcon({ status }: { status: ClosingMonthStatus }) {
   const size = 14;
-  if (status === "cloture") return <Lock size={size} aria-hidden />;
+  // Étape 55 (partie Clôture) : le cadenas d'un mois clôturé se referme d'un coup sec.
+  if (status === "cloture") return <Lock size={size} aria-hidden className="animate-lock-snap" />;
   if (status === "pret") return <Check size={size} strokeWidth={3} aria-hidden />;
   if (status === "en_attente") return <Clock size={size} aria-hidden />;
   if (status === "en_cours") return <LockOpen size={size} aria-hidden />;
@@ -287,7 +288,7 @@ function MonthStrip({ months: allMonths }: { months: ClosingOverview["months"] }
       <CardContent className="flex flex-col gap-3 py-4">
         <p className="font-label-sm uppercase tracking-wider text-ink-muted">Où en sont vos mois</p>
         <div ref={stripRef} className="flex gap-1.5 overflow-x-auto pb-1" role="list" aria-label="État de clôture des mois">
-          {months.map((m) => {
+          {months.map((m, i) => {
             const monthIndex = Number(m.month.slice(5, 7)) - 1;
             const detail =
               m.status === "en_attente" && m.closableFrom
@@ -300,7 +301,17 @@ function MonthStrip({ months: allMonths }: { months: ClosingOverview["months"] }
                 title={`${capitalize(monthLabelFr(m.month))} — ${detail}`}
                 className="flex min-w-[3rem] flex-1 flex-col items-center gap-1"
               >
-                <span className={cn("flex h-8 w-8 items-center justify-center rounded-md border", STATUS_CELL[m.status])}>
+                <span
+                  className={cn(
+                    "relative flex h-8 w-8 animate-cell-pop items-center justify-center rounded-md border",
+                    STATUS_CELL[m.status],
+                  )}
+                  style={{ animationDelay: `${i * 45}ms` }}
+                >
+                  {/* Le mois prêt à clôturer appelle l'attention : une onde douce autour de sa case. */}
+                  {m.status === "pret" && (
+                    <span aria-hidden className="absolute inset-0 animate-ripple rounded-md border-2 border-success" />
+                  )}
                   <StatusIcon status={m.status} />
                 </span>
                 <span

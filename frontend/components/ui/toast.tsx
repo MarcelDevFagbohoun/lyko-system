@@ -4,12 +4,15 @@ import { CheckCircle2, AlertTriangle, XCircle, Info, X } from "lucide-react";
 import { useToast, type ToastItem, type ToastVariant } from "@/lib/toast/toast-context";
 import { cn } from "@/lib/utils";
 
-const VARIANT_STYLE: Record<ToastVariant, { icon: typeof CheckCircle2; className: string; iconClassName: string }> = {
-  success: { icon: CheckCircle2, className: "border-success-border bg-success-bg text-success-fg", iconClassName: "text-success" },
-  warning: { icon: AlertTriangle, className: "border-warning-border bg-warning-bg text-warning-fg", iconClassName: "text-warning" },
-  danger: { icon: XCircle, className: "border-danger-border bg-danger-bg text-danger-fg", iconClassName: "text-danger" },
-  info: { icon: Info, className: "border-info-border bg-info-bg text-info-fg", iconClassName: "text-info" },
+const VARIANT_STYLE: Record<ToastVariant, { icon: typeof CheckCircle2; className: string; iconClassName: string; bar: string; title: string }> = {
+  success: { icon: CheckCircle2, className: "border-success-border bg-surface text-ink", iconClassName: "bg-success text-white", bar: "bg-success", title: "C'est fait" },
+  warning: { icon: AlertTriangle, className: "border-warning-border bg-surface text-ink", iconClassName: "bg-warning text-white", bar: "bg-warning", title: "À vérifier" },
+  danger: { icon: XCircle, className: "border-danger-border bg-surface text-ink", iconClassName: "bg-danger text-white", bar: "bg-danger", title: "Action impossible" },
+  info: { icon: Info, className: "border-info-border bg-surface text-ink", iconClassName: "bg-info text-white", bar: "bg-info", title: "Information" },
 };
+
+// Même durée que `AUTO_DISMISS_MS` (lib/toast/toast-context.tsx) : la barre se vide quand le message part.
+const TOAST_DURATION_MS = 4000;
 
 /**
  * Empilement de toasts, fixé en haut à droite (bas sur mobile pour rester
@@ -35,25 +38,38 @@ export function ToastStack() {
 }
 
 function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: () => void }) {
-  const { icon: Icon, className, iconClassName } = VARIANT_STYLE[toast.variant];
+  const { icon: Icon, className, iconClassName, bar, title } = VARIANT_STYLE[toast.variant];
+  // Étape 55 : message plus visible — pastille d'icône pleine, titre court qui dit tout de suite si
+  // l'action a réussi ou non, liseré de couleur et barre qui montre le temps restant.
   return (
     <div
-      role="status"
+      role={toast.variant === "danger" ? "alert" : "status"}
       className={cn(
-        "animate-toast-in pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-lg border px-4 py-3 shadow-lg",
+        "animate-toast-in pointer-events-auto relative flex w-full max-w-sm items-start gap-3 overflow-hidden rounded-lg border py-3 pl-4 pr-3 shadow-lg",
         className,
       )}
     >
-      <Icon size={18} className={cn("mt-0.5 shrink-0", iconClassName)} />
-      <p className="flex-1 text-body-sm">{toast.message}</p>
+      <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1", bar)} />
+      <span className={cn("mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full", iconClassName)}>
+        <Icon size={16} />
+      </span>
+      <div className="flex-1">
+        <p className="font-label-md text-ink">{title}</p>
+        <p className="text-body-sm text-ink-soft">{toast.message}</p>
+      </div>
       <button
         type="button"
         onClick={onDismiss}
         aria-label="Fermer"
-        className="shrink-0 rounded p-0.5 opacity-60 hover:opacity-100"
+        className="shrink-0 rounded p-0.5 text-ink-muted opacity-70 hover:opacity-100"
       >
         <X size={14} />
       </button>
+      <span
+        aria-hidden
+        className={cn("absolute bottom-0 left-0 h-0.5 w-full origin-left opacity-60", bar)}
+        style={{ animation: `toast-progress ${TOAST_DURATION_MS}ms linear forwards` }}
+      />
     </div>
   );
 }

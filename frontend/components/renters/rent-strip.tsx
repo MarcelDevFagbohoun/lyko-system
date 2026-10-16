@@ -61,21 +61,29 @@ function StatusIcon({ status, size }: { status: RentStripStatus; size: number })
   return null;
 }
 
-/** Case d'un mois. Partiel : remplie au prorata de ce qui est payé, comme une jauge. */
-function Cell({ m, size, late }: { m: RentStripMonth; size: number; late: boolean }) {
+/**
+ * Case d'un mois. Partiel : remplie au prorata de ce qui est payé, comme une jauge.
+ * Étape 55 (partie Locataires) : les cases apparaissent l'une après l'autre (`index`) et la jauge
+ * d'un mois partiel se remplit depuis le bas — la frise « se construit » sous les yeux.
+ */
+function Cell({ m, size, late, index = 0 }: { m: RentStripMonth; size: number; late: boolean; index?: number }) {
   const ratio = m.due > 0 ? Math.min(1, m.paid / m.due) : 0;
   return (
     <span
       className={cn(
-        "relative flex shrink-0 items-center justify-center overflow-hidden rounded",
+        "relative flex shrink-0 animate-cell-pop items-center justify-center overflow-hidden rounded",
         CELL[m.status],
         // Partiel ET échéance dépassée : contour rouge, la jauge orange dit ce qui est payé.
         m.status === "partiel" && late && "border-danger-strong",
       )}
-      style={{ width: size, height: size }}
+      style={{ width: size, height: size, animationDelay: `${index * 35}ms` }}
     >
       {m.status === "partiel" && (
-        <span aria-hidden className="absolute inset-x-0 bottom-0 bg-warning" style={{ height: `${Math.round(ratio * 100)}%` }} />
+        <span
+          aria-hidden
+          className="absolute inset-x-0 bottom-0 origin-bottom animate-gauge-fill bg-warning"
+          style={{ height: `${Math.round(ratio * 100)}%`, animationDelay: `${index * 35 + 200}ms` }}
+        />
       )}
       <span className="relative flex items-center justify-center">
         <StatusIcon status={m.status} size={Math.max(8, Math.round(size * 0.55))} />
@@ -103,9 +111,9 @@ export function RentStrip({ months, variant = "full" }: { months: RentStripMonth
   if (variant === "compact") {
     return (
       <span className="inline-flex items-center gap-1" role="img" aria-label="Frise des 12 mois de loyer">
-        {months.map((m) => (
+        {months.map((m, i) => (
           <span key={m.month} title={`${monthLabelFr(m.month)} — ${describeStripMonth(m)}`}>
-            <Cell m={m} size={14} late={m.late} />
+            <Cell m={m} size={14} late={m.late} index={i} />
           </span>
         ))}
       </span>
@@ -117,7 +125,7 @@ export function RentStrip({ months, variant = "full" }: { months: RentStripMonth
   return (
     <div className="flex flex-col gap-3">
       <div className="flex gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Frise des 12 mois de loyer">
-        {months.map((m) => {
+        {months.map((m, i) => {
           const isActive = m.month === active.month;
           const monthIndex = Number(m.month.slice(5, 7)) - 1;
           // Période non-calendaire (clé « AAAA-MM-JJ », étape 2c) : le jour de début précède le mois.
@@ -134,7 +142,7 @@ export function RentStrip({ months, variant = "full" }: { months: RentStripMonth
                 isActive ? "border-primary bg-primary-bg/50" : "border-transparent hover:bg-surface-muted",
               )}
             >
-              <Cell m={m} size={26} late={m.late} />
+              <Cell m={m} size={26} late={m.late} index={i} />
               <span className={cn("text-body-xs", m.isCurrent ? "font-label-md text-primary" : "text-ink-muted")}>
                 {startDay}
                 {MONTHS_SHORT[monthIndex]}

@@ -52,13 +52,17 @@ export function UtilityAlertsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: b
     <Card tone={CADRES.finances.tone}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <BellRing size={18} className="text-warning-fg" />
+          {/* Étape 55 (partie Charges) : une onde part de la cloche tant que des alertes attendent. */}
+          <span className="relative flex">
+            <span aria-hidden className="absolute inset-0 animate-ripple rounded-full bg-warning/40" />
+            <BellRing size={18} className="relative text-warning-fg" />
+          </span>
           Alertes du suivi des charges
           <Badge variant="warning">{alerts.length}</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
-        {alerts.map((a) => {
+        {alerts.map((a, i) => {
           const style = SEVERITY_STYLE[a.severity];
           const Icon = style.icon;
           return (
@@ -66,9 +70,10 @@ export function UtilityAlertsCard({ hideWhenEmpty = false }: { hideWhenEmpty?: b
               key={a.key}
               href={a.href}
               className={cn(
-                "group flex items-start gap-3 rounded-lg border border-border border-l-4 bg-surface px-3 py-2.5 transition-colors hover:bg-surface-muted",
+                "group flex animate-slide-in-left items-start gap-3 rounded-lg border border-border border-l-4 bg-surface px-3 py-2.5 transition-colors hover:bg-surface-muted",
                 style.border,
               )}
+              style={{ animationDelay: `${i * 60}ms` }}
             >
               <Icon size={16} className={cn("mt-0.5 shrink-0", style.iconCls)} />
               <div className="min-w-0 flex-1">

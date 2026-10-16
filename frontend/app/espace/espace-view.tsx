@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { MyTasksCard } from "@/components/espace/my-tasks-card";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
-import { ClosingReminderBanner } from "@/components/accounting/closing-reminder-banner";
+import { PriorityPanel } from "@/components/espace/priority-panel";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CADRES } from "@/lib/module-theme";
@@ -25,7 +25,7 @@ export function EspaceView() {
 }
 
 function EspaceContent() {
-  const { user, tenant, accessToken } = useAuth();
+  const { user, tenant } = useAuth();
   const isDg = user?.role === "dg";
   const canLocataires = isDg || (user?.permissions.includes("locataires") ?? false);
   const canPayments = canLocataires || (user?.permissions.includes("comptabilite") ?? false);
@@ -38,20 +38,20 @@ function EspaceContent() {
         <div>
           <h1 className="font-display text-headline-xl text-ink">Bienvenue, {user?.firstName} 👋</h1>
           <p className="text-body-lg text-ink-soft">
-            Votre espace {tenant?.companyName} est prêt. Voici pour commencer :
+            Votre espace {tenant?.companyName}. Voici ce qui demande votre attention aujourd&apos;hui.
           </p>
         </div>
 
-        {isDg && <ClosingReminderBanner accessToken={accessToken} />}
+        <PriorityPanel />
 
         {!isDg && <MyTasksCard />}
 
         {canCharges && <UtilityAlertsCard hideWhenEmpty />}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {isDg && (
             <Link href="/espace/employes" className="group">
-              <Card tone={CADRES.administration.tone} className="h-full transition-shadow group-hover:shadow-md">
+              <Card tone={CADRES.administration.tone} interactive className="h-full">
                 <CardHeader>
                   <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
                     <UserPlus size={20} />
@@ -71,7 +71,7 @@ function EspaceContent() {
           {canLocataires ? (
             <>
               <Link href="/espace/biens/nouveau" className="group">
-                <Card tone={CADRES.patrimoine.tone} className="h-full transition-shadow group-hover:shadow-md">
+                <Card tone={CADRES.patrimoine.tone} interactive className="h-full">
                   <CardHeader>
                     <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
                       <Building2 size={20} />
@@ -85,7 +85,7 @@ function EspaceContent() {
                 </Card>
               </Link>
               <Link href="/espace/locataires/nouveau" className="group">
-                <Card tone={CADRES.patrimoine.tone} className="h-full transition-shadow group-hover:shadow-md">
+                <Card tone={CADRES.patrimoine.tone} interactive className="h-full">
                   <CardHeader>
                     <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
                       <UserPlus size={20} />
@@ -101,7 +101,7 @@ function EspaceContent() {
             </>
           ) : canPayments ? (
             <Link href="/espace/locataires" className="group">
-              <Card tone={CADRES.finances.tone} className="h-full transition-shadow group-hover:shadow-md">
+              <Card tone={CADRES.finances.tone} interactive className="h-full">
                 <CardHeader>
                   <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg bg-surface-muted text-primary">
                     <Receipt size={20} />
