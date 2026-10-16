@@ -46,6 +46,31 @@ function subPeriod(periodStartIso) {
   return prev.toISOString().slice(0, 10);
 }
 
+/**
+ * Dernier jour (inclus) d'une période identifiée par sa clé — calendaire ('AAAA-MM') : dernier jour
+ * du mois ; sinon ('AAAA-MM-JJ') : veille du début de la période suivante. Sert aux libellés
+ * « du … au … » (quittance, portail, frise), jamais au calcul du dû.
+ */
+function periodEndOf(periodKey) {
+  if (/^\d{4}-\d{2}$/.test(periodKey)) {
+    const [y, m] = periodKey.split('-').map(Number);
+    return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  }
+  const d = new Date(`${addPeriod(periodKey)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Clé de période d'une ligne `rent_payments` (étape 2c) : `covers_month` pour un bail calendaire,
+ * `covers_period_start` (date complète) sinon — la même clé que celle du moteur de loyer, pour que
+ * toute réponse d'API qui expose `coversMonth` renvoie une valeur exploitable, jamais `null`.
+ */
+function paymentPeriodKey(row) {
+  if (row.covers_month) return row.covers_month;
+  return row.covers_period_start ? toIsoDateString(row.covers_period_start) : null;
+}
+
 /** Avance d'une période quel que soit le rythme — calendaire retombe sur `addMonth` (inchangé). */
 function nextPeriodKey(rhythm, periodKey) {
   return (rhythm?.mode ?? 'calendaire') === 'calendaire' ? addMonth(periodKey) : addPeriod(periodKey);
@@ -80,6 +105,18 @@ function periodKeyContainingToday(rhythm, baselineKey, todayIso) {
   let key = baselineKey;
   while (nextPeriodKey(rhythm, key) <= todayIso) key = nextPeriodKey(rhythm, key);
   return key;
+}
+
+/**
+ * Période de la grille d'un bail non-calendaire (ancrée sur `anchorKey`) qui COMMENCE dans le mois
+ * civil `yearMonth` ('AAAA-MM') — `null` si aucune (un mois sauté par un ancrage en fin de mois).
+ * Marche bornée par l'écart en mois, jamais d'accès base. Sert aux vues découpées par mois civil.
+ */
+function periodKeyStartingInMonth(rhythm, anchorKey, yearMonth) {
+  let key = anchorKey;
+  while (key.slice(0, 7) > yearMonth) key = previousPeriodKey(rhythm, key);
+  while (key.slice(0, 7) < yearMonth) key = nextPeriodKey(rhythm, key);
+  return key.slice(0, 7) === yearMonth ? key : null;
 }
 
 /**
@@ -964,10 +1001,13 @@ function buildMonthRentPayload(lease, period, paidForMonth, asOfIso, rhythm) {
  * payé pour CE mois de loyer. Invariant : attendu = encaissé + reste.
  *
  * Refonte de la clôture (étape 2/5) : `rhythm`/`currentPeriodKey` optionnels, ajoutés en fin de
- * liste de paramètres — comportement byte pour byte inchangé quand omis (calendaire). Cette
- * fonction reste calendaire-only en pratique (voir `routes/accounting.js GET /rent-month`,
- * limitation documentée du plan étape 2 — pas de sélecteur de période non-calendaire encore
- * construit), mais sa généralisation interne ne coûte rien et évite une divergence future.
+ * liste de paramètres — comportement byte pour byte inchangé quand omis pour un bail calendaire.
+ *
+ * Étape 2c : sans `rhythm`, chaque bail est évalué selon SON rythme (dérivé de ses colonnes, comme
+ * partout ailleurs). Un bail non-calendaire dans ce récapitulatif par mois civil est compté pour la
+ * période de SA grille qui COMMENCE dans `month` (`leases[i].paid` = cumul payé pour cette
+ * période) — avant cette étape, un seul bail de ce type faisait planter tout le récapitulatif
+ * (échéance calculée sur un `rentDueDay` absent).
  */
 function summarizeRentMonth(leases, month, today = new Date(), rhythm, currentPeriodKey) {
   const todayIso = today.toISOString().slice(0, 10);
@@ -984,10 +1024,26 @@ function summarizeRentMonth(leases, month, today = new Date(), rhythm, currentPe
     const rent = Number(lease.monthlyRent) || 0;
     const paid = Number(lease.paid) || 0;
     const startDate = toIsoDateString(lease.startDate);
-    const isCalendaire = (rhythm?.mode ?? 'calendaire') === 'calendaire';
+    const leaseRhythm = rhythm ?? { mode: lease.rentDueDay != null ? 'calendaire' : 'jour_fixe' };
+    const isCalendaire = leaseRhythm.mode === 'calendaire';
+    const baselineMonth = baselineMonthOf({
+      startDate,
+      createdAt: lease.createdAt,
+      upToDateAtOnboarding: lease.upToDateAtOnboarding,
+      entryProration: lease.entryProration,
+      rentDueDay: lease.rentDueDay,
+      rhythm: leaseRhythm,
+    });
+    let periodKey = month;
+    let leaseCurrentKey = currentPeriodKey;
+    if (!isCalendaire && /^\d{4}-\d{2}$/.test(month)) {
+      periodKey = periodKeyStartingInMonth(leaseRhythm, baselineMonth, month);
+      if (!periodKey) continue;
+      leaseCurrentKey = periodKeyContainingToday(leaseRhythm, baselineMonth, todayIso);
+    }
     const state = rentMonthState(
       {
-        month,
+        month: periodKey,
         paid,
         rent,
         rentDueDay: lease.rentDueDay,
@@ -995,16 +1051,9 @@ function summarizeRentMonth(leases, month, today = new Date(), rhythm, currentPe
         rentTiming: lease.rentTiming,
         startMonth: isCalendaire ? startDate.slice(0, 7) : startDate,
         endMonth: lease.endDate ? (isCalendaire ? toIsoDateString(lease.endDate).slice(0, 7) : toIsoDateString(lease.endDate)) : null,
-        baselineMonth: baselineMonthOf({
-          startDate,
-          createdAt: lease.createdAt,
-          upToDateAtOnboarding: lease.upToDateAtOnboarding,
-          entryProration: lease.entryProration,
-          rentDueDay: lease.rentDueDay,
-          rhythm,
-        }),
-        rhythm,
-        currentPeriodKey,
+        baselineMonth,
+        rhythm: leaseRhythm,
+        currentPeriodKey: leaseCurrentKey,
       },
       todayIso,
     );
@@ -1030,9 +1079,12 @@ module.exports = {
   rentMonthState,
   addMonth,
   addPeriod,
+  periodEndOf,
+  paymentPeriodKey,
   nextPeriodKey,
   previousPeriodKey,
   periodKeyContainingToday,
+  periodKeyStartingInMonth,
   resolveRentDueDate,
   allocateRentPayment,
   monthsBetweenInclusive,

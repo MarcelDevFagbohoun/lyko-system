@@ -196,7 +196,11 @@ function ContractArticles({ data }: { data: LeaseContractData }) {
       title: "Loyer et modalités de paiement",
       body:
         `Le loyer mensuel est fixé à ${formatFcfa(data.lease.monthlyRent)}, payable ${data.lease.rentTimingLabel.toLowerCase()}, ` +
-        `au plus tard le ${data.lease.rentDueDay} de chaque mois.` +
+        (data.lease.rentDueDay != null
+          ? `au plus tard le ${data.lease.rentDueDay} de chaque mois.`
+          : data.lease.rentDueOffsetDays
+            ? `au plus tard ${data.lease.rentDueOffsetDays} jour${data.lease.rentDueOffsetDays > 1 ? "s" : ""} après le début de chaque période.`
+            : "au plus tard le premier jour de chaque période.") +
         (data.lease.entryFeeAmount > 0 ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)} restent acquis à l'entreprise.` : ""),
     },
     {

@@ -112,6 +112,10 @@ type CreatedRenter = {
 function NouveauContent() {
   const { accessToken, tenant } = useAuth();
   const online = useOnlineStatus();
+  // Rythme de période de l'entreprise (étape 2b) : décide du champ d'échéance (jour du mois ou jours
+  // après le début de la période) et masque le prorata d'entrée, calendaire uniquement côté serveur.
+  const { rhythm } = useTenantRhythm(accessToken);
+  const isCalendaireRhythm = !rhythm || rhythm.mode === "calendaire";
   const [form, setForm] = React.useState<FormState>(INITIAL);
   const [selectedUnit, setSelectedUnit] = React.useState<Unit | null>(null);
   const [touched, setTouched] = React.useState<Partial<Record<keyof FormState, boolean>>>({});
@@ -161,9 +165,14 @@ function NouveauContent() {
 
   // Aperçu du prorata d'entrée (étape 42) — miroir exact du calcul serveur (`previewEntryProrata`,
   // lib/utils.ts) ; le montant réellement enregistré reste toujours recalculé par le serveur.
+  // Bail non-calendaire : jamais de prorata d'entrée (le serveur l'ignore), donc aucun aperçu ni
+  // mode de paiement exigé pour lui.
   const prorataPreview = React.useMemo(
-    () => previewEntryProrata({ startDate: form.startDate, monthlyRent: Number(form.monthlyRent || "0"), rentDueDay: Number(form.rentDueDay || "5") }),
-    [form.startDate, form.monthlyRent, form.rentDueDay],
+    () =>
+      isCalendaireRhythm
+        ? previewEntryProrata({ startDate: form.startDate, monthlyRent: Number(form.monthlyRent || "0"), rentDueDay: Number(form.rentDueDay || "5") })
+        : { days: 0, amount: 0, dueDate: form.startDate },
+    [isCalendaireRhythm, form.startDate, form.monthlyRent, form.rentDueDay],
   );
 
   // Un bail qui démarre APRÈS l'échéance de ce mois-ci facturerait, sans cette case, tout le mois en
@@ -201,7 +210,7 @@ function NouveauContent() {
     const openingDebt = Number(form.openingDebtAmount || "0");
     if (!Number.isFinite(openingDebt) || openingDebt < 0) e.openingDebtAmount = "Montant invalide";
     return e;
-  }, [form, prorataPreview.amount]);
+  }, [form, prorataPreview.amount, rhythm]);
 
   // Cautions supplémentaires (étape 43) — même principe que la caution de loyer/les frais d'agence
   // ci-dessus : mode de règlement requis seulement si un montant est saisi.

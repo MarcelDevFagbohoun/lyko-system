@@ -115,13 +115,17 @@ async function getTauxCommissionActif(tenantId, ownerId, yearMonth) {
  *     bail EXACTEMENT une unité) — aucun risque de doublon en sommant.
  *   - dépenses : lecture directe de `expenses.property_id`, sans jointure.
  */
+// Mois civil d'un loyer (étape 2c) : `covers_month` pour un bail calendaire ; pour un bail
+// non-calendaire (`covers_month` NULL), le mois où COMMENCE la période payée — même règle que le
+// récapitulatif « Loyers du mois » (`summarizeRentMonth`). Sans ce repli, un seul paiement de ce type
+// faisait planter le séquestre (et tout le tableau de bord comptable) sur un mois `null`.
 async function getRecetteNetteMaison(tenantId, propertyId, yearMonth) {
   const [paymentRows] = await pool.query(
     `SELECT COALESCE(SUM(rp.amount), 0) AS total
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
      JOIN property_units u ON u.id = l.unit_id
-     WHERE rp.tenant_id = :tenantId AND u.property_id = :propertyId AND rp.covers_month = :yearMonth
+     WHERE rp.tenant_id = :tenantId AND u.property_id = :propertyId AND COALESCE(rp.covers_month, DATE_FORMAT(rp.covers_period_start, '%Y-%m')) = :yearMonth
        AND rp.deleted_at IS NULL`,
     { tenantId, propertyId, yearMonth },
   );
@@ -264,7 +268,7 @@ async function getEscrowBalances(tenantId, db = pool) {
   // l'app) retombe sur le propriétaire ACTUEL plutôt que de disparaître silencieusement du total — mieux
   // vaut l'ancien comportement (imprécis) que de perdre de l'argent dans l'agrégat.
   const [paymentRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, rp.covers_month AS ym, SUM(rp.amount) AS total
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, COALESCE(rp.covers_month, DATE_FORMAT(rp.covers_period_start, '%Y-%m')) AS ym, SUM(rp.amount) AS total
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
      JOIN property_units u ON u.id = l.unit_id
@@ -272,7 +276,7 @@ async function getEscrowBalances(tenantId, db = pool) {
      LEFT JOIN property_owner_history poh ON poh.property_id = p.id
        AND poh.starts_on <= rp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > rp.paid_at)
      WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL
-     GROUP BY owner_id, p.id, rp.covers_month`,
+     GROUP BY owner_id, p.id, ym`,
     { tenantId },
   );
   // Dette initiale réglée (étape 42, demande explicite de l'utilisateur : « lorsqu'un impayé est payé
@@ -450,7 +454,7 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
      JOIN properties p ON p.id = u.property_id
      LEFT JOIN property_owner_history poh ON poh.property_id = p.id
        AND poh.starts_on <= rp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > rp.paid_at)
-     WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL AND rp.covers_month = :yearMonth
+     WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL AND COALESCE(rp.covers_month, DATE_FORMAT(rp.covers_period_start, '%Y-%m')) = :yearMonth
      GROUP BY owner_id`,
     { tenantId, yearMonth },
   );

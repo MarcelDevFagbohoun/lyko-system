@@ -33,9 +33,8 @@ function isoDate(d) {
  * depuis une chaîne 'AAAA-MM' — s'exécute maintenant pour TOUT rythme, plus seulement calendaire
  * (l'ancien garde-fou `if (legacyPeriod)` dans la route a été retiré). `period` (étiquette 'AAAA-MM')
  * reste renseignée pour affichage/compatibilité seulement en rythme calendaire ; la vue portefeuille
- * (`getMonthlyArchive`/`GET /periods/:period/archive`) reste elle-même calendaire-only pour
- * l'instant (pas encore d'UI pour consulter une archive non-calendaire — limitation documentée du
- * plan, étape 2) mais les données sont désormais TOUJOURS figées, prêtes à être lues plus tard.
+ * (`getMonthlyArchive`/`GET /periods/:period/archive`) lit par `period_start` depuis l'étape 2c,
+ * donc pour tout rythme.
  */
 async function archiveMonth(tenantId, rhythm, periodStart, periodEnd) {
   const isCalendaire = (rhythm?.mode ?? 'calendaire') === 'calendaire';
@@ -148,11 +147,12 @@ async function archiveMonth(tenantId, rhythm, periodStart, periodEnd) {
 }
 
 /**
- * Vue portefeuille d'un mois déjà clôturé (lecture seule) — l'appelant (route) est responsable de
- * vérifier que `period` est bien clôturé avant d'appeler cette fonction.
+ * Vue portefeuille d'une période déjà clôturée (lecture seule), identifiée par sa date de début
+ * réelle (étape 2c — valable pour tout rythme ; en calendaire, c'est le 1er du mois). L'appelant
+ * (route) est responsable de vérifier que la période est bien clôturée avant d'appeler cette fonction.
  */
-async function getMonthlyArchive(tenantId, period, scopeAgentId = null) {
-  const params = { tenantId, period };
+async function getMonthlyArchive(tenantId, periodStart, scopeAgentId = null) {
+  const params = { tenantId, periodStart };
   let scopeClause = '';
   if (scopeAgentId != null) {
     scopeClause = ' AND p.agent_id = :scopeAgentId';
@@ -168,7 +168,7 @@ async function getMonthlyArchive(tenantId, period, scopeAgentId = null) {
      JOIN renters r ON r.id = mra.renter_id
      JOIN property_units un ON un.id = l.unit_id
      JOIN properties p ON p.id = un.property_id
-     WHERE mra.tenant_id = :tenantId AND mra.period = :period ${scopeClause}
+     WHERE mra.tenant_id = :tenantId AND mra.period_start = :periodStart ${scopeClause}
      ORDER BY p.code ASC, un.code ASC`,
     params,
   );

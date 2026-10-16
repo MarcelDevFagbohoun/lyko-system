@@ -54,7 +54,7 @@ export type Arrears = {
 export type RentStripStatus = "paye" | "partiel" | "en_retard" | "a_payer" | "a_venir" | "avant_suivi" | "hors_bail";
 
 export type RentStripMonth = {
-  /** « AAAA-MM » */
+  /** Clé de période : « AAAA-MM » (bail calendaire) ou date de début « AAAA-MM-JJ » (bail non-calendaire). */
   month: string;
   status: RentStripStatus;
   /** Cumul payé pour ce mois. */
@@ -206,7 +206,10 @@ export type Lease = {
   entryProrataReceivedMethod: PaymentMethod | null;
   /** Cautions supplémentaires (étape 43) — uniquement les types activés par l'entreprise et effectivement demandés à ce bail. */
   additionalDeposits: AdditionalDeposit[];
-  rentDueDay: number;
+  /** Jour d'échéance (1-28) — bail calendaire uniquement, `null` sinon (voir `rentDueOffsetDays`). */
+  rentDueDay: number | null;
+  /** Bail non-calendaire : jours après le début de la période où le loyer est dû, `null` sinon. */
+  rentDueOffsetDays: number | null;
   rentTiming: RentTiming;
   startDate: string;
   endDate: string | null;
@@ -580,7 +583,8 @@ export type LeaseContractData = {
   lease: {
     startDate: string;
     monthlyRent: number;
-    rentDueDay: number;
+    rentDueDay: number | null;
+    rentDueOffsetDays: number | null;
     rentTiming: RentTiming;
     rentTimingLabel: string;
     depositAmount: number;

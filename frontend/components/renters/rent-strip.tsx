@@ -120,6 +120,8 @@ export function RentStrip({ months, variant = "full" }: { months: RentStripMonth
         {months.map((m) => {
           const isActive = m.month === active.month;
           const monthIndex = Number(m.month.slice(5, 7)) - 1;
+          // Période non-calendaire (clé « AAAA-MM-JJ », étape 2c) : le jour de début précède le mois.
+          const startDay = m.month.length === 10 ? `${Number(m.month.slice(8, 10))} ` : "";
           return (
             <button
               key={m.month}
@@ -134,6 +136,7 @@ export function RentStrip({ months, variant = "full" }: { months: RentStripMonth
             >
               <Cell m={m} size={26} late={m.late} />
               <span className={cn("text-body-xs", m.isCurrent ? "font-label-md text-primary" : "text-ink-muted")}>
+                {startDay}
                 {MONTHS_SHORT[monthIndex]}
               </span>
               <span className="text-[10px] leading-none text-ink-faint">{m.month.slice(0, 4)}</span>

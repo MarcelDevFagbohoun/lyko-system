@@ -47,6 +47,8 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { MonthGroupsToolbar, MonthHeaderRow, countLabel, useMonthGroups } from "@/components/ui/month-group";
 import { RentStrip } from "@/components/renters/rent-strip";
+import { RentDueField, buildRentDuePayload, validateRentDue } from "@/components/renters/rent-due-field";
+import { useTenantRhythm } from "@/lib/hooks/use-tenant-rhythm";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { groupByMonth, sumBy } from "@/lib/group-by-month";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -631,6 +633,8 @@ function NewLeaseCard({
   const [depositPaidAt, setDepositPaidAt] = React.useState(new Date().toISOString().slice(0, 10));
   const [rentDueDay, setRentDueDay] = React.useState("5");
   const [startDate, setStartDate] = React.useState(new Date().toISOString().slice(0, 10));
+  // Rythme de période de l'entreprise (étape 2b) : même champ d'échéance que la création d'un locataire.
+  const { rhythm } = useTenantRhythm(accessToken);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
@@ -645,11 +649,11 @@ function NewLeaseCard({
     if (!accessToken || !selectedUnit) return;
     const rent = Number(monthlyRent);
     const deposit = Number(depositAmount || "0");
-    const day = Number(rentDueDay);
     if (!Number.isFinite(rent) || rent <= 0) return setError("Loyer invalide.");
     if (!Number.isFinite(deposit) || deposit < 0) return setError("Caution invalide.");
     if (deposit > 0 && !depositPaymentMethod) return setError("Indiquez comment la caution a été reçue.");
-    if (!Number.isInteger(day) || day < 1 || day > 28) return setError("Jour d'échéance entre 1 et 28.");
+    const rentDueError = validateRentDue(rhythm, rentDueDay);
+    if (rentDueError) return setError(`Échéance du loyer : ${rentDueError.toLowerCase()}.`);
     if (!startDate) return setError("Date d'entrée requise.");
 
     setSubmitting(true);
@@ -661,7 +665,7 @@ function NewLeaseCard({
         depositAmount: deposit,
         depositPaymentMethod: deposit > 0 ? (depositPaymentMethod as Exclude<PaymentMethod, "kkiapay">) : undefined,
         depositPaidAt: deposit > 0 ? depositPaidAt : undefined,
-        rentDueDay: day,
+        ...buildRentDuePayload(rhythm, rentDueDay),
         startDate,
       });
       onCreated();
@@ -739,14 +743,7 @@ function NewLeaseCard({
             </div>
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Jour d'échéance du loyer" htmlFor="newLeaseDueDay" required hint="1 à 28">
-              <Input
-                id="newLeaseDueDay"
-                inputMode="numeric"
-                value={rentDueDay}
-                onChange={(e) => setRentDueDay(e.target.value.replace(/\D/g, ""))}
-              />
-            </Field>
+            <RentDueField rhythm={rhythm} value={rentDueDay} onChange={setRentDueDay} />
             <Field label="Date d'entrée" htmlFor="newLeaseStart" required>
               <Input id="newLeaseStart" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </Field>

@@ -68,19 +68,27 @@ function ArchiveMensuelleContent() {
   const { period } = useParams<{ period: string }>();
 
   const [renters, setRenters] = React.useState<MonthlyArchiveRenterEntry[] | null>(null);
+  // Bornes réelles renvoyées par le serveur : une période « libre » n'a pas une longueur déductible
+  // de sa seule date de début (étape 2c).
+  const [range, setRange] = React.useState<{ periodStart: string; periodEnd: string } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // `period` vaut « AAAA-MM » en rythme calendaire, la date de début « AAAA-MM-JJ » sinon.
+  const isCalendairePeriod = !!period && period.length === 7;
 
   React.useEffect(() => {
     if (!accessToken || !period) return;
     setError(null);
     setRenters(null);
     getMonthlyArchive(accessToken, period)
-      .then((res) => setRenters(res.renters))
+      .then((res) => {
+        setRenters(res.renters);
+        setRange({ periodStart: res.periodStart, periodEnd: res.periodEnd });
+      })
       .catch((err) => {
         setError(
           err instanceof ApiError && err.status === 404
-            ? "Ce mois n'est pas encore clôturé — aucune archive n'existe."
-            : "Impossible de charger l'archive de ce mois.",
+            ? "Cette période n'est pas encore clôturée — aucune archive n'existe."
+            : "Impossible de charger l'archive de cette période.",
         );
       });
   }, [accessToken, period]);
@@ -94,14 +102,18 @@ function ArchiveMensuelleContent() {
             Retour à la clôture des mois
           </Link>
           <div className="flex items-center gap-3">
-            <h1 className="font-headline-md text-ink">Archive du mois — {monthLabelFr(period)}</h1>
+            <h1 className="font-headline-md text-ink">
+              {isCalendairePeriod
+                ? `Archive du mois — ${monthLabelFr(period)}`
+                : `Archive de la période — du ${formatDateLabel(range?.periodStart ?? period)}${range ? ` au ${formatDateLabel(range.periodEnd)}` : ""}`}
+            </h1>
             <Badge variant="neutral">
               <Lock size={12} />
               Lecture seule
             </Badge>
           </div>
           <p className="text-body-sm text-ink-soft">
-            Le point de chaque locataire tel qu&apos;il était à la clôture de ce mois : loyer, charges SONEB/SBEE, pénalités de
+            Le point de chaque locataire tel qu&apos;il était à la clôture de cette période : loyer, charges SONEB/SBEE, pénalités de
             retard et note. Ces données sont figées et ne peuvent plus être modifiées.
           </p>
         </div>

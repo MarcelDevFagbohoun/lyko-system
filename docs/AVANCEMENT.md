@@ -6157,3 +6157,69 @@ fournisseur (7 000 FCFA) → `totalOwed: 52000` (somme correcte, pas de doublon)
 
 **LES 15 CONSTATS DE L'ÉTAPE 51BIS SONT TOUS TRAITÉS** (7 Basse corrigées, 1 examinée et jugée non-bug).
 Suite backend finale : **305/305** (300 passent + les 5 échecs calendaires préexistants, sans rapport).
+
+## Étape 52 — Refonte de la clôture : rythme de période (étapes 1, 2a, 2b, 2c du plan)
+
+🟡 À valider (2026-10-16).
+
+**Besoin** : chaque entreprise choisit son rythme de période au lieu du mois civil imposé — `calendaire`
+(1er → fin du mois, défaut, inchangé), `jour_fixe` (ex. du 5 au 4 du mois suivant) ou `libre` (le DG
+saisit la date de fin à chaque clôture).
+
+**Étapes 1 et 2a (commit `daf1cea`)** — socle et moteur de loyer, back-end : migrations 083 à 088
+(`tenants.period_rhythm_mode`/`period_start_day`, bornes réelles `period_start`/`period_end` sur les
+périodes clôturées et les archives, `rent_payments.covers_period_start`, `leases.rent_due_offset_days`).
+Un bail non-calendaire compte en « jours après le début de la période » ; ses périodes sont identifiées
+par leur date de début (`AAAA-MM-JJ`) au lieu de `AAAA-MM`. La clôture fige aussi
+`lease_balance_snapshots` et `monthly_renter_archive` pour tout rythme.
+
+**Étape 2b — le DG peut réellement activer un autre rythme**
+- Sélecteur de rythme sur la page Clôture ; formulaires « Nouveau locataire » et « Nouveau bail »
+  (fiche) : le champ d'échéance devient « jours après le début de la période » hors calendaire
+  (`RentDueField`). Le prorata d'entrée reste calendaire uniquement (masqué sinon).
+- **Bug du commit `daf1cea` corrigé** : le formulaire « Nouveau locataire » ne compilait pas
+  (`rhythm` utilisé mais jamais déclaré — la session précédente s'était arrêtée juste avant) ; sa
+  validation ne se recalculait pas au chargement du rythme.
+- **Page Clôture en rythme non-calendaire** : jusqu'ici elle n'envoyait qu'un mois `AAAA-MM` — en
+  « libre » la clôture échouait (date de fin exigée), en « jour fixe » elle clôturait la période
+  ouverte quel que soit le mois affiché, et l'historique affichait une ligne vide avec un lien
+  `/archive/null`. Nouvelle route `GET /api/accounting/open-period` (début déduit, fin proposée,
+  marge de sécurité avec la date d'échéance réelle des baux en attente) et carte « Période ouverte du
+  … au … » (date de fin saisie en « libre », clôture normale ou forcée). Historique libellé en plage
+  de dates ; archive consultable par date de début (`GET /periods/:period/archive` accepte
+  `AAAA-MM-JJ`). Page Charges : verrouillage par bornes réelles, plus par mois civil.
+
+**Étape 2c — affichage d'une période non-calendaire**
+- `coversMonth` n'est plus jamais `null` dans les réponses (fiche, portail, registre comptable,
+  export Excel) : nouveau `paymentPeriodKey` (rentTracking.js).
+- Libellés : « 05/10 – 04/11/2026 » à l'écran (format numérique : plusieurs titres appliquent
+  `capitalize`), frise « 5 oct. », message WhatsApp « pour la période du … au … », quittance PDF
+  « Loyer — du 05 octobre au 04 novembre 2026 » (`formatPeriodLabel`), contrat de bail « au plus tard
+  N jours après le début de chaque période ».
+
+**Plantages trouvés en testant (tous déclenchés par un seul bail ou paiement non-calendaire)**
+1. Fiche locataire (`GET /api/renters/:id`) : 500 — la route ne passait ni le rythme ni le décalage
+   d'échéance au moteur de loyer (la liste le faisait déjà).
+2. « Loyers du mois » (`GET /api/accounting/rent-month`) : 500 — même cause. Chaque bail est
+   désormais évalué sur sa propre grille ; un bail non-calendaire compte pour la période qui COMMENCE
+   dans le mois affiché (`periodKeyStartingInMonth`), encaissé lu par `covers_period_start`.
+3. Tableau de bord comptable et page Clôture : 500 — `commission.js` (séquestre, recette, revenu du
+   cabinet) supposait `covers_month` toujours rempli. Repli sur le mois civil où commence la période
+   (même règle que le point 2) ; strictement identique pour un bail calendaire
+   (`covers_period_start` = 1er du mois, colonne NOT NULL écrite à un seul endroit).
+
+**Limites connues (non traitées)**
+- Écrans de synthèse (tableau de bord, « Loyers du mois », commission/séquestre, exports) : toujours
+  découpés par mois civil ; un loyer non-calendaire y est rattaché au mois où commence sa période.
+- Archive à la clôture en non-calendaire : elle lit les paiements sur la date de début de la période
+  du CABINET ; un bail dont la grille démarre un autre jour (ex. entré le 20 dans un cabinet « jour 5 »)
+  y apparaîtra non payé. À trancher : aligner les baux sur la grille du cabinet, ou archiver par
+  chevauchement de dates.
+- Prorata d'entrée : calendaire uniquement (comme prévu à l'étape 2a).
+
+**Tests** : nouveau `test/rhythmScreens.test.js` (10 tests : libellés, clé de période, fiche +
+portail, contrat, période ouverte + clôture + archive, archive calendaire inchangée, loyers du mois,
+tableau de bord). Suite backend **372/372** (365 passent, 7 ignorés faute de `pdftotext`). `tsc` et
+`eslint` frontend propres. **Parcours navigateur réel** (Chromium) sur un cabinet « jour fixe » :
+page Clôture, formulaire de création, fiche + frise, liste, comptabilité, clôture d'une période puis
+ouverture automatique de la suivante, historique, archive, portail locataire, texte de la quittance.

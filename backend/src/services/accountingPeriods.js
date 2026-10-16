@@ -298,6 +298,9 @@ async function getPeriodClosabilityForRhythm(tenantId, rhythm, periodStart, peri
       renterName: `${l.first_name} ${l.last_name}`,
       unitCode: l.unit_code,
       dueDay: l.rent_due_day ?? l.rent_due_offset_days,
+      // Date d'échéance réelle dans CETTE période (étape 2b) : seule valeur non ambiguë à afficher
+      // quand le bail compte en jours après le début de la période plutôt qu'en jour du mois.
+      dueDate: dueDateOf(l),
     }));
 
   // Pas de "jour du mois" univoque hors calendaire (une période peut chevaucher deux mois civils) —

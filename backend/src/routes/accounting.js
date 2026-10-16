@@ -51,7 +51,7 @@ const {
   lastDayOfPeriod,
 } = require('../services/accountingPeriods');
 const { isLastPeriodOfFiscalYear } = require('../services/gl/glClosingService');
-const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, summarizeRentMonth } = require('../services/rentTracking');
+const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, summarizeRentMonth, paymentPeriodKey } = require('../services/rentTracking');
 const { archiveMonth, getMonthlyArchive } = require('../services/monthlyArchive');
 const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate, getCabinetRevenue } = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
@@ -1388,7 +1388,7 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
     if (!tenantRows[0]) throw new ApiError(404, 'Entreprise introuvable');
 
     const [rentRows] = await pool.query(
-      `SELECT rp.paid_at, rp.amount, rp.payment_method, rp.covers_month,
+      `SELECT rp.paid_at, rp.amount, rp.payment_method, rp.covers_month, rp.covers_period_start,
               r.first_name AS renter_first_name, r.last_name AS renter_last_name,
               u.code AS unit_code, p.code AS property_code,
               ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
@@ -1480,7 +1480,7 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
         type: 'Loyer encaissé',
         tiers: `${r.renter_first_name} ${r.renter_last_name}`,
         bien: `${r.property_code} · ${r.unit_code}`,
-        categorie: `Loyer ${r.covers_month}`,
+        categorie: `Loyer ${paymentPeriodKey(r)}`,
         debit: null,
         credit: Number(r.amount),
         mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
@@ -1647,15 +1647,18 @@ router.get('/rent-month', canAccounting, async (req, res, next) => {
       scopeClause = 'AND p.agent_id = :scopeAgentId';
       params.scopeAgentId = scopeAgentId;
     }
+    // Encaissé lu par date de début de période (étape 2c) : 'AAAA-MM-01' pour un bail calendaire
+    // (identique à `covers_month = :month`), la période qui commence dans ce mois pour un bail
+    // non-calendaire (voir `summarizeRentMonth`).
     const [leases] = await pool.query(
-      `SELECT l.start_date, l.end_date, l.created_at, l.up_to_date_at_onboarding, l.rent_due_day, l.rent_timing,
-              l.monthly_rent, l.entry_proration, COALESCE(pay.paid, 0) AS paid
+      `SELECT l.start_date, l.end_date, l.created_at, l.up_to_date_at_onboarding, l.rent_due_day, l.rent_due_offset_days,
+              l.rent_timing, l.monthly_rent, l.entry_proration, COALESCE(pay.paid, 0) AS paid
        FROM leases l
        JOIN property_units u ON u.id = l.unit_id
        JOIN properties p ON p.id = u.property_id
        LEFT JOIN (
          SELECT lease_id, SUM(amount) AS paid FROM rent_payments
-         WHERE covers_month = :month AND deleted_at IS NULL GROUP BY lease_id
+         WHERE covers_period_start BETWEEN :firstDay AND :lastDay AND deleted_at IS NULL GROUP BY lease_id
        ) pay ON pay.lease_id = l.id
        WHERE l.tenant_id = :tenantId AND l.start_date <= :lastDay
          AND (l.status = 'active' OR (l.end_date IS NOT NULL AND l.end_date >= :firstDay)) ${scopeClause}`,
@@ -1668,6 +1671,7 @@ router.get('/rent-month', canAccounting, async (req, res, next) => {
         createdAt: l.created_at,
         upToDateAtOnboarding: !!l.up_to_date_at_onboarding,
         rentDueDay: l.rent_due_day,
+        rentDueOffsetDays: l.rent_due_offset_days,
         rentTiming: l.rent_timing,
         monthlyRent: Number(l.monthly_rent),
         entryProration: l.entry_proration,
@@ -1806,7 +1810,7 @@ router.get('/rent-payments', canAccounting, async (req, res, next) => {
         id: p.id,
         renter: { id: p.renter_id, firstName: p.renter_first_name, lastName: p.renter_last_name },
         unitCode: p.unit_code,
-        coversMonth: p.covers_month,
+        coversMonth: paymentPeriodKey(p),
         amount: Number(p.amount),
         paymentMethod: p.payment_method,
         paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
@@ -1865,8 +1869,8 @@ router.get('/periods', requireAnyPermission('comptabilite', 'charges'), async (r
     );
     res.json({
       periods: rows.map((r) => ({
-        // `period` reste 'AAAA-MM' pour les entreprises au rythme calendaire (toutes, pour
-        // l'instant) ; null pour un autre rythme (pas encore d'UI, voir le plan — étape 2).
+        // `period` reste 'AAAA-MM' pour une période clôturée au rythme calendaire ; null pour un
+        // autre rythme — l'écran libelle alors la période par `periodStart`/`periodEnd`.
         period: r.period,
         periodStart: isoDate(r.period_start),
         periodEnd: isoDate(r.period_end),
@@ -1883,19 +1887,28 @@ router.get('/periods', requireAnyPermission('comptabilite', 'charges'), async (r
 // GET /api/accounting/periods/:period/archive — vue portefeuille, lecture seule, du "point du
 // mois" de chaque locataire pour un mois DÉJÀ CLÔTURÉ (demande explicite de l'utilisateur,
 // 16/10/2026). Un mois non clôturé n'a pas d'archive — rien n'est jamais figé avant la clôture.
+//
+// Étape 2c : `:period` accepte aussi la date de DÉBUT d'une période non-calendaire ('AAAA-MM-JJ',
+// son identité réelle — `period` y est NULL), pour que l'historique des clôtures d'une entreprise
+// en rythme « jour fixe »/« libre » mène lui aussi à son archive.
 router.get('/periods/:period/archive', canAccounting, async (req, res, next) => {
   const { period } = req.params;
-  if (!/^\d{4}-\d{2}$/.test(period)) return next(new ApiError(400, 'Mois invalide (AAAA-MM)'));
+  const isPeriodStart = /^\d{4}-\d{2}-\d{2}$/.test(period);
+  if (!isPeriodStart && !/^\d{4}-\d{2}$/.test(period)) {
+    return next(new ApiError(400, 'Période invalide (AAAA-MM ou AAAA-MM-JJ)'));
+  }
   try {
     const [[closed]] = await pool.query(
-      'SELECT id FROM accounting_periods WHERE tenant_id = :tenantId AND period = :period LIMIT 1',
+      `SELECT id, period_start, period_end FROM accounting_periods
+       WHERE tenant_id = :tenantId AND ${isPeriodStart ? 'period_start' : 'period'} = :period LIMIT 1`,
       { tenantId: req.user.tenantId, period },
     );
-    if (!closed) throw new ApiError(404, "Ce mois n'est pas encore clôturé — aucune archive n'existe.");
+    if (!closed) throw new ApiError(404, "Cette période n'est pas encore clôturée — aucune archive n'existe.");
 
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const renters = await getMonthlyArchive(req.user.tenantId, period, scopeAgentId);
-    res.json({ period, renters });
+    const periodStart = isoDate(closed.period_start);
+    const renters = await getMonthlyArchive(req.user.tenantId, periodStart, scopeAgentId);
+    res.json({ period, periodStart, periodEnd: isoDate(closed.period_end), renters });
   } catch (err) {
     next(err);
   }
@@ -1925,10 +1938,9 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
     const rhythm = await getTenantRhythm(req.user.tenantId);
     const todayIso = new Date().toISOString().slice(0, 10);
 
-    // `legacyPeriod` ('AAAA-MM') n'existe que pour les entreprises restées au rythme calendaire —
-    // c'est le cas de TOUTES les entreprises aujourd'hui (aucune interface n'expose encore un autre
-    // choix, voir le plan — étape 1/5). Ce chemin est VOLONTAIREMENT inchangé par rapport à avant
-    // cette étape : mêmes vérifications, même message, même donnée insérée.
+    // `legacyPeriod` ('AAAA-MM') n'existe que pour les entreprises au rythme calendaire. Ce chemin
+    // est VOLONTAIREMENT inchangé par rapport à avant l'étape 1/5 : mêmes vérifications, même
+    // message, même donnée insérée.
     let legacyPeriod = null;
     let periodStart;
     let periodEnd;
@@ -1952,9 +1964,9 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
       periodEnd = lastDayOfPeriod(legacyPeriod);
       closability = await getPeriodClosability(req.user.tenantId, legacyPeriod);
     } else {
-      // Rythmes 'jour_fixe'/'libre' (étape 1/5) : pas encore d'interface, testable par appel API
-      // direct uniquement — voir le plan. `periodStart` est TOUJOURS déduit (jamais fourni par le
-      // client) pour garantir la continuité : impossible de choisir où commence une période.
+      // Rythmes 'jour_fixe'/'libre' (étape 1/5, écran depuis l'étape 2b — voir `GET /open-period`).
+      // `periodStart` est TOUJOURS déduit (jamais fourni par le client) pour garantir la
+      // continuité : impossible de choisir où commence une période.
       periodStart = await getOpenPeriodStart(pool, req.user.tenantId);
       if (!periodStart) {
         return next(new ApiError(400, "Définissez d'abord une date de démarrage de la comptabilité avant de clôturer une première période."));
@@ -2168,9 +2180,42 @@ router.get('/rhythm', requireAnyPermission('comptabilite', 'charges'), async (re
   }
 });
 
-// PATCH /api/accounting/rhythm — changer le rythme de période (DG uniquement). Pas encore exposé
-// par aucune interface (étape 1/5 — voir le plan : le sélecteur n'arrive qu'à l'étape 2, en même
-// temps que le moteur de loyer généralisé, pour ne jamais désynchroniser clôture et loyer dû).
+// GET /api/accounting/open-period — la période actuellement OUVERTE (étape 2b), pour l'écran de
+// clôture d'une entreprise en rythme « jour fixe »/« libre » (le rythme calendaire garde son
+// sélecteur de mois et `GET /dashboard`). Mêmes calculs que `POST /periods` ci-dessus — début
+// toujours déduit, fin proposée (jamais en « libre », saisie par le DG), marge de sécurité par
+// échéance de loyer — pour que l'écran annonce exactement ce que la clôture fera.
+router.get('/open-period', requireAnyPermission('comptabilite', 'charges'), async (req, res, next) => {
+  try {
+    const rhythm = await getTenantRhythm(req.user.tenantId);
+    const periodStart = await getOpenPeriodStart(pool, req.user.tenantId);
+    if (rhythm.mode === 'calendaire' || !periodStart) {
+      return res.json({ mode: rhythm.mode, startDay: rhythm.startDay, periodStart, proposedEnd: null, closability: null });
+    }
+    const proposedEnd = rhythm.mode === 'libre' ? null : computeProposedPeriodEnd(rhythm, periodStart);
+    const closability =
+      rhythm.mode === 'libre'
+        ? null
+        : await getPeriodClosabilityForRhythm(req.user.tenantId, rhythm, periodStart, proposedEnd);
+    res.json({
+      mode: rhythm.mode,
+      startDay: rhythm.startDay,
+      periodStart,
+      proposedEnd,
+      closability: closability && {
+        isClosable: closability.isClosable,
+        closableFrom: closability.closableFrom,
+        pendingLeases: closability.pendingLeases,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/accounting/rhythm — changer le rythme de période (DG uniquement), depuis la page
+// Clôture (étape 2b — exposé en même temps que le moteur de loyer généralisé, pour ne jamais
+// désynchroniser clôture et loyer dû).
 // Changer de rythme n'affecte QUE les prochaines clôtures : la période actuellement ouverte n'a de
 // date de fin qu'au moment où elle est réellement close, avec le rythme alors en vigueur — aucune
 // période déjà clôturée ne bouge jamais.

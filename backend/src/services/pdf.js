@@ -7,6 +7,7 @@ const { EXPENSE_CATEGORIES } = require('../constants/expenses');
 const { UTILITY_TYPES } = require('../constants/charges');
 const { resolveRoleLabels } = require('../constants/roles');
 const { compareCondition } = require('./inspection');
+const { paymentPeriodKey, periodEndOf } = require('./rentTracking');
 const config = require('../config/env');
 
 const EXPENSE_CATEGORY_LABELS = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
@@ -86,6 +87,25 @@ function propertyAddress(property) {
 function formatDateFr(isoDate) {
   const [y, m, d] = isoDate.split('-').map(Number);
   return `${String(d).padStart(2, '0')} ${MONTHS_FR[m - 1]} ${y}`;
+}
+
+/** Bail non-calendaire : « le premier jour de » (0) ou « N jours après le début de ». */
+function rentDueOffsetPhrase(offsetDays) {
+  const n = Number(offsetDays) || 0;
+  if (n === 0) return 'le premier jour de';
+  return `${n} jour${n > 1 ? 's' : ''} après le début de`;
+}
+
+/**
+ * Libellé d'une période de loyer (étape 2c) : « octobre 2026 » pour une clé calendaire 'AAAA-MM',
+ * « du 05 octobre au 04 novembre 2026 » pour une clé non-calendaire 'AAAA-MM-JJ' (début de période,
+ * voir `rentTracking.js`) — l'année n'est répétée que si la période chevauche deux années.
+ */
+function formatPeriodLabel(periodKey) {
+  if (/^\d{4}-\d{2}$/.test(periodKey)) return formatMonthLabel(periodKey);
+  const end = periodEndOf(periodKey);
+  const start = formatDateFr(periodKey);
+  return `du ${periodKey.slice(0, 4) === end.slice(0, 4) ? start.slice(0, -5) : start} au ${formatDateFr(end)}`;
 }
 
 // Format jour/mois/année (JJ/MM/AAAA) — spécifiquement pour la date de
@@ -368,15 +388,10 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
   doc.text('MONTANT', colAmount.x, y + 8, { width: colAmount.width, align: 'right', characterSpacing: 0.3 });
   y += headerHeight + 14;
 
-  // `covers_month` ('AAAA-MM') n'est renseignée que pour un bail calendaire (migration 085, étape
-  // 2/5) — repli sur `covers_period_start` (date complète) si absente, plutôt que de planter sur un
-  // `.split()` d'une valeur `null`. Généraliser l'affichage lui-même (plage de dates au lieu d'un
-  // nom de mois) reste hors scope de cette étape, limitation documentée.
-  const monthLabel = payment.covers_month
-    ? formatMonthLabel(payment.covers_month)
-    : payment.covers_period_start
-      ? isoDateOnly(payment.covers_period_start)
-      : '';
+  // Bail calendaire : nom du mois ; bail non-calendaire : plage de dates réelle de la période
+  // (étape 2c — `covers_month` y est NULL, voir migration 085).
+  const periodKey = paymentPeriodKey(payment);
+  const monthLabel = periodKey ? formatPeriodLabel(periodKey) : '';
   doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(`Loyer — ${monthLabel}`, colDesc.x, y, {
     width: colDesc.width,
   });
@@ -587,7 +602,9 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
     4,
     'Loyer et modalités de paiement',
     `Le loyer mensuel est fixé à ${formatFcfa(data.lease.monthlyRent)}, payable ${data.lease.rentTimingLabel.toLowerCase()}, ` +
-      `au plus tard le ${data.lease.rentDueDay} de chaque mois concerné.` +
+      (data.lease.rentDueDay != null
+        ? `au plus tard le ${data.lease.rentDueDay} de chaque mois concerné.`
+        : `au plus tard ${rentDueOffsetPhrase(data.lease.rentDueOffsetDays)} chaque période concernée.`) +
       (data.lease.entryFeeAmount > 0
         ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)}, dus une seule fois à la signature, ` +
           `restent intégralement acquis à l'entreprise et ne sont pas restituables.`
@@ -1855,5 +1872,6 @@ module.exports = {
   streamAccountingReportPdf,
   formatFcfa,
   formatMonthLabel,
+  formatPeriodLabel,
   formatDateFr,
 };

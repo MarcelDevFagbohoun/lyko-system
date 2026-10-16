@@ -307,19 +307,51 @@ export function listOwnerPayouts(accessToken: string, from: string, to: string) 
   );
 }
 
-export type AccountingPeriod = { period: string; closedAt: string; closedBy: Actor; forced: boolean };
+export type AccountingPeriod = {
+  /** « AAAA-MM » pour une période calendaire, `null` pour un rythme « jour fixe »/« libre ». */
+  period: string | null;
+  periodStart: string;
+  periodEnd: string;
+  closedAt: string;
+  closedBy: Actor;
+  forced: boolean;
+};
 
 export function listClosedPeriods(accessToken: string) {
   return apiFetch<{ periods: AccountingPeriod[] }>("/api/accounting/periods", { accessToken });
 }
 
-export function closePeriod(accessToken: string, period: string, force?: boolean) {
-  return apiFetch<{ period: string; forced: boolean }>("/api/accounting/periods", {
+/**
+ * Clôture : `period` (« AAAA-MM ») en rythme calendaire ; sinon le serveur déduit lui-même le début
+ * de la période ouverte et `periodEnd` fixe sa fin (obligatoire en rythme « libre », proposée par le
+ * serveur en « jour fixe » si omise).
+ */
+export function closePeriod(accessToken: string, input: { period?: string; periodEnd?: string }, force?: boolean) {
+  return apiFetch<{ period: string | null; periodStart: string; periodEnd: string; forced: boolean }>("/api/accounting/periods", {
     method: "POST",
     accessToken,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ period, force: force ?? false }),
+    body: JSON.stringify({ ...input, force: force ?? false }),
   });
+}
+
+/** Période ouverte d'une entreprise en rythme « jour fixe »/« libre » (étape 2b). */
+export type OpenPeriod = {
+  mode: PeriodRhythmMode;
+  startDay: number | null;
+  /** `null` tant qu'aucune période n'a été clôturée ni aucune date de démarrage définie. */
+  periodStart: string | null;
+  /** Fin proposée (« jour fixe ») ; `null` en « libre », où le DG la saisit. */
+  proposedEnd: string | null;
+  closability: {
+    isClosable: boolean;
+    closableFrom: string;
+    pendingLeases: { leaseId: number; renterName: string; unitCode: string; dueDate: string }[];
+  } | null;
+};
+
+export function getOpenPeriod(accessToken: string) {
+  return apiFetch<OpenPeriod>("/api/accounting/open-period", { accessToken });
 }
 
 // Archive mensuelle (demande explicite de l'utilisateur, 16/10/2026) : "le point du mois" de
@@ -367,7 +399,7 @@ export type MonthlyArchiveRenterEntry = {
 };
 
 export function getMonthlyArchive(accessToken: string, period: string) {
-  return apiFetch<{ period: string; renters: MonthlyArchiveRenterEntry[] }>(
+  return apiFetch<{ period: string; periodStart: string; periodEnd: string; renters: MonthlyArchiveRenterEntry[] }>(
     `/api/accounting/periods/${period}/archive`,
     { accessToken },
   );

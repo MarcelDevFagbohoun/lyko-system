@@ -69,7 +69,9 @@ function ChargesContent() {
   const [utilityType, setUtilityType] = React.useState<UtilityType | "all">("all");
   const [query, setQuery] = React.useState("");
   const [charges, setCharges] = React.useState<UtilityCharge[] | null>(null);
-  const [closedPeriods, setClosedPeriods] = React.useState<Set<string>>(new Set());
+  // Plages réelles des périodes clôturées (étape 2b) : en rythme « jour fixe »/« libre », une
+  // période ne correspond pas à un mois civil — la date de la facture est comparée aux bornes.
+  const [closedPeriods, setClosedPeriods] = React.useState<{ periodStart: string; periodEnd: string }[]>([]);
   const [error, setError] = React.useState<string | null>(null);
 
   const load = React.useCallback(() => {
@@ -93,7 +95,7 @@ function ChargesContent() {
   React.useEffect(() => {
     if (!accessToken) return;
     listClosedPeriods(accessToken)
-      .then((res) => setClosedPeriods(new Set(res.periods.map((p) => p.period))))
+      .then((res) => setClosedPeriods(res.periods.map((p) => ({ periodStart: p.periodStart, periodEnd: p.periodEnd }))))
       .catch(() => {
         // Silencieux : un utilisateur avec seulement `charges` (pas
         // `comptabilite`) garde quand même l'accès en lecture via l'API
@@ -253,7 +255,7 @@ function ChargesContent() {
                           key={c.id}
                           charge={c}
                           accessToken={accessToken}
-                          locked={closedPeriods.has(c.billedAt.slice(0, 7))}
+                          locked={closedPeriods.some((p) => c.billedAt.slice(0, 10) >= p.periodStart && c.billedAt.slice(0, 10) <= p.periodEnd)}
                           onChanged={load}
                         />
                       ))}

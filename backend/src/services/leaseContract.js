@@ -75,6 +75,7 @@ async function buildContractData(tenantId, leaseId, { particularConditions = nul
       startDate: isoDate(row.start_date),
       monthlyRent: Number(row.monthly_rent),
       rentDueDay: row.rent_due_day,
+      rentDueOffsetDays: row.rent_due_offset_days,
       rentTiming: row.rent_timing,
       rentTimingLabel: RENT_TIMING_LABELS[row.rent_timing] ?? row.rent_timing,
       depositAmount: Number(row.deposit_amount),

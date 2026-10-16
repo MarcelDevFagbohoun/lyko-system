@@ -13,7 +13,7 @@ const { ApiError } = require('../middleware/error');
 const { requirePortalToken } = require('../middleware/portalAuth');
 const { portalComplaintSchema } = require('../validators/portal');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
-const { computeArrears, buildRentStrip } = require('../services/rentTracking');
+const { computeArrears, buildRentStrip, paymentPeriodKey } = require('../services/rentTracking');
 const { streamReceiptPdf, streamLeaseContractPdf, streamMoveInPdf, streamMoveOutPdf } = require('../services/pdf');
 const { loadContractRow, toPublicContract } = require('../services/leaseContract');
 const {
@@ -138,10 +138,9 @@ router.get('/:token', async (req, res, next) => {
     let unpaidCharges = [];
     if (activeLease) {
       // Refonte de la clôture (étape 2/5) : rythme DU BAIL (pas du tenant), dérivé de ses propres
-      // colonnes — voir le même raisonnement dans `routes/leases.js` (`recordRentPayment`). Les
-      // libellés/plages affichés restent calendaire-only pour l'instant (pas encore de bail
-      // non-calendaire créable via l'interface — limitation documentée, étape 2c du plan) ; ce
-      // branchement évite seulement un calcul FAUX si un tel bail existe déjà (créé par API directe).
+      // colonnes — voir le même raisonnement dans `routes/leases.js` (`recordRentPayment`). Les clés
+      // de période renvoyées (`coversMonth`, frise) sont 'AAAA-MM-JJ' pour un bail non-calendaire ;
+      // le portail les libelle en plage de dates (étape 2c, `monthLabelFr` côté frontend).
       const isCalendaireLease = activeLease.rent_due_day != null;
       const portalRhythm = { mode: isCalendaireLease ? 'calendaire' : 'jour_fixe' };
       const [payRows] = await pool.query(
@@ -154,7 +153,7 @@ router.get('/:token', async (req, res, next) => {
       );
       payments = payRows.map((p) => ({
         id: p.id,
-        coversMonth: p.covers_month,
+        coversMonth: paymentPeriodKey(p),
         amount: Number(p.amount),
         paymentMethod: p.payment_method,
         paidAt: isoDate(p.paid_at),
@@ -163,11 +162,7 @@ router.get('/:token', async (req, res, next) => {
       const startDate =
         activeLease.start_date instanceof Date ? activeLease.start_date.toISOString().slice(0, 10) : activeLease.start_date;
       const mappedPayRows = payRows.map((p) => ({
-        coversMonth: isCalendaireLease
-          ? p.covers_month
-          : p.covers_period_start instanceof Date
-            ? p.covers_period_start.toISOString().slice(0, 10)
-            : String(p.covers_period_start).slice(0, 10),
+        coversMonth: paymentPeriodKey(p),
         amount: Number(p.amount),
       }));
       arrears = computeArrears({

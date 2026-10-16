@@ -13,7 +13,7 @@ const {
   createLeaseSchema,
 } = require('../validators/renters');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
-const { computeArrears, buildRentStrip, computeEntryProrata } = require('../services/rentTracking');
+const { computeArrears, buildRentStrip, computeEntryProrata, paymentPeriodKey } = require('../services/rentTracking');
 const { toPublicInspectionReport, toPublicMoveOutReport } = require('../services/inspection');
 const { toActor } = require('../utils/actor');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
@@ -586,10 +586,9 @@ router.get('/:id', canRead, async (req, res, next) => {
         const receipt = receiptsByPayment.get(p.id);
         paymentsByLease.get(p.lease_id).push({
           id: p.id,
-          // `coversMonth` ('AAAA-MM') reste la valeur normale pour un bail calendaire ; `coversPeriodStart`
-          // (toujours renseignée, voir migration 085) couvre aussi les baux non-calendaire — pas encore
-          // affichée différemment côté frontend (aucune interface ne crée ce type de bail encore, étape 2/5).
-          coversMonth: p.covers_month,
+          // Clé de période (étape 2c) : 'AAAA-MM' pour un bail calendaire, date de début 'AAAA-MM-JJ'
+          // sinon — jamais `null`, le frontend sait libeller les deux (`monthLabelFr`).
+          coversMonth: paymentPeriodKey(p),
           coversPeriodStart: isoDate(p.covers_period_start),
           amount: Number(p.amount),
           paymentMethod: p.payment_method,
@@ -628,6 +627,10 @@ router.get('/:id', canRead, async (req, res, next) => {
       const lease = toPublicLease(row);
       const payments = paymentsByLease.get(row.id) || [];
       const isActive = row.status === 'active';
+      // Rythme DU BAIL, dérivé de ses colonnes (même règle que la liste ci-dessus) — sans lui, un bail
+      // non-calendaire faisait planter toute la fiche (échéance calculée sur `rentDueDay` null).
+      // `payments[].coversMonth` porte déjà la bonne clé de période (`paymentPeriodKey`).
+      const rhythm = { mode: lease.rentDueDay != null ? 'calendaire' : 'jour_fixe' };
       const openingDebtPayments = openingDebtPaymentsByLease.get(row.id) || [];
       const openingDebtPaid = openingDebtPayments.reduce((sum, p) => sum + p.amount, 0);
       return {
@@ -640,10 +643,12 @@ router.get('/:id', canRead, async (req, res, next) => {
               createdAt: lease.createdAt,
               upToDateAtOnboarding: lease.upToDateAtOnboarding,
               rentDueDay: lease.rentDueDay,
+              rentDueOffsetDays: lease.rentDueOffsetDays,
               rentTiming: lease.rentTiming,
               monthlyRent: lease.monthlyRent,
               entryProration: lease.entryProration,
               payments,
+              rhythm,
             })
           : null,
         // Frise des 12 mois — seulement pour un bail actif (un bail terminé n'a plus d'échéance à suivre).
@@ -654,10 +659,12 @@ router.get('/:id', canRead, async (req, res, next) => {
               createdAt: lease.createdAt,
               upToDateAtOnboarding: lease.upToDateAtOnboarding,
               rentDueDay: lease.rentDueDay,
+              rentDueOffsetDays: lease.rentDueOffsetDays,
               rentTiming: lease.rentTiming,
               monthlyRent: lease.monthlyRent,
               entryProration: lease.entryProration,
               payments,
+              rhythm,
             })
           : null,
         openingDebtPaid,
@@ -718,8 +725,8 @@ router.post('/', canManage, async (req, res, next) => {
     const rentTiming = await resolveRentTiming(conn, req.user.tenantId, data.rentTiming);
     // Refonte de la clôture (étape 2/5) : rythme du TENANT (pas du bail, qui n'existe pas encore) —
     // décide quelle colonne d'échéance ce nouveau bail reçoit. `rent_due_day` (jour du mois civil)
-    // pour une entreprise calendaire (toutes, pour l'instant — aucune interface n'expose encore un
-    // autre choix) ; `rent_due_offset_days` sinon, voir `validators/renters.js`.
+    // pour une entreprise calendaire ; `rent_due_offset_days` sinon (rythme choisi par le DG sur la
+    // page Clôture depuis l'étape 2b), voir `validators/renters.js`.
     const tenantRhythm = await getTenantRhythm(req.user.tenantId);
     const isCalendaireLease = tenantRhythm.mode === 'calendaire';
     // Prorata d'entrée (étape 42) : jours + montant TOUJOURS calculés par le serveur, jamais transmis

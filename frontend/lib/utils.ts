@@ -99,16 +99,28 @@ export function buildReceiptMessage(params: {
 }): string {
   return [
     `Bonjour ${params.renterFirstName},`,
-    `Nous confirmons la réception de votre paiement de ${formatFcfa(params.amount)} pour ${monthLabelFr(params.coversMonth)}.`,
+    `Nous confirmons la réception de votre paiement de ${formatFcfa(params.amount)} pour ${
+      FULL_DATE_RE.test(params.coversMonth) ? `la période du ${monthLabelFr(params.coversMonth).replace(" – ", " au ")}` : monthLabelFr(params.coversMonth)
+    }.`,
     `Votre quittance : ${params.url}`,
     `Merci !`,
     params.companyName ? `Cordialement, ${params.companyName}` : "",
   ].join(" ");
 }
 
-/** Mois suivant, format « AAAA-MM ». */
-export function addMonth(yearMonth: string): string {
-  const [y, m] = yearMonth.split("-").map(Number);
+const FULL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Période suivante. Clé calendaire « AAAA-MM » → mois suivant (inchangé). Clé non-calendaire
+ * « AAAA-MM-JJ » (début de période, étape 2c) → un mois plus tard, ancré sur le même jour — miroir
+ * de `addPeriod` côté serveur (`backend/src/services/rentTracking.js`).
+ */
+export function addMonth(periodKey: string): string {
+  if (FULL_DATE_RE.test(periodKey)) {
+    const [y, m, d] = periodKey.split("-").map(Number);
+    return new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
+  }
+  const [y, m] = periodKey.split("-").map(Number);
   const d = new Date(Date.UTC(y, m, 1)); // `m` (et non m-1) avance déjà d'un mois
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
@@ -118,11 +130,27 @@ const MONTHS_FR = [
   "juillet", "août", "septembre", "octobre", "novembre", "décembre",
 ];
 
-/** « 2026-09 » → « septembre 2026 ». */
+/**
+ * « 2026-09 » → « septembre 2026 ». Une clé de période non-calendaire « 2026-10-05 » (début de
+ * période, étape 2c) → « 05/10 – 04/11/2026 » : la plage réelle, l'année répétée seulement si la
+ * période chevauche deux années. Format numérique volontaire : plusieurs écrans appliquent
+ * `capitalize` au libellé, qui mettrait une majuscule à chaque nom de mois d'une plage écrite.
+ */
 export function monthLabelFr(yearMonth: string): string {
+  if (FULL_DATE_RE.test(yearMonth)) return periodRangeLabelFr(yearMonth);
   const [y, m] = yearMonth.split("-").map(Number);
   if (!y || !m || m < 1 || m > 12) return yearMonth;
   return `${MONTHS_FR[m - 1]} ${y}`;
+}
+
+function periodRangeLabelFr(periodStart: string): string {
+  const [y, m, d] = periodStart.split("-").map(Number);
+  if (!y || !m || m < 1 || m > 12) return periodStart;
+  const end = new Date(Date.UTC(y, m, d - 1)); // veille du début de la période suivante
+  const ey = end.getUTCFullYear();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const startLabel = `${pad(d)}/${pad(m)}${ey !== y ? `/${y}` : ""}`;
+  return `${startLabel} – ${pad(end.getUTCDate())}/${pad(end.getUTCMonth() + 1)}/${ey}`;
 }
 
 /**

@@ -29,6 +29,7 @@ const {
 } = require('../../constants/glOperationTypes');
 const { logGlAudit } = require('./glAuditService');
 const { ADDITIONAL_DEPOSIT_LABELS } = require('../../constants/leaseDeposits');
+const { paymentPeriodKey } = require('../rentTracking');
 
 function isoDate(d) {
   if (!d) return null;
@@ -142,7 +143,7 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
   const operations = [];
 
   const [rentPayments] = await pool.query(
-    `SELECT rp.id, rp.lease_id, rp.amount, rp.payment_method, rp.paid_at, rp.covers_month, rp.recorded_by,
+    `SELECT rp.id, rp.lease_id, rp.amount, rp.payment_method, rp.paid_at, rp.covers_month, rp.covers_period_start, rp.recorded_by,
             r.first_name, r.last_name
      FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
@@ -158,7 +159,7 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
       entryDate: isoDate(p.paid_at),
       amount: Number(p.amount),
       paymentMethod: p.payment_method,
-      narrationVars: { mois: p.covers_month, locataire: `${p.first_name} ${p.last_name}` },
+      narrationVars: { mois: paymentPeriodKey(p), locataire: `${p.first_name} ${p.last_name}` },
       createdBy: p.recorded_by ?? createdBy,
       context: { leaseId: p.lease_id },
     });
