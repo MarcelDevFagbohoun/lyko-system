@@ -2,7 +2,7 @@
 
 Statut : décisions du 21/10/2026 intégrées, rien n'est encore codé. Les prix en gras sont ceux fixés par Marcel ; le reste est une proposition.
 
-Décisions prises : pas d'essai gratuit (on paie, avec remboursement possible sous 15 jours) ; Pro est l'offre principale ; on peut commencer par Démarrage à 15 000 FCFA (1 mois) ou 25 000 FCFA (2 mois) ; après expiration, les locataires peuvent toujours payer leur loyer mais l'entreprise n'a plus accès à son espace.
+Décisions prises : pas d'essai gratuit (on paie, avec remboursement possible sous 15 jours) ; Pro est l'offre principale ; on peut commencer par Démarrage à 15 000 FCFA (1 mois) ou 25 000 FCFA (2 mois) ; après expiration, les locataires peuvent toujours payer leur loyer mais l'entreprise n'a plus accès à son espace, **coupure automatique sans délai de grâce** ; remboursement **moins les frais FedaPay** ; **l'assistant IA est mis de côté au lancement** (désactivé dans le code, réintégré dans une version ultérieure).
 
 ## 1. Offres
 
@@ -25,7 +25,7 @@ Fonctions (clés techniques entre parenthèses) :
 | Paiements sortants FedaPay : salaires, reversements, paiements libres (`payouts`) | non | oui | oui |
 | Relevé propriétaire, portail propriétaire (`owner_portal`) | non | oui | oui |
 | Biens à vendre (`sale_properties`) | non | oui | oui |
-| Assistant IA (`ai_assistant`) | non | 100 questions/mois (proposé) | 1 000 questions/mois (proposé) |
+| Assistant IA (`ai_assistant`) | **reporté** : désactivé au lancement pour toutes les offres, prévu dans une version ultérieure | | |
 | Comptabilité avancée SYSCOHADA (`advanced_accounting`) | non | non | oui |
 | Journal d'audit complet, support prioritaire (`audit_full`) | non | non | oui |
 
@@ -50,7 +50,7 @@ Manque :
 Les offres vivent dans le code (`backend/src/constants/plans.js`) : prix, durées, limites, fonctions. Pro est l'offre principale mise en avant ; Démarrage sert de porte d'entrée. Pas de table de configuration à synchroniser, et chaque changement de prix est versionné dans git.
 
 Tables :
-- `tenant_subscriptions` : `tenant_id` (unique), `plan_key` (`demarrage|pro|entreprise|interne`), `status` (`active|grace|expired|cancelled|refunded`) ; `expired` et `refunded` = accès entreprise coupé, `period_months`, `started_at`, `current_period_end`, `grace_until`, `first_purchase_at`, `refund_eligible_until` (= premier paiement + 15 jours).
+- `tenant_subscriptions` : `tenant_id` (unique), `plan_key` (`demarrage|pro|entreprise|interne`), `status` (`active|expired|cancelled|refunded`) ; `expired` et `refunded` = accès entreprise coupé, `period_months`, `started_at`, `current_period_end`, `first_purchase_at`, `refund_eligible_until` (= premier paiement + 15 jours).
 - `subscription_payments` : `id`, `tenant_id`, `plan_key`, `period_months`, `amount`, `reference` (128 bits, non devinable), `fedapay_transaction_id`, `status` (`pending|approved|failed|refunded`), `paid_at`, `invoice_number`. Contrainte d'unicité sur la transaction FedaPay (idempotence).
 - `subscription_refunds` : `payment_id`, `requested_by`, `reason`, `status` (`requested|approved|awaiting_payee_details|rejected|paid`), `decided_by`, `decided_at`, `rejection_reason`, `payee_phone`, `payee_operator` (chiffrés), `payee_token_hash`, `payee_token_expires_at`, `payout_reference`.
 - `platform_admins` : comptes séparés des utilisateurs d'entreprise (voir section 7).
@@ -69,21 +69,29 @@ Points d'application :
 - Création d'unité, de propriétaire, d'employé : limite correspondante.
 - Routes de paiements sortants, fiches de paie, relevés et portail propriétaire, biens à vendre : `requireFeature`.
 - Activation de la comptabilité avancée (`routes/gl/glActivation.js`) : `advanced_accounting`.
-- Assistant : `blockReason` ajoute « offre » ; `MONTHLY_QUOTA` devient le quota de l'offre (100 / 1 000).
+- Assistant IA : **désactivé au lancement** (voir section 4bis). Quand il reviendra, `blockReason` ajoutera « offre » et `MONTHLY_QUOTA` deviendra le quota de l'offre.
 - Menu et boutons masqués côté interface selon l'offre, **mais jamais comme seule protection**.
 
 Dépassement : l'ajout est refusé avec un message clair et un lien « passer à l'offre au-dessus ». Les données existantes ne sont jamais supprimées. Si une entreprise redescend d'offre au-dessus de ses limites, ses données restent, seul l'ajout est bloqué.
 
+## 4bis. Assistant IA mis de côté au lancement
+
+Décision du 21/10/2026 : l'assistant n'est pas vendu au lancement et sera réintégré dans une version ultérieure, avec ses quotas par offre.
+- Désactivation **réversible** par un indicateur unique côté serveur (`ASSISTANT_FEATURE_ENABLED`, faux par défaut) : routes non montées, aucun appel à l'API d'IA, aucune dépense.
+- Interface : bouton, panneau, réglage de la direction et permission « Assistant IA » masqués quand l'indicateur est faux.
+- Le code, les tables et les tests de l'assistant sont **conservés** (non supprimés) pour le remettre en service sans réécriture.
+- Effet sur les prix : la seule dépense variable importante par client disparaît ; les marges de Démarrage et de Pro n'en dépendent plus.
+
 ## 5. Expiration
 
 - Rappels par email et bandeau dans l'application : J-14, J-7, J-1.
-- À l'échéance : l'**accès de l'entreprise à son espace est coupé** (DG et employés : connexion refusée avec un message « abonnement expiré » et un lien pour renouveler, sans accès aux données).
+- À l'échéance : **coupure automatique, sans délai de grâce**. L'**accès de l'entreprise à son espace est coupé** (DG et employés : connexion refusée avec un message « abonnement expiré » et un lien pour renouveler, sans accès aux données).
 - **Les locataires, eux, continuent de payer** : le portail locataire, les liens de paiement et le paiement FedaPay des loyers et charges restent actifs. L'argent va directement sur le compte FedaPay de l'entreprise (ses propres clés), donc il n'est jamais bloqué par Lyko.
 - Les paiements reçus pendant la coupure sont **enregistrés normalement** (webhook et relecture serveur, quittance envoyée au locataire) pour que la comptabilité soit complète au retour de l'entreprise.
 - Les données ne sont jamais supprimées. Au renouvellement, l'accès est rétabli à l'identique.
 - Seuls restent actifs côté entreprise : la page de renouvellement et le paiement de l'abonnement.
 - Technique : un contrôle d'accès à la connexion, au rafraîchissement du jeton et sur chaque route des espaces entreprise ; les routes publiques du portail et des webhooks ne sont pas concernées.
-- Points à confirmer : délai de grâce après l'échéance (7 jours proposés, ou 0), et possibilité de demander un export des données à Lyko pendant la coupure.
+- Point à confirmer : possibilité de demander un export des données à Lyko pendant la coupure.
 
 ## 6. Facturation de l'abonnement par FedaPay
 
@@ -118,7 +126,7 @@ Parcours :
 
 Sécurité du lien et des coordonnées : jeton aléatoire stocké haché, usage unique, expiration, limitation de débit, coordonnées chiffrées en base, jamais renvoyées en clair après saisie ; le versement ne part que vers le numéro saisi via ce lien.
 
-Montant : à trancher entre intégral et déduction des frais FedaPay.
+Montant : **le prix payé moins les frais FedaPay** de la transaction d'origine (décision du 21/10/2026). Le calcul est fait côté serveur à partir des frais réels relus chez FedaPay ; il est affiché à l'entreprise avant la demande.
 
 ## 9. Interface
 
@@ -144,15 +152,15 @@ Montant : à trancher entre intégral et déduction des frais FedaPay.
 - Limites : dépassement refusé, rafale concurrente qui ne dépasse pas la limite, descente d'offre sans perte de données.
 - Fonctions : chaque route protégée refuse une offre inférieure (403 clair), accepte la bonne.
 - Paiement d'abonnement : succès, montant altéré, référence d'une autre entreprise, webhook rejoué, webhook à signature invalide, paiement non approuvé.
-- Expiration : rappels, grâce, accès entreprise refusé (connexion, jeton, routes) tout en laissant fonctionner le portail locataire, les liens de paiement et les webhooks ; paiements reçus pendant la coupure bien enregistrés ; accès rétabli au renouvellement.
-- Remboursement : hors des 15 jours refusé, deuxième demande refusée, refus avec motif, lien de saisie des coordonnées (usage unique, expiré, rejoué, mauvais jeton), versement uniquement vers le numéro saisi, accès coupé.
+- Expiration : rappels, coupure sans délai de grâce, accès entreprise refusé (connexion, jeton, routes) tout en laissant fonctionner le portail locataire, les liens de paiement et les webhooks ; paiements reçus pendant la coupure bien enregistrés ; accès rétabli au renouvellement.
+- Remboursement : montant = prix − frais FedaPay (arrondi et frais relus côté serveur) ; hors des 15 jours refusé, deuxième demande refusée, refus avec motif, lien de saisie des coordonnées (usage unique, expiré, rejoué, mauvais jeton), versement uniquement vers le numéro saisi, accès coupé.
 - Back-office : un utilisateur d'entreprise ne peut jamais appeler les routes admin ; actions tracées.
 - Rattrapage : les entreprises existantes passent bien en `interne`.
-- Assistant : quota selon l'offre.
+- Assistant : indicateur faux = aucune route, aucun bouton, aucun appel d'IA ; code et tests conservés.
 
 ## 12. Étapes de réalisation
 
-1. **Fondations** : `plans.js`, tables, migration de rattrapage, service d'entitlements, application des limites et des fonctions, quota IA par offre. Tests associés.
+1. **Fondations** : `plans.js`, tables, migration de rattrapage, service d'entitlements, application des limites et des fonctions, désactivation réversible de l'assistant IA. Tests associés.
 2. **Facturation** : paiement FedaPay des abonnements, webhook, factures PDF, emails, rappels et expiration (accès coupé, locataires toujours capables de payer).
 3. **Back-office et remboursement** : comptes admin, espace `/admin`, demandes de remboursement (validation sur motif, email de collecte des coordonnées, versement).
 4. **Interface publique** : page `/tarifs`, choix de l'offre à l'inscription, écran Paramètres → Abonnement, bandeaux.
@@ -164,14 +172,15 @@ Chaque étape est livrable et testée seule, comme pour les paiements.
 
 Prises le 21/10/2026 :
 - Pas d'essai gratuit ; paiement puis remboursement possible sous **15 jours**.
-- Remboursement validé par l'administrateur de Lyko System si la raison est acceptable, puis email pour récupérer les coordonnées de paiement.
+- Remboursement validé par l'administrateur de Lyko System si la raison est acceptable, puis email pour récupérer les coordonnées de paiement. Montant = prix moins les frais FedaPay.
+- Coupure automatique à l'échéance, sans délai de grâce.
+- Assistant IA reporté à une version ultérieure.
 - Après expiration : les locataires peuvent payer, l'entreprise n'a plus accès à son espace.
 - Pro est l'offre principale ; on peut commencer par Démarrage à 15 000 FCFA (1 mois) ou 25 000 FCFA (2 mois).
 
 Restent à trancher :
-1. Prix et limites de Pro et d'Entreprise (propositions ci-dessus). L'écart Démarrage / Pro est de 3 750 FCFA par mois : la limite d'IA de Pro protège la marge.
-2. Montant remboursé : intégral ou frais FedaPay déduits.
-3. Délai de grâce après l'échéance (7 jours proposés) et export des données pendant la coupure.
-4. Entreprises existantes : tout en `interne`, ou certaines à basculer sur une vraie offre.
-5. Facturation : TVA et mentions légales, à valider avec un comptable.
-6. Qui administre la plateforme (comptes `platform_admins`).
+1. Prix de lancement et limites de Pro et d'Entreprise (voir la discussion du 21/10 sur un tarif de lancement).
+2. Export des données à la demande pendant la coupure.
+3. Entreprises existantes : tout en `interne`, ou certaines à basculer sur une vraie offre.
+4. Facturation : TVA et mentions légales, à valider avec un comptable.
+5. Qui administre la plateforme (comptes `platform_admins`).
