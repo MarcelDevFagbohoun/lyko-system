@@ -1,17 +1,19 @@
 # Lyko System en SaaS — plan technique
 
-Statut : proposition à valider. Rien n'est encore codé. Les prix en gras sont ceux fixés par Marcel ; le reste est une proposition.
+Statut : décisions du 21/10/2026 intégrées, rien n'est encore codé. Les prix en gras sont ceux fixés par Marcel ; le reste est une proposition.
+
+Décisions prises : pas d'essai gratuit (on paie, avec remboursement possible sous 15 jours) ; Pro est l'offre principale ; on peut commencer par Démarrage à 15 000 FCFA (1 mois) ou 25 000 FCFA (2 mois) ; après expiration, les locataires peuvent toujours payer leur loyer mais l'entreprise n'a plus accès à son espace.
 
 ## 1. Offres
 
 | | **Démarrage** | **Pro** | **Entreprise** |
 |---|---|---|---|
-| Prix | **25 000 FCFA / 2 mois** (1 mois possible au début : 15 000, à confirmer) | **65 000 FCFA / 4 mois** | 180 000 FCFA / 4 mois (proposé) |
+| Prix | **25 000 FCFA / 2 mois** ou **15 000 FCFA / 1 mois** (au démarrage) | **65 000 FCFA / 4 mois** | 180 000 FCFA / 4 mois (proposé) |
 | Annuel | 120 000 (proposé) | 180 000 (proposé) | 520 000 (proposé) |
 | Unités | **50** | 200 (proposé) | illimité |
 | Propriétaires | **10** | 60 (proposé) | illimité |
 | Utilisateurs (DG + employés) | 2 | 8 | 20 |
-| Remboursement | **30 jours, 1re souscription** | idem | idem |
+| Remboursement | **15 jours, 1re souscription** | idem | idem |
 
 Fonctions (clés techniques entre parenthèses) :
 
@@ -45,12 +47,12 @@ Manque :
 
 ## 3. Modèle de données (migration 105 et suivantes)
 
-Les offres vivent dans le code (`backend/src/constants/plans.js`) : prix, durées, limites, fonctions. Pas de table de configuration à synchroniser, et chaque changement de prix est versionné dans git.
+Les offres vivent dans le code (`backend/src/constants/plans.js`) : prix, durées, limites, fonctions. Pro est l'offre principale mise en avant ; Démarrage sert de porte d'entrée. Pas de table de configuration à synchroniser, et chaque changement de prix est versionné dans git.
 
 Tables :
-- `tenant_subscriptions` : `tenant_id` (unique), `plan_key` (`demarrage|pro|entreprise|interne`), `status` (`active|grace|expired|cancelled|refunded`), `period_months`, `started_at`, `current_period_end`, `grace_until`, `first_purchase_at`, `refund_eligible_until`.
+- `tenant_subscriptions` : `tenant_id` (unique), `plan_key` (`demarrage|pro|entreprise|interne`), `status` (`active|grace|expired|cancelled|refunded`) ; `expired` et `refunded` = accès entreprise coupé, `period_months`, `started_at`, `current_period_end`, `grace_until`, `first_purchase_at`, `refund_eligible_until` (= premier paiement + 15 jours).
 - `subscription_payments` : `id`, `tenant_id`, `plan_key`, `period_months`, `amount`, `reference` (128 bits, non devinable), `fedapay_transaction_id`, `status` (`pending|approved|failed|refunded`), `paid_at`, `invoice_number`. Contrainte d'unicité sur la transaction FedaPay (idempotence).
-- `subscription_refunds` : `payment_id`, `requested_by`, `reason`, `status` (`requested|approved|rejected|paid`), `decided_by`, `decided_at`, `payout_reference`.
+- `subscription_refunds` : `payment_id`, `requested_by`, `reason`, `status` (`requested|approved|awaiting_payee_details|rejected|paid`), `decided_by`, `decided_at`, `rejection_reason`, `payee_phone`, `payee_operator` (chiffrés), `payee_token_hash`, `payee_token_expires_at`, `payout_reference`.
 - `platform_admins` : comptes séparés des utilisateurs d'entreprise (voir section 7).
 - `subscription_events` : trace de tout changement (qui, quand, avant/après), réutilisant le journal chaîné existant.
 
@@ -75,10 +77,13 @@ Dépassement : l'ajout est refusé avec un message clair et un lien « passer à
 ## 5. Expiration
 
 - Rappels par email et bandeau dans l'application : J-14, J-7, J-1.
-- À l'échéance : période de grâce de 7 jours, tout fonctionne.
-- Après la grâce : **lecture seule**. Consultation, export des données et téléchargement des documents restent possibles ; création, paiements et envois sont bloqués.
-- Jamais de suppression de données à l'expiration.
-- Décision à confirmer : en lecture seule, les locataires peuvent-ils encore payer leur loyer par FedaPay ? Recommandation : oui pendant 30 jours, pour ne pas pénaliser les locataires.
+- À l'échéance : l'**accès de l'entreprise à son espace est coupé** (DG et employés : connexion refusée avec un message « abonnement expiré » et un lien pour renouveler, sans accès aux données).
+- **Les locataires, eux, continuent de payer** : le portail locataire, les liens de paiement et le paiement FedaPay des loyers et charges restent actifs. L'argent va directement sur le compte FedaPay de l'entreprise (ses propres clés), donc il n'est jamais bloqué par Lyko.
+- Les paiements reçus pendant la coupure sont **enregistrés normalement** (webhook et relecture serveur, quittance envoyée au locataire) pour que la comptabilité soit complète au retour de l'entreprise.
+- Les données ne sont jamais supprimées. Au renouvellement, l'accès est rétabli à l'identique.
+- Seuls restent actifs côté entreprise : la page de renouvellement et le paiement de l'abonnement.
+- Technique : un contrôle d'accès à la connexion, au rafraîchissement du jeton et sur chaque route des espaces entreprise ; les routes publiques du portail et des webhooks ne sont pas concernées.
+- Points à confirmer : délai de grâce après l'échéance (7 jours proposés, ou 0), et possibilité de demander un export des données à Lyko pendant la coupure.
 
 ## 6. Facturation de l'abonnement par FedaPay
 
@@ -101,19 +106,26 @@ Espace `/admin` distinct, hors des espaces entreprise :
 
 ## 8. Remboursement
 
-- Fenêtre de 30 jours après le premier paiement, une seule fois par entreprise, première souscription uniquement.
-- Bouton « Demander un remboursement » dans Paramètres → Abonnement, motif obligatoire.
-- Validation manuelle par l'administrateur (recommandé au début).
-- Montant : à trancher entre intégral et déduction des frais FedaPay.
-- Versement par l'envoi d'argent FedaPay déjà intégré (mêmes contrôles, mêmes traces). À vérifier : FedaPay propose-t-il un remboursement direct d'une transaction ? À défaut, envoi classique.
-- À l'approbation : l'accès passe en `refunded` (lecture seule), un export complet des données est mis à disposition 30 jours, la décision est tracée.
+Règle : 15 jours après le premier paiement, une seule fois par entreprise, première souscription uniquement.
+
+Parcours :
+1. L'entreprise clique sur « Demander un remboursement » dans Paramètres → Abonnement, avec un **motif obligatoire** (visible seulement pendant les 15 jours).
+2. La demande arrive dans la file de l'administrateur Lyko System.
+3. L'administrateur **valide ou refuse selon que la raison est acceptable**. Un refus exige une explication, envoyée par email à l'entreprise.
+4. Si la demande est acceptée, **un email est envoyé au DG avec un lien sécurisé** pour saisir ses coordonnées de paiement (numéro Mobile Money et opérateur). Le lien est à usage unique, expire (par exemple 7 jours) et ne donne accès qu'à ce formulaire.
+5. Le DG saisit ses coordonnées ; l'administrateur les vérifie et déclenche le versement par l'envoi d'argent FedaPay déjà intégré (mêmes contrôles, mêmes traces). À vérifier : FedaPay propose-t-il un remboursement direct d'une transaction ? À défaut, envoi classique.
+6. À la décision d'accepter : l'accès de l'entreprise est coupé (statut `refunded`) et, si la demande est ensuite payée, tout est tracé (qui, quand, montant, référence du versement).
+
+Sécurité du lien et des coordonnées : jeton aléatoire stocké haché, usage unique, expiration, limitation de débit, coordonnées chiffrées en base, jamais renvoyées en clair après saisie ; le versement ne part que vers le numéro saisi via ce lien.
+
+Montant : à trancher entre intégral et déduction des frais FedaPay.
 
 ## 9. Interface
 
-- Page publique `/tarifs` : trois cartes, tableau comparatif, durées, prix en FCFA, FAQ remboursement.
-- Inscription : choix de l'offre, paiement de la première période par FedaPay avant l'activation (ou période d'essai si décidée, voir décisions).
+- Page publique `/tarifs` : trois cartes (Pro mise en avant), tableau comparatif, durées, prix en FCFA, FAQ remboursement (15 jours).
+- Inscription : choix de l'offre (Pro mise en avant ; Démarrage à 15 000 FCFA pour 1 mois ou 25 000 FCFA pour 2 mois comme porte d'entrée), paiement de la première période par FedaPay avant l'activation. Pas d'essai gratuit : la garantie de remboursement sous 15 jours la remplace.
 - Paramètres → Abonnement : offre actuelle, date de fin, barres de consommation (unités, propriétaires, utilisateurs, questions IA), renouveler, changer d'offre, factures, demande de remboursement.
-- Bandeaux d'alerte avant expiration et en lecture seule.
+- Bandeaux d'alerte avant expiration ; écran dédié « abonnement expiré » après la coupure.
 - Invitations contextuelles : « cette fonction est dans l'offre Pro ».
 
 ## 10. Sécurité et traçabilité
@@ -132,8 +144,8 @@ Espace `/admin` distinct, hors des espaces entreprise :
 - Limites : dépassement refusé, rafale concurrente qui ne dépasse pas la limite, descente d'offre sans perte de données.
 - Fonctions : chaque route protégée refuse une offre inférieure (403 clair), accepte la bonne.
 - Paiement d'abonnement : succès, montant altéré, référence d'une autre entreprise, webhook rejoué, webhook à signature invalide, paiement non approuvé.
-- Expiration : rappels, grâce, passage en lecture seule, export toujours possible.
-- Remboursement : hors fenêtre refusé, deuxième demande refusée, approbation et versement, accès coupé.
+- Expiration : rappels, grâce, accès entreprise refusé (connexion, jeton, routes) tout en laissant fonctionner le portail locataire, les liens de paiement et les webhooks ; paiements reçus pendant la coupure bien enregistrés ; accès rétabli au renouvellement.
+- Remboursement : hors des 15 jours refusé, deuxième demande refusée, refus avec motif, lien de saisie des coordonnées (usage unique, expiré, rejoué, mauvais jeton), versement uniquement vers le numéro saisi, accès coupé.
 - Back-office : un utilisateur d'entreprise ne peut jamais appeler les routes admin ; actions tracées.
 - Rattrapage : les entreprises existantes passent bien en `interne`.
 - Assistant : quota selon l'offre.
@@ -141,20 +153,25 @@ Espace `/admin` distinct, hors des espaces entreprise :
 ## 12. Étapes de réalisation
 
 1. **Fondations** : `plans.js`, tables, migration de rattrapage, service d'entitlements, application des limites et des fonctions, quota IA par offre. Tests associés.
-2. **Facturation** : paiement FedaPay des abonnements, webhook, factures PDF, emails, rappels et expiration (grâce, lecture seule).
-3. **Back-office et remboursement** : comptes admin, espace `/admin`, demandes de remboursement et versement.
+2. **Facturation** : paiement FedaPay des abonnements, webhook, factures PDF, emails, rappels et expiration (accès coupé, locataires toujours capables de payer).
+3. **Back-office et remboursement** : comptes admin, espace `/admin`, demandes de remboursement (validation sur motif, email de collecte des coordonnées, versement).
 4. **Interface publique** : page `/tarifs`, choix de l'offre à l'inscription, écran Paramètres → Abonnement, bandeaux.
 5. **Durcissement** : revue de sécurité, tests de charge légers, relecture des textes et des conditions de vente par un juriste, essai complet en sandbox FedaPay.
 
 Chaque étape est livrable et testée seule, comme pour les paiements.
 
-## 13. Décisions à trancher avant de coder
+## 13. Décisions
 
-1. Pro est-elle l'offre principale (volume) ou doit-elle être plus nettement séparée de Démarrage ? L'écart actuel n'est que de 3 750 FCFA par mois.
-2. Prix et limites de Pro et d'Entreprise (propositions ci-dessus), et prix d'un mois de Démarrage (15 000 ?).
-3. Essai gratuit : oui ou non, sur quelle offre, combien de jours.
-4. Remboursement : validation manuelle ou automatique ; intégral ou frais FedaPay déduits.
-5. Lecture seule après expiration : les locataires peuvent-ils encore payer leur loyer ?
-6. Entreprises existantes : tout en `interne`, ou certaines à basculer sur une vraie offre.
-7. Facturation : TVA et mentions légales, à valider avec un comptable.
-8. Qui administre la plateforme (comptes `platform_admins`).
+Prises le 21/10/2026 :
+- Pas d'essai gratuit ; paiement puis remboursement possible sous **15 jours**.
+- Remboursement validé par l'administrateur de Lyko System si la raison est acceptable, puis email pour récupérer les coordonnées de paiement.
+- Après expiration : les locataires peuvent payer, l'entreprise n'a plus accès à son espace.
+- Pro est l'offre principale ; on peut commencer par Démarrage à 15 000 FCFA (1 mois) ou 25 000 FCFA (2 mois).
+
+Restent à trancher :
+1. Prix et limites de Pro et d'Entreprise (propositions ci-dessus). L'écart Démarrage / Pro est de 3 750 FCFA par mois : la limite d'IA de Pro protège la marge.
+2. Montant remboursé : intégral ou frais FedaPay déduits.
+3. Délai de grâce après l'échéance (7 jours proposés) et export des données pendant la coupure.
+4. Entreprises existantes : tout en `interne`, ou certaines à basculer sur une vraie offre.
+5. Facturation : TVA et mentions légales, à valider avec un comptable.
+6. Qui administre la plateforme (comptes `platform_admins`).
