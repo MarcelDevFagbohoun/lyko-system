@@ -8,6 +8,7 @@ import {
 } from "@/lib/api/admin";
 import type { PlanKey, Refund } from "@/lib/api/billing";
 import { offerLabel } from "@/lib/api/billing";
+import { CatalogEditor } from "./catalog-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -81,7 +82,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "succes
 };
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
-  const [tab, setTab] = React.useState<"refunds" | "tenants">("refunds");
+  const [tab, setTab] = React.useState<"refunds" | "tenants" | "catalog">("refunds");
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [tenants, setTenants] = React.useState<AdminTenant[]>([]);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -110,6 +111,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
           <div className="flex gap-2">
             <Button variant={tab === "refunds" ? "primary" : "secondary"} onClick={() => setTab("refunds")}>Remboursements</Button>
             <Button variant={tab === "tenants" ? "primary" : "secondary"} onClick={() => setTab("tenants")}>Entreprises</Button>
+            <Button variant={tab === "catalog" ? "primary" : "secondary"} onClick={() => setTab("catalog")}>Offres et prix</Button>
             <Button variant="ghost" onClick={onLogout}>Déconnexion</Button>
           </div>
         </div>
@@ -159,6 +161,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             })}
           </div>
         )}
+
+        {tab === "catalog" && <CatalogEditor token={token} />}
 
         {tab === "tenants" && (
           <Card>

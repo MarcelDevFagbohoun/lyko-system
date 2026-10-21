@@ -9,7 +9,7 @@ const { pool } = require('../config/db');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 const { sendSubscriptionReminderEmail } = require('../services/email/sendEmail');
-const { getPlan } = require('../constants/plans');
+const { getPlanAsync } = require('../services/planCatalog');
 
 async function runSubscriptionJob() {
   await pool.query("UPDATE tenant_subscriptions SET status = 'expired' WHERE status = 'active' AND plan_key <> 'interne' AND current_period_end <= NOW()");
@@ -37,7 +37,7 @@ async function runSubscriptionJob() {
     if (same && r.reminder_days !== null && r.reminder_days <= threshold) continue;
     try {
       await sendSubscriptionReminderEmail({
-        to: r.email, dgName: r.first_name, companyName: r.company_name, planLabel: getPlan(r.plan_key).label,
+        to: r.email, dgName: r.first_name, companyName: r.company_name, planLabel: (await getPlanAsync(r.plan_key)).label,
         daysLeft: threshold, renewUrl: `${config.frontendUrl}/abonnement`,
       });
       await pool.query('UPDATE tenant_subscriptions SET reminder_sent_for = current_period_end, reminder_days = :d WHERE tenant_id = :t', { d: threshold, t: r.tenant_id });

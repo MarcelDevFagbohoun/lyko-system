@@ -27,3 +27,23 @@ export const adminPay = (t: string, id: number) => apiFetch<{ status: string }>(
 export const adminRefresh = (t: string, id: number) => apiFetch<{ status: string }>(`/api/admin/refunds/${id}/refresh`, { accessToken: t, method: "POST" });
 export const adminGrant = (t: string, tenantId: number, planKey: PlanKey, months: number, note: string) =>
   apiFetch<{ ok: true }>(`/api/admin/tenants/${tenantId}/grant`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ planKey, months, note }) });
+
+export type AdminPlan = {
+  key: PlanKey;
+  label: string;
+  featured: boolean;
+  limits: { units: number | null; owners: number | null; users: number | null };
+  features: string[];
+  offers: { months: number; price: number }[];
+};
+export type AdminCatalog = {
+  plans: Record<PlanKey, AdminPlan>;
+  founder: { enabled: boolean; planKey: PlanKey; months: number; price: number; maxCompanies: number };
+  refundWindowDays: number;
+};
+export const adminCatalog = (t: string) =>
+  apiFetch<{ catalog: AdminCatalog; features: string[]; changes: { id: number; adminName: string | null; createdAt: string }[] }>("/api/admin/catalog", { accessToken: t });
+export const adminSaveCatalog = (t: string, catalog: AdminCatalog) =>
+  apiFetch<{ catalog: AdminCatalog }>("/api/admin/catalog", { accessToken: t, method: "PUT", headers: json, body: JSON.stringify(catalog) });
+export const adminResetCatalog = (t: string) =>
+  apiFetch<{ catalog: AdminCatalog }>("/api/admin/catalog/reset", { accessToken: t, method: "POST" });

@@ -13,6 +13,7 @@ const { ApiError } = require('../middleware/error');
 const { verifyAdminToken, signAdminToken } = require('../utils/jwt');
 const { verifyPassword, DUMMY_PASSWORD_HASH } = require('../utils/password');
 const refunds = require('../services/refunds');
+const catalogService = require('../services/planCatalog');
 const { findOffer } = require('../services/billing');
 const { activatePayment } = require('../services/billing');
 const logger = require('../utils/logger');
@@ -82,7 +83,7 @@ router.post('/tenants/:id/grant', async (req, res, next) => {
   try {
     const tenantId = idOf(req);
     const body = z.object({ planKey: z.enum(['demarrage', 'pro', 'entreprise']), months: z.number().int(), note: z.string().min(3).max(300) }).safeParse(req.body);
-    if (!body.success || !findOffer(body.data.planKey, body.data.months)) throw new ApiError(400, 'Offre invalide');
+    if (!body.success || !(await findOffer(body.data.planKey, body.data.months))) throw new ApiError(400, 'Offre invalide');
     const [[t]] = await pool.query('SELECT id FROM tenants WHERE id = :id', { id: tenantId });
     if (!t) throw new ApiError(404, 'Entreprise introuvable');
     const [[s]] = await pool.query('SELECT plan_key FROM tenant_subscriptions WHERE tenant_id = :id', { id: tenantId });
@@ -94,6 +95,21 @@ router.post('/tenants/:id/grant', async (req, res, next) => {
     logger.info('Abonnement attribué manuellement', { tenantId, admin: req.admin.id });
     res.json({ ok: true });
   } catch (err) { next(err); }
+});
+
+// Offres : prix, durées, limites, fonctions, tarif fondateur, délai de remboursement. Les prix ne touchent que les achats futurs.
+router.get('/catalog', async (_req, res, next) => {
+  try { res.json({ catalog: await catalogService.getCatalog(), features: catalogService.FEATURES.filter((f) => f !== 'ai_assistant'), changes: await catalogService.listChanges() }); } catch (err) { next(err); }
+});
+router.put('/catalog', async (req, res, next) => {
+  try {
+    const catalog = await catalogService.saveCatalog(req.admin.id, req.body);
+    logger.info('Catalogue des offres modifié', { admin: req.admin.id });
+    res.json({ catalog });
+  } catch (err) { next(err); }
+});
+router.post('/catalog/reset', async (req, res, next) => {
+  try { res.json({ catalog: await catalogService.resetCatalog(req.admin.id) }); } catch (err) { next(err); }
 });
 
 module.exports = router;

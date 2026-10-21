@@ -7,7 +7,7 @@ const { ApiError } = require('../middleware/error');
 const logger = require('../utils/logger');
 const fedapay = require('./payments/fedapay');
 const { encryptSecret } = require('../utils/encryption');
-const { PLANS, FOUNDER_OFFER, REFUND_WINDOW_DAYS, getPlan } = require('../constants/plans');
+const { getCatalog, getPlanAsync } = require('./planCatalog');
 
 /**
  * Facturation des abonnements via le compte FedaPay de la PLATEFORME (variables PLATFORM_FEDAPAY_*).
@@ -35,8 +35,8 @@ function verifyPlatformWebhook(rawBody, header) {
   return fedapay.verifyWebhookSignature(platformAccount(), rawBody, header);
 }
 
-function findOffer(planKey, months) {
-  const plan = getPlan(planKey);
+async function findOffer(planKey, months) {
+  const plan = await getPlanAsync(planKey);
   if (!plan || planKey === 'interne') return null;
   const offer = plan.offers.find((o) => o.months === months);
   return offer ? { plan, offer } : null;
@@ -53,13 +53,14 @@ async function founderTaken(conn = pool) {
 
 /** Prix réellement dû par cette entreprise pour cette offre (tarif fondateur inclus). */
 async function quote(tenantId, planKey, months, conn = pool) {
-  const found = findOffer(planKey, months);
+  const found = await findOffer(planKey, months);
   if (!found) throw new ApiError(400, 'Offre inconnue');
   const [[paid]] = await conn.query("SELECT COUNT(*) AS n FROM subscription_payments WHERE tenant_id = :tenantId AND status IN ('paid','refunded')", { tenantId });
   const isFirst = Number(paid.n) === 0;
   let price = found.offer.price;
   let founder = false;
-  if (isFirst && planKey === FOUNDER_OFFER.planKey && months === FOUNDER_OFFER.months) {
+  const { founder: FOUNDER_OFFER } = await getCatalog();
+  if (FOUNDER_OFFER.enabled && isFirst && planKey === FOUNDER_OFFER.planKey && months === FOUNDER_OFFER.months) {
     const [[mine]] = await conn.query("SELECT COUNT(*) AS n FROM subscription_payments WHERE tenant_id = :tenantId AND founder_price = 1 AND status = 'pending' AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)", { tenantId });
     const taken = (await founderTaken(conn)) - (Number(mine.n) > 0 ? 1 : 0);
     if (taken < FOUNDER_OFFER.maxCompanies) {
@@ -73,12 +74,13 @@ async function quote(tenantId, planKey, months, conn = pool) {
 /** Catalogue public (pages tarifs) : prix, limites, fonctions, places fondateur restantes. */
 async function publicCatalog() {
   const taken = await founderTaken();
+  const catalog = await getCatalog();
+  const FOUNDER_OFFER = catalog.founder;
   return {
-    plans: Object.values(PLANS)
-      .filter((p) => p.key !== 'interne')
+    plans: Object.values(catalog.plans)
       .map((p) => ({ key: p.key, label: p.label, featured: !!p.featured, limits: p.limits, features: p.features, offers: p.offers })),
-    founder: { ...FOUNDER_OFFER, remaining: Math.max(0, FOUNDER_OFFER.maxCompanies - taken) },
-    refundWindowDays: REFUND_WINDOW_DAYS,
+    founder: { ...FOUNDER_OFFER, remaining: FOUNDER_OFFER.enabled ? Math.max(0, FOUNDER_OFFER.maxCompanies - taken) : 0 },
+    refundWindowDays: catalog.refundWindowDays,
   };
 }
 
@@ -98,7 +100,7 @@ async function startCheckout({ tenantId, userId, planKey, months }) {
   try {
     const checkout = await fedapay.createCheckout(account, {
       amount: q.price,
-      description: `Abonnement Lyko System ${getPlan(planKey).label} — ${months} mois`,
+      description: `Abonnement Lyko System ${(await getPlanAsync(planKey)).label} — ${months} mois`,
       callbackUrl: `${config.frontendUrl}/abonnement/retour?ref=${reference}`,
       reference,
       customer: { name: `${dg?.first_name ?? ''} ${dg?.last_name ?? ''}`.trim() || tenant.company_name, email: dg?.email },
@@ -120,6 +122,7 @@ async function logEvent(conn, tenantId, type, actor, details) {
 
 /** Active ou prolonge l'abonnement pour un paiement approuvé. Idempotent : un paiement déjà `paid` ne refait rien. */
 async function activatePayment(paymentId) {
+  const refundDays = (await getCatalog()).refundWindowDays;
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -137,7 +140,7 @@ async function activatePayment(paymentId) {
          started_at = IF(:extend = 1, started_at, NOW()),
          current_period_end = DATE_ADD(${startExpr}, INTERVAL :months MONTH),
          first_purchase_at = COALESCE(first_purchase_at, IF(:first = 1, NOW(), NULL)),
-         refund_eligible_until = IF(:first = 1, DATE_ADD(NOW(), INTERVAL ${REFUND_WINDOW_DAYS} DAY), refund_eligible_until),
+         refund_eligible_until = IF(:first = 1, DATE_ADD(NOW(), INTERVAL ${Number(refundDays)} DAY), refund_eligible_until),
          founder_price = IF(:founder = 1, 1, founder_price),
          reminder_sent_for = NULL, reminder_days = NULL
        WHERE tenant_id = :t`,
@@ -210,7 +213,7 @@ async function describe(tenantId) {
   const active = s.status === 'active' && (interne || Number(s.running) === 1);
   return {
     planKey: s.plan_key,
-    planLabel: s.plan_key ? getPlan(s.plan_key)?.label : null,
+    planLabel: s.plan_key ? (await getPlanAsync(s.plan_key))?.label : null,
     status: active ? 'active' : s.status === 'active' ? 'expired' : s.status,
     active,
     enforced: config.features.subscriptionsEnforced,

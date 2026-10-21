@@ -9,7 +9,7 @@
 const config = require('../config/env');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-const { getPlan } = require('../constants/plans');
+const { getPlanAsync } = require('./planCatalog');
 
 const COUNTERS = {
   // Unités actives (hors biens supprimés) de l'entreprise.
@@ -29,7 +29,7 @@ function q(conn) {
 /** Droits courants : { planKey, status, active, features:Set, limits }. Un abonnement expiré/absent => active=false. */
 async function getEntitlements(tenantId, conn) {
   if (!config.features.subscriptionsEnforced) {
-    const p = getPlan('interne');
+    const p = await getPlanAsync('interne');
     return { planKey: 'interne', status: 'active', active: true, features: new Set(p.features), limits: p.limits, enforced: false };
   }
   const [rows] = await q(conn).query(
@@ -37,7 +37,7 @@ async function getEntitlements(tenantId, conn) {
     { tenantId },
   );
   const s = rows[0];
-  const plan = s && s.plan_key ? getPlan(s.plan_key) : null;
+  const plan = s && s.plan_key ? await getPlanAsync(s.plan_key) : null;
   const notExpired = s && (s.plan_key === 'interne' || Number(s.not_expired) === 1);
   const active = !!(plan && s.status === 'active' && notExpired);
   return {

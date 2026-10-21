@@ -14,7 +14,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const billing = require('../services/billing');
 const refunds = require('../services/refunds');
 const { streamSubscriptionInvoicePdf } = require('../services/pdf');
-const { getPlan } = require('../constants/plans');
+const { getPlanAsync } = require('../services/planCatalog');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -94,7 +94,9 @@ router.get('/payments', async (req, res, next) => {
       "SELECT id, plan_key, months, amount, founder_price, status, invoice_number, paid_at, period_end FROM subscription_payments WHERE tenant_id = :t AND status IN ('paid','refunded') ORDER BY id DESC LIMIT 100",
       { t: req.user.tenantId },
     );
-    res.json({ payments: rows.map((r) => ({ id: r.id, planKey: r.plan_key, planLabel: getPlan(r.plan_key).label, months: r.months, amount: r.amount, founderPrice: !!r.founder_price, status: r.status, invoiceNumber: r.invoice_number, paidAt: r.paid_at, periodEnd: r.period_end })) });
+    const labels = {};
+    for (const k of new Set(rows.map((r) => r.plan_key))) labels[k] = (await getPlanAsync(k)).label;
+    res.json({ payments: rows.map((r) => ({ id: r.id, planKey: r.plan_key, planLabel: labels[r.plan_key], months: r.months, amount: r.amount, founderPrice: !!r.founder_price, status: r.status, invoiceNumber: r.invoice_number, paidAt: r.paid_at, periodEnd: r.period_end })) });
   } catch (err) { next(err); }
 });
 
@@ -105,7 +107,7 @@ router.get('/payments/:id/invoice.pdf', async (req, res, next) => {
     const [[p]] = await pool.query("SELECT * FROM subscription_payments WHERE id = :id AND tenant_id = :t AND status IN ('paid','refunded')", { id, t: req.user.tenantId });
     if (!p) throw new ApiError(404, 'Facture introuvable');
     const [[client]] = await pool.query('SELECT company_name, rccm, ifu FROM tenants WHERE id = :t', { t: req.user.tenantId });
-    streamSubscriptionInvoicePdf(res, { client, payment: p, planLabel: getPlan(p.plan_key).label });
+    streamSubscriptionInvoicePdf(res, { client, payment: p, planLabel: (await getPlanAsync(p.plan_key)).label });
   } catch (err) { next(err); }
 });
 

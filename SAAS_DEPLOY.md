@@ -1,7 +1,7 @@
 # Mise en service du SaaS — liste de contrôle
 
 ## 1. Déploiement (aucun changement de comportement tant que les verrous sont éteints)
-1. Déployer la branche, appliquer les migrations **105, 106, 107** (`npm run db:migrate`).
+1. Déployer la branche, appliquer les migrations **105 à 108** (`npm run db:migrate`).
    Les entreprises existantes passent en offre « interne » (accès complet, sans limite ni échéance).
 2. Variables d'environnement (backend) :
    | Variable | Rôle |
@@ -36,6 +36,12 @@
 - **Export des données pendant la coupure** : non implémenté (l'entreprise expirée n'a plus accès à rien tant qu'elle ne renouvelle pas).
 - **Mentions légales, CGV, TVA** sur les factures : à fournir (la facture actuelle est acquittée, sans TVA).
 - **Prix proposés non confirmés** : limites Pro (200 unités / 60 propriétaires / 8 utilisateurs), Entreprise (180 000 / 4 mois, 520 000 / an),
-  annuels Démarrage 120 000 et Pro 180 000 — modifiables dans `backend/src/constants/plans.js`.
+  annuels Démarrage 120 000 et Pro 180 000 — modifiables dans le back-office (`/admin` → « Offres et prix ») ; `constants/plans.js` ne sert plus que de valeurs d'origine.
 - **Changement d'offre en cours de période** : repart de la date du paiement, sans proratisation.
 - **Frais de remboursement** : montant fixé à la main à chaque validation (estimation par défaut).
+
+## 5. Modifier les offres (back-office → « Offres et prix »)
+- Nom, offre recommandée, durées et prix, limites (vide = illimité), fonctions incluses, tarif fondateur (offre, durée, prix, nombre de places), délai de remboursement.
+- **Prix** : seulement pour les achats futurs (chaque paiement garde le montant payé). **Limites et fonctions** : effet immédiat pour toutes les entreprises de l'offre ; une limite abaissée ne supprime rien, elle empêche d'en créer de nouveaux.
+- Chaque enregistrement est tracé (qui, quand, avant/après). « Revenir aux valeurs d'origine » restaure le code.
+- Cache de 10 s par processus.
