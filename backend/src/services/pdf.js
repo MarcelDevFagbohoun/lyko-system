@@ -476,6 +476,40 @@ function streamPaymentAdvicePdf(res, { tenant, order }) {
   });
 }
 
+/** Facture d'abonnement Lyko System, remise à l'entreprise cliente. */
+function streamSubscriptionInvoicePdf(res, { client, payment, planLabel }) {
+  const paidOn = formatDateFr(isoDay(payment.paid_at));
+  const platform = { company_name: 'Lyko System' };
+  renderReceiptDocument(res, {
+    tenant: platform,
+    filename: `${payment.invoice_number}.pdf`,
+    title: 'FACTURE',
+    subtitle: 'Abonnement Lyko System',
+    meta: [['N° de facture', payment.invoice_number], ['Payée le', paidOn]],
+    intro: { prefix: 'Facture acquittée le ', bold: paidOn },
+    partiesLabel: 'Client',
+    parties: [
+      ['Entreprise', client.company_name],
+      ['RCCM / IFU', [client.rccm, client.ifu].filter(Boolean).join(' / ') || '—'],
+      ['Référence de paiement', payment.reference],
+    ],
+    detailLabel: 'Détail',
+    lines: {
+      columns: [
+        { label: 'Désignation', width: 235 },
+        { label: 'Durée', width: 120 },
+        { label: 'Montant', width: 140, align: 'right', bold: true },
+      ],
+      rows: [[`Abonnement ${planLabel}${payment.founder_price ? ' (tarif fondateur)' : ''}`, `${payment.months} mois`, D.fcfa(payment.amount)]],
+    },
+    total: { label: 'Total payé', amount: D.fcfa(payment.amount), raw: payment.amount },
+    wordsPrefix: 'Arrêtée la présente facture à la somme de',
+    note: 'Facture acquittée : le paiement a été confirmé par le prestataire de paiement. Document généré automatiquement.',
+    signatureTitle: 'Lyko System',
+    issuer: null,
+  });
+}
+
 /** Reçu du règlement d'une facture SONEB/SBEE, remis au locataire (portail). */
 function streamChargeReceiptPdf(res, { tenant, renter, charge, payment }) {
   const fluide = charge.utility_type === 'soneb' ? 'SONEB (eau)' : 'SBEE (électricité)';
@@ -1983,6 +2017,7 @@ module.exports = {
   streamEntryReceiptPdf,
   streamPayslipPdf,
   streamPaymentAdvicePdf,
+  streamSubscriptionInvoicePdf,
   streamChargeReceiptPdf,
   streamLeaseContractPdf,
   streamOwnerStatementPdf,

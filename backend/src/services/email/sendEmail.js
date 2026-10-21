@@ -147,4 +147,15 @@ async function sendPaymentConfirmationEmail({ to, recipientName, companyName, di
   return sendViaResend({ to, subject, html });
 }
 
-module.exports = { sendVerificationCodeEmail, sendWelcomeEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };
+/** Rappel : l'abonnement arrive à échéance (ou vient de s'arrêter, daysLeft <= 0). */
+async function sendSubscriptionReminderEmail({ to, dgName, companyName, planLabel, daysLeft, renewUrl }) {
+  const expired = daysLeft <= 0;
+  const html = wrapHtml(`
+    <h1 style="margin:0 0 12px;font-size:20px;">${expired ? 'Votre abonnement a pris fin' : `Votre abonnement se termine dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}`}</h1>
+    <p style="margin:0 0 16px;font-size:14px;color:${MUTED};">Bonjour ${escapeHtml(dgName)}, l'abonnement ${escapeHtml(planLabel)} de ${escapeHtml(companyName)} ${expired ? "n'est plus actif : votre espace est suspendu, mais vos locataires peuvent toujours payer leur loyer." : 'arrive bientôt à échéance. Renouvelez-le pour ne pas perdre l’accès à votre espace.'}</p>
+    <p style="margin:0;font-size:14px;"><a href="${escapeHtml(renewUrl)}" style="color:#1a2b5f;font-weight:bold;">Renouveler mon abonnement</a></p>
+  `);
+  return sendViaResend({ to, subject: safeHeader(expired ? 'Votre abonnement Lyko System a pris fin' : `Votre abonnement Lyko System se termine dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}`), html });
+}
+
+module.exports = { sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };

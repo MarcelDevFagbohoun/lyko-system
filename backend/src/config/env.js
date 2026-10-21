@@ -123,4 +123,11 @@ config.features = {
   subscriptionsEnforced: process.env.SUBSCRIPTIONS_ENFORCED === 'true',
 };
 
+// Compte FedaPay DE LA PLATEFORME (encaisse les abonnements) — distinct des clés de chaque entreprise cliente.
+config.platform = {
+  fedapaySecretKey: process.env.PLATFORM_FEDAPAY_SECRET_KEY || '',
+  fedapayWebhookSecret: process.env.PLATFORM_FEDAPAY_WEBHOOK_SECRET || '',
+  fedapaySandbox: process.env.PLATFORM_FEDAPAY_SANDBOX !== 'false',
+};
+
 module.exports = config;

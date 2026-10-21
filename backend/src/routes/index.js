@@ -44,6 +44,7 @@ const glBankReconciliationRoutes = require('./gl/glBankReconciliation');
 const glSettingsRoutes = require('./gl/glSettings');
 const glIrfRoutes = require('./gl/glIrf');
 const fileRoutes = require('./files');
+const billingRoutes = require('./billing');
 const config = require('../config/env');
 const { requireAuth } = require('../middleware/auth');
 const { requireFeature } = require('../services/entitlements');
@@ -63,6 +64,8 @@ router.use('/renters', renterRoutes);
 router.use('/leases', leaseRoutes);
 router.use('/inspection-catalog', inspectionCatalogRoutes);
 router.use('/complaints', complaintRoutes);
+// Abonnement : jamais derrière requireFeature (une entreprise expirée doit pouvoir renouveler).
+router.use('/billing', billingRoutes);
 router.use('/accounting/incomes', accountingIncomesRoutes);
 router.use('/accounting', accountingRoutes);
 router.use('/charges', chargeRoutes);

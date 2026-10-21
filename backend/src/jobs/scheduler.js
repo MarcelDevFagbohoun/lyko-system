@@ -25,6 +25,7 @@ const { runClosingReminderJob } = require('./closingReminderJob');
 const { runUtilityAlertsJob } = require('./utilityAlertsJob');
 const { runAssistantPurgeJob } = require('./assistantPurgeJob');
 const { runFiscalYearExpiryJob } = require('./fiscalYearExpiryJob');
+const { runSubscriptionJob } = require('./subscriptionJob');
 const { runWelcomeEmailJob } = require('./welcomeEmailJob');
 const { runRegistrationCleanupJob } = require('./registrationCleanupJob');
 
@@ -60,6 +61,7 @@ function startScheduler() {
   cron.schedule('0 3 * * *', runSafely("purge des conversations de l'assistant IA", runAssistantPurgeJob));
   // 07h15 chaque jour — rappel de fin d'exercice comptable (module SYSCOHADA).
   cron.schedule('15 7 * * *', runSafely("rappel de fin d'exercice comptable", runFiscalYearExpiryJob));
+  cron.schedule('30 6 * * *', runSafely('expiration et rappels des abonnements', runSubscriptionJob));
   // Chaque minute — email de bienvenue, ~2 minutes après la vérification d'email (demande
   // utilisateur, 2026-10-18). Fréquence fine : le délai annoncé (« dans 2 minutes ») doit rester
   // précis, pas une fenêtre d'une heure.
