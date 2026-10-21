@@ -14,7 +14,7 @@ const { requirePortalToken } = require('../middleware/portalAuth');
 const { portalComplaintSchema } = require('../validators/portal');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { computeArrears, buildRentStrip, paymentPeriodKey } = require('../services/rentTracking');
-const { streamReceiptPdf, streamLeaseContractPdf, streamMoveInPdf, streamMoveOutPdf } = require('../services/pdf');
+const { streamReceiptPdf, streamChargeReceiptPdf, streamLeaseContractPdf, streamMoveInPdf, streamMoveOutPdf } = require('../services/pdf');
 const { loadContractRow, toPublicContract } = require('../services/leaseContract');
 const {
   normalizeStoredItems,
@@ -136,6 +136,7 @@ router.get('/:token', async (req, res, next) => {
     let arrears = null;
     let rentStrip = null;
     let unpaidCharges = [];
+    let chargePayments = [];
     if (activeLease) {
       // Refonte de la clôture (étape 2/5) : rythme DU BAIL (pas du tenant), dérivé de ses propres
       // colonnes — voir le même raisonnement dans `routes/leases.js` (`recordRentPayment`). Les clés
@@ -212,6 +213,24 @@ router.get('/:token', async (req, res, next) => {
         remaining: Number(c.amount) - Number(c.paid_total),
         status: c.status,
       }));
+
+      // Règlements de charges déjà faits (avec reçu téléchargeable) — les 24 plus récents.
+      const [cpRows] = await pool.query(
+        `SELECT up.id, up.amount, up.paid_at, uc.utility_type, uc.period_start, uc.period_end
+         FROM utility_payments up
+         JOIN utility_charges uc ON uc.id = up.charge_id
+         WHERE uc.lease_id = :leaseId AND uc.deleted_at IS NULL
+         ORDER BY up.paid_at DESC, up.id DESC LIMIT 24`,
+        { leaseId: activeLease.id },
+      );
+      chargePayments = cpRows.map((r) => ({
+        id: r.id,
+        utilityType: r.utility_type,
+        periodStart: isoDate(r.period_start),
+        periodEnd: isoDate(r.period_end),
+        amount: Number(r.amount),
+        paidAt: isoDate(r.paid_at),
+      }));
     }
 
     // Dernier bail (actif ou terminé) — état des lieux signés, consultables
@@ -271,6 +290,7 @@ router.get('/:token', async (req, res, next) => {
       rentStrip,
       payments,
       unpaidCharges,
+      chargePayments,
       lastLease,
     });
   } catch (err) {
@@ -326,6 +346,28 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
       issuer: issuerRows[0] || null,
       verificationCode: issuance.verification_code,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portal/:token/charge-payments/:paymentId/receipt.pdf — reçu de SON règlement de charges.
+router.get('/:token/charge-payments/:paymentId/receipt.pdf', async (req, res, next) => {
+  const paymentId = Number(req.params.paymentId);
+  if (!Number.isInteger(paymentId) || paymentId <= 0) return next(new ApiError(400, 'Identifiant invalide'));
+  try {
+    const { id: renterId, tenantId } = req.portalRenter;
+    const lease = await loadActivePortalLease(tenantId, renterId);
+    const [[row]] = await pool.query(
+      `SELECT up.id, up.amount, up.paid_at, uc.utility_type, uc.period_start, uc.period_end
+       FROM utility_payments up JOIN utility_charges uc ON uc.id = up.charge_id
+       WHERE up.id = :paymentId AND uc.lease_id = :leaseId AND up.tenant_id = :tenantId AND uc.deleted_at IS NULL LIMIT 1`,
+      { paymentId, leaseId: lease.id, tenantId },
+    );
+    if (!row) throw new ApiError(404, 'Paiement introuvable');
+    const [[renter]] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: renterId });
+    const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    streamChargeReceiptPdf(res, { tenant, renter, charge: row, payment: row });
   } catch (err) {
     next(err);
   }

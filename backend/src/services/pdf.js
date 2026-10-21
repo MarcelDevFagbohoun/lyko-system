@@ -865,43 +865,76 @@ function streamPayslipPdf(res, { tenant, employee, payslip, issuer }) {
 }
 
 /**
- * Avis de paiement (ordre sortant FedaPay confirmé `sent`) : preuve remise au bénéficiaire / au cabinet.
- * Le numéro Mobile Money est TOUJOURS masqué ; aucune donnée de clé ou d'identifiant technique n'y figure.
+ * Justificatif de paiement générique (une seule page : titre, référence, lignes libellé/valeur, mention).
+ * `rows` : [[libellé, valeur, mono?]]. Utilisé par l'avis de paiement sortant et le reçu de charge du locataire.
  */
-function streamPaymentAdvicePdf(res, { tenant, order }) {
+function streamPaymentProofPdf(res, { tenant, title, reference, filename, rows, footnote }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="avis-paiement-${order.reference}.pdf"`);
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
   res.setHeader('Cache-Control', 'private, no-store');
   doc.pipe(res);
 
   doc.rect(0, 0, doc.page.width, 5).fill(PRIMARY);
   doc.font(FONT_SANS_BOLD).fontSize(15).fillColor(INK).text(tenant.company_name, 50, 44, { width: 230 });
-  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('AVIS DE PAIEMENT', 285, 40, { width: 260, align: 'right' });
-  doc.font(FONT_MONO_BOLD).fontSize(10).fillColor(INK_SOFT).text(order.reference, 285, doc.y + 2, { width: 260, align: 'right' });
+  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text(title, 285, 40, { width: 260, align: 'right' });
+  doc.font(FONT_MONO_BOLD).fontSize(10).fillColor(INK_SOFT).text(reference, 285, doc.y + 2, { width: 260, align: 'right' });
 
   let y = 120;
   doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
   y += 18;
-  const purposeLabels = { salaire: 'Salaire', reversement_proprietaire: 'Reversement propriétaire', autre: 'Paiement' };
-  const sentIso = order.sent_at instanceof Date ? order.sent_at.toISOString().slice(0, 10) : String(order.sent_at).slice(0, 10);
-  const rows = [
-    ['Nature', purposeLabels[order.purpose] ?? order.purpose, false],
-    ['Bénéficiaire', order.beneficiary_name, false],
-    ['Compte Mobile Money', `${String(order.operator).toUpperCase()} ${order.beneficiary_phone_masked}`, true],
-    ['Motif', order.label, false],
-    ['Date d\'envoi', formatDateFr(sentIso), true],
-    ['Montant versé', formatFcfa(order.amount), true],
-    ['Statut', 'Envoi confirmé', false],
-  ];
-  for (const [label, value, mono] of rows) y += drawRow(doc, label, String(value), y, { mono });
+  for (const [label, value, mono] of rows) y += drawRow(doc, label, String(value), y, { mono: !!mono });
   y += 14;
-  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(
-    'Document généré automatiquement. Il atteste de l\'envoi des fonds par le prestataire de paiement à la date indiquée.',
-    50, y, { width: 495 },
-  );
+  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(footnote, 50, y, { width: 495 });
   drawFooter(doc);
   doc.end();
+}
+
+function isoDay(value) {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+}
+
+/**
+ * Avis de paiement (ordre sortant FedaPay confirmé `sent`). Le numéro Mobile Money est TOUJOURS masqué ;
+ * aucune clé ni identifiant technique n'y figure.
+ */
+function streamPaymentAdvicePdf(res, { tenant, order }) {
+  const purposeLabels = { salaire: 'Salaire', reversement_proprietaire: 'Reversement propriétaire', autre: 'Paiement' };
+  streamPaymentProofPdf(res, {
+    tenant,
+    title: 'AVIS DE PAIEMENT',
+    reference: order.reference,
+    filename: `avis-paiement-${order.reference}.pdf`,
+    rows: [
+      ['Nature', purposeLabels[order.purpose] ?? order.purpose],
+      ['Bénéficiaire', order.beneficiary_name],
+      ['Compte Mobile Money', `${String(order.operator).toUpperCase()} ${order.beneficiary_phone_masked}`, true],
+      ['Motif', order.label],
+      ["Date d'envoi", formatDateFr(isoDay(order.sent_at)), true],
+      ['Montant versé', formatFcfa(order.amount), true],
+      ['Statut', 'Envoi confirmé'],
+    ],
+    footnote: "Document généré automatiquement. Il atteste de l'envoi des fonds par le prestataire de paiement à la date indiquée.",
+  });
+}
+
+/** Reçu du règlement d'une facture SONEB/SBEE, remis au locataire (portail). */
+function streamChargeReceiptPdf(res, { tenant, renter, charge, payment }) {
+  const fluide = charge.utility_type === 'soneb' ? 'SONEB (eau)' : 'SBEE (électricité)';
+  streamPaymentProofPdf(res, {
+    tenant,
+    title: 'REÇU DE CHARGES',
+    reference: `CHG-${payment.id}`,
+    filename: `recu-charges-${payment.id}.pdf`,
+    rows: [
+      ['Locataire', `${renter.first_name} ${renter.last_name}`],
+      ['Facture', fluide],
+      ['Période', `${formatDateFr(isoDay(charge.period_start))} au ${formatDateFr(isoDay(charge.period_end))}`, true],
+      ['Date du règlement', formatDateFr(isoDay(payment.paid_at)), true],
+      ['Montant réglé', formatFcfa(payment.amount), true],
+    ],
+    footnote: 'Reçu généré automatiquement pour le règlement de cette facture. Conservez-le comme preuve de paiement.',
+  });
 }
 
 /** « Article N — Titre », puis le corps — page neuve avant le titre s'il ne reste pas assez de place
@@ -2434,6 +2467,7 @@ module.exports = {
   streamEntryReceiptPdf,
   streamPayslipPdf,
   streamPaymentAdvicePdf,
+  streamChargeReceiptPdf,
   streamLeaseContractPdf,
   streamOwnerStatementPdf,
   streamUtilityCarnetPdf,

@@ -8,6 +8,7 @@ import {
   getPortalDashboard,
   submitPortalComplaint,
   portalReceiptPdfUrl,
+  portalChargeReceiptPdfUrl,
   portalContractPdfUrl,
   portalMoveInReportPdfUrl,
   portalMoveOutReportPdfUrl,
@@ -86,7 +87,7 @@ export function PortailView() {
     );
   }
 
-  const { tenant, renter, activeLease, arrears, rentStrip, payments, unpaidCharges, lastLease } = dashboard;
+  const { tenant, renter, activeLease, arrears, rentStrip, payments, unpaidCharges, chargePayments = [], lastLease } = dashboard;
   const canPayOnline = tenant.kkiapayEnabled && !!tenant.kkiapayPublicKey;
   // Un mois déjà entamé se complète : le locataire paie le RESTE, pas un loyer entier.
   const partialRemaining =
@@ -306,6 +307,33 @@ export function PortailView() {
                 )}
               </CardContent>
             </Card>
+
+            {chargePayments.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Mes règlements de charges (eau / électricité)</CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {chargePayments.map((c) => (
+                    <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 text-body-sm">
+                      <span className="text-ink">
+                        {c.utilityType === "soneb" ? "SONEB" : "SBEE"} · {c.periodStart} → {c.periodEnd} · {formatFcfa(c.amount)}
+                        <span className="text-ink-muted"> · réglé le {c.paidAt}</span>
+                      </span>
+                      <a
+                        href={portalChargeReceiptPdfUrl(token, c.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-label-sm text-primary hover:underline"
+                      >
+                        <FileText size={14} />
+                        Reçu
+                      </a>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
             <ComplaintForm token={token} />
             </>

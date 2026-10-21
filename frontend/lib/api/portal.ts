@@ -42,6 +42,15 @@ export type PortalUnpaidCharge = {
   status: "impayee" | "partiellement_payee";
 };
 
+export type PortalChargePayment = {
+  id: number;
+  utilityType: "soneb" | "sbee";
+  periodStart: string;
+  periodEnd: string;
+  amount: number;
+  paidAt: string;
+};
+
 export type PortalDashboard = {
   tenant: {
     id: number;
@@ -66,6 +75,7 @@ export type PortalDashboard = {
   rentStrip: RentStripMonth[] | null;
   payments: PortalPayment[];
   unpaidCharges: PortalUnpaidCharge[];
+  chargePayments: PortalChargePayment[];
   /** Dernier bail, actif OU terminé (étape 48) — états des lieux signés, consultables même après la
    * fin du bail (contrairement à `activeLease` ci-dessus, restreint volontairement au bail en cours). */
   lastLease: { id: number; hasSignedMoveIn: boolean; hasSignedMoveOut: boolean } | null;
@@ -95,6 +105,10 @@ export function verifyPortalChargePayment(token: string, chargeId: number, trans
 
 export function portalReceiptPdfUrl(token: string, paymentId: number) {
   return `${API_URL}/api/portal/${token}/payments/${paymentId}/receipt.pdf`;
+}
+
+export function portalChargeReceiptPdfUrl(token: string, paymentId: number) {
+  return `${API_URL}/api/portal/${token}/charge-payments/${paymentId}/receipt.pdf`;
 }
 
 /** Contrat de bail signé (étape 46) — 404 tant qu'il n'a pas été signé par les deux parties. */

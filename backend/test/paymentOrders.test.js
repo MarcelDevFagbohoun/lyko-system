@@ -425,3 +425,43 @@ test('loyer encaissé : e-mail automatique au locataire (adresse masquée dans l
   ))[0][0]);
   assert.equal(row2.status, 'skipped');
 });
+
+test('charges payées : reçu téléchargeable par le locataire (portail), e-mail automatique, isolation du lien', async () => {
+  await pool.query("UPDATE renters SET email = 'loc.charges@example.test' WHERE id = :id", { id: A.renterId });
+  const [ch] = await pool.query(
+    `INSERT INTO utility_charges (tenant_id, lease_id, utility_type, reading_start, reading_end, unit_price, amount, loss_share_amount, billed_at, period_start, period_end, recorded_by)
+     VALUES (:t, :l, 'sbee', 0, 120, 100, 12000, 0, '2026-03-31', '2026-03-01', '2026-03-31', :by)`,
+    { t: A.tenantId, l: A.leaseId, by: A.dgId },
+  );
+  const pay = await fetch(`${baseUrl}/api/charges/${ch.insertId}/payments`, {
+    method: 'POST', headers: auth(A.dgId2, A.tenantId),
+    body: JSON.stringify({ amount: 12000, paymentMethod: 'especes', paidAt: '2026-04-02', idempotencyKey: key() }),
+  });
+  assert.equal(pay.status, 201);
+  const [[up]] = await pool.query('SELECT id FROM utility_payments WHERE charge_id = :c', { c: ch.insertId });
+  const notif = await waitFor(async () => (await pool.query(
+    "SELECT recipient_masked FROM payment_notifications WHERE tenant_id = :t AND source_table = 'utility_payments' AND source_id = :id",
+    { t: A.tenantId, id: up.id },
+  ))[0][0]);
+  assert.ok(notif && !notif.recipient_masked.includes('loc.charges'));
+
+  const link = await (await fetch(`${baseUrl}/api/renters/${A.renterId}/portal-link`, { method: 'POST', headers: auth(A.dgId2, A.tenantId) })).json();
+  const dash = await (await fetch(`${baseUrl}/api/portal/${link.token}`)).json();
+  assert.ok(dash.chargePayments.some((c) => c.id === up.id));
+  const pdf = await fetch(`${baseUrl}/api/portal/${link.token}/charge-payments/${up.id}/receipt.pdf`);
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+
+  // Un autre locataire (autre cabinet) ne peut pas lire ce reçu, même en devinant l'identifiant.
+  const [r2] = await pool.query("INSERT INTO renters (tenant_id, first_name, last_name, phone, created_by) VALUES (:t, 'Autre', 'Loc', :p, :by)", { t: B.tenantId, p: `04${Math.floor(Math.random() * 100000000)}`, by: B.dgId });
+  const [bu] = await pool.query("INSERT INTO properties (tenant_id, code, owner_id, address, created_by) VALUES (:t, 'B1', :o, 'x', :by)", { t: B.tenantId, o: B.ownerId, by: B.dgId });
+  const [un] = await pool.query("INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, 'U9', 'studio', 'loue', 1000, :by)", { t: B.tenantId, p: bu.insertId, by: B.dgId });
+  await pool.query("INSERT INTO leases (tenant_id, renter_id, unit_id, start_date, monthly_rent, rent_due_day, deposit_amount, status, created_by) VALUES (:t, :r, :u, '2026-01-01', 1000, 5, 0, 'active', :by)", { t: B.tenantId, r: r2.insertId, u: un.insertId, by: B.dgId });
+  const link2 = await (await fetch(`${baseUrl}/api/renters/${r2.insertId}/portal-link`, { method: 'POST', headers: auth(B.dgId2, B.tenantId) })).json();
+  const stolen = await fetch(`${baseUrl}/api/portal/${link2.token}/charge-payments/${up.id}/receipt.pdf`);
+  assert.equal(stolen.status, 404);
+  const bad = await fetch(`${baseUrl}/api/portal/${link2.token}/charge-payments/1%20OR%201=1/receipt.pdf`);
+  assert.equal(bad.status, 400);
+  await pool.query('DELETE FROM utility_payments WHERE tenant_id = :t', { t: A.tenantId });
+  await pool.query('DELETE FROM utility_charges WHERE tenant_id = :t', { t: A.tenantId });
+});
