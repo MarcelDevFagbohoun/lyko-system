@@ -28,7 +28,7 @@
 
 ## 3. Activation
 1. Passer `SUBSCRIPTIONS_ENFORCED=true`.
-2. Les entreprises existantes restent « interne ». Pour en faire des clients payants : `/admin` → Entreprises → Attribuer
+2. Les entreprises existantes restent « interne ». Pour en faire des clients payants : `/admin` → Entreprises → « Attribuer une offre » (et « Passer en interne » pour l'inverse)
    (ou passer leur `plan_key` en base).
 3. Les nouvelles inscriptions arrivent sur l'écran « choisir une offre » et paient avant d'accéder à leur espace.
 

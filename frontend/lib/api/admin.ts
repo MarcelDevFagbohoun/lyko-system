@@ -25,6 +25,8 @@ export const adminReject = (t: string, id: number, note: string) =>
   apiFetch<{ ok: true }>(`/api/admin/refunds/${id}/reject`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ note }) });
 export const adminPay = (t: string, id: number) => apiFetch<{ status: string }>(`/api/admin/refunds/${id}/pay`, { accessToken: t, method: "POST" });
 export const adminRefresh = (t: string, id: number) => apiFetch<{ status: string }>(`/api/admin/refunds/${id}/refresh`, { accessToken: t, method: "POST" });
+export const adminSetInternal = (t: string, tenantId: number, note: string) =>
+  apiFetch<{ ok: true }>(`/api/admin/tenants/${tenantId}/internal`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ note }) });
 export const adminGrant = (t: string, tenantId: number, planKey: PlanKey, months: number, note: string) =>
   apiFetch<{ ok: true }>(`/api/admin/tenants/${tenantId}/grant`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ planKey, months, note }) });
 

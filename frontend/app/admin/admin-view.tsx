@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ApiError } from "@/lib/api/client";
 import {
-  adminLogin, adminMe, adminTenants, adminRefunds, adminApprove, adminReject, adminPay, adminRefresh, adminGrant,
+  adminLogin, adminMe, adminTenants, adminRefunds, adminApprove, adminReject, adminPay, adminRefresh, adminGrant, adminSetInternal,
   getAdminToken, setAdminToken, type AdminTenant,
 } from "@/lib/api/admin";
 import type { PlanKey, Refund } from "@/lib/api/billing";
@@ -89,6 +89,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [fees, setFees] = React.useState<Record<number, string>>({});
   const [notes, setNotes] = React.useState<Record<number, string>>({});
   const [busy, setBusy] = React.useState<number | null>(null);
+  const [search, setSearch] = React.useState("");
 
   const load = React.useCallback(() => {
     Promise.all([adminRefunds(token), adminTenants(token)])
@@ -166,7 +167,13 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
 
         {tab === "tenants" && (
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="flex flex-col gap-4 pt-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Input aria-label="Rechercher une entreprise" placeholder="Rechercher une entreprise…" className="max-w-xs" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <p className="text-body-xs text-ink-muted">
+                  « interne » = accès complet sans limite ni échéance (vos entreprises actuelles). « Attribuer une offre » en fait un client payant.
+                </p>
+              </div>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -174,21 +181,25 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {tenants.map((t) => (
+                  {tenants.filter((t) => t.companyName.toLowerCase().includes(search.trim().toLowerCase())).map((t) => (
                     <TableRow key={t.id}>
                       <TableCell>{t.companyName}{t.founderPrice ? " ★" : ""}</TableCell>
-                      <TableCell>{t.planKey ?? "—"}</TableCell>
+                      <TableCell>{t.planKey === "interne" ? "interne (accès complet)" : t.planKey ?? "—"}</TableCell>
                       <TableCell>{t.status}</TableCell>
                       <TableCell>{t.currentPeriodEnd ? formatDateLabel(t.currentPeriodEnd.slice(0, 10)) : "—"}</TableCell>
                       <TableCell>{formatFcfa(t.totalPaid)}</TableCell>
-                      <TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          const plan = window.prompt("Offre à attribuer (demarrage / pro / entreprise) :", "pro") as PlanKey | null;
+                          const months = Number(window.prompt("Durée en mois (1, 2, 4 ou 12 selon l'offre) :", "4"));
+                          const note = window.prompt("Motif de l'attribution :", "Geste commercial");
+                          if (plan && months && note) run(t.id, () => adminGrant(token, t.id, plan, months, note), `Offre attribuée à ${t.companyName} (${offerLabel(months)}).`);
+                        }}>Attribuer une offre</Button>
                         {t.planKey !== "interne" && (
                           <Button variant="ghost" size="sm" onClick={() => {
-                            const plan = window.prompt("Offre à attribuer (demarrage / pro / entreprise) :", "pro") as PlanKey | null;
-                            const months = Number(window.prompt("Durée en mois (1, 2, 4 ou 12 selon l'offre) :", "4"));
-                            const note = window.prompt("Motif de l'attribution :", "Geste commercial");
-                            if (plan && months && note) run(t.id, () => adminGrant(token, t.id, plan, months, note), `Offre attribuée à ${t.companyName} (${offerLabel(months)}).`);
-                          }}>Attribuer</Button>
+                            const note = window.prompt("Passer cette entreprise en accès complet sans échéance. Motif :", "Compte de démonstration");
+                            if (note) run(t.id, () => adminSetInternal(token, t.id, note), `${t.companyName} est maintenant en offre interne.`);
+                          }}>Passer en interne</Button>
                         )}
                       </TableCell>
                     </TableRow>

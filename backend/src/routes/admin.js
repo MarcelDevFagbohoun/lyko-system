@@ -86,13 +86,30 @@ router.post('/tenants/:id/grant', async (req, res, next) => {
     if (!body.success || !(await findOffer(body.data.planKey, body.data.months))) throw new ApiError(400, 'Offre invalide');
     const [[t]] = await pool.query('SELECT id FROM tenants WHERE id = :id', { id: tenantId });
     if (!t) throw new ApiError(404, 'Entreprise introuvable');
-    const [[s]] = await pool.query('SELECT plan_key FROM tenant_subscriptions WHERE tenant_id = :id', { id: tenantId });
-    if (s?.plan_key === 'interne') throw new ApiError(400, 'Entreprise interne : pas d’abonnement à attribuer.');
+    // Une entreprise « interne » peut devenir cliente payante : l'attribution remplace l'offre interne par l'offre choisie.
     const reference = require('crypto').randomBytes(16).toString('hex');
     const [ins] = await pool.query("INSERT INTO subscription_payments (tenant_id, reference, plan_key, months, amount, is_first_purchase) VALUES (:t, :r, :p, :m, 0, 0)", { t: tenantId, r: reference, p: body.data.planKey, m: body.data.months });
     await activatePayment(ins.insertId);
     await pool.query('INSERT INTO subscription_events (tenant_id, event_type, actor, details) VALUES (:t, :e, :a, :d)', { t: tenantId, e: 'granted', a: `admin:${req.admin.id}`, d: JSON.stringify({ ...body.data }) });
     logger.info('Abonnement attribué manuellement', { tenantId, admin: req.admin.id });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// Remet une entreprise en offre « interne » (accès complet, sans limite ni échéance) — équipe, démonstration, partenaire.
+router.post('/tenants/:id/internal', async (req, res, next) => {
+  try {
+    const tenantId = idOf(req);
+    const note = String(req.body?.note ?? '').trim();
+    if (note.length < 3) throw new ApiError(400, 'Indiquez le motif.');
+    const [[t]] = await pool.query('SELECT id FROM tenants WHERE id = :id', { id: tenantId });
+    if (!t) throw new ApiError(404, 'Entreprise introuvable');
+    await pool.query(
+      `INSERT INTO tenant_subscriptions (tenant_id, plan_key, status) VALUES (:t, 'interne', 'active')
+       ON DUPLICATE KEY UPDATE plan_key = 'interne', status = 'active', current_period_end = NULL, period_months = NULL`,
+      { t: tenantId },
+    );
+    await pool.query('INSERT INTO subscription_events (tenant_id, event_type, actor, details) VALUES (:t, :e, :a, :d)', { t: tenantId, e: 'set_internal', a: `admin:${req.admin.id}`, d: JSON.stringify({ note }) });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

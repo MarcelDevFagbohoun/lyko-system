@@ -184,3 +184,17 @@ test('attribution manuelle par l’admin', async () => {
   assert.equal(s.plan_key, 'demarrage');
   assert.equal(s.status, 'active');
 });
+
+test('entreprise interne : l’admin peut la passer en offre payante, puis la remettre en interne', async () => {
+  await pool.query("UPDATE tenant_subscriptions SET plan_key = 'interne', status = 'active', current_period_end = NULL WHERE tenant_id = :t", { t: fx.tenantId });
+  assert.equal((await call('POST', `/api/admin/tenants/${fx.tenantId}/grant`, { planKey: 'pro', months: 4, note: 'Passage en client payant' }, adHdr())).status, 200);
+  let s = await sub();
+  assert.equal(s.plan_key, 'pro');
+  assert.ok(s.current_period_end);
+  assert.equal((await call('POST', `/api/admin/tenants/${fx.tenantId}/internal`, { note: '' }, adHdr())).status, 400);
+  assert.equal((await call('POST', `/api/admin/tenants/${fx.tenantId}/internal`, { note: 'Compte de démonstration' }, adHdr())).status, 200);
+  s = await sub();
+  assert.equal(s.plan_key, 'interne');
+  assert.equal(s.current_period_end, null);
+  assert.equal((await call('POST', `/api/admin/tenants/${fx.tenantId}/internal`, { note: 'x' }, dgHdr())).status, 401);
+});
