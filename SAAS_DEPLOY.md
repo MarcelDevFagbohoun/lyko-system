@@ -45,3 +45,12 @@
 - **Prix** : seulement pour les achats futurs (chaque paiement garde le montant payé). **Limites et fonctions** : effet immédiat pour toutes les entreprises de l'offre ; une limite abaissée ne supprime rien, elle empêche d'en créer de nouveaux.
 - Chaque enregistrement est tracé (qui, quand, avant/après). « Revenir aux valeurs d'origine » restaure le code.
 - Cache de 10 s par processus.
+
+## 6. Domaine et adresse d'envoi
+Actuellement : domaine `cabinetmconseil.com`, expéditeur `service@cabinetmconseil.com` (valeur par défaut de `EMAIL_FROM_ADDRESS`).
+Tout est réglé par variables d'environnement, aucun changement de code n'est nécessaire le jour où vous achetez le domaine d'Africa Immo Management :
+1. Variables : `PUBLIC_APP_URL` (= `FRONTEND_URL` / `CORS_ORIGIN`), `PUBLIC_API_URL`, `EMAIL_FROM_ADDRESS`.
+2. Resend : vérifier le nouveau domaine d'envoi (enregistrements DNS) avant de changer l'expéditeur, sinon les courriels (code de vérification, rappels, remboursements) ne partent plus.
+3. FedaPay : redéclarer les adresses de webhook avec le nouveau domaine (`/api/billing/webhook` pour la plateforme, et celle affichée dans Paramètres pour chaque entreprise).
+4. Les liens déjà envoyés par courriel (retour de paiement, lien de remboursement) pointent vers l'ancien domaine : garder l'ancien actif quelques semaines.
+5. Les liens de portail locataire/propriétaire déjà partagés suivent `FRONTEND_URL` : prévenir les clients ou garder une redirection.
