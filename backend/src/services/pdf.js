@@ -9,6 +9,7 @@ const { resolveRoleLabels } = require('../constants/roles');
 const { compareCondition } = require('./inspection');
 const { paymentPeriodKey, periodEndOf } = require('./rentTracking');
 const config = require('../config/env');
+const D = require('./pdfDesign');
 
 const EXPENSE_CATEGORY_LABELS = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
 const UTILITY_TYPE_LABELS = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, t.label]));
@@ -16,12 +17,12 @@ const UTILITY_TYPE_LABELS = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, 
 // Charte graphique alignée sur celle de l'application (frontend/tailwind.config.ts)
 // — mêmes tokens sémantiques, pour qu'un PDF généré ressemble à un écran de
 // Lyko System plutôt qu'à un document généré à part avec ses propres couleurs.
-const PRIMARY = '#1E3A8A';
-const PRIMARY_BG = '#E8ECF9';
-const PRIMARY_BORDER = '#B7C3EA';
+const PRIMARY = '#0B2A5B';
+const PRIMARY_BG = '#EAF0FB';
+const PRIMARY_BORDER = '#C5D3EE';
 const INK = '#0F172A';
 const INK_SOFT = '#334155';
-const MUTED = '#64748B';
+const MUTED = '#5B6B82';
 const FAINT = '#94A3B8';
 const BORDER = '#E2E8F0';
 const BORDER_STRONG = '#CBD5E1';
@@ -38,8 +39,8 @@ const WARNING_FG = '#B45309';
 // à la manière des factures Stripe/Apple plutôt qu'un simple document Word.
 const FONT_SANS = 'Helvetica';
 const FONT_SANS_BOLD = 'Helvetica-Bold';
-const FONT_MONO = 'Courier';
-const FONT_MONO_BOLD = 'Courier-Bold';
+const FONT_MONO = 'Helvetica';
+const FONT_MONO_BOLD = 'Helvetica-Bold';
 
 const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
 
@@ -78,7 +79,7 @@ function normalizeLineBreaks(text) {
 // `property_label`/`property_address`, parfois en `label`/`address` : on
 // accepte les deux pour ne pas dépendre d'une convention SQL précise.
 function propertyLabel(property) {
-  return property.property_label ?? property.label;
+  return property.property_label ?? property.label ?? property.designation_custom ?? property.designation ?? 'Bien';
 }
 function propertyAddress(property) {
   return property.property_address ?? property.address;
@@ -150,39 +151,8 @@ function formatFcfa(amount) {
  * d'identité légale (RCCM/IFU/téléphone) en Courier — ce sont des CODES, pas
  * du texte, ils bénéficient de l'alignement en chiffres fixes.
  */
-function drawHeader(doc, tenant) {
-  doc.rect(0, 0, doc.page.width, 5).fill(PRIMARY);
-
-  let textX = 50;
-  if (tenant.logo_path) {
-    const logoFile = path.join(UPLOADS_ROOT, tenant.logo_path);
-    if (fs.existsSync(logoFile)) {
-      try {
-        doc.image(logoFile, 50, 48, { fit: [50, 50] });
-        textX = 112;
-      } catch {
-        // Logo illisible (format inattendu) : on continue sans image.
-      }
-    }
-  }
-  doc
-    .fillColor(INK)
-    .font(FONT_SANS_BOLD)
-    .fontSize(14)
-    .text(tenant.company_name, textX, 52);
-  doc
-    .fillColor(MUTED)
-    .font(FONT_MONO)
-    .fontSize(8)
-    .text(`RCCM ${tenant.rccm}  ·  IFU ${tenant.ifu}  ·  ${tenant.contact_phone}`, textX, 71);
-
-  doc
-    .moveTo(50, 112)
-    .lineTo(545, 112)
-    .strokeColor(BORDER_STRONG)
-    .lineWidth(1)
-    .stroke();
-  doc.y = 134;
+function drawHeader(doc, tenant, opts = {}) {
+  return D.drawBanner(doc, tenant, { title: opts.title ?? '', subtitle: opts.subtitle ?? null, meta: opts.meta ?? [] });
 }
 
 /**
@@ -205,44 +175,11 @@ function drawHeader(doc, tenant) {
  * marge, largement assez pour une ligne de plus sans chevaucher le contenu.
  */
 function drawFooter(doc, { verificationCode } = {}) {
-  const downloadDate = formatDateSlash(new Date().toISOString().slice(0, 10));
-  const range = doc.bufferedPageRange();
-  for (let i = range.start; i < range.start + range.count; i += 1) {
-    doc.switchToPage(i);
-    // PDFKit déclenche son saut de page automatique sur `.text()` en
-    // comparant `y` à `page.height - page.margins.bottom`, MÊME avec des
-    // coordonnées absolues après `switchToPage` — sans ce contournement
-    // (bien connu de PDFKit), dessiner le pied de page à y≈780 crée une
-    // page BLANCHE supplémentaire à chaque itération au lieu d'écrire sur
-    // la page visée (constaté : un document de 2 pages en ressortait avec
-    // 4, les pieds de page réels invisibles, relégués sur les pages 3-4).
-    const realBottomMargin = doc.page.margins.bottom;
-    doc.page.margins.bottom = 0;
-    doc
-      .moveTo(50, 772)
-      .lineTo(545, 772)
-      .strokeColor(BORDER)
-      .lineWidth(0.75)
-      .stroke();
-    doc.fontSize(7.5);
-    doc.font(FONT_SANS).fillColor(MUTED).text('Document téléchargé le ', 50, 781, { continued: true });
-    doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(downloadDate, { continued: true });
-    doc.font(FONT_SANS).fillColor(MUTED).text(' · Lyko System.');
-    doc
-      .fontSize(7.5)
-      .fillColor(FAINT)
-      .font(FONT_MONO)
-      .text(`${i - range.start + 1} / ${range.count}`, 445, 781, { width: 100, align: 'right' });
-    if (verificationCode) {
-      const verifyHost = config.frontendUrl.replace(/^https?:\/\//, '');
-      doc.fontSize(7.5);
-      doc.font(FONT_SANS).fillColor(MUTED).text("Vérifiez l'authenticité de ce document sur ", 50, 792, { continued: true });
-      doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(`${verifyHost}/verifier`, { continued: true });
-      doc.font(FONT_SANS).fillColor(MUTED).text(' avec le code ', { continued: true });
-      doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(verificationCode);
-    }
-    doc.page.margins.bottom = realBottomMargin;
-  }
+  D.finishDocument(doc, {
+    verificationCode,
+    frontendHost: config.frontendUrl.replace(/^https?:\/\//, ''),
+    downloadDate: formatDateSlash(new Date().toISOString().slice(0, 10)),
+  });
 }
 
 // Retourne la hauteur réellement occupée (la valeur peut passer sur plusieurs
@@ -290,6 +227,50 @@ function drawPanelRow(doc, label, value, x, y, { labelWidth = 280, valueWidth = 
     .text(value, x + labelWidth, y, { width: valueWidth, align: 'right' });
 }
 
+/** Carte de signature de l'émetteur (employé qui a encaissé, sinon cachet/signature de l'entreprise). */
+function issuerCard(tenant, issuer, title) {
+  return {
+    title,
+    name: issuer ? `${issuer.first_name} ${issuer.last_name}` : tenant.company_name,
+    role: issuer ? resolveRoleLabels(tenant)[issuer.role] ?? issuer.role : null,
+    signatureFile: D.imageIfExists(issuer?.signature_path || tenant.signature_path),
+    stampFile: D.imageIfExists(issuer?.stamp_path || tenant.stamp_path),
+  };
+}
+
+/**
+ * Gabarit commun des reçus (quittance, reçu d'entrée, fiche de paie, avis de paiement, reçu de charges) —
+ * même mise en page partout : bandeau, mention, parties, détail en tableau, montant principal, montant en
+ * lettres, note, signature. `lines` : { columns, rows } ; `total` : { label, amount } ; `wordsPrefix` : début de
+ * la phrase « Arrêté … à la somme de ».
+ */
+function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, intro, partiesLabel = 'Parties', parties, detailLabel = 'Détail', lines, total, wordsPrefix, note, signatureTitle, issuer, verificationCode, extraRows = null }) {
+  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  doc.pipe(res);
+
+  let y = D.drawBanner(doc, tenant, { title, subtitle, meta });
+  if (intro) {
+    doc.font(D.F.SANS).fontSize(9.5).fillColor(D.C.INK_SOFT).text(intro.prefix, D.LEFT, y, { continued: true });
+    doc.font(D.F.BOLD).fillColor(D.C.INK).text(intro.bold);
+    y = doc.y + 16;
+  }
+  y = D.drawSection(doc, y, partiesLabel);
+  y = D.drawInfoGrid(doc, y, parties);
+  y = D.drawSection(doc, y, detailLabel);
+  y = D.drawTable(doc, y, lines.columns, lines.rows);
+  if (extraRows) y = D.drawTable(doc, y, extraRows.columns, extraRows.rows);
+  y = D.drawTotalBar(doc, y, total.label, total.amount);
+  y = D.drawWordsLine(doc, y, total.raw, wordsPrefix);
+  if (note) y = D.drawNote(doc, y + 2, null, note);
+  y = D.drawSignatureCards(doc, y, [issuerCard(tenant, issuer, signatureTitle)], { section: false });
+
+  drawFooter(doc, { verificationCode });
+  doc.end();
+}
+
 /**
  * Quittance de loyer (un paiement = une quittance). Deuxième refonte demandée
  * par l'utilisateur, référence cette fois un modèle de facture professionnel
@@ -312,195 +293,47 @@ function drawPanelRow(doc, label, value, x, y, { labelWidth = 280, valueWidth = 
  * avant cette fonctionnalité.
  */
 function streamReceiptPdf(res, { tenant, renter, property, lease, payment, receipt, issuer, verificationCode }) {
-  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${receipt.receipt_number}.pdf"`);
-  doc.pipe(res);
-
-  // --- Ligne 1 : logo + société (gauche) / gros titre + date (droite), sur la même ligne. ---
-  doc.rect(0, 0, doc.page.width, 5).fill(PRIMARY);
-  const topY = 40;
-  let leftX = 50;
-  if (tenant.logo_path) {
-    const logoFile = path.join(UPLOADS_ROOT, tenant.logo_path);
-    if (fs.existsSync(logoFile)) {
-      try {
-        doc.image(logoFile, 50, topY, { fit: [42, 42] });
-        leftX = 102;
-      } catch {
-        // Logo illisible : on continue sans image.
-      }
-    }
-  }
-  doc.font(FONT_SANS_BOLD).fontSize(15).fillColor(INK).text(tenant.company_name, leftX, topY + 4, { width: 230 });
-
-  doc.font(FONT_SANS_BOLD).fontSize(24).fillColor(PRIMARY).text('QUITTANCE', 315, topY - 4, { width: 230, align: 'right' });
-  // Date ET heure de DÉLIVRANCE de cette quittance précise (`receipts.issued_at`, horodatage réel de sa
-  // création) — jamais la date du paiement (`payment.paid_at`, un simple jour sans heure, un concept
-  // différent : le paiement a pu être réglé un jour, la quittance émise à un autre moment).
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(10)
-    .fillColor(INK_SOFT)
-    .text(
-      `${formatDateFr(receipt.issued_at.toISOString().slice(0, 10))} à ${formatTimeHm(receipt.issued_at)}`,
-      315,
-      doc.y + 2,
-      { width: 230, align: 'right' },
-    );
-
-  // --- Ligne 2 : coordonnées du cabinet (gauche) / destinataire (droite). ---
-  let y = Math.max(topY + 42, doc.y) + 16;
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('CABINET', 50, y, { characterSpacing: 0.6 });
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('À L’ATTENTION DE', 315, y, { width: 230, align: 'right', characterSpacing: 0.6 });
-  y += 13;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(`RCCM ${tenant.rccm}`, 50, y, { width: 230 });
-  doc.font(FONT_SANS_BOLD).fontSize(10.5).fillColor(INK).text(`${renter.first_name} ${renter.last_name}`, 315, y, { width: 230, align: 'right' });
-  y += 12;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(`IFU ${tenant.ifu}`, 50, y, { width: 230 });
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(MUTED).text(renter.phone, 315, y, { width: 230, align: 'right' });
-  y += 12;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(tenant.contact_phone, 50, y, { width: 230 });
-  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(propertyLabel(property), 315, y, { width: 230, align: 'right' });
-  y += 24;
-
-  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
-  y += 18;
-
-  // --- Meta (n° reçu, moyen de paiement) ---
-  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text('N° reçu ', 50, y, { continued: true });
-  doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(receipt.receipt_number, { continued: true });
-  doc.font(FONT_SANS).fillColor(MUTED).text('   ·   Réglé par ', { continued: true });
-  doc.font(FONT_SANS_BOLD).fillColor(INK_SOFT).text(PAYMENT_METHOD_LABELS[payment.payment_method] ?? payment.payment_method);
-  y = doc.y + 18;
-
-  // --- Tableau : en-tête pleine couleur (Description / P.U. / Mois / Montant). ---
-  const colDesc = { x: 60, width: 225 };
-  const colUnit = { x: 285, width: 85 };
-  const colMonths = { x: 375, width: 70 };
-  const colAmount = { x: 460, width: 75 };
-  const headerHeight = 24;
-  doc.rect(50, y, 495, headerHeight).fill(PRIMARY);
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor('#FFFFFF');
-  doc.text('DESCRIPTION', colDesc.x, y + 8, { width: colDesc.width, characterSpacing: 0.3 });
-  doc.text('P.U.', colUnit.x, y + 8, { width: colUnit.width, align: 'right', characterSpacing: 0.3 });
-  doc.text('MOIS', colMonths.x, y + 8, { width: colMonths.width, align: 'right', characterSpacing: 0.3 });
-  doc.text('MONTANT', colAmount.x, y + 8, { width: colAmount.width, align: 'right', characterSpacing: 0.3 });
-  y += headerHeight + 14;
-
   // Bail calendaire : nom du mois ; bail non-calendaire : plage de dates réelle de la période
   // (étape 2c — `covers_month` y est NULL, voir migration 085).
   const periodKey = paymentPeriodKey(payment);
-  const monthLabel = periodKey ? formatPeriodLabel(periodKey) : '';
-  doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(`Loyer — ${monthLabel}`, colDesc.x, y, {
-    width: colDesc.width,
-  });
-  doc
-    .font(FONT_MONO)
-    .fontSize(9.5)
-    .fillColor(INK)
-    .text(formatFcfa(payment.amount), colUnit.x, y, { width: colUnit.width, align: 'right' });
-  doc.font(FONT_MONO).fontSize(9.5).fillColor(INK).text('1', colMonths.x, y, { width: colMonths.width, align: 'right' });
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(9.5)
-    .fillColor(INK)
-    .text(formatFcfa(payment.amount), colAmount.x, y, { width: colAmount.width, align: 'right' });
-  y += 16;
-  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
-  y += 20;
-
-  // --- Total : barre pleine couleur (jamais de sous-total/TVA/remise — sans objet pour un loyer). ---
-  const totalBoxHeight = 36;
-  doc.roundedRect(275, y, 270, totalBoxHeight, 6).fill(PRIMARY);
-  doc.font(FONT_SANS_BOLD).fontSize(10).fillColor('#FFFFFF').text('MONTANT PAYÉ', 290, y + 12, { width: 130 });
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(13)
-    .fillColor('#FFFFFF')
-    .text(formatFcfa(payment.amount), 275, y + 10, { width: 255, align: 'right' });
-  y += totalBoxHeight + 24;
-
-  // --- Note ---
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('NOTE', 50, y, { characterSpacing: 0.6 });
-  y += 13;
-  doc
-    .font(FONT_SANS)
-    .fontSize(9)
-    .fillColor(INK_SOFT)
-    .text(
+  const monthLabel = periodKey ? formatPeriodLabel(periodKey) : '—';
+  // Date ET heure de DÉLIVRANCE de cette quittance (`receipts.issued_at`) — jamais la date du paiement.
+  const issuedOn = formatDateFr(receipt.issued_at.toISOString().slice(0, 10));
+  const issuedAt = `${issuedOn} à ${formatTimeHm(receipt.issued_at)}`;
+  const method = PAYMENT_METHOD_LABELS[payment.payment_method] ?? payment.payment_method;
+  renderReceiptDocument(res, {
+    tenant,
+    filename: `${receipt.receipt_number}.pdf`,
+    title: 'QUITTANCE DE LOYER',
+    subtitle: `Période : ${monthLabel}`,
+    meta: [['N° de reçu', receipt.receipt_number], verificationCode ? ['Code de vérification', verificationCode] : ['Délivrée le', issuedOn]],
+    intro: { prefix: 'Quittance délivrée le ', bold: issuedAt },
+    parties: [
+      ['Locataire', `${renter.first_name} ${renter.last_name}`],
+      ['Bien loué', `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`],
+      ['Unité', property.unit_code ?? '—'],
+      ['Bailleur / mandataire', tenant.company_name],
+      ['Réglé par', method],
+      ['Téléphone du locataire', renter.phone ?? '—'],
+    ],
+    detailLabel: 'Détail du règlement',
+    lines: {
+      columns: [
+        { label: 'Désignation', width: 235 },
+        { label: 'Période', width: 160 },
+        { label: 'Montant', width: 100, align: 'right', bold: true },
+      ],
+      rows: [['Loyer', monthLabel, D.fcfa(payment.amount)]],
+    },
+    total: { label: 'Montant reçu', amount: D.fcfa(payment.amount), raw: payment.amount },
+    wordsPrefix: 'Arrêtée la présente quittance à la somme de',
+    note:
       `L'entreprise ${tenant.company_name} certifie avoir reçu de ${renter.first_name} ${renter.last_name} ` +
-        `la somme ci-dessus au titre du loyer de ${propertyLabel(property)}, pour la période mentionnée.`,
-      50,
-      y,
-      { width: 495 },
-    );
-  y = doc.y + 20;
-
-  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(PRIMARY).text('Merci pour votre confiance.', 50, y);
-  y = doc.y + 16;
-  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
-  y += 16;
-
-  // --- Pied à deux colonnes : contact (gauche) / cachet-signature (droite) — mêmes emplacements que
-  // les colonnes « Questions »/« Payment Info » du modèle, adaptées (voir décisions ci-dessus). ---
-  const SIGNATURE_BLOCK_HEIGHT = 130;
-  if (y + SIGNATURE_BLOCK_HEIGHT > doc.page.height - doc.page.margins.bottom) {
-    doc.addPage();
-    y = doc.y;
-  }
-
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('UNE QUESTION ?', 50, y, { characterSpacing: 0.6 });
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('CACHET & SIGNATURE', 315, y, { characterSpacing: 0.6 });
-  doc.font(FONT_MONO_BOLD).fontSize(9.5).fillColor(INK).text(tenant.contact_phone, 50, y + 12);
-
-  const signatureFile = issuer?.signature_path
-    ? path.join(UPLOADS_ROOT, issuer.signature_path)
-    : tenant.signature_path
-      ? path.join(UPLOADS_ROOT, tenant.signature_path)
-      : null;
-  const stampFile = issuer?.stamp_path
-    ? path.join(UPLOADS_ROOT, issuer.stamp_path)
-    : tenant.stamp_path
-      ? path.join(UPLOADS_ROOT, tenant.stamp_path)
-      : null;
-
-  const signX = 315;
-  const signY = y + 16;
-  let signatureDrawn = false;
-  if (signatureFile && fs.existsSync(signatureFile)) {
-    try {
-      doc.image(signatureFile, signX, signY, { fit: [110, 40] });
-      signatureDrawn = true;
-    } catch {
-      // Signature illisible : repli sur la ligne à signer ci-dessous.
-    }
-  }
-  if (!signatureDrawn) {
-    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', signX, signY + 25);
-  }
-  if (stampFile && fs.existsSync(stampFile)) {
-    try {
-      doc.opacity(0.9).image(stampFile, signX + 70, signY - 15, { fit: [100, 100] }).opacity(1);
-    } catch {
-      // Cachet illisible : on continue sans (pas bloquant pour la quittance).
-    }
-  }
-  if (issuer) {
-    doc
-      .font(FONT_SANS_BOLD)
-      .fontSize(9)
-      .fillColor(INK)
-      .text(`${issuer.first_name} ${issuer.last_name}`, signX, signY + 50);
-    doc
-      .font(FONT_SANS)
-      .fontSize(8)
-      .fillColor(MUTED)
-      .text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, signX, signY + 63);
-  }
-
-  drawFooter(doc, { verificationCode });
-  doc.end();
+      `la somme ci-dessus au titre du loyer de ${propertyLabel(property)}, pour la période mentionnée. Merci pour votre confiance.`,
+    signatureTitle: 'Le bailleur / mandataire',
+    issuer,
+    verificationCode,
+  });
 }
 
 /**
@@ -516,171 +349,41 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
  * la création du bail — jamais recalculé, même principe que `lease_contracts.snapshot`).
  */
 function streamEntryReceiptPdf(res, { tenant, renter, property, lease, entryReceipt, issuer, verificationCode }) {
-  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${entryReceipt.receipt_number}.pdf"`);
-  doc.pipe(res);
-
-  doc.rect(0, 0, doc.page.width, 5).fill(PRIMARY);
-  const topY = 40;
-  let leftX = 50;
-  if (tenant.logo_path) {
-    const logoFile = path.join(UPLOADS_ROOT, tenant.logo_path);
-    if (fs.existsSync(logoFile)) {
-      try {
-        doc.image(logoFile, 50, topY, { fit: [42, 42] });
-        leftX = 102;
-      } catch {
-        // Logo illisible : on continue sans image.
-      }
-    }
-  }
-  doc.font(FONT_SANS_BOLD).fontSize(15).fillColor(INK).text(tenant.company_name, leftX, topY + 4, { width: 230 });
-
-  doc.font(FONT_SANS_BOLD).fontSize(22).fillColor(PRIMARY).text("REÇU D'ENTRÉE", 285, topY - 4, { width: 260, align: 'right' });
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(10)
-    .fillColor(INK_SOFT)
-    .text(
-      `${formatDateFr(entryReceipt.issued_at.toISOString().slice(0, 10))} à ${formatTimeHm(entryReceipt.issued_at)}`,
-      315,
-      doc.y + 2,
-      { width: 230, align: 'right' },
-    );
-
-  let y = Math.max(topY + 42, doc.y) + 16;
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('CABINET', 50, y, { characterSpacing: 0.6 });
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('À L’ATTENTION DE', 315, y, { width: 230, align: 'right', characterSpacing: 0.6 });
-  y += 13;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(`RCCM ${tenant.rccm}`, 50, y, { width: 230 });
-  doc.font(FONT_SANS_BOLD).fontSize(10.5).fillColor(INK).text(`${renter.first_name} ${renter.last_name}`, 315, y, { width: 230, align: 'right' });
-  y += 12;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(`IFU ${tenant.ifu}`, 50, y, { width: 230 });
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(MUTED).text(renter.phone, 315, y, { width: 230, align: 'right' });
-  y += 12;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(tenant.contact_phone, 50, y, { width: 230 });
-  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(propertyLabel(property), 315, y, { width: 230, align: 'right' });
-  y += 24;
-
-  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
-  y += 18;
-
-  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text('N° reçu ', 50, y, { continued: true });
-  doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(entryReceipt.receipt_number);
-  y = doc.y + 18;
-
-  const colDesc = { x: 60, width: 360 };
-  const colAmount = { x: 460, width: 75 };
-  const headerHeight = 24;
-  doc.rect(50, y, 495, headerHeight).fill(PRIMARY);
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor('#FFFFFF');
-  doc.text('DESCRIPTION', colDesc.x, y + 8, { width: colDesc.width, characterSpacing: 0.3 });
-  doc.text('MONTANT', colAmount.x, y + 8, { width: colAmount.width, align: 'right', characterSpacing: 0.3 });
-  y += headerHeight + 14;
-
   const snapshot = entryReceipt.snapshot;
-  for (const line of snapshot.lines) {
-    y = ensureSpace(doc, y, 20);
-    doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(line.label, colDesc.x, y, { width: colDesc.width });
-    doc
-      .font(FONT_MONO_BOLD)
-      .fontSize(9.5)
-      .fillColor(INK)
-      .text(formatFcfa(line.amount), colAmount.x, y, { width: colAmount.width, align: 'right' });
-    y += 16;
-    doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
-    y += 8;
-  }
-  y += 12;
-
-  const totalBoxHeight = 36;
-  y = ensureSpace(doc, y, totalBoxHeight + 24);
-  doc.roundedRect(275, y, 270, totalBoxHeight, 6).fill(PRIMARY);
-  doc.font(FONT_SANS_BOLD).fontSize(10).fillColor('#FFFFFF').text('TOTAL PAYÉ', 290, y + 12, { width: 130 });
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(13)
-    .fillColor('#FFFFFF')
-    .text(formatFcfa(snapshot.total), 275, y + 10, { width: 255, align: 'right' });
-  y += totalBoxHeight + 24;
-
-  y = ensureSpace(doc, y, 60);
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('NOTE', 50, y, { characterSpacing: 0.6 });
-  y += 13;
-  doc
-    .font(FONT_SANS)
-    .fontSize(9)
-    .fillColor(INK_SOFT)
-    .text(
+  const issuedOn = formatDateFr(entryReceipt.issued_at.toISOString().slice(0, 10));
+  renderReceiptDocument(res, {
+    tenant,
+    filename: `${entryReceipt.receipt_number}.pdf`,
+    title: "REÇU D'ENTRÉE",
+    subtitle: 'Signature du bail — sommes réglées à l\'entrée',
+    meta: [['N° de reçu', entryReceipt.receipt_number], verificationCode ? ['Code de vérification', verificationCode] : ['Délivré le', issuedOn]],
+    intro: { prefix: 'Reçu délivré le ', bold: `${issuedOn} à ${formatTimeHm(entryReceipt.issued_at)}` },
+    parties: [
+      ['Locataire', `${renter.first_name} ${renter.last_name}`],
+      ['Bien loué', `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`],
+      ['Unité', property.unit_code ?? '—'],
+      ['Bailleur / mandataire', tenant.company_name],
+      ['Début du bail', lease?.start_date ? formatDateFr(isoDay(lease.start_date)) : '—'],
+      ['Téléphone du locataire', renter.phone ?? '—'],
+    ],
+    detailLabel: 'Sommes réglées à l\'entrée',
+    lines: {
+      columns: [
+        { label: 'Désignation', width: 395 },
+        { label: 'Montant', width: 100, align: 'right', bold: true },
+      ],
+      rows: snapshot.lines.map((line) => [line.label, D.fcfa(line.amount)]),
+    },
+    total: { label: 'Total payé', amount: D.fcfa(snapshot.total), raw: snapshot.total },
+    wordsPrefix: 'Arrêté le présent reçu à la somme de',
+    note:
       `L'entreprise ${tenant.company_name} certifie avoir reçu de ${renter.first_name} ${renter.last_name} ` +
-        `la somme ci-dessus à la signature du bail de ${propertyLabel(property)}. Les frais d'agence sont ` +
-        `non remboursables ; les cautions sont restituables selon les conditions du bail.`,
-      50,
-      y,
-      { width: 495 },
-    );
-  y = doc.y + 20;
-
-  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(PRIMARY).text('Merci pour votre confiance.', 50, y);
-  y = doc.y + 16;
-  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
-  y += 16;
-
-  const SIGNATURE_BLOCK_HEIGHT = 130;
-  y = ensureSpace(doc, y, SIGNATURE_BLOCK_HEIGHT);
-
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('UNE QUESTION ?', 50, y, { characterSpacing: 0.6 });
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('CACHET & SIGNATURE', 315, y, { characterSpacing: 0.6 });
-  doc.font(FONT_MONO_BOLD).fontSize(9.5).fillColor(INK).text(tenant.contact_phone, 50, y + 12);
-
-  const signatureFile = issuer?.signature_path
-    ? path.join(UPLOADS_ROOT, issuer.signature_path)
-    : tenant.signature_path
-      ? path.join(UPLOADS_ROOT, tenant.signature_path)
-      : null;
-  const stampFile = issuer?.stamp_path
-    ? path.join(UPLOADS_ROOT, issuer.stamp_path)
-    : tenant.stamp_path
-      ? path.join(UPLOADS_ROOT, tenant.stamp_path)
-      : null;
-
-  const signX = 315;
-  const signY = y + 16;
-  let signatureDrawn = false;
-  if (signatureFile && fs.existsSync(signatureFile)) {
-    try {
-      doc.image(signatureFile, signX, signY, { fit: [110, 40] });
-      signatureDrawn = true;
-    } catch {
-      // Signature illisible : repli sur la ligne à signer ci-dessous.
-    }
-  }
-  if (!signatureDrawn) {
-    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', signX, signY + 25);
-  }
-  if (stampFile && fs.existsSync(stampFile)) {
-    try {
-      doc.opacity(0.9).image(stampFile, signX + 70, signY - 15, { fit: [100, 100] }).opacity(1);
-    } catch {
-      // Cachet illisible : on continue sans (pas bloquant pour le reçu).
-    }
-  }
-  if (issuer) {
-    doc
-      .font(FONT_SANS_BOLD)
-      .fontSize(9)
-      .fillColor(INK)
-      .text(`${issuer.first_name} ${issuer.last_name}`, signX, signY + 50);
-    doc
-      .font(FONT_SANS)
-      .fontSize(8)
-      .fillColor(MUTED)
-      .text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, signX, signY + 63);
-  }
-
-  drawFooter(doc, { verificationCode });
-  doc.end();
+      `la somme ci-dessus à la signature du bail de ${propertyLabel(property)}. Les frais d'agence sont ` +
+      `non remboursables ; les cautions sont restituables selon les conditions du bail.`,
+    signatureTitle: 'Le bailleur / mandataire',
+    issuer,
+    verificationCode,
+  });
 }
 
 /**
@@ -692,202 +395,45 @@ function streamEntryReceiptPdf(res, { tenant, renter, property, lease, entryRece
  * si le DG n'a pas encore téléversé la sienne (« Mon compte »), même logique que `streamEntryReceiptPdf`.
  */
 function streamPayslipPdf(res, { tenant, employee, payslip, issuer }) {
-  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   const roleLabels = resolveRoleLabels(tenant);
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="fiche-de-paie-${payslip.period}-${employee.id}.pdf"`);
-  doc.pipe(res);
-
-  doc.rect(0, 0, doc.page.width, 5).fill(PRIMARY);
-  const topY = 40;
-  let leftX = 50;
-  if (tenant.logo_path) {
-    const logoFile = path.join(UPLOADS_ROOT, tenant.logo_path);
-    if (fs.existsSync(logoFile)) {
-      try {
-        doc.image(logoFile, 50, topY, { fit: [42, 42] });
-        leftX = 102;
-      } catch {
-        // Logo illisible : on continue sans image.
-      }
-    }
-  }
-  doc.font(FONT_SANS_BOLD).fontSize(15).fillColor(INK).text(tenant.company_name, leftX, topY + 4, { width: 230 });
-
-  doc.font(FONT_SANS_BOLD).fontSize(22).fillColor(PRIMARY).text('FICHE DE PAIE', 285, topY - 4, { width: 260, align: 'right' });
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(10)
-    .fillColor(INK_SOFT)
-    .text(formatMonthLabel(payslip.period), 315, doc.y + 2, { width: 230, align: 'right' });
-
-  let y = Math.max(topY + 42, doc.y) + 16;
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('EMPLOYEUR', 50, y, { characterSpacing: 0.6 });
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('EMPLOYÉ', 315, y, { width: 230, align: 'right', characterSpacing: 0.6 });
-  y += 13;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(`RCCM ${tenant.rccm}`, 50, y, { width: 230 });
-  doc.font(FONT_SANS_BOLD).fontSize(10.5).fillColor(INK).text(`${employee.first_name} ${employee.last_name}`, 315, y, { width: 230, align: 'right' });
-  y += 12;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(`IFU ${tenant.ifu}`, 50, y, { width: 230 });
-  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(roleLabels[employee.role] ?? employee.role, 315, y, { width: 230, align: 'right' });
-  y += 12;
-  doc.font(FONT_MONO).fontSize(8.5).fillColor(INK_SOFT).text(tenant.contact_phone, 50, y, { width: 230 });
-  if (employee.identifier) {
-    doc.font(FONT_MONO).fontSize(8.5).fillColor(MUTED).text(employee.identifier, 315, y, { width: 230, align: 'right' });
-  }
-  y += 24;
-
-  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
-  y += 18;
-
-  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text('Date de règlement ', 50, y, { continued: true });
   const paidAtIso = payslip.paid_at instanceof Date ? payslip.paid_at.toISOString().slice(0, 10) : String(payslip.paid_at).slice(0, 10);
-  doc.font(FONT_MONO_BOLD).fillColor(INK_SOFT).text(formatDateFr(paidAtIso));
-  y = doc.y + 18;
-
-  const colDesc = { x: 60, width: 360 };
-  const colAmount = { x: 460, width: 75 };
-  const headerHeight = 24;
-  doc.rect(50, y, 495, headerHeight).fill(PRIMARY);
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor('#FFFFFF');
-  doc.text('DÉSIGNATION', colDesc.x, y + 8, { width: colDesc.width, characterSpacing: 0.3 });
-  doc.text('MONTANT', colAmount.x, y + 8, { width: colAmount.width, align: 'right', characterSpacing: 0.3 });
-  y += headerHeight + 14;
-
-  const lines = [{ label: 'Salaire de base', amount: Number(payslip.base_amount) }];
-  if (Number(payslip.bonus_amount) > 0) {
-    lines.push({ label: payslip.bonus_label || 'Prime', amount: Number(payslip.bonus_amount) });
-  }
-  for (const line of lines) {
-    y = ensureSpace(doc, y, 20);
-    doc.font(FONT_SANS).fontSize(9.5).fillColor(INK).text(line.label, colDesc.x, y, { width: colDesc.width });
-    doc.font(FONT_MONO_BOLD).fontSize(9.5).fillColor(INK).text(formatFcfa(line.amount), colAmount.x, y, { width: colAmount.width, align: 'right' });
-    y += 16;
-    doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
-    y += 8;
-  }
-
-  y = ensureSpace(doc, y, 24);
-  doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK_SOFT).text('Salaire brut', colDesc.x, y, { width: colDesc.width });
-  doc.font(FONT_MONO_BOLD).fontSize(9.5).fillColor(INK_SOFT).text(formatFcfa(payslip.gross_amount), colAmount.x, y, { width: colAmount.width, align: 'right' });
-  y += 20;
-
-  if (Number(payslip.deduction_amount) > 0) {
-    y = ensureSpace(doc, y, 20);
-    doc.font(FONT_SANS).fontSize(9.5).fillColor(DANGER_FG).text(payslip.deduction_label || 'Retenue', colDesc.x, y, { width: colDesc.width });
-    doc
-      .font(FONT_MONO_BOLD)
-      .fontSize(9.5)
-      .fillColor(DANGER_FG)
-      .text(`- ${formatFcfa(payslip.deduction_amount)}`, colAmount.x, y, { width: colAmount.width, align: 'right' });
-    y += 16;
-    doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
-    y += 8;
-  }
-  y += 8;
-
-  const totalBoxHeight = 36;
-  y = ensureSpace(doc, y, totalBoxHeight + 24);
-  doc.roundedRect(275, y, 270, totalBoxHeight, 6).fill(PRIMARY);
-  doc.font(FONT_SANS_BOLD).fontSize(10).fillColor('#FFFFFF').text('NET À PAYER', 290, y + 12, { width: 130 });
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(13)
-    .fillColor('#FFFFFF')
-    .text(formatFcfa(payslip.net_amount), 275, y + 10, { width: 255, align: 'right' });
-  y += totalBoxHeight + 24;
-
-  y = ensureSpace(doc, y, 60);
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('NOTE', 50, y, { characterSpacing: 0.6 });
-  y += 13;
-  doc
-    .font(FONT_SANS)
-    .fontSize(9)
-    .fillColor(INK_SOFT)
-    .text(
+  const rows = [['Salaire de base', D.fcfa(payslip.base_amount)]];
+  if (Number(payslip.bonus_amount) > 0) rows.push([payslip.bonus_label || 'Prime', D.fcfa(payslip.bonus_amount)]);
+  rows.push(['Salaire brut', D.fcfa(payslip.gross_amount)]);
+  if (Number(payslip.deduction_amount) > 0) rows.push([payslip.deduction_label || 'Retenue', `- ${D.fcfa(payslip.deduction_amount)}`]);
+  renderReceiptDocument(res, {
+    tenant,
+    filename: `fiche-de-paie-${payslip.period}-${employee.id}.pdf`,
+    title: 'FICHE DE PAIE',
+    subtitle: formatMonthLabel(payslip.period),
+    meta: [['Période', formatMonthLabel(payslip.period)], ['Date de règlement', formatDateFr(paidAtIso)]],
+    intro: { prefix: 'Salaire de ', bold: formatMonthLabel(payslip.period) },
+    partiesLabel: 'Employeur et employé',
+    parties: [
+      ['Employé', `${employee.first_name} ${employee.last_name}`],
+      ['Fonction', roleLabels[employee.role] ?? employee.role],
+      ['Identifiant', employee.identifier ?? '—'],
+      ['Employeur', tenant.company_name],
+      ['Mode de règlement', PAYMENT_METHOD_LABELS[payslip.payment_method] ?? payslip.payment_method],
+      ['Date de règlement', formatDateFr(paidAtIso)],
+    ],
+    detailLabel: 'Détail de la rémunération',
+    lines: {
+      columns: [
+        { label: 'Désignation', width: 395 },
+        { label: 'Montant', width: 100, align: 'right', bold: true },
+      ],
+      rows,
+    },
+    total: { label: 'Net à payer', amount: D.fcfa(payslip.net_amount), raw: payslip.net_amount },
+    wordsPrefix: 'Arrêtée la présente fiche à la somme de',
+    note:
       `${tenant.company_name} certifie avoir versé à ${employee.first_name} ${employee.last_name} la somme ` +
-        `ci-dessus au titre de son salaire de ${formatMonthLabel(payslip.period)}, réglée par ` +
-        `${PAYMENT_METHOD_LABELS[payslip.payment_method] ?? payslip.payment_method}.`,
-      50,
-      y,
-      { width: 495 },
-    );
-  y = doc.y + 20;
-  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER).lineWidth(1).stroke();
-  y += 16;
-
-  const SIGNATURE_BLOCK_HEIGHT = 130;
-  y = ensureSpace(doc, y, SIGNATURE_BLOCK_HEIGHT);
-
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('UNE QUESTION ?', 50, y, { characterSpacing: 0.6 });
-  doc.font(FONT_SANS_BOLD).fontSize(8).fillColor(MUTED).text('SIGNATURE', 315, y, { characterSpacing: 0.6 });
-  doc.font(FONT_MONO_BOLD).fontSize(9.5).fillColor(INK).text(tenant.contact_phone, 50, y + 12);
-
-  const signatureFile = issuer?.signature_path
-    ? path.join(UPLOADS_ROOT, issuer.signature_path)
-    : tenant.signature_path
-      ? path.join(UPLOADS_ROOT, tenant.signature_path)
-      : null;
-  const stampFile = issuer?.stamp_path
-    ? path.join(UPLOADS_ROOT, issuer.stamp_path)
-    : tenant.stamp_path
-      ? path.join(UPLOADS_ROOT, tenant.stamp_path)
-      : null;
-
-  const signX = 315;
-  const signY = y + 16;
-  let signatureDrawn = false;
-  if (signatureFile && fs.existsSync(signatureFile)) {
-    try {
-      doc.image(signatureFile, signX, signY, { fit: [110, 40] });
-      signatureDrawn = true;
-    } catch {
-      // Signature illisible : repli sur la ligne à signer ci-dessous.
-    }
-  }
-  if (!signatureDrawn) {
-    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', signX, signY + 25);
-  }
-  if (stampFile && fs.existsSync(stampFile)) {
-    try {
-      doc.opacity(0.9).image(stampFile, signX + 70, signY - 15, { fit: [100, 100] }).opacity(1);
-    } catch {
-      // Cachet illisible : on continue sans (pas bloquant pour la fiche).
-    }
-  }
-  if (issuer) {
-    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(`${issuer.first_name} ${issuer.last_name}`, signX, signY + 50);
-    doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text(roleLabels[issuer.role] ?? issuer.role, signX, signY + 63);
-  }
-
-  drawFooter(doc);
-  doc.end();
-}
-
-/**
- * Justificatif de paiement générique (une seule page : titre, référence, lignes libellé/valeur, mention).
- * `rows` : [[libellé, valeur, mono?]]. Utilisé par l'avis de paiement sortant et le reçu de charge du locataire.
- */
-function streamPaymentProofPdf(res, { tenant, title, reference, filename, rows, footnote }) {
-  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-  res.setHeader('Cache-Control', 'private, no-store');
-  doc.pipe(res);
-
-  doc.rect(0, 0, doc.page.width, 5).fill(PRIMARY);
-  doc.font(FONT_SANS_BOLD).fontSize(15).fillColor(INK).text(tenant.company_name, 50, 44, { width: 230 });
-  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text(title, 285, 40, { width: 260, align: 'right' });
-  doc.font(FONT_MONO_BOLD).fontSize(10).fillColor(INK_SOFT).text(reference, 285, doc.y + 2, { width: 260, align: 'right' });
-
-  let y = 120;
-  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
-  y += 18;
-  for (const [label, value, mono] of rows) y += drawRow(doc, label, String(value), y, { mono: !!mono });
-  y += 14;
-  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(footnote, 50, y, { width: 495 });
-  drawFooter(doc);
-  doc.end();
+      `ci-dessus au titre de son salaire de ${formatMonthLabel(payslip.period)}, réglée par ` +
+      `${PAYMENT_METHOD_LABELS[payslip.payment_method] ?? payslip.payment_method}.`,
+    signatureTitle: "L'employeur",
+    issuer,
+  });
 }
 
 function isoDay(value) {
@@ -900,40 +446,66 @@ function isoDay(value) {
  */
 function streamPaymentAdvicePdf(res, { tenant, order }) {
   const purposeLabels = { salaire: 'Salaire', reversement_proprietaire: 'Reversement propriétaire', autre: 'Paiement' };
-  streamPaymentProofPdf(res, {
+  const sentOn = formatDateFr(isoDay(order.sent_at));
+  renderReceiptDocument(res, {
     tenant,
-    title: 'AVIS DE PAIEMENT',
-    reference: order.reference,
     filename: `avis-paiement-${order.reference}.pdf`,
-    rows: [
-      ['Nature', purposeLabels[order.purpose] ?? order.purpose],
+    title: 'AVIS DE PAIEMENT',
+    subtitle: purposeLabels[order.purpose] ?? 'Paiement',
+    meta: [['Référence', order.reference], ['Envoyé le', sentOn]],
+    intro: { prefix: "Envoi confirmé par le prestataire de paiement le ", bold: sentOn },
+    partiesLabel: 'Bénéficiaire',
+    parties: [
       ['Bénéficiaire', order.beneficiary_name],
-      ['Compte Mobile Money', `${String(order.operator).toUpperCase()} ${order.beneficiary_phone_masked}`, true],
-      ['Motif', order.label],
-      ["Date d'envoi", formatDateFr(isoDay(order.sent_at)), true],
-      ['Montant versé', formatFcfa(order.amount), true],
-      ['Statut', 'Envoi confirmé'],
+      ['Compte Mobile Money', `${String(order.operator).toUpperCase()} ${order.beneficiary_phone_masked}`],
+      ['Émetteur', tenant.company_name],
     ],
-    footnote: "Document généré automatiquement. Il atteste de l'envoi des fonds par le prestataire de paiement à la date indiquée.",
+    detailLabel: 'Détail du paiement',
+    lines: {
+      columns: [
+        { label: 'Motif', width: 335 },
+        { label: 'Montant', width: 160, align: 'right', bold: true },
+      ],
+      rows: [[order.label, D.fcfa(order.amount)]],
+    },
+    total: { label: 'Montant versé', amount: D.fcfa(order.amount), raw: order.amount },
+    wordsPrefix: 'Arrêté le présent avis à la somme de',
+    note: "Document généré automatiquement. Il atteste de l'envoi des fonds par le prestataire de paiement à la date indiquée.",
+    signatureTitle: tenant.company_name,
+    issuer: null,
   });
 }
 
 /** Reçu du règlement d'une facture SONEB/SBEE, remis au locataire (portail). */
 function streamChargeReceiptPdf(res, { tenant, renter, charge, payment }) {
   const fluide = charge.utility_type === 'soneb' ? 'SONEB (eau)' : 'SBEE (électricité)';
-  streamPaymentProofPdf(res, {
+  const paidOn = formatDateFr(isoDay(payment.paid_at));
+  renderReceiptDocument(res, {
     tenant,
-    title: 'REÇU DE CHARGES',
-    reference: `CHG-${payment.id}`,
     filename: `recu-charges-${payment.id}.pdf`,
-    rows: [
+    title: 'REÇU DE CHARGES',
+    subtitle: fluide,
+    meta: [['N° de reçu', `CHG-${payment.id}`], ['Réglé le', paidOn]],
+    intro: { prefix: 'Règlement reçu le ', bold: paidOn },
+    parties: [
       ['Locataire', `${renter.first_name} ${renter.last_name}`],
       ['Facture', fluide],
-      ['Période', `${formatDateFr(isoDay(charge.period_start))} au ${formatDateFr(isoDay(charge.period_end))}`, true],
-      ['Date du règlement', formatDateFr(isoDay(payment.paid_at)), true],
-      ['Montant réglé', formatFcfa(payment.amount), true],
+      ['Bailleur / mandataire', tenant.company_name],
     ],
-    footnote: 'Reçu généré automatiquement pour le règlement de cette facture. Conservez-le comme preuve de paiement.',
+    detailLabel: 'Détail du règlement',
+    lines: {
+      columns: [
+        { label: 'Désignation', width: 235 },
+        { label: 'Période', width: 160 },
+        { label: 'Montant', width: 100, align: 'right', bold: true },
+      ],
+      rows: [[`Facture ${fluide}`, `${formatDateFr(isoDay(charge.period_start))} au ${formatDateFr(isoDay(charge.period_end))}`, D.fcfa(payment.amount)]],
+    },
+    total: { label: 'Montant réglé', amount: D.fcfa(payment.amount), raw: payment.amount },
+    wordsPrefix: 'Arrêté le présent reçu à la somme de',
+    note: 'Reçu généré automatiquement pour le règlement de cette facture. Conservez-le comme preuve de paiement.',
+    signatureTitle: 'Le bailleur / mandataire',
+    issuer: null,
   });
 }
 
@@ -959,19 +531,18 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
   res.setHeader('Content-Disposition', `inline; filename="contrat-bail-${data.renter.lastName}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant);
-
-  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('CONTRAT DE BAIL', 50, doc.y);
-  drawMetaLine(doc, [
-    { text: 'Réf. ' },
-    { text: `BAIL-${String(leaseId).padStart(5, '0')}`, mono: true },
-    { text: contract.status === 'finalized' ? '  ·  Signé le ' : '  ·  Rédigé le ' },
-    {
-      text: formatDateFr((contract.status === 'finalized' ? contract.finalizedAt : contract.createdAt).toISOString().slice(0, 10)),
-      mono: true,
-    },
-  ]);
-  doc.moveDown(0.6);
+  drawHeader(doc, tenant, {
+    title: 'CONTRAT DE BAIL',
+    subtitle: contract.status === 'finalized' ? "Bail d'habitation — signé" : "Bail d'habitation — projet",
+    meta: [
+      ['Référence', `BAIL-${String(leaseId).padStart(5, '0')}`],
+      [
+        contract.status === 'finalized' ? 'Signé le' : 'Rédigé le',
+        formatDateFr((contract.status === 'finalized' ? contract.finalizedAt : contract.createdAt).toISOString().slice(0, 10)),
+      ],
+      ...(verificationCode ? [['Code de vérification', verificationCode]] : []),
+    ],
+  });
 
   if (contract.status !== 'finalized') {
     doc
@@ -1227,49 +798,23 @@ function drawConditionPill(doc, condition, x, y) {
  * qu'une suite de lignes. `rows` : paires [libellé, valeur] lues de gauche à droite.
  */
 function drawInfoPanel(doc, rows, y) {
-  const colWidth = (CONTENT_WIDTH - 30) / 2;
-  const lines = [];
-  for (let k = 0; k < rows.length; k += 2) lines.push(rows.slice(k, k + 2));
-  const lineHeights = lines.map((pair) =>
-    Math.max(
-      ...pair.map(([, value]) => doc.font(FONT_SANS_BOLD).fontSize(10).heightOfString(String(value ?? '—'), { width: colWidth })),
-    ) + 18,
-  );
-  const height = lineHeights.reduce((a, b) => a + b, 0) + 16;
-  y = ensureSpace(doc, y, height);
-  drawPanel(doc, CONTENT_LEFT, y, CONTENT_WIDTH, height);
-  let ly = y + 12;
-  lines.forEach((pair, idx) => {
-    pair.forEach(([label, value], col) => {
-      const x = CONTENT_LEFT + 15 + col * (colWidth + 0);
-      doc.font(FONT_SANS_BOLD).fontSize(7).fillColor(MUTED).text(String(label).toUpperCase(), x, ly, { width: colWidth, characterSpacing: 0.4 });
-      doc.font(FONT_SANS_BOLD).fontSize(10).fillColor(INK).text(String(value ?? '—'), x, ly + 10, { width: colWidth });
-    });
-    ly += lineHeights[idx];
-  });
-  return y + height + 14;
+  y = ensureSpace(doc, y, 60);
+  y = D.drawSection(doc, y, 'Informations générales');
+  return D.drawInfoGrid(doc, y, rows);
 }
 
 /** Résumé chiffré d'une fiche : pièces, puis éléments par état — l'essentiel lisible en un coup d'œil. */
 function drawInspectionSummary(doc, zones, y) {
   const counts = { BE: 0, SR: 0, ME: 0 };
   for (const zone of zones) for (const item of zone.items) if (item.condition) counts[item.condition] += 1;
-  const boxes = [
-    { label: 'Pièces', value: zones.length, color: PRIMARY, bg: PRIMARY_BG },
-    { label: 'Bon état', value: counts.BE, color: SUCCESS_FG, bg: CONDITION_BG.BE },
-    { label: 'Sous réserve', value: counts.SR, color: WARNING_FG, bg: CONDITION_BG.SR },
-    { label: 'Mauvais état', value: counts.ME, color: DANGER_FG, bg: CONDITION_BG.ME },
-  ];
-  y = ensureSpace(doc, y, 52);
-  const gap = 8;
-  const w = (CONTENT_WIDTH - gap * 3) / 4;
-  boxes.forEach((b, k) => {
-    const x = CONTENT_LEFT + k * (w + gap);
-    doc.roundedRect(x, y, w, 44, 5).fill(b.bg);
-    doc.font(FONT_MONO_BOLD).fontSize(17).fillColor(b.color).text(String(b.value), x + 12, y + 8, { width: w - 24 });
-    doc.font(FONT_SANS_BOLD).fontSize(7.5).fillColor(b.color).text(b.label.toUpperCase(), x + 12, y + 29, { width: w - 24, characterSpacing: 0.4 });
-  });
-  return y + 44 + 18;
+  y = ensureSpace(doc, y, 90);
+  y = D.drawSection(doc, y, "Synthèse de l'état des lieux");
+  return D.drawStatTiles(doc, y, [
+    { label: zones.length > 1 ? 'Pièces' : 'Pièce', value: zones.length, color: D.C.ACCENT, bg: D.C.TINT },
+    { label: 'Bon état', value: counts.BE, color: D.C.SUCCESS, bg: D.C.SUCCESS_BG },
+    { label: 'Sous réserve', value: counts.SR, color: D.C.WARNING, bg: D.C.WARNING_BG },
+    { label: 'Mauvais état', value: counts.ME, color: D.C.DANGER, bg: D.C.DANGER_BG },
+  ]);
 }
 
 /**
@@ -1445,13 +990,13 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
   res.setHeader('Content-Disposition', `inline; filename="pv-sortie-${renter.last_name}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant);
-
-  doc.font(FONT_SANS_BOLD).fontSize(18).fillColor(PRIMARY).text('PV DE SORTIE & DÉCOMPTE DE CAUTION', 50, doc.y);
-  drawMetaLine(doc, [
-    { text: 'État des lieux de sortie réalisé le ' },
-    { text: formatDateFr(report.conductedAt), mono: true },
-  ]);
+  drawHeader(doc, tenant, {
+    title: 'PROCÈS-VERBAL DE SORTIE',
+    subtitle: '& décompte de caution',
+    meta: [['Référence unité', property.unit_code ?? '—'], ...(verificationCode ? [['Code de vérification', verificationCode]] : [])],
+  });
+  doc.font(FONT_SANS).fontSize(9.5).fillColor(INK_SOFT).text("État des lieux de sortie réalisé le ", 50, doc.y, { continued: true });
+  doc.font(FONT_SANS_BOLD).fillColor(INK).text(formatDateFr(report.conductedAt));
 
   const tenantName = `${renter.first_name} ${renter.last_name}`;
   const agentName = report.finalizedBy?.name ?? report.conductedBy?.name ?? null;
@@ -1519,27 +1064,28 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
   const refundMethodLabel = report.refundPaymentMethod
     ? ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS[report.refundPaymentMethod] ?? report.refundPaymentMethod
     : null;
-  const boxHeight = refundMethodLabel ? 112 : 90;
-  drawPanel(doc, 50, y, 495, boxHeight);
-  const boxY = y + 14;
-  drawPanelRow(doc, 'Caution initiale', formatFcfa(report.depositAmount), 65, boxY, { labelWidth: 335, valueWidth: 130 });
-  drawPanelRow(doc, 'Total des retenues', `- ${formatFcfa(report.totalDeductions)}`, 65, boxY + 20, {
-    labelWidth: 335,
-    valueWidth: 130,
-    valueColor: DANGER_FG,
+  y = ensureSpace(doc, y, 190);
+  y = D.drawSection(doc, y, 'Décompte de la caution');
+  const panelH = refundMethodLabel ? 96 : 74;
+  doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, panelH + 54, 8).lineWidth(0.75).fillAndStroke(D.C.TINT, D.C.TINT_BORDER);
+  const rowsDef = [
+    ['Caution initiale versée', formatFcfa(report.depositAmount), D.C.INK],
+    ['Total des retenues', `- ${formatFcfa(report.totalDeductions)}`, D.C.DANGER],
+  ];
+  if (refundMethodLabel) rowsDef.push(['Réglé par', refundMethodLabel, D.C.INK]);
+  rowsDef.forEach(([label, value, color], k) => {
+    const ry = y + 14 + k * 22;
+    doc.font(D.F.SANS).fontSize(9.5).fillColor(D.C.INK_SOFT).text(label, CONTENT_LEFT + 16, ry, { width: 300, lineBreak: false });
+    doc.font(D.F.BOLD).fontSize(9.5).fillColor(color).text(value, CONTENT_LEFT + 300, ry, { width: CONTENT_WIDTH - 316, align: 'right', lineBreak: false });
+    if (k === 1) doc.moveTo(CONTENT_LEFT + 16, ry + 18).lineTo(CONTENT_LEFT + CONTENT_WIDTH - 16, ry + 18).lineWidth(0.75).strokeColor(D.C.ACCENT).stroke();
   });
-  doc.moveTo(65, boxY + 42).lineTo(530, boxY + 42).strokeColor(BORDER).lineWidth(1).stroke();
-  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(INK).text('Net à restituer au locataire', 65, boxY + 50);
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(16)
-    .fillColor(PRIMARY)
-    .text(formatFcfa(report.netRefund), 350, boxY + 46, { width: 180, align: 'right' });
-  if (refundMethodLabel) {
-    drawPanelRow(doc, 'Réglé par', refundMethodLabel, 65, boxY + 76, { labelWidth: 335, valueWidth: 130 });
-  }
-
-  y += boxHeight + 25;
+  const barY = y + panelH - 4;
+  doc.roundedRect(CONTENT_LEFT + 10, barY + 4, CONTENT_WIDTH - 20, 40, 6).fill(D.C.NAVY);
+  doc.font(D.F.BOLD).fontSize(10).fillColor(D.C.WHITE).text('SOLDE À RESTITUER AU LOCATAIRE', CONTENT_LEFT + 26, barY + 19, { width: 250, characterSpacing: 0.4, lineBreak: false });
+  doc.font(D.F.BOLD).fontSize(15).fillColor(D.C.WHITE).text(formatFcfa(report.netRefund), CONTENT_LEFT + 230, barY + 16, { width: CONTENT_WIDTH - 256, align: 'right', lineBreak: false });
+  y += panelH + 54 + 8;
+  doc.font(D.F.ITALIC).fontSize(8.5).fillColor(D.C.MUTED).text(D.sentenceAmount(report.netRefund, 'Arrêté le présent décompte à la somme de'), CONTENT_LEFT, y, { width: CONTENT_WIDTH });
+  y = doc.y + 18;
 
   // Cautions supplémentaires (étape 43, SBEE/SONEB/peinture) — chacune distincte de la caution de
   // loyer ci-dessus (compte 165 unique, mais des lignes SÉPARÉES sur ce PV pour rester claires, comme
@@ -1626,39 +1172,12 @@ function drawReopenedNotice(doc, report, y) {
  * d'appui, nom du signataire et date de signature. Jamais coupé par un saut de page.
  */
 function drawSignatureBlock(doc, report, y, { tenantName = null, agentName = null } = {}) {
-  const cardH = 150;
-  y = ensureSpace(doc, y + 10, cardH + 10);
-  const cardW = (CONTENT_WIDTH - 15) / 2;
   const signedOn = report.finalizedAt ? formatDateFr(report.finalizedAt.slice(0, 10)) : null;
-  const cards = [
-    { title: 'Le locataire', name: tenantName, file: uploadedFile(report.tenantSignatureUrl), x: CONTENT_LEFT },
-    { title: "Pour l'entreprise", name: agentName, file: uploadedFile(report.agentSignatureUrl), x: CONTENT_LEFT + cardW + 15 },
-  ];
-  for (const c of cards) {
-    doc.roundedRect(c.x, y, cardW, cardH, 6).lineWidth(0.75).strokeColor(BORDER_STRONG).stroke();
-    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text(c.title, c.x + 14, y + 12, { width: cardW - 28 });
-    doc.font('Helvetica-Oblique').fontSize(7.5).fillColor(MUTED).text('Lu et approuvé', c.x + 14, y + 25, { width: cardW - 28 });
-    const sigTop = y + 38;
-    const sigH = 62;
-    try {
-      if (c.file && fs.existsSync(c.file)) doc.image(c.file, c.x + 14, sigTop, { fit: [cardW - 28, sigH], align: 'center', valign: 'center' });
-    } catch {
-      // Signature illisible : on continue sans (pas bloquant pour le PV).
-    }
-    doc.moveTo(c.x + 14, sigTop + sigH + 4).lineTo(c.x + cardW - 14, sigTop + sigH + 4).dash(2, { space: 2 }).strokeColor(BORDER_STRONG).lineWidth(0.75).stroke().undash();
-    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text(c.name || '—', c.x + 14, sigTop + sigH + 12, { width: cardW - 28, align: 'center' });
-    if (signedOn) {
-      // Centrage manuel : `align: 'center'` + `continued` de PDFKit superpose les deux morceaux.
-      const lead = 'Signé le ';
-      const leadW = doc.font(FONT_SANS).fontSize(7.5).widthOfString(lead);
-      const dateW = doc.font(FONT_MONO_BOLD).fontSize(7.5).widthOfString(signedOn);
-      const startX = c.x + (cardW - leadW - dateW) / 2;
-      const lineY = sigTop + sigH + 27;
-      doc.font(FONT_SANS).fontSize(7.5).fillColor(MUTED).text(lead, startX, lineY, { lineBreak: false });
-      doc.font(FONT_MONO_BOLD).fontSize(7.5).fillColor(INK_SOFT).text(signedOn, startX + leadW, lineY, { lineBreak: false });
-    }
-  }
-  return y + cardH;
+  const end = D.drawSignatureCards(doc, y, [
+    { title: 'Le locataire', name: tenantName, date: signedOn, signatureFile: uploadedFile(report.tenantSignatureUrl), hint: 'Signature précédée de « Lu et approuvé »' },
+    { title: 'Le bailleur / mandataire', name: agentName, date: signedOn, signatureFile: uploadedFile(report.agentSignatureUrl), hint: 'Signature précédée de « Lu et approuvé »' },
+  ]);
+  return end;
 }
 
 /**
@@ -1674,13 +1193,13 @@ function streamMoveInPdf(res, { tenant, renter, property, lease, report, verific
   res.setHeader('Content-Disposition', `inline; filename="etat-des-lieux-entree-${renter.last_name}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant);
-
-  doc.font(FONT_SANS_BOLD).fontSize(18).fillColor(PRIMARY).text("ÉTAT DES LIEUX D'ENTRÉE", 50, doc.y);
-  drawMetaLine(doc, [
-    { text: 'Réalisé le ' },
-    { text: formatDateFr(report.conductedAt), mono: true },
-  ]);
+  drawHeader(doc, tenant, {
+    title: "ÉTAT DES LIEUX D'ENTRÉE",
+    subtitle: 'Procès-verbal contradictoire',
+    meta: [['Référence unité', property.unit_code ?? '—'], ...(verificationCode ? [['Code de vérification', verificationCode]] : [])],
+  });
+  doc.font(FONT_SANS).fontSize(9.5).fillColor(INK_SOFT).text("État des lieux d'entrée réalisé le ", 50, doc.y, { continued: true });
+  doc.font(FONT_SANS_BOLD).fillColor(INK).text(formatDateFr(report.conductedAt));
 
   const tenantName = `${renter.first_name} ${renter.last_name}`;
   const agentName = report.finalizedBy?.name ?? report.conductedBy?.name ?? null;
@@ -1959,19 +1478,13 @@ function streamUtilityCarnetPdf(res, { tenant, owner, carnet, verificationCode }
   res.setHeader('Content-Disposition', `inline; filename="carnet-charges-${safeFilenamePart(owner.name)}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant);
+  const topY = drawHeader(doc, tenant, {
+    title: 'CARNET DES CHARGES',
+    subtitle: periodLabelFr(carnet.from, carnet.to),
+    meta: [['Généré le', formatDateFr(new Date().toISOString().slice(0, 10))], ...(verificationCode ? [['Code de vérification', verificationCode]] : [])],
+  });
 
-  const topY = doc.y;
-  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('CARNET DES CHARGES', 50, topY, { width: 300 });
-  doc.font(FONT_SANS).fontSize(10).fillColor(MUTED).text('Eau (SONEB) et électricité (SBEE)', 50, doc.y);
-
-  const metaX = 335;
-  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Période', metaX, topY + 3, { width: 210, align: 'right' });
-  doc.font(FONT_SANS_BOLD).fontSize(10).fillColor(INK).text(periodLabelFr(carnet.from, carnet.to), metaX, topY + 14, { width: 210, align: 'right' });
-  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Généré le', metaX, topY + 30, { width: 210, align: 'right' });
-  doc.font(FONT_MONO_BOLD).fontSize(10).fillColor(INK).text(formatDateFr(new Date().toISOString().slice(0, 10)), metaX, topY + 41, { width: 210, align: 'right' });
-
-  let y = Math.max(doc.y, topY + 41 + 17) + 12;
+  let y = topY;
 
   doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('PROPRIÉTAIRE', 50, y, { characterSpacing: 0.6 });
   y += 13;
@@ -2062,22 +1575,13 @@ function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, charges =
   res.setHeader('Content-Disposition', `inline; filename="releve-${owner.name.replace(/\s+/g, '-')}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant);
+  const topY = drawHeader(doc, tenant, {
+    title: 'RELEVÉ PROPRIÉTAIRE',
+    subtitle: owner.name,
+    meta: [['Généré le', formatDateFr(new Date().toISOString().slice(0, 10))], ...(verificationCode ? [['Code de vérification', verificationCode]] : [])],
+  });
 
-  // --- Titre (gauche) + méta-données, en libellés (droite) ---
-  const topY = doc.y;
-  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('RELEVÉ', 50, topY, { width: 250 });
-  doc.font(FONT_SANS).fontSize(10).fillColor(MUTED).text('Propriétaire', 50, doc.y);
-
-  const metaX = 335;
-  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Généré le', metaX, topY + 3, { width: 210, align: 'right' });
-  doc
-    .font(FONT_MONO_BOLD)
-    .fontSize(10)
-    .fillColor(INK)
-    .text(formatDateFr(new Date().toISOString().slice(0, 10)), metaX, topY + 14, { width: 210, align: 'right' });
-
-  let y = Math.max(doc.y, topY + 14 + 17) + 15;
+  let y = topY;
 
   // --- Propriétaire ---
   doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('PROPRIÉTAIRE', 50, y, { characterSpacing: 0.6 });
@@ -2232,12 +1736,13 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
   res.setHeader('Content-Disposition', `inline; filename="rapport-${dashboard.period.from.slice(0, 7)}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant);
+  drawHeader(doc, tenant, {
+    title: 'RAPPORT MENSUEL',
+    subtitle: periodLabel,
+    meta: [['Période', periodLabel], ['Généré le', formatDateFr(new Date().toISOString().slice(0, 10))]],
+  });
 
-  doc.font(FONT_SANS_BOLD).fontSize(18).fillColor(PRIMARY).text('RAPPORT MENSUEL', 50, doc.y);
-  drawMetaLine(doc, [{ text: periodLabel, mono: true }]);
-
-  let y = doc.y + 10;
+  let y = doc.y;
   if (dashboard.isClosed && dashboard.closedInfo) {
     doc
       .font(FONT_SANS)
@@ -2368,9 +1873,11 @@ function streamFinancialStatementsPdf(res, { tenant, fiscalYear, incomeStatement
   res.setHeader('Content-Disposition', `inline; filename="etats-financiers-${fiscalYear.label}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant);
-  doc.font(FONT_SANS_BOLD).fontSize(18).fillColor(PRIMARY).text('ÉTATS FINANCIERS', 50, doc.y);
-  drawMetaLine(doc, [{ text: `Exercice ${fiscalYear.label}`, mono: true }]);
+  drawHeader(doc, tenant, {
+    title: 'ÉTATS FINANCIERS',
+    subtitle: `Exercice ${fiscalYear.label}`,
+    meta: [['Exercice', fiscalYear.label], ['Généré le', formatDateFr(new Date().toISOString().slice(0, 10))]],
+  });
   doc
     .font(FONT_SANS)
     .fontSize(8)

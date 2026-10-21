@@ -78,7 +78,7 @@ test('streamMoveInPdf — PDF valide, sans colonne de retenue (constat, pas de f
   assert.match(text, /ÉTAT DES LIEUX D'ENTRÉE/);
   // Mise en page en tableau (étape 56) : l'élément et son état figurent sur la même ligne du tableau.
   assert.match(text, /Porte\s+Bon état/);
-  assert.match(text, /PIÈCES/);
+  assert.match(text, /Pièces?/);
   assert.match(text, /Lu et approuvé/);
   // Constat d'entrée : jamais de montant de retenue, cette notion n'existe pas ici.
   assert.doesNotMatch(text, /FCFA/);
