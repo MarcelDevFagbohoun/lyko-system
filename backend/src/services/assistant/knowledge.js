@@ -23,7 +23,7 @@ const PLATFORM_KNOWLEDGE = `
 - Charges SONEB/SBEE — /espace/charges ; relevés /espace/charges/releves ; bouton « Nouveau relevé » ; « le point » /espace/charges/point (facture mère payée par le propriétaire, encaissé chez les locataires, impayés, reste à charge, reversement au propriétaire).
 - Employés — /espace/employes (direction) : créer des comptes agent ou comptable et choisir leurs permissions ; le mot de passe temporaire doit être changé à la première connexion.
 - Journal — /espace/journal (direction) : qui a fait quoi et quand. Historique — /espace/historique : l'historique personnel d'un employé non-direction.
-- Réglages — /espace/parametres (direction) : comptabilité avancée, catalogue de facturation des états des lieux, noms des postes, convention de paiement du loyer par défaut (d'avance ou à terme échu), paiement en ligne KKiaPay, assistant.
+- Réglages — /espace/parametres (direction) : comptabilité avancée, catalogue de facturation des états des lieux, noms des postes, convention de paiement du loyer par défaut (d'avance ou à terme échu), paiement en ligne FedaPay, assistant.
 - Mon compte — /espace/mon-compte : signature de l'employé.
 
 # Fonctionnement à connaître
@@ -33,7 +33,7 @@ const PLATFORM_KNOWLEDGE = `
 - Convention de loyer : chaque bail suit « d'avance » ou « à terme échu » ; la valeur par défaut se règle dans les Réglages.
 - Charges SONEB/SBEE : le propriétaire paie la facture mère, l'entreprise encaisse les locataires puis fait le point ; l'entreprise ne garde rien sur les charges, elle reverse ce qu'elle a encaissé.
 - Clôture mensuelle : un mois clôturé est verrouillé définitivement (plus aucun paiement, dépense ou versement ne peut y être ajouté ni modifié).
-- Portails : le locataire et le propriétaire consultent un espace personnel, sans mot de passe, via un lien secret généré par l'entreprise (lecture seule). Le paiement en ligne (Mobile Money ou carte via KKiaPay) est facultatif et activé par la direction.
+- Portails : le locataire et le propriétaire consultent un espace personnel, sans mot de passe, via un lien secret généré par l'entreprise (lecture seule). Le paiement en ligne (Mobile Money ou carte via FedaPay) est facultatif et activé par la direction.
 - Hors connexion : les pages déjà ouvertes restent consultables ; seuls l'enregistrement d'un paiement de loyer et le signalement d'une plainte peuvent se faire hors connexion (synchronisés au retour du réseau). Créer un bien, un locataire, un propriétaire, un employé ou une charge demande une connexion.
 - Documents : quittances, contrats de bail et relevés portent un code de vérification contrôlable sur la page publique « Vérifier un document ».
 `.trim();

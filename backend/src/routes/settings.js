@@ -40,15 +40,6 @@ function toPublicSettings(tenant) {
     // connexion employé (voir GET /api/auth/role-titles, public).
     roleTitles: resolveRoleLabels(tenant),
     roleTitlePresets: ROLE_TITLE_PRESETS,
-    // Paiement en ligne (KKiaPay) : la clé publique est sans risque (faite
-    // pour être embarquée côté client), mais les clés privée/secrète ne
-    // sont JAMAIS renvoyées, même à ce DG — `kkiapayConfigured` indique
-    // seulement si elles sont déjà enregistrées, pour affichage (ex. « clé
-    // déjà configurée, laissez vide pour la conserver »).
-    kkiapayEnabled: !!tenant.kkiapay_enabled,
-    kkiapaySandbox: !!tenant.kkiapay_sandbox,
-    kkiapayPublicKey: tenant.kkiapay_public_key,
-    kkiapayConfigured: !!(tenant.kkiapay_private_key_enc && tenant.kkiapay_secret_key_enc),
     // Envoi d'argent (FedaPay) : la clé secrète n'est JAMAIS renvoyée, seulement son existence.
     fedapayEnabled: !!tenant.fedapay_enabled,
     fedapaySandbox: !!tenant.fedapay_sandbox,
@@ -112,45 +103,6 @@ router.patch(
         fields.push('agent_title = :agentTitle');
         params.agentTitle = data.agentTitle;
       }
-      if (data.kkiapaySandbox !== undefined) {
-        fields.push('kkiapay_sandbox = :kkiapaySandbox');
-        params.kkiapaySandbox = data.kkiapaySandbox;
-      }
-      if (data.kkiapayPublicKey !== undefined) {
-        fields.push('kkiapay_public_key = :kkiapayPublicKey');
-        params.kkiapayPublicKey = data.kkiapayPublicKey;
-      }
-      // Écriture seule : un champ vide/absent laisse la clé déjà enregistrée
-      // intacte (sinon rouvrir Réglages sans rien taper l'effacerait à
-      // chaque sauvegarde, puisqu'elle n'est jamais renvoyée en clair).
-      if (data.kkiapayPrivateKey) {
-        fields.push('kkiapay_private_key_enc = :kkiapayPrivateKeyEnc');
-        params.kkiapayPrivateKeyEnc = encryptSecret(data.kkiapayPrivateKey);
-      }
-      if (data.kkiapaySecretKey) {
-        fields.push('kkiapay_secret_key_enc = :kkiapaySecretKeyEnc');
-        params.kkiapaySecretKeyEnc = encryptSecret(data.kkiapaySecretKey);
-      }
-      if (data.kkiapayEnabled !== undefined) {
-        if (data.kkiapayEnabled) {
-          // Activer n'a de sens que si les 3 clés existent (déjà en base ou
-          // fournies dans cette même requête) — sinon le bouton « Payer
-          // maintenant » apparaîtrait côté locataire sans rien derrière.
-          const [[current]] = await pool.query(
-            'SELECT kkiapay_public_key, kkiapay_private_key_enc, kkiapay_secret_key_enc FROM tenants WHERE id = :id LIMIT 1',
-            { id: req.user.tenantId },
-          );
-          const hasPublicKey = data.kkiapayPublicKey ?? current?.kkiapay_public_key;
-          const hasPrivateKey = data.kkiapayPrivateKey || current?.kkiapay_private_key_enc;
-          const hasSecretKey = data.kkiapaySecretKey || current?.kkiapay_secret_key_enc;
-          if (!hasPublicKey || !hasPrivateKey || !hasSecretKey) {
-            throw new ApiError(400, 'Renseignez les 3 clés KKiaPay (publique, privée, secrète) avant d\'activer le paiement en ligne.');
-          }
-        }
-        fields.push('kkiapay_enabled = :kkiapayEnabled');
-        params.kkiapayEnabled = data.kkiapayEnabled;
-      }
-
       if (data.fedapaySandbox !== undefined) {
         fields.push('fedapay_sandbox = :fedapaySandbox');
         params.fedapaySandbox = data.fedapaySandbox;

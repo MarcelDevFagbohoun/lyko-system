@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 
 /**
- * Génère un lien de paiement KKiaPay à envoyer à la main (WhatsApp) — pour
+ * Génère un lien de paiement FedaPay à envoyer à la main (WhatsApp) — pour
  * un locataire sans portail actif. Même schéma de révélation unique que
  * `PortalLinkCard` (fiche locataire) : le lien en clair n'est affiché
  * qu'une fois, juste après la génération.

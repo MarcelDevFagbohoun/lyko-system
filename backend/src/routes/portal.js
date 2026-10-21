@@ -22,7 +22,6 @@ const {
   toPublicMoveOutReport,
 } = require('../services/inspection');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
-const { verifyAndRecordKkiapay } = require('../services/paymentVerification');
 const { startCheckout } = require('../services/onlinePayments');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
 const logger = require('../utils/logger');
@@ -120,7 +119,7 @@ router.get('/:token', async (req, res, next) => {
     const { id: renterId, tenantId, firstName, lastName } = req.portalRenter;
 
     const [tenantRows] = await pool.query(
-      'SELECT company_name, logo_path, kkiapay_enabled, kkiapay_sandbox, kkiapay_public_key, fedapay_collect_enabled FROM tenants WHERE id = :tenantId LIMIT 1',
+      'SELECT company_name, logo_path, fedapay_collect_enabled FROM tenants WHERE id = :tenantId LIMIT 1',
       { tenantId },
     );
 
@@ -262,12 +261,7 @@ router.get('/:token', async (req, res, next) => {
         id: tenantId,
         companyName: tenantRows[0]?.company_name ?? null,
         logoUrl: tenantRows[0]?.logo_path ? `/uploads/${tenantRows[0].logo_path}` : null,
-        // Clé publique seule (sans risque, faite pour être embarquée côté
-        // client) : présente uniquement si le paiement en ligne est activé.
         onlinePaymentEnabled: !!tenantRows[0]?.fedapay_collect_enabled,
-        kkiapayEnabled: !!tenantRows[0]?.kkiapay_enabled,
-        kkiapaySandbox: !!tenantRows[0]?.kkiapay_sandbox,
-        kkiapayPublicKey: tenantRows[0]?.kkiapay_enabled ? tenantRows[0]?.kkiapay_public_key : null,
       },
       renter: { firstName, lastName },
       activeLease: activeLease
@@ -574,69 +568,6 @@ router.post('/:token/charges/:chargeId/checkout', async (req, res, next) => {
       tenant, kind: 'charge', chargeId, amount: remaining,
       customer: { name: `${renter.first_name} ${renter.last_name}`, email: renter.email },
     }));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/portal/:token/payments/verify — confirme un paiement de loyer
-// payé via le widget KKiaPay depuis le portail. Ne fait JAMAIS confiance au
-// seul fait que le widget dise « succès » : `verifyAndRecordKkiapay` revérifie
-// côté serveur auprès de KKiaPay avant d'enregistrer quoi que ce soit.
-router.post('/:token/payments/verify', async (req, res, next) => {
-  const transactionId = typeof req.body?.transactionId === 'string' ? req.body.transactionId.trim() : '';
-  if (!transactionId) return next(new ApiError(400, 'transactionId requis'));
-
-  try {
-    const { id: renterId, tenantId } = req.portalRenter;
-    const lease = await loadActivePortalLease(tenantId, renterId);
-    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
-    if (!tenantRows[0]) throw new ApiError(404, 'Entreprise introuvable');
-
-    const result = await verifyAndRecordKkiapay({
-      tenant: tenantRows[0],
-      transactionId,
-      kind: 'rent',
-      leaseId: lease.id,
-      expectedReference: `t${tenantId}:rent:${lease.id}`,
-    });
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/portal/:token/charges/:chargeId/payments/verify — même principe
-// pour le règlement d'une facture SONEB/SBEE.
-router.post('/:token/charges/:chargeId/payments/verify', async (req, res, next) => {
-  const chargeId = Number(req.params.chargeId);
-  const transactionId = typeof req.body?.transactionId === 'string' ? req.body.transactionId.trim() : '';
-  if (!Number.isInteger(chargeId)) return next(new ApiError(400, 'Identifiant invalide'));
-  if (!transactionId) return next(new ApiError(400, 'transactionId requis'));
-
-  try {
-    const { id: renterId, tenantId } = req.portalRenter;
-    const lease = await loadActivePortalLease(tenantId, renterId);
-    // La facture doit appartenir au bail actif de CE locataire — jamais une
-    // facture d'un autre bail/locataire (même principe de portée que le
-    // reste du portail).
-    const [chargeRows] = await pool.query(
-      'SELECT id FROM utility_charges WHERE id = :id AND lease_id = :leaseId AND deleted_at IS NULL LIMIT 1',
-      { id: chargeId, leaseId: lease.id },
-    );
-    if (!chargeRows[0]) throw new ApiError(404, 'Facture introuvable');
-
-    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
-    if (!tenantRows[0]) throw new ApiError(404, 'Entreprise introuvable');
-
-    const result = await verifyAndRecordKkiapay({
-      tenant: tenantRows[0],
-      transactionId,
-      kind: 'charge',
-      chargeId,
-      expectedReference: `t${tenantId}:charge:${chargeId}`,
-    });
-    res.json(result);
   } catch (err) {
     next(err);
   }

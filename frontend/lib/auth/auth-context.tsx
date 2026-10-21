@@ -37,9 +37,6 @@ export type AuthTenant = {
   // libellés fixes "Admin"/"Comptable"/"Agent" partout où un rôle est
   // affiché, y compris le sélecteur de poste à la connexion employé.
   roleTitles: RoleTitles;
-  // Sert uniquement à afficher/masquer le bouton « Générer un lien de
-  // paiement » — le personnel ne paie jamais lui-même, voir routes/auth.js.
-  kkiapayEnabled: boolean;
   // Paiement en ligne FedaPay activé (liens de paiement, bouton « Payer » du portail).
   onlinePaymentEnabled: boolean;
   // Convention de paiement du loyer par défaut (avance/terme échu) — pré-

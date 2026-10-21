@@ -16,7 +16,7 @@ export const FAQ_ITEMS = [
   {
     question: "Comment mes locataires paient-ils ?",
     answer:
-      "Vous enregistrez les paiements reçus en espèces, par Mobile Money, virement ou chèque. Si votre entreprise le souhaite, elle peut aussi activer le paiement en ligne (Mobile Money ou carte) via KKiaPay, avec son propre compte marchand.",
+      "Vous enregistrez les paiements reçus en espèces, par Mobile Money, virement ou chèque. Si votre entreprise le souhaite, elle peut aussi activer le paiement en ligne (Mobile Money ou carte) via FedaPay, avec son propre compte marchand.",
   },
   {
     question: "Mes propriétaires ont-ils accès aux informations ?",

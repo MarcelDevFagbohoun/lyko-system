@@ -4,7 +4,7 @@ const { decryptSecret } = require('../../utils/encryption');
 const logger = require('../../utils/logger');
 
 /**
- * Client FedaPay (Payouts) écrit à la main, sans SDK — même choix que `services/kkiapay.js` (aucune dépendance
+ * Client FedaPay (Payouts) écrit à la main, sans SDK — même principe que l’ancien client de paiement (aucune dépendance
  * supplémentaire à auditer). Seul endroit qui manipule la clé secrète en clair ; rien d'autre ne l'appelle.
  *
  * Endpoints (documentation FedaPay, « Payouts management ») :

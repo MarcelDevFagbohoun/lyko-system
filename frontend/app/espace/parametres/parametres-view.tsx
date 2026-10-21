@@ -76,11 +76,6 @@ function ParametresContent() {
   const [dgTitle, setDgTitle] = React.useState("");
   const [comptableTitle, setComptableTitle] = React.useState("");
   const [agentTitle, setAgentTitle] = React.useState("");
-  const [kkiapayEnabled, setKkiapayEnabled] = React.useState(false);
-  const [kkiapaySandbox, setKkiapaySandbox] = React.useState(true);
-  const [kkiapayPublicKey, setKkiapayPublicKey] = React.useState("");
-  const [kkiapayPrivateKey, setKkiapayPrivateKey] = React.useState("");
-  const [kkiapaySecretKey, setKkiapaySecretKey] = React.useState("");
   const [fedapayCollectEnabled, setFedapayCollectEnabled] = React.useState(false);
   const [fedapayWebhookSecret, setFedapayWebhookSecret] = React.useState("");
   const [fedapayEnabled, setFedapayEnabled] = React.useState(false);
@@ -106,9 +101,6 @@ function ParametresContent() {
         setDgTitle(res.settings.roleTitles.dg);
         setComptableTitle(res.settings.roleTitles.comptable);
         setAgentTitle(res.settings.roleTitles.agent);
-        setKkiapayEnabled(res.settings.kkiapayEnabled);
-        setKkiapaySandbox(res.settings.kkiapaySandbox);
-        setKkiapayPublicKey(res.settings.kkiapayPublicKey ?? "");
         setFedapayEnabled(res.settings.fedapayEnabled);
         setFedapayCollectEnabled(res.settings.fedapayCollectEnabled);
         setFedapaySandbox(res.settings.fedapaySandbox);
@@ -155,11 +147,6 @@ function ParametresContent() {
         dgTitle,
         comptableTitle,
         agentTitle,
-        kkiapayEnabled,
-        kkiapaySandbox,
-        kkiapayPublicKey,
-        kkiapayPrivateKey,
-        kkiapaySecretKey,
         fedapayEnabled,
         fedapayCollectEnabled,
         fedapayWebhookSecret,
@@ -176,8 +163,6 @@ function ParametresContent() {
       setSettings(res.settings);
       setStampFile(null);
       setSignatureFile(null);
-      setKkiapayPrivateKey("");
-      setKkiapaySecretKey("");
       setFedapaySecretKey("");
       setFedapayWebhookSecret("");
       setSaved(true);
