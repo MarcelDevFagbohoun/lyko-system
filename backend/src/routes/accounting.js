@@ -33,6 +33,7 @@ const {
   FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE,
 } = require('../constants/glOperationTypes');
 const { genererEcriture, isModuleActive, resolveOpenFiscalYear } = require('../services/gl/glPostingService');
+const { resolveExpensePosting } = require('../services/gl/glExpensePosting');
 const { extourneEcriture } = require('../services/gl/glReversalService');
 const { computeMonthlyDepreciation } = require('../services/gl/glDepreciationService');
 const { notifyDg } = require('../services/gl/glNotificationService');
@@ -363,9 +364,15 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
       if (!operationType) {
         throw new Error(`Catégorie de dépense sans correspondance comptable : ${data.category}`);
       }
+      const posting = await resolveExpensePosting(conn, {
+        tenantId: req.user.tenantId,
+        propertyId: data.propertyId,
+        entryDate: data.expenseDate,
+        categoryOperationType: operationType,
+      });
       await genererEcriture(conn, {
         tenantId: req.user.tenantId,
-        operationType,
+        operationType: posting.operationType,
         entryDate: data.expenseDate,
         amount: data.amount,
         // "À crédit" : pas de mode de règlement (rien n'est payé) — la
@@ -376,7 +383,7 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
         sourceTable: 'expenses',
         sourceId: expenseId,
         createdBy: req.user.id,
-        context: { supplierId },
+        context: { supplierId, ...posting.context },
       });
 
       // Notifie le DG si la dépense dépasse le seuil paramétré (décision

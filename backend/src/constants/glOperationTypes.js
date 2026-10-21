@@ -34,6 +34,7 @@ const GL_OPERATION_TYPES = [
   'depense_marketing',
   'depense_taxes',
   'depense_autre',
+  'depense_bien_proprietaire',
   'immobilisation_informatique_acquise',
   'immobilisation_mobilier_acquise',
   'immobilisation_transport_acquise',

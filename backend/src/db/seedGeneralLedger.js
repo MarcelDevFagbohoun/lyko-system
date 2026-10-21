@@ -491,6 +491,26 @@ const RULES = [
   // Dépenses de fonctionnement — une règle par catégorie EXISTANTE
   // (expenses.category), pour que chaque catégorie ait sa propre
   // correspondance modifiable indépendamment (jamais de compte en dur).
+  {
+    // Dépense (réparation, entretien…) imputée à un BIEN : c'est une AVANCE faite pour le compte du
+    // propriétaire, pas une charge du cabinet (alignement du 21/10/2026 sur la comptabilité simple, où la
+    // dépense réduit la recette nette du Bien : recette − dépense, puis commission sur le net). Miroir exact
+    // de `loyer_encaisse` : le compte du propriétaire (4671) est débité de la dépense moins la part de
+    // commission que le cabinet ne perçoit plus (706 débité), la trésorerie ou le fournisseur est crédité du
+    // total. En mode `gl_commission_timing = 'reversement'`, 4671 est débité du total et la commission est
+    // ajustée au reversement. À VALIDER par un expert-comptable (compte d'avances aux mandants).
+    operation_type: 'depense_bien_proprietaire',
+    label: 'Dépense sur un Bien (avance pour le propriétaire)',
+    journal: 'OD',
+    narration_template: 'Dépense Bien — {libelle}',
+    note:
+      "Alignement comptabilité simple / avancée : la dépense d'un Bien réduit la recette du propriétaire (compte 4671), jamais le résultat du cabinet, sauf la part de commission correspondante. Dépense encore impayée : 4671 est débité à l'engagement et le fournisseur crédité, alors que la comptabilité simple ne la compte qu'à son paiement réel (écart temporaire, résorbé au règlement).",
+    lines: [
+      { side: 'debit', account: '706', formula: 'pourcentage_variable', param: 'taux_commission_encaissement' },
+      { side: 'debit', role: 'tiers_proprietaire', formula: 'montant_moins_pourcentage', param: 'taux_commission_encaissement' },
+      { side: 'credit', role: 'tresorerie_ou_fournisseur', formula: 'montant_total' },
+    ],
+  },
   { operation_type: 'depense_loyer_bureau', label: 'Dépense — Loyer du bureau', account: '622' },
   { operation_type: 'depense_fournitures', label: 'Dépense — Fournitures', account: '604' },
   { operation_type: 'depense_entretien', label: 'Dépense — Entretien', account: '624' },

@@ -21,6 +21,7 @@
  */
 
 const { seed } = require('../../db/seedGeneralLedger');
+const { resolveExpensePosting } = require('./glExpensePosting');
 const { genererEcriture } = require('./glPostingService');
 const {
   EXPENSE_CATEGORY_TO_OPERATION_TYPE,
@@ -219,7 +220,7 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
 
   const [expenses] = await pool.query(
     `SELECT e.id, e.category, e.label, e.amount, e.expense_date, e.payment_method, e.payment_status,
-            e.supplier_id, e.paid_at, e.recorded_by, s.name AS supplier_name
+            e.supplier_id, e.paid_at, e.recorded_by, e.property_id, s.name AS supplier_name
      FROM expenses e LEFT JOIN suppliers s ON s.id = e.supplier_id
      WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.expense_date >= :fromDate`,
     { tenantId, fromDate },
@@ -231,10 +232,16 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
       continue;
     }
     const isCredit = e.supplier_id != null;
+    const posting = await resolveExpensePosting(pool, {
+      tenantId,
+      propertyId: e.property_id,
+      entryDate: isoDate(e.expense_date),
+      categoryOperationType: operationType,
+    });
     operations.push({
       sourceTable: 'expenses',
       sourceId: e.id,
-      operationType,
+      operationType: posting.operationType,
       entryDate: isoDate(e.expense_date),
       amount: Number(e.amount),
       // "À crédit" (voir migration 048) : pas de mode de règlement à
@@ -242,7 +249,7 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
       paymentMethod: isCredit ? undefined : e.payment_method,
       narrationVars: { libelle: e.label, mois: isoDate(e.expense_date).slice(0, 7), employe: e.label },
       createdBy: e.recorded_by ?? createdBy,
-      context: isCredit ? { supplierId: e.supplier_id } : {},
+      context: { ...(isCredit ? { supplierId: e.supplier_id } : {}), ...posting.context },
     });
 
     // La dépense "à crédit" a peut-être ENTRE-TEMPS été réglée, avant même
