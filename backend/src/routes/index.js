@@ -48,9 +48,12 @@ const billingRoutes = require('./billing');
 const adminRoutes = require('./admin');
 const config = require('../config/env');
 const { requireAuth } = require('../middleware/auth');
-const { requireFeature } = require('../services/entitlements');
+const { requireFeature, enforceActiveSubscription } = require('../services/entitlements');
 
 const router = Router();
+
+// Coupure d'abonnement appliquée côté serveur à toutes les routes d'entreprise (voir OPEN_PREFIXES).
+router.use(enforceActiveSubscription);
 
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);

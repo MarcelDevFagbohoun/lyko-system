@@ -118,6 +118,8 @@ const registerSchema = z
     phone: z.string().trim().min(4, 'Numéro requis').max(20, 'Trop long'),
     password: passwordSchema,
     confirmPassword: z.string(),
+    // Case « J'accepte les conditions » : obligatoire (formulaire multipart => chaîne « true »).
+    acceptTerms: z.preprocess((v) => v === true || v === 'true', z.literal(true, { errorMap: () => ({ message: 'Vous devez accepter les conditions d’utilisation' }) })),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: 'Les mots de passe ne correspondent pas',

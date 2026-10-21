@@ -42,6 +42,7 @@ const EMAIL_VERIFICATION_MAX_ATTEMPTS = 5;
 const WELCOME_EMAIL_DELAY_MINUTES = 2;
 
 const { createInitialSubscription } = require('../services/entitlements');
+const config = require('../config/env');
 const router = Router();
 
 /**
@@ -241,9 +242,9 @@ router.post('/register', registerLimiter, upload.single('logo'), async (req, res
     await conn.beginTransaction();
 
     const [tenantResult] = await conn.query(
-      `INSERT INTO tenants (company_name, rccm, ifu, contact_phone, country)
-       VALUES (:companyName, :rccm, :ifu, :phone, :country)`,
-      { companyName: data.companyName, rccm: data.rccm, ifu: data.ifu, phone: data.phone, country: data.country },
+      `INSERT INTO tenants (company_name, rccm, ifu, contact_phone, country, terms_accepted_at, terms_version)
+       VALUES (:companyName, :rccm, :ifu, :phone, :country, NOW(), :termsVersion)`,
+      { companyName: data.companyName, rccm: data.rccm, ifu: data.ifu, phone: data.phone, country: data.country, termsVersion: config.legal.termsVersion },
     );
     const tenantId = tenantResult.insertId;
     await createInitialSubscription(conn, tenantId);

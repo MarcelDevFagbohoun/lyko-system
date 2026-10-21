@@ -47,6 +47,15 @@ export function SiteFooter() {
             <Link href="/verifier" className="text-body-sm text-ink-soft hover:text-ink">
               Vérifier un document
             </Link>
+            <Link href="/cgu" className="text-body-sm text-ink-soft hover:text-ink">
+              Conditions d&apos;utilisation
+            </Link>
+            <Link href="/confidentialite" className="text-body-sm text-ink-soft hover:text-ink">
+              Confidentialité
+            </Link>
+            <Link href="/mentions-legales" className="text-body-sm text-ink-soft hover:text-ink">
+              Mentions légales
+            </Link>
             {CONTACT.whatsappUrl && (
               <a href={CONTACT.whatsappUrl} target="_blank" rel="noopener noreferrer" className="text-body-sm text-ink-soft hover:text-ink">
                 WhatsApp

@@ -97,6 +97,7 @@ async function registerAndGetCode(overrides = {}) {
     phone: uniquePhone(),
     password: 'Abcdef12!@',
     confirmPassword: 'Abcdef12!@',
+    acceptTerms: true,
     ...overrides,
   };
   delete body.ip;
@@ -128,6 +129,14 @@ test("POST /register — crée le compte mais n'ouvre AUCUNE session (vérificat
   );
   assert.equal(row.email_verified_at, null);
   assert.equal(row.email_verification_attempts, 0);
+  const [[t]] = await pool.query('SELECT t.terms_accepted_at, t.terms_version FROM tenants t JOIN users u ON u.tenant_id = t.id WHERE u.email = :email', { email });
+  assert.ok(t.terms_accepted_at, 'la date d’acceptation des conditions est conservée');
+  assert.ok(t.terms_version);
+});
+
+test('POST /register — refusé (400) sans acceptation des conditions d’utilisation', async () => {
+  const { res } = await registerAndGetCode({ acceptTerms: false });
+  assert.equal(res.status, 400);
 });
 
 test('POST /register — pays Togo avec un numéro réel validé par libphonenumber-js, stocké en E.164', async () => {
@@ -152,6 +161,7 @@ test('POST /register — numéro invalide pour le pays choisi → 400', async ()
       phone: '0161234567', // format béninois, invalide pour le Togo
       password: 'Abcdef12!@',
       confirmPassword: 'Abcdef12!@',
+    acceptTerms: true,
     }),
   });
   assert.equal(res.status, 400);
@@ -174,6 +184,7 @@ test('POST /register — numéro déjà utilisé → 409 ; email déjà associé
       phone: (await pool.query('SELECT phone FROM users WHERE id = :id', { id: first.userId }))[0][0].phone,
       password: 'Abcdef12!@',
       confirmPassword: 'Abcdef12!@',
+    acceptTerms: true,
     }),
   });
   assert.equal(samePhone.status, 409);
@@ -192,6 +203,7 @@ test('POST /register — numéro déjà utilisé → 409 ; email déjà associé
       phone: uniquePhone(),
       password: 'Abcdef12!@',
       confirmPassword: 'Abcdef12!@',
+    acceptTerms: true,
     }),
   });
   assert.equal(sameEmail.status, 409);

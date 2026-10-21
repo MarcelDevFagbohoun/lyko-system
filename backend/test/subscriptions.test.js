@@ -49,9 +49,19 @@ test('catalogue : prix fixés par la direction', () => {
   assert.ok(!PLANS.demarrage.features.includes('ai_assistant'));
 });
 
-test('migration : les entreprises existantes sont en offre interne', async () => {
-  const [[r]] = await pool.query("SELECT COUNT(*) n FROM tenant_subscriptions WHERE plan_key='interne' AND status='active'");
-  assert.ok(r.n >= 1);
+test('inscription : sans application des abonnements => offre interne ; avec => en attente de paiement', async () => {
+  const { createInitialSubscription } = require('../src/services/entitlements');
+  const conn = await pool.getConnection();
+  try {
+    for (const [enforced, plan, status] of [[false, 'interne', 'active'], [true, null, 'pending_payment']]) {
+      config.features.subscriptionsEnforced = enforced;
+      await conn.query('DELETE FROM tenant_subscriptions WHERE tenant_id = :t', { t: fx.tenantId });
+      await createInitialSubscription(conn, fx.tenantId);
+      const [[r]] = await conn.query('SELECT plan_key, status FROM tenant_subscriptions WHERE tenant_id = :t', { t: fx.tenantId });
+      assert.equal(r.plan_key, plan);
+      assert.equal(r.status, status);
+    }
+  } finally { config.features.subscriptionsEnforced = true; conn.release(); }
 });
 
 test('sans abonnement (pending_payment) : accès refusé', async () => {
@@ -131,6 +141,7 @@ test('indicateur désactivé : comportement actuel inchangé (tout autorisé)', 
 
 test('assistant IA : routes non montées par défaut', async () => {
   assert.equal(config.features.assistant, false);
+  await setSub('pro');
   const r = await call('GET', '/api/assistant/settings');
   assert.equal(r.status, 404);
 });
@@ -155,4 +166,20 @@ test('locataires : le portail et le paiement restent ouverts quand l’entrepris
   await setSub('pro', 'active', 'DATE_SUB(NOW(), INTERVAL 1 SECOND)');
   const r = await fetch(`${base}/api/portal/${tok}`);
   assert.equal(r.status, 200);
+});
+
+test('coupure serveur : entreprise expirée => 402 sur les routes de base, /auth et /billing restent ouverts', async () => {
+  await setSub('pro', 'active', 'DATE_SUB(NOW(), INTERVAL 1 DAY)');
+  for (const path of ['/api/renters', '/api/owners', '/api/properties', '/api/employees', '/api/settings', '/api/charges']) {
+    const r = await call('GET', path);
+    assert.equal(r.status, 402, path);
+    assert.match(JSON.stringify(r.body), /SUBSCRIPTION_INACTIVE/, path);
+  }
+  const billing = await call('GET', '/api/billing/subscription');
+  assert.notEqual(billing.status, 402);
+  const health = await call('GET', '/api/health');
+  assert.equal(health.status, 200);
+  await setSub('pro');
+  const ok = await call('GET', '/api/renters');
+  assert.equal(ok.status, 200);
 });

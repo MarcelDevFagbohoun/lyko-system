@@ -179,3 +179,20 @@ test('expiration : le job marque « expired » ; la page d’abonnement reste ac
   assert.equal(d.status, 'expired');
   assert.equal((await buy('pro', 4)).status, 201); // peut renouveler
 });
+
+test('réconciliation : un paiement approuvé mais jamais confirmé est rattrapé par le job', async () => {
+  const { runSubscriptionReconciliation } = require('../src/jobs/subscriptionJob');
+  const r = await buy('pro', 4);
+  assert.equal(r.status, 201);
+  const ref = r.body.reference;
+  const before = (await sub()).current_period_end;
+  txs.get(await txOf(ref)).status = 'approved'; // le client a payé puis fermé la page ; aucun webhook
+  await pool.query("UPDATE subscription_payments SET created_at = DATE_SUB(NOW(), INTERVAL 5 MINUTE) WHERE reference = :r", { r: ref });
+  await runSubscriptionReconciliation();
+  const [[p]] = await pool.query('SELECT status FROM subscription_payments WHERE reference = :r', { r: ref });
+  assert.equal(p.status, 'paid');
+  assert.ok(new Date((await sub()).current_period_end) > new Date(before));
+  await runSubscriptionReconciliation(); // rejouer ne prolonge pas une 2e fois
+  const [[n]] = await pool.query("SELECT COUNT(*) n FROM subscription_payments WHERE tenant_id = :t AND status = 'paid'", { t: fx.tenantId });
+  assert.ok(Number(n.n) >= 2);
+});

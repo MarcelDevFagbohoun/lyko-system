@@ -7,6 +7,7 @@ import { ApiError } from "@/lib/api/client";
 import { RCCM_RE, IFU_RE, PASSWORD_RE, passwordStrength, isValidRegistrationPhone } from "@/lib/validation/auth";
 import { REGISTRATION_COUNTRIES, type RegistrationCountryCode } from "@/lib/constants/registration-countries";
 import { Field, Input } from "@/components/ui/input";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 type FormState = {
@@ -20,6 +21,7 @@ type FormState = {
   phone: string;
   password: string;
   confirmPassword: string;
+  acceptTerms: boolean;
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -35,6 +37,7 @@ const INITIAL_FORM: FormState = {
   phone: "",
   password: "",
   confirmPassword: "",
+  acceptTerms: false,
 };
 
 function strengthColor(score: number) {
@@ -87,6 +90,8 @@ export function RegisterForm() {
     if (!form.confirmPassword) e.confirmPassword = "Confirmation requise";
     else if (form.confirmPassword !== form.password) e.confirmPassword = "Les mots de passe ne correspondent pas";
 
+    if (!form.acceptTerms) e.acceptTerms = "Vous devez accepter les conditions pour créer un compte";
+
     return e;
   }, [form]);
 
@@ -115,6 +120,7 @@ export function RegisterForm() {
       phone: true,
       password: true,
       confirmPassword: true,
+      acceptTerms: true,
     });
     if (!isValid) return;
 
@@ -132,6 +138,7 @@ export function RegisterForm() {
       fd.append("phone", form.phone.trim());
       fd.append("password", form.password);
       fd.append("confirmPassword", form.confirmPassword);
+      fd.append("acceptTerms", "true");
       if (logo) fd.append("logo", logo);
 
       const { email } = await register(fd);
@@ -340,6 +347,27 @@ export function RegisterForm() {
             {passwordsMatch ? "Les mots de passe correspondent ✓" : "Les mots de passe ne correspondent pas"}
           </p>
         )}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label className="flex items-start gap-2 text-body-sm text-ink-soft">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 shrink-0"
+            checked={form.acceptTerms}
+            onChange={(e) => {
+              set("acceptTerms", e.target.checked);
+              markTouched("acceptTerms");
+            }}
+          />
+          <span>
+            J&apos;ai lu et j&apos;accepte les{" "}
+            <Link href="/cgu" target="_blank" className="text-primary underline">conditions d&apos;utilisation</Link>{" "}
+            et la{" "}
+            <Link href="/confidentialite" target="_blank" className="text-primary underline">politique de confidentialité</Link>.
+          </span>
+        </label>
+        {touched.acceptTerms && errors.acceptTerms && <p className="text-body-xs text-danger-fg">{errors.acceptTerms}</p>}
       </div>
 
       <Button type="submit" size="lg" disabled={submitting}>

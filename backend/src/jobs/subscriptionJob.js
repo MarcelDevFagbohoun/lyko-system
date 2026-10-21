@@ -47,4 +47,28 @@ async function runSubscriptionJob() {
   }
 }
 
-module.exports = { runSubscriptionJob };
+/**
+ * Filet de sécurité : relit chez FedaPay les paiements d'abonnement restés « pending » (client parti avant le retour,
+ * webhook perdu). `confirmRow` est idempotent : un paiement déjà activé n'est jamais activé deux fois.
+ */
+async function runSubscriptionReconciliation() {
+  const { confirmRow } = require('../services/billing');
+  const [rows] = await pool.query(
+    `SELECT * FROM subscription_payments
+     WHERE status = 'pending' AND fedapay_transaction_id IS NOT NULL
+       AND created_at <= DATE_SUB(NOW(), INTERVAL 2 MINUTE) AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
+     ORDER BY id LIMIT 100`,
+  );
+  for (const p of rows) {
+    try {
+      const r = await confirmRow(p);
+      if (r.state === 'paid') logger.info('Abonnement : paiement rattrapé par la réconciliation', { id: p.id, tenantId: p.tenant_id });
+    } catch (err) {
+      logger.warn('Abonnement : réconciliation impossible', { id: p.id, message: err.message });
+    }
+  }
+  // Paiements jamais finalisés au bout de 7 jours : clôturés (le client a abandonné).
+  await pool.query("UPDATE subscription_payments SET status = 'failed' WHERE status = 'pending' AND created_at <= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+}
+
+module.exports = { runSubscriptionJob, runSubscriptionReconciliation };

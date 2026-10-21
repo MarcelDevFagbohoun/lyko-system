@@ -1,7 +1,7 @@
 # Mise en service du SaaS — liste de contrôle
 
 ## 1. Déploiement (aucun changement de comportement tant que les verrous sont éteints)
-1. Déployer la branche, appliquer les migrations **105 à 108** (`npm run db:migrate`).
+1. Déployer la branche, appliquer les migrations **105 à 109** (`npm run db:migrate`).
    Les entreprises existantes passent en offre « interne » (accès complet, sans limite ni échéance).
 2. Variables d'environnement (backend) :
    | Variable | Rôle |
@@ -54,3 +54,14 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 3. FedaPay : redéclarer les adresses de webhook avec le nouveau domaine (`/api/billing/webhook` pour la plateforme, et celle affichée dans Paramètres pour chaque entreprise).
 4. Les liens déjà envoyés par courriel (retour de paiement, lien de remboursement) pointent vers l'ancien domaine : garder l'ancien actif quelques semaines.
 5. Les liens de portail locataire/propriétaire déjà partagés suivent `FRONTEND_URL` : prévenir les clients ou garder une redirection.
+
+
+## Revue du 21/10/2026 — points ajoutés
+
+- **Coupure côté serveur** : avec `SUBSCRIPTIONS_ENFORCED=true`, toute requête authentifiée d'une entreprise sans abonnement actif reçoit 402, sauf connexion, abonnement et pages publiques.
+- **Réconciliation** : toutes les 10 minutes, les paiements d'abonnement restés « en attente » sont relus chez FedaPay (rattrapage si le webhook est perdu).
+- **Identité légale** : renseigner `PLATFORM_LEGAL_RCCM/IFU/ADDRESS` (factures) et `NEXT_PUBLIC_LEGAL_*` (pages /cgu, /confidentialite, /mentions-legales, figées au build web). Les textes légaux sont des brouillons à faire valider par un juriste ; changer `TERMS_VERSION` à chaque modification.
+- **Inscription** : la case d'acceptation est obligatoire ; la date et la version acceptées sont conservées (`tenants.terms_accepted_at/terms_version`).
+- **Production** : `/diagnostics` est introuvable et `/api/health/db` ne renvoie plus de détail technique.
+- **Tests** : `npm test` (dans `backend`) utilise la base `<DB_NAME>_test` créée automatiquement ; il refuse de tourner sur la base de développement.
+- **Identifiant technique** : la valeur `kkiapay` stockée pour un paiement en ligne est un identifiant historique conservé (affiché « Paiement en ligne ») ; tout passe désormais par FedaPay.

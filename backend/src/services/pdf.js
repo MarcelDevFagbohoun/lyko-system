@@ -479,7 +479,8 @@ function streamPaymentAdvicePdf(res, { tenant, order }) {
 /** Facture d'abonnement Africa Immo Management, remise à l'entreprise cliente. */
 function streamSubscriptionInvoicePdf(res, { client, payment, planLabel }) {
   const paidOn = formatDateFr(isoDay(payment.paid_at));
-  const platform = { company_name: 'Africa Immo Management' };
+  const LEGAL = require('../config/env').legal;
+  const platform = { company_name: LEGAL.name };
   renderReceiptDocument(res, {
     tenant: platform,
     filename: `${payment.invoice_number}.pdf`,
@@ -492,6 +493,9 @@ function streamSubscriptionInvoicePdf(res, { client, payment, planLabel }) {
       ['Entreprise', client.company_name],
       ['RCCM / IFU', [client.rccm, client.ifu].filter(Boolean).join(' / ') || '—'],
       ['Référence de paiement', payment.reference],
+      // Identité fiscale de l'émetteur (renseignée via PLATFORM_LEGAL_* ; absente tant qu'elle n'est pas configurée).
+      ...[['Émetteur', LEGAL.name], ['RCCM / IFU émetteur', [LEGAL.rccm, LEGAL.ifu].filter(Boolean).join(' / ')], ['Adresse émetteur', LEGAL.address]]
+        .filter(([, v]) => v),
     ],
     detailLabel: 'Détail',
     lines: {
@@ -1266,7 +1270,7 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
-  kkiapay: 'Paiement en ligne (KKiaPay)',
+  kkiapay: 'Paiement en ligne',
   // Réglé par prélèvement sur la caution à la sortie (demande utilisateur, 2026-10-18) — jamais
   // sélectionnable manuellement, uniquement généré par `POST /:leaseId/move-out-report/finalize`.
   caution: 'Prélevé sur la caution',

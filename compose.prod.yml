@@ -1,4 +1,4 @@
-# ── Lyko System — pile de production (VPS + Docker Compose) ───────────────────
+# ── Africa Immo Management — pile de production (VPS + Docker Compose) ───────────────────
 #
 #   cp .env.prod.example .env      # puis renseigner domaines / secrets / mots de passe
 #   docker compose -f compose.prod.yml build
@@ -7,7 +7,7 @@
 # Exposé sur l'hôte : uniquement Caddy (80/443). db et api ne sont joignables
 # que sur les réseaux internes. Voir docs/DEPLOIEMENT.md pour le détail.
 
-name: lyko-system
+name: africa-immo
 
 services:
   db:
@@ -53,6 +53,28 @@ services:
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-7d}
       JWT_ISSUER: ${JWT_ISSUER:-lyko-system}
       BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      # URL publique du site : liens des courriels, des PDF et retour FedaPay.
+      FRONTEND_URL: ${PUBLIC_APP_URL:?}
+      # Secrets obligatoires en production (l'API refuse de démarrer sans eux).
+      JWT_MARKETPLACE_ACCOUNT_SECRET: ${JWT_MARKETPLACE_ACCOUNT_SECRET:?}
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?}
+      # Courriels (vérification d'inscription, relances d'abonnement).
+      RESEND_API_KEY: ${RESEND_API_KEY:?}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:?}
+      # Abonnements et facturation de la plateforme (compte FedaPay de la plateforme).
+      SUBSCRIPTIONS_ENFORCED: ${SUBSCRIPTIONS_ENFORCED:-false}
+      PLATFORM_FEDAPAY_SECRET_KEY: ${PLATFORM_FEDAPAY_SECRET_KEY:-}
+      PLATFORM_FEDAPAY_WEBHOOK_SECRET: ${PLATFORM_FEDAPAY_WEBHOOK_SECRET:-}
+      PLATFORM_FEDAPAY_SANDBOX: ${PLATFORM_FEDAPAY_SANDBOX:-true}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+      PLATFORM_REFUND_FEE_PERCENT: ${PLATFORM_REFUND_FEE_PERCENT:-}
+      PLATFORM_ADMIN_JWT_SECRET: ${PLATFORM_ADMIN_JWT_SECRET:-}
+      PLATFORM_LEGAL_NAME: ${PLATFORM_LEGAL_NAME:-Africa Immo Management}
+      PLATFORM_LEGAL_RCCM: ${PLATFORM_LEGAL_RCCM:-}
+      PLATFORM_LEGAL_IFU: ${PLATFORM_LEGAL_IFU:-}
+      PLATFORM_LEGAL_ADDRESS: ${PLATFORM_LEGAL_ADDRESS:-}
+      TERMS_VERSION: ${TERMS_VERSION:-2026-10}
+      ASSISTANT_FEATURE_ENABLED: ${ASSISTANT_FEATURE_ENABLED:-false}
     volumes:
       - uploads:/app/uploads
     networks:
@@ -68,6 +90,13 @@ services:
       args:
         # ⚠ Figée dans le bundle client AU BUILD — rebuild obligatoire si elle change.
         NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?}
+        NEXT_PUBLIC_CONTACT_WHATSAPP: ${NEXT_PUBLIC_CONTACT_WHATSAPP:-}
+        NEXT_PUBLIC_CONTACT_EMAIL: ${NEXT_PUBLIC_CONTACT_EMAIL:-}
+        NEXT_PUBLIC_LEGAL_NAME: ${NEXT_PUBLIC_LEGAL_NAME:-}
+        NEXT_PUBLIC_LEGAL_RCCM: ${NEXT_PUBLIC_LEGAL_RCCM:-}
+        NEXT_PUBLIC_LEGAL_IFU: ${NEXT_PUBLIC_LEGAL_IFU:-}
+        NEXT_PUBLIC_LEGAL_ADDRESS: ${NEXT_PUBLIC_LEGAL_ADDRESS:-}
+        NEXT_PUBLIC_LEGAL_DIRECTOR: ${NEXT_PUBLIC_LEGAL_DIRECTOR:-}
     restart: unless-stopped
     environment:
       NODE_ENV: production

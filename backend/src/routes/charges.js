@@ -455,11 +455,11 @@ router.get('/:id/payments', async (req, res, next) => {
  * Cœur commun du règlement d'une facture SONEB/SBEE (total ou partiel) :
  * vérifie le solde restant, insère `utility_payments`, met à jour le statut
  * de `utility_charges`. Seul endroit qui insère dans `utility_payments` —
- * utilisé par la route manuelle ci-dessous ET par les chemins KKiaPay
+ * utilisé par la route manuelle ci-dessous ET par les chemins FedaPay
  * (portail, lien de paiement, webhook). Appelant responsable du verrou
  * (`SELECT ... FOR UPDATE` sur `utility_charges`) et de la transaction.
  *
- * `recordedBy` : `null` pour un règlement confirmé par KKiaPay.
+ * `recordedBy` : `null` pour un règlement confirmé par FedaPay.
  */
 async function recordUtilityPayment(
   conn,
@@ -665,7 +665,7 @@ router.delete('/:id', async (req, res, next) => {
   }
 });
 
-// POST /api/charges/:id/payment-links — génère un lien de paiement KKiaPay
+// POST /api/charges/:id/payment-links — génère un lien de paiement FedaPay
 // pour cette facture, à envoyer à la main (WhatsApp) à un locataire sans
 // portail actif. Même schéma de révélation unique que les liens de portail.
 router.post('/:id/payment-links', async (req, res, next) => {

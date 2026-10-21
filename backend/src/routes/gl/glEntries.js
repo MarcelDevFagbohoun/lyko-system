@@ -190,7 +190,7 @@ router.post('/manual', canAdvanced, async (req, res, next) => {
       }
     }
 
-    // Haute #4 (étape 51) avait déjà corrigé ce même trou pour KKiaPay ; Moyenne #4 (étape 51bis) : la
+    // Haute #4 (étape 51) avait déjà corrigé ce même trou pour FedaPay ; Moyenne #4 (étape 51bis) : la
     // saisie manuelle était la SEULE route qui postait des écritures sans jamais vérifier la clôture de
     // mois (toutes les autres — loyers, charges, dépenses, versements — l'imposent déjà).
     await assertPeriodOpen(req.user.tenantId, entryDate);

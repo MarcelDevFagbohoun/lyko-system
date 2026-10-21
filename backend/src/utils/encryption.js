@@ -6,7 +6,7 @@ const config = require('../config/env');
 // Chiffrement RÉVERSIBLE (AES-256-GCM) — contrairement à `hashToken()` dans
 // `tokens.js`, qui protège des valeurs qu'on n'a jamais besoin de relire en
 // clair (mots de passe, tokens de session/portail). Les clés privée/secrète
-// KKiaPay de chaque entreprise doivent au contraire être RÉCUPÉRABLES en
+// FedaPay de chaque entreprise doivent au contraire être RÉCUPÉRABLES en
 // clair pour appeler leur API — d'où ce module distinct, à réserver à ce
 // seul type de besoin (jamais pour un mot de passe : bcrypt reste la règle).
 //
@@ -20,7 +20,7 @@ function derivedKey() {
   return crypto.createHash('sha256').update(config.secretsEncryptionKey).digest();
 }
 
-/** Chiffre une valeur en clair (ex. clé privée KKiaPay) → chaîne stockable telle quelle en base. */
+/** Chiffre une valeur en clair (ex. clé privée FedaPay) → chaîne stockable telle quelle en base. */
 function encryptSecret(plaintext) {
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, derivedKey(), iv);

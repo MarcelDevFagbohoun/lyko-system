@@ -349,13 +349,13 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
       label: `Paiement loyer : ${r.r_fn} ${r.r_ln} — ${Number(r.amount).toLocaleString('fr-FR')} FCFA (${
         r.covers_month ?? (r.covers_period_start instanceof Date ? r.covers_period_start.toISOString().slice(0, 10) : r.covers_period_start)
       })`,
-      // `recorded_by` est NULL pour un paiement confirmé par KKiaPay (aucun
+      // `recorded_by` est NULL pour un paiement confirmé par FedaPay (aucun
       // employé ne l'a saisi) — un intitulé explicite plutôt que le
       // « Auteur inconnu » générique de `toActor(null, ...)`, qui suggérerait
       // à tort un problème de données.
       actor:
         r.payment_method === 'kkiapay'
-          ? { name: 'Paiement en ligne', role: 'kkiapay', roleLabel: 'KKiaPay' }
+          ? { name: 'Paiement en ligne', role: 'en_ligne', roleLabel: 'Paiement en ligne' }
           : toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,
     })),

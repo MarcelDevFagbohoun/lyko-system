@@ -10,6 +10,7 @@ const config = require('../config/env');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { getPlanAsync } = require('./planCatalog');
+const { verifyAccessToken } = require('../utils/jwt');
 
 const COUNTERS = {
   // Unités actives (hors biens supprimés) de l'entreprise.
@@ -85,6 +86,31 @@ async function assertWithinLimit(tenantId, kind, conn, adding = 1) {
   }
 }
 
+// Routes qui restent ouvertes à une entreprise sans abonnement actif (renouvellement, connexion, pages publiques).
+const OPEN_PREFIXES = ['/health', '/auth', '/billing', '/admin', '/portal', '/owner-portal', '/marketplace-accounts', '/verify', '/pay', '/recu', '/online-payments', '/webhooks', '/marketplace/public'];
+
+/**
+ * Coupure CÔTÉ SERVEUR : toute requête authentifiée d'une entreprise dont l'abonnement n'est pas actif reçoit 402.
+ * Placé en tête du routeur API ; sans jeton valide la requête passe et c'est la route elle-même qui répondra 401.
+ */
+function enforceActiveSubscription(req, _res, next) {
+  if (!config.features.subscriptionsEnforced) return next();
+  if (OPEN_PREFIXES.some((p) => req.path === p || req.path.startsWith(`${p}/`))) return next();
+  const [scheme, token] = (req.headers.authorization || '').split(' ');
+  if (scheme !== 'Bearer' || !token) return next();
+  let payload;
+  try {
+    payload = verifyAccessToken(token);
+  } catch (_e) {
+    return next();
+  }
+  if (!payload.tenantId) return next();
+  getEntitlements(payload.tenantId).then((ent) => {
+    if (ent.active) return next();
+    next(new ApiError(402, "Abonnement inactif ou expiré : renouvelez votre abonnement pour continuer.", { code: 'SUBSCRIPTION_INACTIVE' }));
+  }, next);
+}
+
 /** Ligne d'abonnement initiale d'une nouvelle entreprise (dans la transaction d'inscription). */
 async function createInitialSubscription(conn, tenantId) {
   if (config.features.subscriptionsEnforced) {
@@ -94,4 +120,4 @@ async function createInitialSubscription(conn, tenantId) {
   }
 }
 
-module.exports = { getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };
+module.exports = { enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };

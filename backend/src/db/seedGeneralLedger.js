@@ -203,7 +203,7 @@ const TREASURY_BY_PAYMENT_METHOD = {
   virement: { journal: 'BQ', account: '521' },
   cheque: { journal: 'BQ', account: '521' },
   mobile_money: { journal: 'MM', account: '552' },
-  kkiapay: { journal: 'MM', account: '552' }, // À VALIDER — KKiaPay règle par Mobile Money/carte ; simplifié sur 552 en V1.
+  kkiapay: { journal: 'MM', account: '552' }, // À VALIDER — FedaPay règle par Mobile Money/carte ; simplifié sur 552 en V1.
 };
 
 // ────────────────────────────────────────────────────────────────────────

@@ -226,4 +226,4 @@ async function describe(tenantId) {
   };
 }
 
-module.exports = { platformAccount, verifyPlatformWebhook, findOffer, quote, publicCatalog, startCheckout, activatePayment, confirmByReference, confirmByTransaction, describe, founderTaken };
+module.exports = { confirmRow, platformAccount, verifyPlatformWebhook, findOffer, quote, publicCatalog, startCheckout, activatePayment, confirmByReference, confirmByTransaction, describe, founderTaken };

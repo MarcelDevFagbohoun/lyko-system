@@ -214,14 +214,14 @@ async function insertReceiptForPayment(conn, tenantId, paymentId, maxAttempts = 
  * Cœur commun de l'enregistrement d'un paiement de loyer : verrouille le
  * bail, calcule l'allocation multi-mois, insère les lignes `rent_payments` +
  * `receipts`. Seul endroit qui insère dans `rent_payments` — utilisé par la
- * route manuelle (staff) ci-dessous ET par les chemins KKiaPay (portail,
+ * route manuelle (staff) ci-dessous ET par les chemins FedaPay (portail,
  * lien de paiement, webhook), jamais dupliqué.
  *
- * `recordedBy` : `null` pour un paiement confirmé par KKiaPay (aucun employé
+ * `recordedBy` : `null` pour un paiement confirmé par FedaPay (aucun employé
  * ne l'a saisi). `kkiapayTransactionId`, s'il est fourni, n'est attaché qu'à
  * la PREMIÈRE ligne créée (la colonne est UNIQUE — un paiement qui se
  * répartit sur plusieurs mois ne doit pas tenter d'insérer la même
- * référence KKiaPay deux fois) ; il suffit à identifier la transaction pour
+ * référence FedaPay deux fois) ; il suffit à identifier la transaction pour
  * l'idempotence, vérifiée en amont par l'appelant avant même d'arriver ici.
  * Appelant responsable du verrou de transaction (`conn.beginTransaction()`)
  * et du `SELECT ... FOR UPDATE` sur le bail avant d'appeler cette fonction.
@@ -2318,7 +2318,7 @@ router.get('/:leaseId/contract.pdf', canPayments, async (req, res, next) => {
   }
 });
 
-// POST /api/leases/:leaseId/payment-links — génère un lien de paiement KKiaPay
+// POST /api/leases/:leaseId/payment-links — génère un lien de paiement FedaPay
 // à envoyer à la main (WhatsApp) à un locataire sans portail actif. Même
 // schéma de révélation unique que POST /:id/portal-link (renters.js) : seule
 // l'empreinte du token est conservée, le lien en clair n'est renvoyé qu'ici.
@@ -2367,7 +2367,7 @@ router.post('/:leaseId/payment-links', canPayments, async (req, res, next) => {
 });
 
 module.exports = router;
-// Réutilisés par portal.js (paiement KKiaPay depuis le portail locataire) et
+// Réutilisés par portal.js (paiement FedaPay depuis le portail locataire) et
 // paymentLinks.js (lien de paiement généré par le personnel) — voir le
 // commentaire au-dessus de `recordRentPayment` : seul point d'insertion
 // dans `rent_payments`, jamais dupliqué.

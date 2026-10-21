@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { BrandLogo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +39,8 @@ const PALETTE: { name: string; className: string; hex: string }[] = [
  * graphique. Conservée depuis l'étape 0 comme outil de diagnostic continu.
  */
 export default function DiagnosticsPage() {
+  // Outil de développement : introuvable en production (il expose l'état technique de l'API et de la base).
+  if (process.env.NODE_ENV === "production") notFound();
   return (
     <main className="min-h-screen bg-canvas">
       {/* Barre haute — 56px, comme la charte */}

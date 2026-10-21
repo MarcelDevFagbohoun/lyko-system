@@ -78,7 +78,7 @@ const config = {
   bcryptRounds: int('BCRYPT_ROUNDS', 12),
 
   // Chiffrement réversible (AES-256-GCM, voir utils/encryption.js) — sert à
-  // stocker les clés privée/secrète KKiaPay de chaque entreprise de façon
+  // stocker les clés privée/secrète FedaPay de chaque entreprise de façon
   // récupérable (contrairement aux mots de passe/tokens, hashés à sens
   // unique partout ailleurs dans ce projet). Une seule clé globale : c'est
   // le serveur qui protège la base, pas une entreprise qui protège les
@@ -130,6 +130,15 @@ config.platform = {
   fedapaySecretKey: process.env.PLATFORM_FEDAPAY_SECRET_KEY || '',
   fedapayWebhookSecret: process.env.PLATFORM_FEDAPAY_WEBHOOK_SECRET || '',
   fedapaySandbox: process.env.PLATFORM_FEDAPAY_SANDBOX !== 'false',
+};
+
+// Identité légale de la plateforme (factures, pages légales) et version des conditions d'utilisation en vigueur.
+config.legal = {
+  termsVersion: process.env.TERMS_VERSION || '2026-10',
+  name: process.env.PLATFORM_LEGAL_NAME || 'Africa Immo Management',
+  rccm: process.env.PLATFORM_LEGAL_RCCM || '',
+  ifu: process.env.PLATFORM_LEGAL_IFU || '',
+  address: process.env.PLATFORM_LEGAL_ADDRESS || '',
 };
 
 module.exports = config;

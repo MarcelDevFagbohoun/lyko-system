@@ -4,6 +4,11 @@ const mysql = require('mysql2/promise');
 const config = require('./env');
 const logger = require('../utils/logger');
 
+// Garde-fou : un test ne tourne JAMAIS sur la base de développement (`npm test` utilise `<DB_NAME>_test`).
+if (process.env.NODE_TEST_CONTEXT && !String(config.db.database).endsWith('_test') && process.env.ALLOW_TESTS_ON_DEV_DB !== '1') {
+  throw new Error(`Test refusé sur la base « ${config.db.database} » : lancez « npm test » (base dédiée *_test).`);
+}
+
 /**
  * Pool de connexions MySQL partagé par toute l'application.
  * `namedPlaceholders` permet d'écrire des requêtes avec :param.

@@ -74,7 +74,7 @@ router.get('/:token', async (req, res, next) => {
       id: issuance.tenant_id,
     });
     // Cachet/signature de l'employé qui a réellement encaissé — `recorded_by`
-    // est NULL pour un paiement confirmé par KKiaPay, la requête ne renvoie
+    // est NULL pour un paiement confirmé par FedaPay, la requête ne renvoie
     // alors rien et `streamReceiptPdf` retombe sur le cachet de l'entreprise.
     const [issuerRows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', {
       id: payment.recorded_by,
