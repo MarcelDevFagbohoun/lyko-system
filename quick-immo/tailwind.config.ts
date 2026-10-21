@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 /**
- * Charte graphique Lyko System — dérivée de la maquette
+ * Charte graphique Africa Immo Management — dérivée de la maquette
  * (stitch "Cabinet M Conseils Design System", section DESIGN.md).
  *
  * Règle : toutes les couleurs sont exposées comme tokens sémantiques.

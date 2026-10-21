@@ -1313,7 +1313,7 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
 
 /**
  * Impayés existants à l'entrée (onboarding d'un locataire déjà en place
- * avant Lyko System, voir `leases.opening_debt_amount`) — n'affiche rien du
+ * avant Africa Immo Management, voir `leases.opening_debt_amount`) — n'affiche rien du
  * tout pour l'immense majorité des baux (aucun impayé déclaré à la création).
  * Se règle indépendamment du registre de loyer ci-dessous (aucun mois de
  * loyer concerné, aucune quittance).

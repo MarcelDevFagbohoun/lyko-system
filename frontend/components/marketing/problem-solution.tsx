@@ -39,7 +39,7 @@ export function ProblemSolution() {
       <div className="mt-10 grid grid-cols-1 gap-3 sm:gap-4">
         <div className="hidden grid-cols-2 gap-4 px-1 sm:grid">
           <p className="font-label-sm uppercase tracking-wider text-ink-muted">Aujourd&apos;hui</p>
-          <p className="font-label-sm uppercase tracking-wider text-primary">Avec Lyko System</p>
+          <p className="font-label-sm uppercase tracking-wider text-primary">Avec Africa Immo Management</p>
         </div>
         {ROWS.map((row) => (
           <div key={row.after} className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4">

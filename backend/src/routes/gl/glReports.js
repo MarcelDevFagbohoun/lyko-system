@@ -295,7 +295,7 @@ router.get('/financial-statements.xlsx', canAdvanced, async (req, res, next) => 
     ]);
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Lyko System';
+    workbook.creator = 'Africa Immo Management';
     workbook.created = new Date();
 
     function writeLinesSheet(name, title, sections) {

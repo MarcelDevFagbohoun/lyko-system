@@ -24,9 +24,9 @@ export const FAQ_ITEMS = [
       "Ils consultent un portail personnel, sans mot de passe, accessible par un lien que vous leur donnez : recette du mois, commission, versements, relevé PDF et carnet des charges. Le portail est en lecture seule.",
   },
   {
-    question: "Lyko System règle-t-il les factures SONEB et SBEE ?",
+    question: "Africa Immo Management règle-t-il les factures SONEB et SBEE ?",
     answer:
-      "Non : il les suit. Le propriétaire paie la facture mère ; Lyko calcule les factures de chaque locataire, suit leurs paiements, fait le point avec la facture mère et prépare le reversement des charges encaissées.",
+      "Non : il les suit. Le propriétaire paie la facture mère ; Africa Immo Management calcule les factures de chaque locataire, suit leurs paiements, fait le point avec la facture mère et prépare le reversement des charges encaissées.",
   },
   {
     question: "La comptabilité SYSCOHADA est-elle obligatoire ?",

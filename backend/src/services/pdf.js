@@ -16,7 +16,7 @@ const UTILITY_TYPE_LABELS = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, 
 
 // Charte graphique alignée sur celle de l'application (frontend/tailwind.config.ts)
 // — mêmes tokens sémantiques, pour qu'un PDF généré ressemble à un écran de
-// Lyko System plutôt qu'à un document généré à part avec ses propres couleurs.
+// Africa Immo Management plutôt qu'à un document généré à part avec ses propres couleurs.
 const PRIMARY = '#0B2A5B';
 const PRIMARY_BG = '#EAF0FB';
 const PRIMARY_BORDER = '#C5D3EE';
@@ -476,15 +476,15 @@ function streamPaymentAdvicePdf(res, { tenant, order }) {
   });
 }
 
-/** Facture d'abonnement Lyko System, remise à l'entreprise cliente. */
+/** Facture d'abonnement Africa Immo Management, remise à l'entreprise cliente. */
 function streamSubscriptionInvoicePdf(res, { client, payment, planLabel }) {
   const paidOn = formatDateFr(isoDay(payment.paid_at));
-  const platform = { company_name: 'Lyko System' };
+  const platform = { company_name: 'Africa Immo Management' };
   renderReceiptDocument(res, {
     tenant: platform,
     filename: `${payment.invoice_number}.pdf`,
     title: 'FACTURE',
-    subtitle: 'Abonnement Lyko System',
+    subtitle: 'Abonnement Africa Immo Management',
     meta: [['N° de facture', payment.invoice_number], ['Payée le', paidOn]],
     intro: { prefix: 'Facture acquittée le ', bold: paidOn },
     partiesLabel: 'Client',
@@ -505,7 +505,7 @@ function streamSubscriptionInvoicePdf(res, { client, payment, planLabel }) {
     total: { label: 'Total payé', amount: D.fcfa(payment.amount), raw: payment.amount },
     wordsPrefix: 'Arrêtée la présente facture à la somme de',
     note: 'Facture acquittée : le paiement a été confirmé par le prestataire de paiement. Document généré automatiquement.',
-    signatureTitle: 'Lyko System',
+    signatureTitle: 'Africa Immo Management',
     issuer: null,
   });
 }

@@ -13,7 +13,7 @@ const { sendBillingEmail } = require('./email/sendEmail');
 /**
  * Remboursement sous garantie (15 jours après le PREMIER paiement). Parcours :
  *   requested  → le DG demande, en donnant sa raison
- *   approved   → l'admin Lyko valide (frais FedaPay retenus fixés) : le DG reçoit un lien à usage unique par courriel
+ *   approved   → l'admin de la plateforme valide (frais FedaPay retenus fixés) : le DG reçoit un lien à usage unique par courriel
  *   details_received → le DG a saisi son numéro Mobile Money via ce lien
  *   processing → l'admin déclenche le virement FedaPay (compte de la plateforme)
  *   paid       → virement confirmé par FedaPay : abonnement clôturé (« refunded »), paiement marqué remboursé
@@ -197,7 +197,7 @@ async function pay({ id, adminId }) {
   try {
     const payout = await fedapay.createPayout(account, {
       amount: r.refund_amount, name: r.payee_name, phone: r.payee_phone, operator: r.payee_operator,
-      description: `Remboursement abonnement Lyko System #${id}`, reference: `REFUND-${id}`,
+      description: `Remboursement abonnement Africa Immo Management #${id}`, reference: `REFUND-${id}`,
     });
     await pool.query('UPDATE subscription_refunds SET payout_id = :p WHERE id = :id', { p: payout.id, id });
     await fedapay.startPayout(account, payout.id);

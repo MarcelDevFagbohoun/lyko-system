@@ -1,5 +1,5 @@
 /*
- * Service worker Lyko System — shell applicatif (étape 0).
+ * Service worker Africa Immo Management — shell applicatif (étape 0).
  *
  * Rôle limité au shell (navigations + assets statiques) : rendre l'appli
  * chargeable hors-ligne. Les données métier (lecture) et la file d'écriture

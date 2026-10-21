@@ -111,7 +111,7 @@ test('paiement approuvé : abonnement actif 4 mois, garantie 15 jours, facture ;
   assert.equal(new Date((await sub()).current_period_end).getTime(), end1);
   const pays = await (await api('GET', '/api/billing/payments')).json();
   assert.equal(pays.payments.length, 1);
-  assert.match(pays.payments[0].invoiceNumber, /^LYKO-\d{4}-\d{6}$/);
+  assert.match(pays.payments[0].invoiceNumber, /^AIM-\d{4}-\d{6}$/);
   const pdf = await api('GET', `/api/billing/payments/${pays.payments[0].id}/invoice.pdf`);
   assert.equal(pdf.status, 200);
   assert.equal(pdf.headers.get('content-type'), 'application/pdf');

@@ -57,7 +57,7 @@ export function VerifierView() {
             <h1 className="font-display text-headline-lg text-ink">Vérifier un document</h1>
             <p className="max-w-sm text-body-md text-ink-soft">
               Confirmez en quelques secondes qu&apos;une quittance, un contrat de bail ou un
-              relevé propriétaire a bien été émis par Lyko System.
+              relevé propriétaire a bien été émis par Africa Immo Management.
             </p>
           </div>
 

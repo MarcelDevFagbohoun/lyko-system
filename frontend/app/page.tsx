@@ -23,7 +23,7 @@ const JSON_LD = {
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      name: "Lyko System",
+      name: "Africa Immo Management",
       applicationCategory: "BusinessApplication",
       operatingSystem: "Web",
       inLanguage: "fr",

@@ -87,7 +87,7 @@ export function AssistantWidget() {
       /* stockage indisponible : on propose quand même */
     }
     setOnboarding("name");
-    setMessages([{ id: nextId(), role: "assistant", content: "Bonjour ! Je suis l'assistant Lyko. Pour mieux vous aider, comment dois-je vous appeler ?" }]);
+    setMessages([{ id: nextId(), role: "assistant", content: "Bonjour ! Je suis l'assistant Africa Immo. Pour mieux vous aider, comment dois-je vous appeler ?" }]);
   }, [open, needsIntro, onboarding, messages.length, view]);
 
   React.useEffect(() => {
@@ -327,7 +327,7 @@ export function AssistantWidget() {
       {open && (
         <section
           role="dialog"
-          aria-label="Assistant Lyko"
+          aria-label="Assistant Africa Immo"
           className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-surface shadow-lg sm:inset-auto sm:bottom-6 sm:right-6 sm:h-[36rem] sm:max-h-[calc(100vh-3rem)] sm:w-[26rem] sm:rounded-xl sm:border sm:border-border"
         >
           <header className="flex items-center gap-2 border-b border-border bg-primary-bg px-3 py-2.5">
@@ -341,7 +341,7 @@ export function AssistantWidget() {
               </span>
             )}
             <div className="min-w-0 flex-1">
-              <p className="font-display text-headline-sm text-ink">{view === "history" ? "Conversations" : view === "profile" ? "Mon profil" : "Assistant Lyko"}</p>
+              <p className="font-display text-headline-sm text-ink">{view === "history" ? "Conversations" : view === "profile" ? "Mon profil" : "Assistant Africa Immo"}</p>
               <p className="text-body-xs text-ink-muted">
                 {quotaExhausted ? "Quota mensuel atteint" : `${remaining} message${remaining > 1 ? "s" : ""} restant${remaining > 1 ? "s" : ""} ce mois-ci`}
               </p>

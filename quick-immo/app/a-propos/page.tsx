@@ -10,7 +10,7 @@ const POINTS = [
   {
     icon: Search,
     title: "Des biens vérifiés",
-    text: "Chaque annonce est gérée par une agence partenaire, suivie via Lyko System — jamais un particulier anonyme.",
+    text: "Chaque annonce est gérée par une agence partenaire, suivie via Africa Immo Management — jamais un particulier anonyme.",
   },
   {
     icon: Handshake,
@@ -20,7 +20,7 @@ const POINTS = [
   {
     icon: ShieldCheck,
     title: "Une gestion sérieuse",
-    text: "Chaque agence partenaire suit ses biens grâce à Lyko System, la plateforme de gestion locative.",
+    text: "Chaque agence partenaire suit ses biens grâce à Africa Immo Management, la plateforme de gestion locative.",
   },
 ];
 

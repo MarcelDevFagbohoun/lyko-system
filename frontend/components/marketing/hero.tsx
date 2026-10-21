@@ -46,7 +46,7 @@ export function Hero() {
             Encaissez à temps. Rendez des comptes justes à vos propriétaires.
           </h1>
           <p className="max-w-xl text-body-lg text-ink-soft">
-            Lyko System est le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE, relances
+            Africa Immo Management est le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE, relances
             WhatsApp, quittances, relevés propriétaires et comptabilité SYSCOHADA, dans un seul espace sécurisé pour toute
             votre équipe.
           </p>

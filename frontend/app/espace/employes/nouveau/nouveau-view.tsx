@@ -260,7 +260,7 @@ function NouvelEmployeContent() {
 function buildCredentialsMessage(employee: CreatedEmployee, roleLabel: string) {
   return [
     `Bonjour ${employee.name},`,
-    `Voici vos identifiants Lyko System :`,
+    `Voici vos identifiants Africa Immo Management :`,
     `Identifiant : ${employee.identifier}`,
     `Mot de passe temporaire : ${employee.temporaryPassword}`,
     `Poste : ${roleLabel}`,
@@ -286,7 +286,7 @@ function SuccessPanel({ employee }: { employee: CreatedEmployee }) {
   const message = buildCredentialsMessage(employee, tenant?.roleTitles?.[employee.role] ?? ROLE_LABELS[employee.role]);
   const whatsappHref = `https://wa.me/${toE164Benin(employee.phone).replace("+", "")}?text=${encodeURIComponent(message)}`;
   const mailHref = employee.email
-    ? `mailto:${employee.email}?subject=${encodeURIComponent("Vos identifiants Lyko System")}&body=${encodeURIComponent(message)}`
+    ? `mailto:${employee.email}?subject=${encodeURIComponent("Vos identifiants Africa Immo Management")}&body=${encodeURIComponent(message)}`
     : null;
 
   return (

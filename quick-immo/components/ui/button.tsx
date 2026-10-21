@@ -3,7 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 /**
- * Bouton — charte Lyko System.
+ * Bouton — charte Africa Immo Management.
  * Variantes calquées sur la maquette (Primary / Secondary / Destructive / Ghost / WhatsApp).
  */
 const buttonVariants = cva(

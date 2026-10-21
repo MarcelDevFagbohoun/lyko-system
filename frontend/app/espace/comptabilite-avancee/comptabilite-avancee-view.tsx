@@ -2113,7 +2113,7 @@ function ReglesTab({
         </Button>
       </div>
       <p className="text-body-xs text-ink-muted">
-        Ajoute les règles des opérations récemment introduites dans Lyko System et rattache les comptes qui en
+        Ajoute les règles des opérations récemment introduites dans Africa Immo Management et rattache les comptes qui en
         avaient besoin, sans jamais toucher une règle ou un compte déjà en place (validé ou non) — à utiliser si une
         opération signale l&apos;absence de règle ou de compte comptable.
       </p>

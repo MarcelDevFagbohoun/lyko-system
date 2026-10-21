@@ -19,7 +19,7 @@ export function Footer() {
       <div className="content-shell flex flex-col gap-1 border-t border-border py-4">
         <p className="text-body-xs text-ink-faint">
           © {new Date().getFullYear()} Quick Immo — plateforme reliée à des agences immobilières partenaires,
-          propulsée par Lyko System.
+          propulsée par Africa Immo Management.
         </p>
         <p className="text-body-xs text-ink-faint">
           Commission d&apos;agence plafonnée par la loi à 50 % du loyer pour toute location publiée ici.

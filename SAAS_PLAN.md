@@ -1,4 +1,4 @@
-# Lyko System en SaaS — plan technique
+# Africa Immo Management en SaaS — plan technique
 
 Statut : décisions du 21/10/2026 intégrées, rien n'est encore codé. Les prix en gras sont ceux fixés par Marcel ; le reste est une proposition.
 
@@ -43,7 +43,7 @@ Existe :
 Manque :
 - Aucune notion d'abonnement, d'offre, de limite ni d'expiration.
 - Aucun rôle « administrateur de la plateforme » : chaque DG est seul maître de son entreprise.
-- Les clés FedaPay sont **par entreprise** ; il en faut une paire **propre à Lyko** pour encaisser les abonnements.
+- Les clés FedaPay sont **par entreprise** ; il en faut une paire **propre à Africa Immo Management** pour encaisser les abonnements.
 
 ## 3. Modèle de données (migration 105 et suivantes)
 
@@ -86,16 +86,16 @@ Décision du 21/10/2026 : l'assistant n'est pas vendu au lancement et sera réin
 
 - Rappels par email et bandeau dans l'application : J-14, J-7, J-1.
 - À l'échéance : **coupure automatique, sans délai de grâce**. L'**accès de l'entreprise à son espace est coupé** (DG et employés : connexion refusée avec un message « abonnement expiré » et un lien pour renouveler, sans accès aux données).
-- **Les locataires, eux, continuent de payer** : le portail locataire, les liens de paiement et le paiement FedaPay des loyers et charges restent actifs. L'argent va directement sur le compte FedaPay de l'entreprise (ses propres clés), donc il n'est jamais bloqué par Lyko.
+- **Les locataires, eux, continuent de payer** : le portail locataire, les liens de paiement et le paiement FedaPay des loyers et charges restent actifs. L'argent va directement sur le compte FedaPay de l'entreprise (ses propres clés), donc il n'est jamais bloqué par Africa Immo Management.
 - Les paiements reçus pendant la coupure sont **enregistrés normalement** (webhook et relecture serveur, quittance envoyée au locataire) pour que la comptabilité soit complète au retour de l'entreprise.
 - Les données ne sont jamais supprimées. Au renouvellement, l'accès est rétabli à l'identique.
 - Seuls restent actifs côté entreprise : la page de renouvellement et le paiement de l'abonnement.
 - Technique : un contrôle d'accès à la connexion, au rafraîchissement du jeton et sur chaque route des espaces entreprise ; les routes publiques du portail et des webhooks ne sont pas concernées.
-- Point à confirmer : possibilité de demander un export des données à Lyko pendant la coupure.
+- Point à confirmer : possibilité de demander un export des données à Africa Immo Management pendant la coupure.
 
 ## 6. Facturation de l'abonnement par FedaPay
 
-- Nouvelles variables d'environnement : clé secrète FedaPay Lyko, secret du webhook, mode sandbox/live. Séparées des clés des entreprises.
+- Nouvelles variables d'environnement : clé secrète FedaPay de la plateforme, secret du webhook, mode sandbox/live. Séparées des clés des entreprises.
 - Réutilise `services/payments/fedapay.js` et le schéma déjà validé pour l'encaissement des locataires : transaction créée côté serveur, montant et référence lus en base (jamais envoyés par le client), redirection vers la page hébergée FedaPay, retour client, **webhook signé (HMAC)** et **relecture du statut côté serveur**, vérification montant et référence, idempotence.
 - Webhook : `/api/webhooks/fedapay-platform/` (route distincte de celle des entreprises).
 - Pas de prélèvement automatique : le Mobile Money ne le permet pas de façon fiable. Le renouvellement est un paiement manuel, d'où les rappels de la section 5.
@@ -118,7 +118,7 @@ Règle : 15 jours après le premier paiement, une seule fois par entreprise, pre
 
 Parcours :
 1. L'entreprise clique sur « Demander un remboursement » dans Paramètres → Abonnement, avec un **motif obligatoire** (visible seulement pendant les 15 jours).
-2. La demande arrive dans la file de l'administrateur Lyko System.
+2. La demande arrive dans la file de l'administrateur Africa Immo Management.
 3. L'administrateur **valide ou refuse selon que la raison est acceptable**. Un refus exige une explication, envoyée par email à l'entreprise.
 4. Si la demande est acceptée, **un email est envoyé au DG avec un lien sécurisé** pour saisir ses coordonnées de paiement (numéro Mobile Money et opérateur). Le lien est à usage unique, expire (par exemple 7 jours) et ne donne accès qu'à ce formulaire.
 5. Le DG saisit ses coordonnées ; l'administrateur les vérifie et déclenche le versement par l'envoi d'argent FedaPay déjà intégré (mêmes contrôles, mêmes traces). À vérifier : FedaPay propose-t-il un remboursement direct d'une transaction ? À défaut, envoi classique.
@@ -172,7 +172,7 @@ Chaque étape est livrable et testée seule, comme pour les paiements.
 
 Prises le 21/10/2026 :
 - Pas d'essai gratuit ; paiement puis remboursement possible sous **15 jours**.
-- Remboursement validé par l'administrateur de Lyko System si la raison est acceptable, puis email pour récupérer les coordonnées de paiement. Montant = prix moins les frais FedaPay.
+- Remboursement validé par l'administrateur de Africa Immo Management si la raison est acceptable, puis email pour récupérer les coordonnées de paiement. Montant = prix moins les frais FedaPay.
 - Coupure automatique à l'échéance, sans délai de grâce.
 - Assistant IA reporté à une version ultérieure.
 - Après expiration : les locataires peuvent payer, l'entreprise n'a plus accès à son espace.

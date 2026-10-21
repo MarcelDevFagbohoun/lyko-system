@@ -217,7 +217,7 @@ function computeEntryProrata({ startDate, monthlyRent, rentDueDay }) {
 /**
  * Premier mois réellement SUIVI pour un bail : le mois du début du bail, ou
  * celui de son enregistrement sur la plateforme s'il est postérieur (le suivi
- * ne remonte jamais avant Lyko System) ; un locataire entré « à jour » démarre le
+ * ne remonte jamais avant Africa Immo Management) ; un locataire entré « à jour » démarre le
  * mois d'après. Partagé par le calcul de retard et la frise des mois.
  *
  * Bug corrigé (audit comptable du 30/09/2026) : avec un prorata d'entrée
@@ -259,7 +259,7 @@ function baselineMonthOf({ startDate, createdAt, upToDateAtOnboarding, entryPror
  * manqué un paiement (juste jamais suivi ici). Le suivi ne peut jamais
  * démarrer avant `createdAt` : `startDate` reste le fait historique (contrat,
  * état des lieux) mais seul, sans plafond, il ferait remonter le retard
- * avant même que Lyko System n'existe pour ce bail. `upToDateAtOnboarding`
+ * avant même que Africa Immo Management n'existe pour ce bail. `upToDateAtOnboarding`
  * (coché explicitement par l'agent à la création) couvre le dernier résidu :
  * le mois de l'enregistrement lui-même, également considéré couvert.
  * `createdAt` omis (compatibilité) : aucun plafond, comportement historique
@@ -919,7 +919,7 @@ const STRIP_MONTHS = 12;
  *  - en_retard    : rien payé et échéance dépassée
  *  - a_payer      : période en cours (ou passée) rien payé, échéance pas encore passée
  *  - a_venir      : période future, rien payé
- *  - avant_suivi  : le bail existait mais Lyko System ne le suivait pas encore
+ *  - avant_suivi  : le bail existait mais Africa Immo Management ne le suivait pas encore
  *  - hors_bail    : avant le début ou après la fin du bail
  *
  * L'échéance suit la convention du bail (`rentTiming`) exactement comme

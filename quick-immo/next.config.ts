@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Origine de l'API Lyko System (biens publiés, comptes Quick Immo) — pour
+// Origine de l'API Africa Immo Management (biens publiés, comptes Quick Immo) — pour
 // autoriser les appels XHR et le chargement des photos dans la CSP. Même
 // convention que `frontend/next.config.ts`, une seule source de vérité
 // (la variable d'env, pas une valeur en dur).

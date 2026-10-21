@@ -1609,7 +1609,7 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
     rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Lyko System';
+    workbook.creator = 'Africa Immo Management';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('Registre comptable');
 

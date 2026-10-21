@@ -23,7 +23,7 @@ const AuthContext = React.createContext<AuthContextValue | null>(null);
 
 /**
  * Comptes Quick Immo (grand public) — un seul jeton en `localStorage`, PAS
- * de refresh token httpOnly comme les employés Lyko System : pas d'enjeu
+ * de refresh token httpOnly comme les employés Africa Immo Management : pas d'enjeu
  * financier/sensible comparable, une session longue (30j côté serveur,
  * `utils/jwt.js` signMarketplaceToken) simplifie ce client public.
  */

@@ -15,7 +15,7 @@
  * Réglable par bail (`leases.rent_timing`), avec un défaut par entreprise
  * (`tenants.default_rent_timing`) qui pré-remplit chaque nouveau bail —
  * une agence a en général une seule politique, mais certains propriétaires
- * gérés peuvent avoir leur propre habitude antérieure à Lyko System.
+ * gérés peuvent avoir leur propre habitude antérieure à Africa Immo Management.
  */
 const RENT_TIMINGS = [
   { key: 'avance', label: "Payé d'avance (dans le mois facturé)" },

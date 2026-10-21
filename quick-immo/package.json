@@ -2,7 +2,7 @@
   "name": "quick-immo",
   "version": "0.1.0",
   "private": true,
-  "description": "Quick Immo — vitrine publique de biens à louer/vendre, reliée à Lyko System",
+  "description": "Quick Immo — vitrine publique de biens à louer/vendre, reliée à Africa Immo Management",
   "scripts": {
     "dev": "next dev -p 3100",
     "build": "next build",

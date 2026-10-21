@@ -1,15 +1,17 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+export const BRAND_NAME = "Africa Immo Management";
+
 /**
- * Logo par défaut « Lyko System » — repris de la maquette
- * (stitch logo_lyko_systeme). Utilisé tant que le DG n'a pas
- * importé le logo de son entreprise (section 4.3 du cahier des charges).
+ * Logo « Africa Immo Management » : pastille dégradée bleue (toit blanc, trois piliers, point de liaison) +
+ * nom et signature « Gestion & Technologies ». Utilisé tant que le DG n'a pas importé le logo de son entreprise
+ * (section 4.3 du cahier des charges).
  */
-export function LykoLogo({
+export function BrandLogo({
   className,
   withWordmark = true,
-  title = "Lyko System",
+  title = BRAND_NAME,
 }: {
   className?: string;
   withWordmark?: boolean;
@@ -17,80 +19,54 @@ export function LykoLogo({
 }) {
   return (
     <svg
-      viewBox={withWordmark ? "0 0 320 80" : "0 0 80 80"}
+      viewBox={withWordmark ? "0 0 440 80" : "0 0 80 80"}
       className={cn("h-8 w-auto", className)}
       fill="none"
       role="img"
       aria-label={title}
     >
       <defs>
-        <linearGradient id="lykoGrad" x1="12" y1="12" x2="68" y2="68" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#1E3A8A" />
-          <stop offset="50%" stopColor="#2563EB" />
-          <stop offset="100%" stopColor="#38BDF8" />
-        </linearGradient>
-        <linearGradient id="lykoAccent" x1="25" y1="20" x2="55" y2="60" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#38BDF8" />
-          <stop offset="100%" stopColor="#60A5FA" />
+        <linearGradient id="aimGrad" x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#0A84CB" />
+          <stop offset="50%" stopColor="#1D4ED8" />
+          <stop offset="100%" stopColor="#111B3F" />
         </linearGradient>
       </defs>
 
-      <rect x="12" y="12" width="56" height="56" rx="14" fill="url(#lykoGrad)" />
-      <path
-        d="M26 24V48C26 51.3137 28.6863 54 32 54H54"
-        stroke="#FFFFFF"
-        strokeWidth="4.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="48" cy="30" r="4.5" fill="#38BDF8" stroke="#FFFFFF" strokeWidth="2" />
-      <path
-        d="M48 34.5V44"
-        stroke="url(#lykoAccent)"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeDasharray="1 3"
-      />
-      <path
-        d="M26 36L38 48"
-        stroke="#93C5FD"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeOpacity="0.8"
-      />
+      <rect width="80" height="80" rx="18" fill="url(#aimGrad)" />
+      {/* Contenu dessiné sur 288 × 288 puis ramené à 80 × 80 */}
+      <g transform="scale(0.2778)">
+        <path d="M85 146 L144 69 L203 146 H175 L144 112 L113 146 Z" fill="#FFFFFF" />
+        <path d="M144 143 L103 169 M144 143 L185 169" stroke="#8EC5F8" strokeWidth="5" strokeLinecap="round" />
+        <rect x="92" y="169" width="22" height="55" rx="11" fill="#FFFFFF" />
+        <rect x="132" y="168" width="24" height="56" rx="12" fill="#1FA2E0" />
+        <rect x="174" y="169" width="22" height="55" rx="11" fill="#FFFFFF" />
+        <circle cx="144" cy="143" r="10" fill="#38BDF8" />
+      </g>
 
       {withWordmark && (
         <>
           <text
-            x="82"
-            y="42"
+            x="96"
+            y="38"
             fontFamily="var(--font-geist), system-ui, sans-serif"
             fontWeight="800"
-            fontSize="24"
+            fontSize="20"
             fill="#0F172A"
-            letterSpacing="-0.03em"
+            letterSpacing="-0.01em"
           >
-            LYKO
+            AFRICA IMMO MANAGEMENT
           </text>
+          <rect x="96" y="46" width="22" height="3.5" rx="1.75" fill="#2563EB" />
+          <rect x="122" y="46" width="7" height="3.5" rx="1.75" fill="#38BDF8" />
           <text
-            x="146"
-            y="42"
-            fontFamily="var(--font-geist), system-ui, sans-serif"
-            fontWeight="400"
-            fontSize="24"
-            fill="#2563EB"
-            letterSpacing="-0.02em"
-          >
-            SYSTEM
-          </text>
-          <text
-            x="83"
-            y="58"
+            x="96"
+            y="66"
             fontFamily="var(--font-inter), system-ui, sans-serif"
-            fontWeight="600"
+            fontWeight="700"
             fontSize="9.5"
-            fill="#64748B"
-            letterSpacing="0.18em"
+            fill="#0284C7"
+            letterSpacing="0.3em"
           >
             GESTION &amp; TECHNOLOGIES
           </text>

@@ -32,7 +32,7 @@ export interface CadreTheme {
 export const CADRES: Record<Cadre, CadreTheme> = {
   apercu: {
     label: "Vue d'ensemble",
-    meaning: "Bleu — l'identité Lyko : le regard d'ensemble sur l'entreprise.",
+    meaning: "Bleu — l'identité Africa Immo : le regard d'ensemble sur l'entreprise.",
     tone: "blue",
     solid: "bg-tint-blue-solid",
     text: "text-tint-blue-solid",

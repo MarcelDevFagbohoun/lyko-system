@@ -47,7 +47,7 @@ export function describeStripMonth(m: RentStripMonth): string {
     case "a_venir":
       return `À venir : ${formatFcfa(m.due)} à payer avant le ${due}.`;
     case "avant_suivi":
-      return "Avant le début du suivi dans Lyko System : rien n'est réclamé pour ce mois.";
+      return "Avant le début du suivi dans Africa Immo Management : rien n'est réclamé pour ce mois.";
     default:
       return "Hors bail.";
   }

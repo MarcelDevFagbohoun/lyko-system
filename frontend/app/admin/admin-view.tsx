@@ -17,7 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatDateLabel, formatFcfa } from "@/lib/utils";
 
 /**
- * Back-office de la plateforme (équipe Lyko System). Authentification séparée de l'espace client ; le jeton vit dans
+ * Back-office de la plateforme (équipe Africa Immo Management). Authentification séparée de l'espace client ; le jeton vit dans
  * sessionStorage (fermé avec l'onglet, expire en 8 h). Aucune donnée métier des clients n'y est affichée.
  */
 export function AdminView() {
@@ -57,7 +57,7 @@ function Login({ onDone }: { onDone: (t: string) => void }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
       <Card className="w-full max-w-sm">
-        <CardHeader><CardTitle>Back-office Lyko System</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Back-office Africa Immo Management</CardTitle></CardHeader>
         <CardContent>
           <form onSubmit={submit} className="flex flex-col gap-4">
             <Field label="E-mail" htmlFor="ae"><Input id="ae" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>

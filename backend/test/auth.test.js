@@ -324,16 +324,16 @@ test('runWelcomeEmailJob — envoie une seule fois, seulement une fois l\'éché
 
   // Pas encore dû (programmé 2 min après vérification, juste à l'instant) → rien envoyé.
   await runWelcomeEmailJob({ tenantIds: [(await pool.query('SELECT tenant_id FROM users WHERE id=:id', { id: userId }))[0][0].tenant_id] });
-  assert.ok(!emailCalls.some((c) => c.to === email && c.subject === 'Bienvenue sur Lyko System'));
+  assert.ok(!emailCalls.some((c) => c.to === email && c.subject === 'Bienvenue sur Africa Immo Management'));
 
   await pool.query('UPDATE users SET welcome_email_due_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = :id', { id: userId });
   const [[u]] = await pool.query('SELECT tenant_id FROM users WHERE id = :id', { id: userId });
   await runWelcomeEmailJob({ tenantIds: [u.tenant_id] });
-  assert.ok(emailCalls.some((c) => c.to === email && c.subject === 'Bienvenue sur Lyko System'));
+  assert.ok(emailCalls.some((c) => c.to === email && c.subject === 'Bienvenue sur Africa Immo Management'));
 
-  const sentCountBefore = emailCalls.filter((c) => c.to === email && c.subject === 'Bienvenue sur Lyko System').length;
+  const sentCountBefore = emailCalls.filter((c) => c.to === email && c.subject === 'Bienvenue sur Africa Immo Management').length;
   await runWelcomeEmailJob({ tenantIds: [u.tenant_id] });
-  const sentCountAfter = emailCalls.filter((c) => c.to === email && c.subject === 'Bienvenue sur Lyko System').length;
+  const sentCountAfter = emailCalls.filter((c) => c.to === email && c.subject === 'Bienvenue sur Africa Immo Management').length;
   assert.equal(sentCountAfter, sentCountBefore, 'jamais envoyé deux fois');
 });
 

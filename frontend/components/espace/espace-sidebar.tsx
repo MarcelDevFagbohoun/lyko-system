@@ -32,7 +32,7 @@ import {
 import { useAuth } from "@/lib/auth/auth-context";
 import { API_URL } from "@/lib/api/client";
 import { ROLE_LABELS } from "@/lib/constants/roles";
-import { LykoLogo } from "@/components/brand/logo";
+import { BrandLogo } from "@/components/brand/logo";
 import { ConnectionIndicator } from "@/components/system/connection-indicator";
 import { startQueueAutoSync } from "@/lib/offline/queue";
 import { Badge } from "@/components/ui/badge";
@@ -164,7 +164,7 @@ export function EspaceSidebar() {
         // eslint-disable-next-line @next/next/no-img-element
         <img src={`${API_URL}${tenant.logoUrl}`} alt={`Logo ${tenant.companyName}`} className="h-8 w-8 shrink-0 object-contain" />
       ) : (
-        <LykoLogo withWordmark={false} className="h-8 w-8 shrink-0" />
+        <BrandLogo withWordmark={false} className="h-8 w-8 shrink-0" />
       )}
       <span className="truncate font-label-md text-ink">{tenant?.companyName}</span>
     </Link>

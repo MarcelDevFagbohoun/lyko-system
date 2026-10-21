@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { LykoLogo } from "@/components/brand/logo";
+import { BrandLogo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -42,7 +42,7 @@ export default function DiagnosticsPage() {
     <main className="min-h-screen bg-canvas">
       {/* Barre haute — 56px, comme la charte */}
       <header className="sticky top-0 z-40 flex h-topbar items-center justify-between border-b border-border bg-surface px-4 sm:px-6">
-        <LykoLogo />
+        <BrandLogo />
         <div className="flex items-center gap-3">
           <ConnectionIndicator />
           <Badge variant="primary">DG</Badge>
@@ -57,7 +57,7 @@ export default function DiagnosticsPage() {
             <span className="text-body-xs text-ink-muted">Page technique interne</span>
           </div>
           <h1 className="font-display text-headline-2xl text-ink">
-            Lyko System, socle opérationnel
+            Africa Immo Management, socle opérationnel
           </h1>
           <p className="max-w-2xl text-body-lg text-ink-soft">
             Next.js 14 (App Router) + Express/MySQL + JWT + PWA. Cette page vérifie la
@@ -210,7 +210,7 @@ export default function DiagnosticsPage() {
         </Card>
 
         <footer className="border-t border-border pt-6 text-body-xs text-ink-muted">
-          Lyko System · Charte « Cabinet M Conseils » · page de diagnostic interne
+          Africa Immo Management · Charte « Cabinet M Conseils » · page de diagnostic interne
         </footer>
       </div>
     </main>

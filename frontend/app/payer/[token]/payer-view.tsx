@@ -40,7 +40,7 @@ export function PayerView() {
           // eslint-disable-next-line @next/next/no-img-element
           <img src={`${API_URL}${link.logoUrl}`} alt={link.companyName ?? "Logo"} className="h-9 w-auto object-contain" />
         ) : (
-          <span className="font-display text-headline-md text-ink">{link?.companyName ?? "Lyko System"}</span>
+          <span className="font-display text-headline-md text-ink">{link?.companyName ?? "Africa Immo Management"}</span>
         )}
       </header>
 

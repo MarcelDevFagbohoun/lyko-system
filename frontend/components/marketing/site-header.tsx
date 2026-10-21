@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
-import { LykoLogo } from "@/components/brand/logo";
+import { BrandLogo } from "@/components/brand/logo";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -23,8 +23,8 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
       <div className="content-shell flex h-topbar items-center justify-between">
-        <Link href="/" className="flex items-center" aria-label="Accueil Lyko System">
-          <LykoLogo />
+        <Link href="/" className="flex items-center" aria-label="Accueil Africa Immo Management">
+          <BrandLogo />
         </Link>
 
         <nav className="hidden items-center gap-6 md:flex" aria-label="Navigation principale">

@@ -148,7 +148,7 @@ const createRenterSchema = z
     rentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),
     startDate: dateSchema,
     // Impayés existants à l'entrée (onboarding d'un locataire déjà en place
-    // avant l'utilisation de Lyko System) : montant déclaré une fois,
+    // avant l'utilisation de Africa Immo Management) : montant déclaré une fois,
     // jamais modifié ensuite — se règle via son propre cycle de paiements,
     // voir POST /:leaseId/opening-debt/payments (routes/leases.js).
     openingDebtAmount: amountSchema.default(0),

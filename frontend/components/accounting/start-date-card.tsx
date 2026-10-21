@@ -74,7 +74,7 @@ export function StartDateCard({ accessToken, isDg }: { accessToken: string | nul
         <CardTitle>Date de démarrage de la comptabilité</CardTitle>
         <CardDescription>
           Aucune écriture n&apos;est acceptée avant cette date, et la clôture des mois commence par ce mois-là. Utile pour
-          ne pas avoir à clôturer les mois antérieurs à votre arrivée sur Lyko System.
+          ne pas avoir à clôturer les mois antérieurs à votre arrivée sur Africa Immo Management.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">

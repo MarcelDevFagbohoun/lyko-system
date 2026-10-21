@@ -52,7 +52,7 @@ function createApp() {
   );
 
   app.get('/', (_req, res) => {
-    res.json({ name: 'Lyko System API', docs: '/api/health' });
+    res.json({ name: 'Africa Immo Management API', docs: '/api/health' });
   });
 
   // Bug corrigé (audit sécurité/logique, étape 49) : ce montage servait

@@ -6,7 +6,7 @@
 2. Variables d'environnement (backend) :
    | Variable | Rôle |
    |---|---|
-   | `PLATFORM_FEDAPAY_SECRET_KEY` | clé secrète du compte FedaPay **de Lyko System** (distinct des clés des entreprises) |
+   | `PLATFORM_FEDAPAY_SECRET_KEY` | clé secrète du compte FedaPay **de Africa Immo Management** (distinct des clés des entreprises) |
    | `PLATFORM_FEDAPAY_WEBHOOK_SECRET` | secret du webhook de ce compte |
    | `PLATFORM_FEDAPAY_SANDBOX` | `false` en production (défaut : sandbox) |
    | `PLATFORM_ADMIN_EMAIL` | reçoit les demandes de remboursement |

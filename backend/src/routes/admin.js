@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Back-office de la plateforme Lyko System. Realm d'authentification SÉPARÉ (clé dédiée, table `platform_admins`) :
+ * Back-office de la plateforme Africa Immo Management. Realm d'authentification SÉPARÉ (clé dédiée, table `platform_admins`) :
  * ni un employé ni un DG de client ne peut l'ouvrir. Aucune donnée métier des clients (locataires, loyers…) n'est
  * exposée ici — seulement l'entreprise, son abonnement, ses paiements d'abonnement et ses remboursements.
  */

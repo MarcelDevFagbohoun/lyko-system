@@ -2,7 +2,7 @@
 
 // Vérification publique d'authenticité (étape 29) : un tiers recevant une
 // quittance/contrat/relevé (banque, autre bailleur...) peut confirmer
-// que le document est réellement émis par Lyko System, sans compte ni accès
+// que le document est réellement émis par Africa Immo Management, sans compte ni accès
 // à l'espace connecté. Ne renvoie JAMAIS de montant ni de donnée sur le
 // locataire/propriétaire concerné — seulement de quoi confirmer
 // l'authenticité (type de document, date d'émission, entreprise émettrice).

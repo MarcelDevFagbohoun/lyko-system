@@ -676,7 +676,7 @@ function NouveauContent() {
                 <Field
                   label="Impayés existants à l'entrée (FCFA)"
                   htmlFor="openingDebtAmount"
-                  hint="Locataire déjà en place avant Lyko System, avec un impayé connu — 0 si aucun"
+                  hint="Locataire déjà en place avant Africa Immo Management, avec un impayé connu — 0 si aucun"
                   error={touched.openingDebtAmount ? errors.openingDebtAmount : undefined}
                 >
                   <Input

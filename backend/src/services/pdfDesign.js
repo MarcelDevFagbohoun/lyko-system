@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Modèle graphique commun de TOUS les PDF Lyko System (reçus, fiches de paie, PV, contrats, relevés, rapports).
+ * Modèle graphique commun de TOUS les PDF Africa Immo Management (reçus, fiches de paie, PV, contrats, relevés, rapports).
  * Référence : le « Procès-verbal de sortie » validé par le DG — bandeau bleu marine avec logo, titre et carte de
  * références ; sections à barre d'accent ; cartes d'information arrondies ; tableaux à en-tête marine et lignes
  * zébrées ; montant principal dans une barre marine ; signatures en cartes ; pied de page identique partout.
@@ -347,7 +347,7 @@ function finishDocument(doc, { verificationCode = null, frontendHost = null, dow
     if (i > range.start) drawContinuationBand(doc, doc._lykoTitle ?? '', doc._lykoContext ?? '');
     doc.page.margins.bottom = 0;
     doc.moveTo(LEFT, 772).lineTo(LEFT + WIDTH, 772).lineWidth(0.75).strokeColor(C.TINT_BORDER).stroke();
-    doc.font(F.SANS).fontSize(7.5).fillColor(C.MUTED).text(`Document téléchargé le ${today} · Lyko System`, LEFT, 780, { width: 330, lineBreak: false });
+    doc.font(F.SANS).fontSize(7.5).fillColor(C.MUTED).text(`Document téléchargé le ${today} · Africa Immo Management`, LEFT, 780, { width: 330, lineBreak: false });
     doc.font(F.SANS).fontSize(7.5).fillColor(C.MUTED).text(`Page ${i - range.start + 1} / ${range.count}`, 445, 780, { width: 100, align: 'right', lineBreak: false });
     if (verificationCode) {
       doc.font(F.SANS).fontSize(7.5).fillColor(C.MUTED).text(`Vérifiez l'authenticité de ce document sur ${frontendHost ?? ''}/verifier avec le code `, LEFT, 791, { continued: true, lineBreak: false });

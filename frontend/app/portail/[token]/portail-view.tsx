@@ -451,7 +451,7 @@ function PortailShell({
           // eslint-disable-next-line @next/next/no-img-element
           <img src={`${API_URL}${tenant.logoUrl}`} alt={tenant.companyName ?? "Logo"} className="h-9 w-auto object-contain" />
         ) : (
-          <span className="font-display text-headline-md text-ink">{tenant?.companyName ?? "Lyko System"}</span>
+          <span className="font-display text-headline-md text-ink">{tenant?.companyName ?? "Africa Immo Management"}</span>
         )}
       </header>
       <main className="flex w-full flex-1 flex-col items-center px-4 py-10">

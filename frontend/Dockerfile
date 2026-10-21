@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# ── Web Lyko System (Next.js 15, App Router, sortie standalone) ───────────────
+# ── Web Africa Immo Management (Next.js 15, App Router, sortie standalone) ───────────────
 # IMPORTANT : `NEXT_PUBLIC_API_URL` est figée dans le bundle client AU BUILD.
 # Elle doit être passée en --build-arg (voir compose.prod.yml) et pointer sur
 # l'URL publique HTTPS de l'API (ex. https://api.mondomaine.tld).

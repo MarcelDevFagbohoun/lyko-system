@@ -192,7 +192,7 @@ export type Lease = {
   monthlyRent: number;
   depositAmount: number;
   depositStatus: "held" | "returned";
-  /** Impayés déclarés à la création du bail (locataire déjà en place avant Lyko System), 0 si aucun. */
+  /** Impayés déclarés à la création du bail (locataire déjà en place avant Africa Immo Management), 0 si aucun. */
   openingDebtAmount: number;
   // Paid/remaining/payments : uniquement renvoyés par GET /api/renters/:id
   // (fiche détaillée) — absents de la liste (GET /api/renters), qui n'en a
@@ -323,7 +323,7 @@ export type CreateRenterInput = {
   /** Optionnel — si omis, le serveur retombe sur le réglage par défaut de l'entreprise (Paramètres). */
   rentTiming?: RentTiming;
   startDate: string;
-  /** Onboarding d'un locataire déjà en place : impayés déjà dus avant Lyko System, 0 si aucun. */
+  /** Onboarding d'un locataire déjà en place : impayés déjà dus avant Africa Immo Management, 0 si aucun. */
   openingDebtAmount?: number;
   /** Onboarding : locataire déjà en place mais SANS aucun impayé — évite un faux retard depuis une date d'entrée ancienne. */
   upToDateAtOnboarding?: boolean;

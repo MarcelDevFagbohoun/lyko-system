@@ -1,7 +1,7 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 // Cabinet dont ce site affiche les biens — Quick Immo est scopé à UN seul
-// cabinet pour l'instant (celui-ci relié à Lyko System), pas un agrégateur
+// cabinet pour l'instant (celui-ci relié à Africa Immo Management), pas un agrégateur
 // multi-cabinets. Configurable par variable d'environnement pour ne pas
 // coder l'id en dur si un jour un autre cabinet a son propre déploiement.
 export const TENANT_ID = Number(process.env.NEXT_PUBLIC_TENANT_ID ?? "8");
@@ -24,7 +24,7 @@ type ApiFetchOptions = Omit<RequestInit, "body"> & {
 };
 
 /**
- * Wrapper fetch pour l'API Lyko System, côté Quick Immo (site externe) :
+ * Wrapper fetch pour l'API Africa Immo Management, côté Quick Immo (site externe) :
  * pas de cookie de session (les comptes du grand public n'ont pas de
  * refresh token httpOnly, voir backend `utils/jwt.js` signMarketplaceToken)
  * — le jeton, quand il y en a un, part en en-tête `Authorization`.

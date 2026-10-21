@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ConnectionIndicator } from "@/components/system/connection-indicator";
-import { LykoLogo } from "@/components/brand/logo";
+import { BrandLogo } from "@/components/brand/logo";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ChangePasswordForm } from "@/components/auth/change-password-form";
@@ -33,7 +33,7 @@ export function ChangerVue() {
   return (
     <div className="flex min-h-screen flex-col bg-canvas">
       <header className="flex h-topbar items-center justify-between border-b border-border bg-surface px-4 sm:px-6">
-        <LykoLogo />
+        <BrandLogo />
         <ConnectionIndicator />
       </header>
 

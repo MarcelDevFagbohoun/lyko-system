@@ -38,7 +38,7 @@ function wrapHtml(bodyHtml) {
     <table role="presentation" width="100%" style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:12px;overflow:hidden;">
       <tr><td style="background:${PRIMARY};height:6px;"></td></tr>
       <tr><td style="padding:28px 28px 8px;">
-        <p style="margin:0;font-size:13px;letter-spacing:0.08em;color:${MUTED};text-transform:uppercase;">Lyko System</p>
+        <p style="margin:0;font-size:13px;letter-spacing:0.08em;color:${MUTED};text-transform:uppercase;">Africa Immo Management</p>
       </td></tr>
       <tr><td style="padding:0 28px 28px;">
         ${bodyHtml}
@@ -71,7 +71,7 @@ async function sendVerificationCodeEmail({ to, dgName, companyName, code }) {
   const html = wrapHtml(`
     <h1 style="margin:0 0 12px;font-size:20px;">Confirmez votre email</h1>
     <p style="margin:0 0 20px;font-size:14px;color:${MUTED};">
-      Bonjour ${escapeHtml(dgName)}, voici le code à saisir pour activer le compte de « ${escapeHtml(companyName)} » sur Lyko System.
+      Bonjour ${escapeHtml(dgName)}, voici le code à saisir pour activer le compte de « ${escapeHtml(companyName)} » sur Africa Immo Management.
     </p>
     <div style="margin:0 0 20px;padding:16px;background:#F1F5F9;border-radius:8px;text-align:center;">
       <span style="font-family:'Courier New',monospace;font-size:32px;font-weight:bold;letter-spacing:0.15em;color:${PRIMARY};">${code}</span>
@@ -80,7 +80,7 @@ async function sendVerificationCodeEmail({ to, dgName, companyName, code }) {
       Ce code expire dans 15 minutes. Si vous n'êtes pas à l'origine de cette inscription, ignorez cet email.
     </p>
   `);
-  return sendViaResend({ to, subject: `${code} — Code de vérification Lyko System`, html });
+  return sendViaResend({ to, subject: `${code} — Code de vérification Africa Immo Management`, html });
 }
 
 function platformExplanationHtml() {
@@ -99,14 +99,14 @@ async function sendWelcomeEmail({ to, dgName, companyName }) {
   const html = wrapHtml(`
     <h1 style="margin:0 0 12px;font-size:20px;">Bienvenue, ${escapeHtml(dgName)}</h1>
     <p style="margin:0 0 16px;font-size:14px;color:${MUTED};">
-      Le compte de « ${escapeHtml(companyName)} » est actif. Voici un aperçu de ce que vous pouvez faire sur Lyko System :
+      Le compte de « ${escapeHtml(companyName)} » est actif. Voici un aperçu de ce que vous pouvez faire sur Africa Immo Management :
     </p>
     ${platformExplanationHtml()}
     <a href="${config.frontendUrl}/espace" style="display:inline-block;padding:10px 20px;background:${PRIMARY};color:#FFFFFF;text-decoration:none;border-radius:6px;font-size:14px;">
-      Ouvrir Lyko System
+      Ouvrir Africa Immo Management
     </a>
   `);
-  return sendViaResend({ to, subject: 'Bienvenue sur Lyko System', html });
+  return sendViaResend({ to, subject: 'Bienvenue sur Africa Immo Management', html });
 }
 
 const PURPOSE_LABELS = {
@@ -155,7 +155,7 @@ async function sendSubscriptionReminderEmail({ to, dgName, companyName, planLabe
     <p style="margin:0 0 16px;font-size:14px;color:${MUTED};">Bonjour ${escapeHtml(dgName)}, l'abonnement ${escapeHtml(planLabel)} de ${escapeHtml(companyName)} ${expired ? "n'est plus actif : votre espace est suspendu, mais vos locataires peuvent toujours payer leur loyer." : 'arrive bientôt à échéance. Renouvelez-le pour ne pas perdre l’accès à votre espace.'}</p>
     <p style="margin:0;font-size:14px;"><a href="${escapeHtml(renewUrl)}" style="color:#1a2b5f;font-weight:bold;">Renouveler mon abonnement</a></p>
   `);
-  return sendViaResend({ to, subject: safeHeader(expired ? 'Votre abonnement Lyko System a pris fin' : `Votre abonnement Lyko System se termine dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}`), html });
+  return sendViaResend({ to, subject: safeHeader(expired ? 'Votre abonnement Africa Immo Management a pris fin' : `Votre abonnement Africa Immo Management se termine dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}`), html });
 }
 
 /** Courriel d'information du back-office / remboursement : titre, paragraphes (échappés), lien optionnel. */

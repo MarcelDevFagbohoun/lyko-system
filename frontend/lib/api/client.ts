@@ -26,7 +26,7 @@ type ApiFetchOptions = Omit<RequestInit, "body"> & {
 };
 
 /**
- * Wrapper fetch pour l'API Lyko System : envoie toujours les cookies
+ * Wrapper fetch pour l'API Africa Immo Management : envoie toujours les cookies
  * (refresh token httpOnly) et normalise les erreurs en `ApiError`.
  * Ne fixe PAS de Content-Type par défaut : laisser FormData définir le
  * sien (boundary) ; passer explicitement application/json pour du JSON.

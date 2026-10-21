@@ -100,7 +100,7 @@ async function startCheckout({ tenantId, userId, planKey, months }) {
   try {
     const checkout = await fedapay.createCheckout(account, {
       amount: q.price,
-      description: `Abonnement Lyko System ${(await getPlanAsync(planKey)).label} — ${months} mois`,
+      description: `Abonnement Africa Immo Management ${(await getPlanAsync(planKey)).label} — ${months} mois`,
       callbackUrl: `${config.frontendUrl}/abonnement/retour?ref=${reference}`,
       reference,
       customer: { name: `${dg?.first_name ?? ''} ${dg?.last_name ?? ''}`.trim() || tenant.company_name, email: dg?.email },
@@ -147,7 +147,7 @@ async function activatePayment(paymentId) {
       { plan: p.plan_key, months: p.months, extend: extend ? 1 : 0, first: p.is_first_purchase, founder: p.founder_price, t: p.tenant_id },
     );
     const [[after]] = await conn.query('SELECT started_at, current_period_end FROM tenant_subscriptions WHERE tenant_id = :t', { t: p.tenant_id });
-    const invoice = `LYKO-${new Date().getUTCFullYear()}-${String(p.id).padStart(6, '0')}`;
+    const invoice = `AIM-${new Date().getUTCFullYear()}-${String(p.id).padStart(6, '0')}`;
     await conn.query(
       "UPDATE subscription_payments SET status = 'paid', paid_at = NOW(), invoice_number = :invoice, period_start = :ps, period_end = :pe WHERE id = :id",
       { invoice, ps: extend ? null : after.started_at, pe: after.current_period_end, id: p.id },

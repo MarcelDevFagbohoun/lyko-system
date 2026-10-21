@@ -9,7 +9,7 @@ const { startScheduler } = require('./jobs/scheduler');
 const app = createApp();
 
 const server = app.listen(config.port, async () => {
-  logger.info(`API Lyko System démarrée`, { port: config.port, env: config.nodeEnv });
+  logger.info(`API Africa Immo Management démarrée`, { port: config.port, env: config.nodeEnv });
   try {
     const diag = await pingDatabase();
     logger.info('Connexion MySQL OK', {

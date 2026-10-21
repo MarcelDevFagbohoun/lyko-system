@@ -804,7 +804,7 @@ test(
   async () => {
     // Cas réel rencontré en vérifiant ce correctif en direct (tenant 1594) : un paiement de loyer
     // enregistré avec un `paidAt` antérieur à la création du Bien (onboarding d'un locataire déjà en
-    // place avant l'usage de Lyko System, saisie rétroactive). Avant le `LEFT JOIN` + `COALESCE`
+    // place avant l'usage de Africa Immo Management, saisie rétroactive). Avant le `LEFT JOIN` + `COALESCE`
     // ci-dessus, un tel paiement disparaissait silencieusement du solde séquestre (JOIN strict, aucune
     // période ne le couvrant).
     const iso = await createBareFixture();

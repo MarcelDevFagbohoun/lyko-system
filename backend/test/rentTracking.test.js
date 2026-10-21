@@ -2,7 +2,7 @@
 
 /**
  * `computeArrears` — le calcul de retard ne doit jamais remonter avant que
- * Lyko System ne suive réellement le bail (demande directe de l'utilisateur :
+ * Africa Immo Management ne suive réellement le bail (demande directe de l'utilisateur :
  * un locataire entré dans les lieux en 2025 mais enregistré aujourd'hui, à
  * jour, ne doit rien). Fonctions pures, aucune base requise.
  */

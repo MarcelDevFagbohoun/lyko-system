@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LykoLogo } from "@/components/brand/logo";
+import { BrandLogo } from "@/components/brand/logo";
 import { CONTACT } from "@/components/marketing/contact";
 
 export function SiteFooter() {
@@ -7,7 +7,7 @@ export function SiteFooter() {
     <footer className="border-t border-border bg-surface">
       <div className="content-shell flex flex-col gap-8 py-10 md:flex-row md:items-start md:justify-between">
         <div className="flex max-w-sm flex-col gap-3">
-          <LykoLogo />
+          <BrandLogo />
           <p className="text-body-sm text-ink-muted">
             Le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE,
             propriétaires, plaintes et comptabilité, pour toute votre équipe.
@@ -63,7 +63,7 @@ export function SiteFooter() {
 
       <div className="border-t border-border">
         <div className="content-shell flex flex-col gap-2 py-4 text-body-xs text-ink-muted sm:flex-row sm:items-center sm:justify-between">
-          <span>© {new Date().getFullYear()} Lyko System. Tous droits réservés.</span>
+          <span>© {new Date().getFullYear()} Africa Immo Management. Tous droits réservés.</span>
           <span>Conçu au Bénin, pour les entreprises et agences immobilières.</span>
         </div>
       </div>
