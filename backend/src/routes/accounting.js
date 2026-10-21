@@ -58,11 +58,9 @@ const {
   computeRentMonthSummary,
   listRentMonthRenters,
   paymentPeriodKey,
-  periodEndOf,
 } = require('../services/rentTracking');
 const {
   getEscrowBalances,
-  getOwnerPayoutStatusAsOf,
   getUnpaidOpeningDebtByOwner,
   getOwnersWithoutCommissionRate,
   getCabinetRevenue,
@@ -1717,29 +1715,10 @@ router.get('/rent-month/:month/renters', canAccounting, async (req, res, next) =
   }
 });
 
-// GET /api/accounting/rent-month/:month/bilan — bilan complet d'un mois (demande utilisateur,
-// 2026-10-18 : « une clôture nous devons avoir tous les détails, les propriétaires reversés et
-// non, les recettes du mois, les points essentiels du mois, les charges — une sorte de bilan du
-// mois »). Réutilise `computeAccountingDashboard` tel quel pour les recettes/dépenses/charges
-// (déjà capable de détecter un mois clôturé) ; les locataires (point mensuel détaillé) restent
-// sur `/rent-month/:month/renters` ci-dessus, inchangé — ce bilan y renvoie en complément plutôt
-// que de dupliquer cette liste. Le statut « reversé/non reversé » des propriétaires est
-// reconstruit À LA DATE DE FIN DE CE MOIS (décision explicite de l'utilisateur, option B) — jamais
-// leur solde actuel, qui mélangerait des versements d'autres mois.
-router.get('/rent-month/:month/bilan', canAccounting, async (req, res, next) => {
-  const month = req.params.month;
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return next(new ApiError(400, 'Mois invalide (AAAA-MM)'));
-
-  try {
-    const from = `${month}-01`;
-    const to = periodEndOf(month);
-    const dashboard = await computeAccountingDashboard(req.user, { from, to });
-    const owners = await getOwnerPayoutStatusAsOf(req.user.tenantId, to);
-    res.json({ month, dashboard, owners });
-  } catch (err) {
-    next(err);
-  }
-});
+// Bilan complet d'un mois clôturé : voir désormais `GET /api/accounting/month-bilan/:month`
+// (`services/monthBilan.js`) — implémentation plus complète (solde d'ouverture/clôture par
+// propriétaire, écart de réconciliation) construite en parallèle, qui a remplacé cette première
+// version (`/rent-month/:month/bilan` + `getOwnerPayoutStatusAsOf`, retirées comme code mort).
 
 // GET /api/accounting/month-bilan/:month — bilan détaillé d'un mois (entrées, sorties, par Bien, point
 // propriétaires, point locataires à la fin du mois, dépenses, charges, contrôles). Mois clôturé : renvoie la

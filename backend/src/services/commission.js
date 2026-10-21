@@ -366,35 +366,6 @@ async function getEscrowBalances(tenantId, db = pool, asOfDate = null) {
 
 
 /**
- * Bilan de clôture (demande utilisateur, 2026-10-18 : « les propriétaires reversé et non ») —
- * pour CHAQUE propriétaire ayant déjà perçu une recette, reconstruit son solde exactement comme
- * il était à la date de clôture du mois (`getEscrowBalances(tenantId, db, asOfDate)`) et le
- * classe : « reversé » (solde nul ou négatif à cette date — rien ne lui était plus dû) ou « non
- * reversé » (solde encore positif — il lui restait de l'argent dû). Décision explicite de
- * l'utilisateur (option B) : reconstruction historique, pas un simple « a reçu un versement ce
- * mois-ci » (qui confondrait un versement pour un AUTRE mois avec le solde réel de celui-ci).
- */
-async function getOwnerPayoutStatusAsOf(tenantId, asOfDate, db = pool) {
-  const balances = await getEscrowBalances(tenantId, db, asOfDate);
-  const ownerIds = [...balances.keys()];
-  if (ownerIds.length === 0) return { reversed: [], notReversed: [] };
-
-  const [ownerRows] = await db.query('SELECT id, name FROM owners WHERE tenant_id = :tenantId', { tenantId });
-  const ownerNameById = new Map(ownerRows.map((o) => [o.id, o.name]));
-
-  const reversed = [];
-  const notReversed = [];
-  for (const [ownerId, b] of balances) {
-    const entry = { ownerId, ownerName: ownerNameById.get(ownerId) ?? 'Propriétaire', balance: b.balance, totalCollected: b.totalCollected, totalPayouts: b.totalPayouts };
-    if (b.balance > 0) notReversed.push(entry);
-    else reversed.push(entry);
-  }
-  reversed.sort((a, b) => a.ownerName.localeCompare(b.ownerName));
-  notReversed.sort((a, b) => b.balance - a.balance);
-  return { reversed, notReversed };
-}
-
-/**
  * Cautions actuellement détenues pour un propriétaire — demande utilisateur, 2026-10-17 : « je veux
  * que Recette nette cumulée soit détaillé ; la caution et le loyer ». Décision explicite : jamais
  * fondu dans `getEscrowBalances`/`totalCollected` ci-dessus (qui plafonne le reversement possible au
@@ -605,7 +576,6 @@ module.exports = {
   getRecetteProprietaire,
   getCabinetRevenue,
   getEscrowBalances,
-  getOwnerPayoutStatusAsOf,
   getDepositsHeldByOwner,
   getUnpaidOpeningDebtByOwner,
   getOwnersWithoutCommissionRate,

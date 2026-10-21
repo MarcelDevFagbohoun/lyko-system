@@ -305,27 +305,9 @@ export function getRentMonthRenters(accessToken: string, month: string) {
   );
 }
 
-/** Statut d'un propriétaire reconstruit À LA DATE DE FIN du mois (étape clôture, 2026-10-18). */
-export type OwnerPayoutStatusEntry = {
-  ownerId: number;
-  ownerName: string;
-  balance: number;
-  totalCollected: number;
-  totalPayouts: number;
-};
-
-/**
- * Bilan complet d'un mois (demande utilisateur, 2026-10-18) : recettes/dépenses/charges (mêmes
- * totaux que le tableau de bord comptable, pour la plage exacte de ce mois) + le statut de chaque
- * propriétaire (reversé ou non) reconstruit à la date de fin de ce mois précis.
- */
-export function getRentMonthBilan(accessToken: string, month: string) {
-  return apiFetch<{
-    month: string;
-    dashboard: AccountingDashboard;
-    owners: { reversed: OwnerPayoutStatusEntry[]; notReversed: OwnerPayoutStatusEntry[] };
-  }>(`/api/accounting/rent-month/${encodeURIComponent(month)}/bilan`, { accessToken });
-}
+// Le bilan complet d'un mois (recettes/dépenses/charges + statut des propriétaires reversés/non)
+// est désormais `getMonthBilan` (voir plus bas) — implémentation plus complète construite en
+// parallèle qui a remplacé celle-ci.
 
 export type RentPaymentEntry = {
   id: number;
