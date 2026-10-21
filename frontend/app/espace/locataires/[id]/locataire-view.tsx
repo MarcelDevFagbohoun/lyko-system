@@ -212,7 +212,7 @@ function LocataireContent() {
 
         {canManage && <PortalLinkCard renter={renter} accessToken={accessToken} onGenerated={load} />}
 
-        {canManage && tenant?.kkiapayEnabled && activeLease && accessToken && (
+        {canManage && tenant?.onlinePaymentEnabled && activeLease && accessToken && (
           <PaymentLinkCard
             title="Lien de paiement en ligne"
             description={`Pour un règlement immédiat sans portail actif — ${renter.firstName} pourra payer par Mobile Money ou carte.`}

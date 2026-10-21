@@ -23,6 +23,7 @@ const {
 } = require('../services/inspection');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 const { verifyAndRecordKkiapay } = require('../services/paymentVerification');
+const { startCheckout } = require('../services/onlinePayments');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
 const logger = require('../utils/logger');
 
@@ -119,7 +120,7 @@ router.get('/:token', async (req, res, next) => {
     const { id: renterId, tenantId, firstName, lastName } = req.portalRenter;
 
     const [tenantRows] = await pool.query(
-      'SELECT company_name, logo_path, kkiapay_enabled, kkiapay_sandbox, kkiapay_public_key FROM tenants WHERE id = :tenantId LIMIT 1',
+      'SELECT company_name, logo_path, kkiapay_enabled, kkiapay_sandbox, kkiapay_public_key, fedapay_collect_enabled FROM tenants WHERE id = :tenantId LIMIT 1',
       { tenantId },
     );
 
@@ -263,6 +264,7 @@ router.get('/:token', async (req, res, next) => {
         logoUrl: tenantRows[0]?.logo_path ? `/uploads/${tenantRows[0].logo_path}` : null,
         // Clé publique seule (sans risque, faite pour être embarquée côté
         // client) : présente uniquement si le paiement en ligne est activé.
+        onlinePaymentEnabled: !!tenantRows[0]?.fedapay_collect_enabled,
         kkiapayEnabled: !!tenantRows[0]?.kkiapay_enabled,
         kkiapaySandbox: !!tenantRows[0]?.kkiapay_sandbox,
         kkiapayPublicKey: tenantRows[0]?.kkiapay_enabled ? tenantRows[0]?.kkiapay_public_key : null,
@@ -527,6 +529,53 @@ router.post('/:token/complaints', async (req, res, next) => {
     next(err);
   } finally {
     conn.release();
+  }
+});
+
+// POST /api/portal/:token/rent/checkout { amount } — ouvre une page de paiement FedaPay pour SON loyer.
+router.post('/:token/rent/checkout', async (req, res, next) => {
+  try {
+    const amount = Number(req.body?.amount);
+    const { id: renterId, tenantId } = req.portalRenter;
+    const lease = await loadActivePortalLease(tenantId, renterId);
+    // Borne de bon sens : jamais plus d'un an de loyer en une fois.
+    if (!Number.isInteger(amount) || amount < 100 || amount > Number(lease.monthly_rent) * 12) {
+      throw new ApiError(400, 'Montant invalide');
+    }
+    const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    const [[renter]] = await pool.query('SELECT first_name, last_name, email FROM renters WHERE id = :id LIMIT 1', { id: renterId });
+    res.json(await startCheckout({
+      tenant, kind: 'rent', leaseId: lease.id, amount,
+      customer: { name: `${renter.first_name} ${renter.last_name}`, email: renter.email },
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/portal/:token/charges/:chargeId/checkout — le montant est le RESTE DÛ calculé côté serveur.
+router.post('/:token/charges/:chargeId/checkout', async (req, res, next) => {
+  const chargeId = Number(req.params.chargeId);
+  if (!Number.isInteger(chargeId) || chargeId <= 0) return next(new ApiError(400, 'Identifiant invalide'));
+  try {
+    const { id: renterId, tenantId } = req.portalRenter;
+    const lease = await loadActivePortalLease(tenantId, renterId);
+    const [[charge]] = await pool.query(
+      'SELECT id, amount FROM utility_charges WHERE id = :id AND lease_id = :leaseId AND deleted_at IS NULL LIMIT 1',
+      { id: chargeId, leaseId: lease.id },
+    );
+    if (!charge) throw new ApiError(404, 'Facture introuvable');
+    const [[{ paidTotal }]] = await pool.query('SELECT COALESCE(SUM(amount), 0) AS paidTotal FROM utility_payments WHERE charge_id = :id', { id: chargeId });
+    const remaining = Number(charge.amount) - Number(paidTotal);
+    if (remaining <= 0) throw new ApiError(400, 'Cette facture est déjà entièrement réglée');
+    const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+    const [[renter]] = await pool.query('SELECT first_name, last_name, email FROM renters WHERE id = :id LIMIT 1', { id: renterId });
+    res.json(await startCheckout({
+      tenant, kind: 'charge', chargeId, amount: remaining,
+      customer: { name: `${renter.first_name} ${renter.last_name}`, email: renter.email },
+    }));
+  } catch (err) {
+    next(err);
   }
 });
 

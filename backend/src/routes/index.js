@@ -30,6 +30,7 @@ const documentRoutes = require('./documents');
 const documentVerificationRoutes = require('./documentVerification');
 const paymentLinkRoutes = require('./paymentLinks');
 const kkiapayWebhookRoutes = require('./kkiapayWebhook');
+const fedapayCollectRoutes = require('./fedapayCollect');
 const receiptShareRoutes = require('./receiptShare');
 const glAccountsRoutes = require('./gl/glAccounts');
 const glJournalsRoutes = require('./gl/glJournals');
@@ -97,6 +98,8 @@ router.use('/verify', documentVerificationRoutes);
 // webhook KKiaPay : PUBLIQUES, aucune auth — même piège, mêmes raisons.
 router.use('/pay', paymentLinkRoutes);
 router.use('/webhooks', kkiapayWebhookRoutes);
+// Encaissement FedaPay (retour client + webhook signé) : PUBLIQUES, même piège de montage que ci-dessus.
+router.use(fedapayCollectRoutes);
 // Lien de partage direct d'une quittance (WhatsApp) : PUBLIQUE, aucune auth —
 // même piège que ci-dessus, doit être montée avant `utilityReadingRoutes`.
 // Préfixe dédié `/recu` (pas `/documents/share`) pour ne jamais dépendre de

@@ -11,6 +11,7 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { hashToken } = require('../utils/tokens');
 const { verifyAndRecordKkiapay } = require('../services/paymentVerification');
+const { startCheckout } = require('../services/onlinePayments');
 
 const router = Router();
 
@@ -29,7 +30,7 @@ router.use(payLimiter);
  * inconnu, expiré ou déjà payé ne se distinguent jamais — pas d'énumération). */
 async function loadPaymentLink(token) {
   const [rows] = await pool.query(
-    `SELECT pl.*, t.company_name, t.logo_path, t.kkiapay_enabled, t.kkiapay_sandbox, t.kkiapay_public_key
+    `SELECT pl.*, t.company_name, t.logo_path, t.kkiapay_enabled, t.kkiapay_sandbox, t.kkiapay_public_key, t.fedapay_collect_enabled
      FROM payment_links pl
      JOIN tenants t ON t.id = pl.tenant_id
      WHERE pl.token_hash = :hash LIMIT 1`,
@@ -56,9 +57,29 @@ router.get('/:token', async (req, res, next) => {
       logoUrl: link.logo_path ? `/uploads/${link.logo_path}` : null,
       kind: link.kind,
       amount: Number(link.amount),
+      onlinePaymentEnabled: !!link.fedapay_collect_enabled,
       kkiapaySandbox: !!link.kkiapay_sandbox,
       kkiapayPublicKey: link.kkiapay_enabled ? link.kkiapay_public_key : null,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/pay/:token/checkout — ouvre la page de paiement FedaPay pour CE lien (montant fixé par le lien).
+router.post('/:token/checkout', async (req, res, next) => {
+  try {
+    const link = await loadPaymentLink(req.params.token);
+    const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: link.tenant_id });
+    res.json(await startCheckout({
+      tenant,
+      kind: link.kind === 'loyer' ? 'rent' : 'charge',
+      leaseId: link.lease_id,
+      chargeId: link.charge_id,
+      linkId: link.id,
+      amount: Number(link.amount),
+      customer: { name: 'Locataire' },
+    }));
   } catch (err) {
     next(err);
   }

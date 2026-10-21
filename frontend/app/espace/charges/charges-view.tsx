@@ -438,7 +438,7 @@ function ChargeRow({
               <Button size="sm" onClick={handlePay} disabled={submitting}>
                 {submitting ? "…" : "Confirmer le règlement"}
               </Button>
-              {tenant?.kkiapayEnabled && !showLink && (
+              {tenant?.onlinePaymentEnabled && !showLink && (
                 <Button size="sm" variant="secondary" onClick={() => setShowLink(true)}>
                   Ou envoyer un lien de paiement
                 </Button>

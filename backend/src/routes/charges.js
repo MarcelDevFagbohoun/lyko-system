@@ -677,11 +677,11 @@ router.post('/:id/payment-links', async (req, res, next) => {
     const charge = await loadCharge(pool, req.user.tenantId, id, scopeAgentId);
     if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée.');
 
-    const [[tenant]] = await pool.query('SELECT kkiapay_enabled FROM tenants WHERE id = :id LIMIT 1', {
+    const [[tenant]] = await pool.query('SELECT kkiapay_enabled, fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {
       id: req.user.tenantId,
     });
-    if (!tenant?.kkiapay_enabled) {
-      throw new ApiError(400, 'Le paiement en ligne (KKiaPay) n\'est pas activé pour votre entreprise (Réglages).');
+    if (!tenant?.fedapay_collect_enabled) {
+      throw new ApiError(400, 'Le paiement en ligne (FedaPay) n\'est pas activé pour votre entreprise (Réglages).');
     }
 
     const [[{ paidTotal }]] = await pool.query(

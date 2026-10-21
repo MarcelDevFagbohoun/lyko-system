@@ -52,6 +52,8 @@ function toPublicSettings(tenant) {
     // Envoi d'argent (FedaPay) : la clé secrète n'est JAMAIS renvoyée, seulement son existence.
     fedapayEnabled: !!tenant.fedapay_enabled,
     fedapaySandbox: !!tenant.fedapay_sandbox,
+    fedapayCollectEnabled: !!tenant.fedapay_collect_enabled,
+    fedapayWebhookConfigured: !!tenant.fedapay_webhook_secret_enc,
     fedapayConfigured: !!tenant.fedapay_secret_key_enc,
     paymentsPerOrderLimit: Number(tenant.payments_per_order_limit ?? 0),
     paymentsDailyLimit: Number(tenant.payments_daily_limit ?? 0),
@@ -164,6 +166,20 @@ router.patch(
       if (data.paymentsDailyLimit !== undefined) {
         fields.push('payments_daily_limit = :paymentsDailyLimit');
         params.paymentsDailyLimit = data.paymentsDailyLimit;
+      }
+      if (data.fedapayWebhookSecret) {
+        fields.push('fedapay_webhook_secret_enc = :fedapayWebhookSecretEnc');
+        params.fedapayWebhookSecretEnc = encryptSecret(data.fedapayWebhookSecret);
+      }
+      if (data.fedapayCollectEnabled !== undefined) {
+        if (data.fedapayCollectEnabled) {
+          const [[current]] = await pool.query('SELECT fedapay_secret_key_enc FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+          if (!(data.fedapaySecretKey || current?.fedapay_secret_key_enc)) {
+            throw new ApiError(400, "Renseignez la clé secrète FedaPay avant d'activer le paiement en ligne.");
+          }
+        }
+        fields.push('fedapay_collect_enabled = :fedapayCollectEnabled');
+        params.fedapayCollectEnabled = data.fedapayCollectEnabled;
       }
       if (data.fedapayEnabled !== undefined) {
         if (data.fedapayEnabled) {

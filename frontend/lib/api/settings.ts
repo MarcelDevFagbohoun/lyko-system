@@ -18,6 +18,9 @@ export type TenantSettings = {
   fedapayEnabled: boolean;
   fedapaySandbox: boolean;
   fedapayConfigured: boolean;
+  /** Encaissement en ligne (loyers, charges) via FedaPay. */
+  fedapayCollectEnabled: boolean;
+  fedapayWebhookConfigured: boolean;
   paymentsPerOrderLimit: number;
   paymentsDailyLimit: number;
   /** Pré-remplit la convention de paiement du loyer de chaque nouveau bail. */
@@ -50,6 +53,8 @@ export function updateSettings(
     fedapayEnabled?: boolean;
     fedapaySandbox?: boolean;
     fedapaySecretKey?: string;
+    fedapayCollectEnabled?: boolean;
+    fedapayWebhookSecret?: string;
     paymentsPerOrderLimit?: number;
     paymentsDailyLimit?: number;
     defaultRentTiming?: RentTiming;
@@ -75,6 +80,8 @@ export function updateSettings(
   if (input.kkiapaySecretKey) fd.append("kkiapaySecretKey", input.kkiapaySecretKey);
   if (input.fedapayEnabled !== undefined) fd.append("fedapayEnabled", String(input.fedapayEnabled));
   if (input.fedapaySandbox !== undefined) fd.append("fedapaySandbox", String(input.fedapaySandbox));
+  if (input.fedapayCollectEnabled !== undefined) fd.append("fedapayCollectEnabled", String(input.fedapayCollectEnabled));
+  if (input.fedapayWebhookSecret) fd.append("fedapayWebhookSecret", input.fedapayWebhookSecret);
   if (input.fedapaySecretKey) fd.append("fedapaySecretKey", input.fedapaySecretKey);
   if (input.paymentsPerOrderLimit !== undefined) fd.append("paymentsPerOrderLimit", String(input.paymentsPerOrderLimit));
   if (input.paymentsDailyLimit !== undefined) fd.append("paymentsDailyLimit", String(input.paymentsDailyLimit));

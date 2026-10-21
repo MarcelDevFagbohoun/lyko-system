@@ -12,8 +12,8 @@ import {
   portalContractPdfUrl,
   portalMoveInReportPdfUrl,
   portalMoveOutReportPdfUrl,
-  verifyPortalRentPayment,
-  verifyPortalChargePayment,
+  startPortalRentCheckout,
+  startPortalChargeCheckout,
   type PortalDashboard,
   type PortalComplaintInput,
 } from "@/lib/api/portal";
@@ -88,7 +88,7 @@ export function PortailView() {
   }
 
   const { tenant, renter, activeLease, arrears, rentStrip, payments, unpaidCharges, chargePayments = [], lastLease } = dashboard;
-  const canPayOnline = tenant.kkiapayEnabled && !!tenant.kkiapayPublicKey;
+  const canPayOnline = tenant.onlinePaymentEnabled;
   // Un mois déjà entamé se complète : le locataire paie le RESTE, pas un loyer entier.
   const partialRemaining =
     activeLease && (arrears?.paidForNextDueMonth ?? 0) > 0 ? Math.max(0, activeLease.monthlyRent - (arrears?.paidForNextDueMonth ?? 0)) : 0;
@@ -210,12 +210,7 @@ export function PortailView() {
                   )}
                   {canPayOnline && (
                     <PayNowButton
-                      amount={partialRemaining > 0 ? partialRemaining : activeLease.monthlyRent}
-                      reference={`t${tenant.id}:rent:${activeLease.id}`}
-                      publicKey={tenant.kkiapayPublicKey!}
-                      sandbox={tenant.kkiapaySandbox}
-                      onVerify={(transactionId) => verifyPortalRentPayment(token, transactionId)}
-                      onPaid={load}
+                      start={() => startPortalRentCheckout(token, partialRemaining > 0 ? partialRemaining : activeLease.monthlyRent)}
                       label={partialRemaining > 0 ? `Payer le reste (${formatFcfa(partialRemaining)}) en ligne` : "Payer mon loyer en ligne"}
                     />
                   )}
@@ -245,14 +240,7 @@ export function PortailView() {
                         </p>
                       </div>
                       {canPayOnline && (
-                        <PayNowButton
-                          amount={c.remaining}
-                          reference={`t${tenant.id}:charge:${c.id}`}
-                          publicKey={tenant.kkiapayPublicKey!}
-                          sandbox={tenant.kkiapaySandbox}
-                          onVerify={(transactionId) => verifyPortalChargePayment(token, c.id, transactionId)}
-                          onPaid={load}
-                        />
+                        <PayNowButton start={() => startPortalChargeCheckout(token, c.id)} />
                       )}
                     </div>
                   ))}

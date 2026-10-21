@@ -54,6 +54,8 @@ const updateSettingsSchema = z.object({
     .union([z.boolean(), z.enum(['true', 'false'])])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+  fedapayCollectEnabled: z.preprocess((v) => (v === 'true' ? true : v === 'false' ? false : v), z.boolean()).optional(),
+  fedapayWebhookSecret: z.string().trim().max(255).optional().or(z.literal('')),
   fedapaySecretKey: z.string().trim().max(255).optional().or(z.literal('')),
   paymentsPerOrderLimit: z.coerce.number().int().min(1000).max(100_000_000).optional(),
   paymentsDailyLimit: z.coerce.number().int().min(1000).max(1_000_000_000).optional(),

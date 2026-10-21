@@ -164,6 +164,7 @@ function toPublicTenant(tenant) {
     // La clé publique n'est exposée que là où le widget s'ouvre réellement
     // (portail locataire, page publique de paiement).
     kkiapayEnabled: !!tenant.kkiapay_enabled,
+    onlinePaymentEnabled: !!tenant.fedapay_collect_enabled,
     // Convention de paiement du loyer par défaut (avance/terme échu) — sert
     // à pré-remplir le formulaire de création de bail ; réglable par le DG
     // dans Paramètres, mais doit être lisible par TOUT employé qui crée un
@@ -200,6 +201,7 @@ async function respondWithSession(res, row) {
       comptable_title: row.comptable_title,
       agent_title: row.agent_title,
       kkiapay_enabled: row.kkiapay_enabled,
+      fedapay_collect_enabled: row.fedapay_collect_enabled,
       default_rent_timing: row.default_rent_timing,
       default_entry_proration: row.default_entry_proration,
       deposit_sbee_enabled: row.deposit_sbee_enabled,
@@ -320,7 +322,7 @@ router.post('/verify-email', verifyEmailLimiter, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
               t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled,
               (u.email_verification_expires_at IS NULL OR u.email_verification_expires_at < NOW()) AS is_expired
        FROM users u JOIN tenants t ON t.id = u.tenant_id
@@ -419,7 +421,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
               t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.phone = :phone LIMIT 1`,
@@ -473,7 +475,7 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
               t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.identifier = :identifier LIMIT 1`,
@@ -571,7 +573,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
-              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
               t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = :id LIMIT 1`,

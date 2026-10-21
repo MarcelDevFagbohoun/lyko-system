@@ -21,7 +21,13 @@ function createApp() {
   app.use(helmetMiddleware);
   app.use(corsMiddleware);
   app.use(globalRateLimiter);
-  app.use(express.json({ limit: '1mb' }));
+  // `rawBody` conservé UNIQUEMENT pour la vérification de signature des webhooks FedaPay.
+  app.use(express.json({
+    limit: '1mb',
+    verify: (req, _res, buf) => {
+      if (req.originalUrl.startsWith('/api/webhooks/fedapay/')) req.rawBody = buf;
+    },
+  }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
 

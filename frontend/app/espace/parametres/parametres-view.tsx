@@ -81,6 +81,8 @@ function ParametresContent() {
   const [kkiapayPublicKey, setKkiapayPublicKey] = React.useState("");
   const [kkiapayPrivateKey, setKkiapayPrivateKey] = React.useState("");
   const [kkiapaySecretKey, setKkiapaySecretKey] = React.useState("");
+  const [fedapayCollectEnabled, setFedapayCollectEnabled] = React.useState(false);
+  const [fedapayWebhookSecret, setFedapayWebhookSecret] = React.useState("");
   const [fedapayEnabled, setFedapayEnabled] = React.useState(false);
   const [fedapaySandbox, setFedapaySandbox] = React.useState(true);
   const [fedapaySecretKey, setFedapaySecretKey] = React.useState("");
@@ -108,6 +110,7 @@ function ParametresContent() {
         setKkiapaySandbox(res.settings.kkiapaySandbox);
         setKkiapayPublicKey(res.settings.kkiapayPublicKey ?? "");
         setFedapayEnabled(res.settings.fedapayEnabled);
+        setFedapayCollectEnabled(res.settings.fedapayCollectEnabled);
         setFedapaySandbox(res.settings.fedapaySandbox);
         setPaymentsPerOrderLimit(String(res.settings.paymentsPerOrderLimit));
         setPaymentsDailyLimit(String(res.settings.paymentsDailyLimit));
@@ -158,6 +161,8 @@ function ParametresContent() {
         kkiapayPrivateKey,
         kkiapaySecretKey,
         fedapayEnabled,
+        fedapayCollectEnabled,
+        fedapayWebhookSecret,
         fedapaySandbox,
         fedapaySecretKey,
         paymentsPerOrderLimit: Number(paymentsPerOrderLimit) || undefined,
@@ -174,6 +179,7 @@ function ParametresContent() {
       setKkiapayPrivateKey("");
       setKkiapaySecretKey("");
       setFedapaySecretKey("");
+      setFedapayWebhookSecret("");
       setSaved(true);
       // Le badge (barre latérale), le journal, les documents... lisent le
       // libellé via le contexte d'auth (`tenant.roleTitles`), pas cet écran :
@@ -459,102 +465,12 @@ function ParametresContent() {
             <CardHeader>
               <div className="flex items-center gap-2">
                 <CreditCard size={18} className={CADRES.finances.text} />
-                <CardTitle>Paiement en ligne (KKiaPay)</CardTitle>
+                <CardTitle>Paiements en ligne (FedaPay)</CardTitle>
               </div>
               <CardDescription>
-                Optionnel : laissez vos locataires régler leur loyer et leurs charges SONEB/SBEE en
-                ligne (Mobile Money, carte). Désactivé, tout continue de fonctionner comme aujourd&apos;hui
-                — vous enregistrez les paiements vous-même.{" "}
-                <a
-                  href="https://kkiapay.me"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-primary hover:underline"
-                >
-                  Créer un compte KKiaPay <ExternalLink size={12} />
-                </a>
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <label className="flex items-center gap-2.5">
-                <input
-                  type="checkbox"
-                  checked={kkiapayEnabled}
-                  onChange={(e) => setKkiapayEnabled(e.target.checked)}
-                  className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
-                />
-                <span className="font-label-md text-ink">Activer le paiement en ligne</span>
-              </label>
-
-              {kkiapayEnabled && (
-                <>
-                  <label className="flex items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      checked={kkiapaySandbox}
-                      onChange={(e) => setKkiapaySandbox(e.target.checked)}
-                      className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
-                    />
-                    <span className="text-body-sm text-ink-soft">
-                      Mode test (sandbox) — aucun vrai paiement tant que c&apos;est coché
-                    </span>
-                  </label>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                    <Field label="Clé publique" htmlFor="kkiapayPublicKey">
-                      <input
-                        id="kkiapayPublicKey"
-                        value={kkiapayPublicKey}
-                        onChange={(e) => setKkiapayPublicKey(e.target.value)}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      />
-                    </Field>
-                    <Field
-                      label="Clé privée"
-                      htmlFor="kkiapayPrivateKey"
-                      hint={settings.kkiapayConfigured ? "Déjà enregistrée — laissez vide pour la conserver" : undefined}
-                    >
-                      <input
-                        id="kkiapayPrivateKey"
-                        type="password"
-                        autoComplete="new-password"
-                        value={kkiapayPrivateKey}
-                        onChange={(e) => setKkiapayPrivateKey(e.target.value)}
-                        placeholder={settings.kkiapayConfigured ? "••••••••" : undefined}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      />
-                    </Field>
-                    <Field
-                      label="Clé secrète"
-                      htmlFor="kkiapaySecretKey"
-                      hint={settings.kkiapayConfigured ? "Déjà enregistrée — laissez vide pour la conserver" : undefined}
-                    >
-                      <input
-                        id="kkiapaySecretKey"
-                        type="password"
-                        autoComplete="new-password"
-                        value={kkiapaySecretKey}
-                        onChange={(e) => setKkiapaySecretKey(e.target.value)}
-                        placeholder={settings.kkiapayConfigured ? "••••••••" : undefined}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      />
-                    </Field>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <CreditCard size={18} className={CADRES.finances.text} />
-                <CardTitle>Paiements sortants (FedaPay)</CardTitle>
-              </div>
-              <CardDescription>
-                Optionnel : payez les salaires, reversez les loyers aux propriétaires et effectuez d&apos;autres
-                paiements en Mobile Money depuis l&apos;application. Chaque envoi demande votre mot de passe,
-                respecte les plafonds ci-dessous et est tracé. Désactivé, tout continue comme aujourd&apos;hui.{" "}
+                FedaPay sert à tout : vos locataires paient leur loyer et leurs charges en ligne (Mobile Money, carte), et vous
+                payez les salaires, reversez les loyers aux propriétaires et effectuez d&apos;autres paiements. Chaque envoi
+                d&apos;argent demande votre mot de passe, respecte les plafonds et est tracé. Désactivé, tout continue comme avant.{" "}
                 <a
                   href="https://fedapay.com"
                   target="_blank"
@@ -569,6 +485,15 @@ function ParametresContent() {
               <label className="flex items-center gap-2.5">
                 <input
                   type="checkbox"
+                  checked={fedapayCollectEnabled}
+                  onChange={(e) => setFedapayCollectEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                />
+                <span className="font-label-md text-ink">Encaisser les loyers et charges en ligne (locataires)</span>
+              </label>
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
                   checked={fedapayEnabled}
                   onChange={(e) => setFedapayEnabled(e.target.checked)}
                   className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
@@ -576,7 +501,7 @@ function ParametresContent() {
                 <span className="font-label-md text-ink">Activer les paiements sortants</span>
               </label>
 
-              {fedapayEnabled && (
+              {(fedapayEnabled || fedapayCollectEnabled) && (
                 <>
                   <label className="flex items-center gap-2.5">
                     <input
@@ -603,6 +528,21 @@ function ParametresContent() {
                         value={fedapaySecretKey}
                         onChange={(e) => setFedapaySecretKey(e.target.value)}
                         placeholder={settings.fedapayConfigured ? "••••••••" : undefined}
+                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      />
+                    </Field>
+                    <Field
+                      label="Secret du webhook (optionnel)"
+                      htmlFor="fedapayWebhookSecret"
+                      hint={settings.fedapayWebhookConfigured ? "Déjà enregistré — laissez vide pour le conserver" : "Confirmation automatique des paiements locataires"}
+                    >
+                      <input
+                        id="fedapayWebhookSecret"
+                        type="password"
+                        autoComplete="new-password"
+                        value={fedapayWebhookSecret}
+                        onChange={(e) => setFedapayWebhookSecret(e.target.value)}
+                        placeholder={settings.fedapayWebhookConfigured ? "••••••••" : undefined}
                         className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                       />
                     </Field>

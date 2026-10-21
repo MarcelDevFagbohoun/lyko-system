@@ -29,12 +29,30 @@ export type PaymentLinkInfo = {
   logoUrl: string | null;
   kind: "loyer" | "charge";
   amount: number;
+  onlinePaymentEnabled: boolean;
   kkiapaySandbox: boolean;
   kkiapayPublicKey: string | null;
 };
 
 export function getPaymentLink(token: string) {
   return apiFetch<PaymentLinkInfo>(`/api/pay/${token}`);
+}
+
+export function startPaymentLinkCheckout(token: string) {
+  return apiFetch<{ url: string; reference: string }>(`/api/pay/${token}/checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+}
+
+/** Page de retour : le serveur relit la transaction chez FedaPay et répond paid | pending | failed. */
+export function confirmOnlinePayment(reference: string) {
+  return apiFetch<{ state: "paid" | "pending" | "failed" }>("/api/online-payments/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reference }),
+  });
 }
 
 export type KkiapayVerifyResult = { alreadyRecorded: boolean; amount?: number };

@@ -94,6 +94,17 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
     throw new ApiError(409, 'Cette transaction ne correspond pas à ce paiement (référence différente)');
   }
 
+  return recordConfirmedOnlinePayment({
+    tenant, kind, leaseId, chargeId, linkId, transactionKey: transactionId, amount: verification.amount, paymentMethod: 'kkiapay',
+  });
+}
+
+/**
+ * Enregistrement commun d'un paiement en ligne DÉJÀ CONFIRMÉ par le prestataire (relu côté serveur par l'appelant).
+ * `transactionKey` : identifiant unique de la transaction (clé d'idempotence en base). `amount` : montant CONFIRMÉ
+ * par le prestataire, jamais un montant fourni par le client.
+ */
+async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, linkId, transactionKey, amount, paymentMethod }) {
   let rentResult = null;
   let utilityResult = null;
   const conn = await pool.getConnection();
@@ -110,12 +121,12 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
         tenantId: tenant.id,
         lease,
         coversMonth: null,
-        amount: verification.amount,
-        paymentMethod: 'kkiapay',
+        amount,
+        paymentMethod,
         paidAt: todayIso(),
         notes: null,
         recordedBy: null,
-        kkiapayTransactionId: transactionId,
+        kkiapayTransactionId: transactionKey,
       });
     } else {
       await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id: chargeId });
@@ -124,12 +135,12 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
       utilityResult = await recordUtilityPayment(conn, {
         tenantId: tenant.id,
         charge,
-        amount: verification.amount,
-        paymentMethod: 'kkiapay',
+        amount,
+        paymentMethod,
         paidAt: todayIso(),
         notes: null,
         recordedBy: null,
-        kkiapayTransactionId: transactionId,
+        kkiapayTransactionId: transactionKey,
       });
     }
 
@@ -148,11 +159,11 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
         'SELECT amount FROM payment_links WHERE id = :id AND tenant_id = :t FOR UPDATE',
         { id: linkId, t: tenant.id },
       );
-      if (link && verification.amount >= Number(link.amount)) {
+      if (link && amount >= Number(link.amount)) {
         await conn.query(
           `UPDATE payment_links SET status = 'paid', paid_at = NOW(), kkiapay_transaction_id = :tx
            WHERE id = :id AND tenant_id = :t`,
-          { tx: transactionId, id: linkId, t: tenant.id },
+          { tx: transactionKey, id: linkId, t: tenant.id },
         );
       }
     }
@@ -161,7 +172,7 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
     // E-mail automatique au locataire (après commit ; ne bloque ni n'échoue jamais le paiement).
     if (rentResult) notifyRentPaymentsRecorded(tenant.id, rentResult.payments.map((p) => p.paymentId));
     if (utilityResult) notifyUtilityPaymentRecorded(tenant.id, utilityResult.paymentId);
-    return { alreadyRecorded: false, amount: verification.amount };
+    return { alreadyRecorded: false, amount };
   } catch (err) {
     await conn.rollback().catch(() => {});
     // Un retry concurrent (deux livraisons du même webhook en parallèle) peut
@@ -177,4 +188,4 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
   }
 }
 
-module.exports = { verifyAndRecordKkiapay };
+module.exports = { verifyAndRecordKkiapay, recordConfirmedOnlinePayment };

@@ -56,6 +56,7 @@ export type PortalDashboard = {
     id: number;
     companyName: string | null;
     logoUrl: string | null;
+    onlinePaymentEnabled: boolean;
     kkiapayEnabled: boolean;
     kkiapaySandbox: boolean;
     kkiapayPublicKey: string | null;
@@ -83,6 +84,25 @@ export type PortalDashboard = {
 
 export function getPortalDashboard(token: string) {
   return apiFetch<PortalDashboard>(`/api/portal/${token}`);
+}
+
+export type CheckoutResult = { url: string; reference: string };
+
+/** Ouvre une page de paiement FedaPay pour le loyer — le serveur crée la transaction, le navigateur ne fait que rediriger. */
+export function startPortalRentCheckout(token: string, amount: number) {
+  return apiFetch<CheckoutResult>(`/api/portal/${token}/rent/checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amount }),
+  });
+}
+
+export function startPortalChargeCheckout(token: string, chargeId: number) {
+  return apiFetch<CheckoutResult>(`/api/portal/${token}/charges/${chargeId}/checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
 }
 
 export type KkiapayVerifyResult = { alreadyRecorded: boolean; amount?: number };

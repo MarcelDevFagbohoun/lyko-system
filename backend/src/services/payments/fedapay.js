@@ -29,15 +29,21 @@ class ProviderError extends Error {
   }
 }
 
-function secretKeyFor(tenant) {
-  if (!tenant.fedapay_enabled || !tenant.fedapay_secret_key_enc) {
-    throw new ProviderError('Les paiements sortants ne sont pas activés pour cette entreprise.');
+/** `scope` : 'payout' (envois) ou 'collect' (encaissement) — deux interrupteurs indépendants, une même clé. */
+function secretKeyFor(tenant, scope = 'payout') {
+  const enabled = scope === 'collect' ? tenant.fedapay_collect_enabled : tenant.fedapay_enabled;
+  if (!enabled || !tenant.fedapay_secret_key_enc) {
+    throw new ProviderError(
+      scope === 'collect'
+        ? "Le paiement en ligne n'est pas activé pour cette entreprise."
+        : 'Les paiements sortants ne sont pas activés pour cette entreprise.',
+    );
   }
   return decryptSecret(tenant.fedapay_secret_key_enc);
 }
 
-async function call(tenant, method, path, body) {
-  const key = secretKeyFor(tenant);
+async function call(tenant, method, path, body, scope = 'payout') {
+  const key = secretKeyFor(tenant, scope);
   const base = tenant.fedapay_sandbox ? BASE.sandbox : BASE.live;
   let response;
   try {
@@ -118,4 +124,67 @@ async function getPayout(tenant, payoutId) {
   };
 }
 
-module.exports = { createPayout, startPayout, getPayout, ProviderError, MODE_BY_OPERATOR };
+// ---------------------------------------------------------------------------------------------------------
+// Encaissement (Checkout hébergé) : POST /v1/transactions → POST /v1/transactions/{id}/token → redirection vers
+// `url`. Statuts : pending | approved | declined | canceled | refunded | transferred | expired.
+// ---------------------------------------------------------------------------------------------------------
+function unwrapTransaction(data) {
+  if (!data || typeof data !== 'object') return null;
+  const candidate = data['v1/transaction'] ?? data.transaction ?? data;
+  return candidate && typeof candidate === 'object' && candidate.id != null ? candidate : null;
+}
+
+async function createCheckout(tenant, { amount, description, callbackUrl, reference, customer }) {
+  const { firstname, lastname } = splitName(customer?.name || 'Client');
+  const data = await call(tenant, 'POST', '/v1/transactions', {
+    description: String(description).slice(0, 190),
+    amount: Number(amount),
+    currency: { iso: 'XOF' },
+    callback_url: callbackUrl,
+    custom_metadata: { lyko_reference: reference },
+    customer: { firstname, lastname, ...(customer?.email ? { email: customer.email } : {}) },
+  }, 'collect');
+  const tx = unwrapTransaction(data);
+  if (!tx) throw new ProviderError('Réponse FedaPay inattendue à la création de la transaction');
+  const tokenData = await call(tenant, 'POST', `/v1/transactions/${encodeURIComponent(String(tx.id))}/token`, undefined, 'collect');
+  const url = typeof tokenData?.url === 'string' ? tokenData.url : null;
+  // On n'envoie jamais le client vers une adresse qui ne serait pas FedaPay.
+  if (!url || !/^https:\/\/([a-z0-9-]+\.)*fedapay\.com(\/|$)/i.test(url)) {
+    throw new ProviderError('Réponse FedaPay inattendue (adresse de paiement)');
+  }
+  return { transactionId: String(tx.id), url };
+}
+
+/** Relit l'état RÉEL d'une transaction — seule source de vérité d'un encaissement. */
+async function getTransaction(tenant, transactionId) {
+  const data = await call(tenant, 'GET', `/v1/transactions/${encodeURIComponent(String(transactionId))}`, undefined, 'collect');
+  const tx = unwrapTransaction(data);
+  if (!tx) throw new ProviderError('Réponse FedaPay inattendue à la lecture de la transaction');
+  const meta = tx.custom_metadata && typeof tx.custom_metadata === 'object' ? tx.custom_metadata : {};
+  return {
+    id: String(tx.id),
+    status: String(tx.status ?? ''),
+    amount: tx.amount != null ? Number(tx.amount) : null,
+    reference: typeof meta.lyko_reference === 'string' ? meta.lyko_reference : null,
+  };
+}
+
+/**
+ * Signature d'un webhook FedaPay : en-tête `X-FEDAPAY-SIGNATURE: t=<horodatage>,s=<hmac-sha256 hex>`, calculée sur
+ * `<t>.<corps brut>` avec le secret du webhook. Comparaison à temps constant, tolérance de 10 minutes (rejeu).
+ */
+function verifyWebhookSignature(tenant, rawBody, header, { now = Date.now() } = {}) {
+  if (!tenant.fedapay_webhook_secret_enc || !rawBody || typeof header !== 'string') return false;
+  const parts = Object.fromEntries(header.split(',').map((p) => p.trim().split('=')).filter((kv) => kv.length === 2));
+  const t = parts.t;
+  const sig = parts.s;
+  if (!t || !sig || !/^\d{9,13}$/.test(t) || !/^[a-f0-9]{64}$/i.test(sig)) return false;
+  const tsMs = t.length <= 10 ? Number(t) * 1000 : Number(t);
+  if (Math.abs(now - tsMs) > 10 * 60 * 1000) return false;
+  const secret = decryptSecret(tenant.fedapay_webhook_secret_enc);
+  const expected = require('crypto').createHmac('sha256', secret).update(`${t}.${rawBody.toString('utf8')}`).digest();
+  const given = Buffer.from(sig, 'hex');
+  return given.length === expected.length && require('crypto').timingSafeEqual(given, expected);
+}
+
+module.exports = { createPayout, startPayout, getPayout, createCheckout, getTransaction, verifyWebhookSignature, ProviderError, MODE_BY_OPERATOR };

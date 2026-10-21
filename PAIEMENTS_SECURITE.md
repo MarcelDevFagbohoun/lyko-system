@@ -23,3 +23,11 @@ La valeur `mode` pour Moov Bénin et l'enveloppe JSON des réponses (gérées d�
 
 ## Tests
 `backend/test/paymentOrders.test.js` (20 tests : droits, IDOR, injections, secrets, mot de passe, rejeu, anomalie, chaîne d'audit, e-mails, portail).
+
+## Encaissement des locataires via FedaPay (remplace KKiaPay dans l'interface)
+- Le locataire est **redirigé vers la page de paiement hébergée FedaPay** : aucune clé n'est exposée au navigateur.
+- Le serveur crée d'abord une *intention* (référence aléatoire 128 bits liée à un bail, une facture ou un lien) ; le montant d'une charge est le reste dû calculé côté serveur, celui d'un loyer est borné (≤ 12 mois).
+- Au retour (page `/paiement/retour`) ou sur webhook signé, le serveur **relit la transaction chez FedaPay** : statut `approved`, montant identique, référence de l'intention présente — sinon rien n'est enregistré. Enregistrement unique (clé `fedapay:<id>`).
+- Webhook `POST /api/webhooks/fedapay/<id du cabinet>` : signature HMAC-SHA256 (secret du cabinet, chiffré), tolérance 10 min ; le corps du webhook n'est jamais cru, il ne fait que déclencher la relecture.
+- Réglage : Paramètres → « Paiements en ligne (FedaPay) » (interrupteur « Encaisser les loyers et charges en ligne » + secret du webhook). Dans FedaPay, déclarer l'URL du webhook : `<API>/api/webhooks/fedapay/<id du cabinet>`.
+- Les paiements KKiaPay déjà enregistrés restent intacts ; le code KKiaPay n'est plus utilisé par l'interface.
