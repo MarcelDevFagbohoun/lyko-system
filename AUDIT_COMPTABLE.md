@@ -182,3 +182,21 @@ Un commit distinct (`395a2c6`) contient un correctif sans rapport avec cet audit
 - Chaque correction revérifiée en direct sur l'entreprise jetable de l'audit (jamais sur KIko Store) : paiement partiel + complément tombant bien sur le même mois (A1) ; reversement de 5 000 000 FCFA désormais rejeté (A2) ; annulation d'un paiement avec extourne GL générée (A3) ; code HTTP réel au lieu de 500 (B1) ; raison affichée lors d'un rattrapage partiel (B4).
 
 **Fin du rapport.**
+
+---
+
+## Audit du 21/10/2026 — vérification des calculs d'un mois
+
+**Divergences trouvées (comptabilité simple) et corrigées**
+- **C1 — Mois d'un loyer.** La fiche du Bien rangeait un loyer par mois *couvert*, le séquestre aussi, le cabinet aussi, mais le séquestre bornait par date d'*encaissement* : un loyer d'octobre payé en septembre apparaissait à deux endroits différents. Tout est maintenant en base caisse, mois civil d'encaissement (`paid_at`).
+- **C2 — Taux de commission.** Le taux du *dernier jour du mois* s'appliquait à tout le mois : deux loyers payés d'avance en septembre (10 %) étaient commissionnés à 15 % parce que le taux changeait le 01/10. Désormais taux **du jour du paiement**, arrondi une fois par (propriétaire, Bien, mois). Chargeur unique `loadOwnerFlows` dans `services/commission.js`.
+- **C3 — Impayés d'un mois passé.** Le tableau de bord affichait les impayés d'aujourd'hui pour un mois clos. `listPortfolioArrears` accepte `asOfDate` (fin du mois).
+- **C4 — « Solde net ».** Il ignorait dette initiale, prorata, pénalités, cautions, charges SONEB/SBEE et dépenses de Biens. Remplacé par deux chiffres séparés : *trésorerie réelle* (toutes entrées − toutes sorties) et *résultat net du cabinet*.
+- **C5 — Comptabilité avancée.** Une réparation d'un Bien était une charge du cabinet (624) alors que, côté simple, elle réduit la recette du propriétaire. Nouvelle règle `depense_bien_proprietaire` (débit 4671 + 706, crédit trésorerie/fournisseur), migration 101 pour les entreprises existantes, rattrapage à l'activation.
+
+**Nouveau** : bilan détaillé d'un mois (`services/monthBilan.js`, `GET /api/accounting/month-bilan/:month`), photo figée à la clôture (`accounting_period_bilans`, migration 100), contrôles de cohérence croisés, page Clôture → « Consulter un mois ».
+
+**À valider avec un expert-comptable**
+- Compte 4671 utilisé comme compte d'avances aux mandants pour les dépenses de Biens (règle non validée par défaut).
+- Dépense de Bien *à crédit* : la comptabilité avancée débite 4671 à l'engagement, la simple la compte à son paiement (écart temporaire jusqu'au règlement).
+- Loyer réglé sur la caution (`payment_method = 'caution'`) : compté dans la recette du propriétaire, mais pas comme entrée de trésorerie.

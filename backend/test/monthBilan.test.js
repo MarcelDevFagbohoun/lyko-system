@@ -60,3 +60,17 @@ test('photo figée : relue telle quelle', async () => {
   const stored = await getStoredBilan(fx.tenantId, '2026-09');
   assert.equal(stored.snapshot.treasury.net, 150000);
 });
+
+test('frais d\'agence, caution, prorata : entrées du mois sans toucher le revenu propriétaire', async () => {
+  await pool.query(
+    `UPDATE leases SET entry_fee_amount = 30000, entry_fee_received_at = '2026-08-04', entry_fee_received_method = 'especes',
+       deposit_amount = 100000, deposit_received_at = '2026-08-04', deposit_received_method = 'especes' WHERE id = :l`,
+    { l: fx.leaseId },
+  );
+  const b = await getMonthBilan(fx.tenantId, '2026-08');
+  assert.equal(b.inflows.lines.entryFees, 30000);
+  assert.equal(b.inflows.lines.rentDeposits, 100000);
+  assert.equal(b.treasury.net, 130000, 'tout l’argent entré compte dans la trésorerie');
+  assert.equal(b.cabinet.netIncome, 30000, 'seuls les frais d’agence reviennent au cabinet (la caution est à rendre)');
+  assert.equal(b.owners.length, 0, 'aucun flux propriétaire ce mois-là');
+});
