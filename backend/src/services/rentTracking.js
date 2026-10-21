@@ -538,7 +538,12 @@ function computeRentOwed({ lease, payments, rhythm, asOfDate = null }) {
   return { arrears, unpaidMonths, rentOwed };
 }
 
-async function listPortfolioArrears(tenantId, scopeAgentId = null) {
+/**
+ * `asOfDate` ('AAAA-MM-JJ', défaut null = aujourd'hui) : reconstruit le point des impayés tel qu'il était
+ * à cette date (fin d'un mois passé) — seuls comptent les baux déjà démarrés et encore en cours à cette
+ * date, les paiements/règlements faits au plus tard ce jour-là, et les pénalités déjà appliquées.
+ */
+async function listPortfolioArrears(tenantId, scopeAgentId = null, asOfDate = null) {
   const { getTenantRhythm } = require('./accountingPeriods');
   const rhythm = await getTenantRhythm(tenantId);
   const isCalendaire = rhythm.mode === 'calendaire';
@@ -549,6 +554,13 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
     scopeClause = ' AND p.agent_id = :scopeAgentId';
     params.scopeAgentId = scopeAgentId;
   }
+  // Bail « en cours » : actif aujourd'hui, ou (reconstruction) démarré avant la date et pas encore terminé.
+  let leaseStatusClause = "l.status = 'active'";
+  if (asOfDate) {
+    leaseStatusClause = 'l.start_date <= :asOfDate AND (l.end_date IS NULL OR l.end_date >= :asOfDate)';
+    params.asOfDate = asOfDate;
+  }
+  const paidBy = (col) => (asOfDate ? ` AND ${col} <= '${asOfDate}'` : '');
   const [activeLeases] = await pool.query(
     `SELECT l.id, l.monthly_rent, l.start_date, l.rent_due_day, l.rent_due_offset_days, l.rent_timing, l.opening_debt_amount,
             l.created_at, l.up_to_date_at_onboarding, l.entry_proration,
@@ -558,7 +570,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
      JOIN renters r ON r.id = l.renter_id
      JOIN property_units un ON un.id = l.unit_id
      JOIN properties p ON p.id = un.property_id
-     WHERE l.tenant_id = :tenantId AND l.status = 'active' ${scopeClause}`,
+     WHERE l.tenant_id = :tenantId AND ${leaseStatusClause} ${scopeClause}`,
     params,
   );
   if (activeLeases.length === 0) return [];
@@ -566,7 +578,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   const leaseIds = activeLeases.map((l) => l.id);
   const placeholders = leaseIds.map(() => '?').join(',');
   const [payments] = await pool.query(
-    `SELECT lease_id, covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL`,
+    `SELECT lease_id, covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id IN (${placeholders}) AND deleted_at IS NULL${paidBy('paid_at')}`,
     leaseIds,
   );
   const paymentsByLease = new Map();
@@ -577,7 +589,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   }
 
   const [openingDebtPaid] = await pool.query(
-    `SELECT lease_id, SUM(amount) AS paid FROM lease_opening_debt_payments WHERE lease_id IN (${placeholders}) GROUP BY lease_id`,
+    `SELECT lease_id, SUM(amount) AS paid FROM lease_opening_debt_payments WHERE lease_id IN (${placeholders})${paidBy('paid_at')} GROUP BY lease_id`,
     leaseIds,
   );
   const openingDebtPaidByLease = new Map(openingDebtPaid.map((r) => [r.lease_id, Number(r.paid)]));
@@ -586,13 +598,13 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   // solde restant = montants appliqués moins ce qui a déjà été réglé, sommé par bail (un bail peut avoir
   // plusieurs pénalités, chacune payable indépendamment — voir `late_fee_payments`).
   const [lateFeesApplied] = await pool.query(
-    `SELECT lease_id, SUM(amount) AS applied FROM late_fees WHERE lease_id IN (${placeholders}) GROUP BY lease_id`,
+    `SELECT lease_id, SUM(amount) AS applied FROM late_fees WHERE lease_id IN (${placeholders})${paidBy('applied_at')} GROUP BY lease_id`,
     leaseIds,
   );
   const [lateFeesPaid] = await pool.query(
     `SELECT lf.lease_id, SUM(lfp.amount) AS paid
      FROM late_fee_payments lfp JOIN late_fees lf ON lf.id = lfp.late_fee_id
-     WHERE lf.lease_id IN (${placeholders}) GROUP BY lf.lease_id`,
+     WHERE lf.lease_id IN (${placeholders})${paidBy('lfp.paid_at')} GROUP BY lf.lease_id`,
     leaseIds,
   );
   const lateFeesAppliedByLease = new Map(lateFeesApplied.map((r) => [r.lease_id, Number(r.applied)]));
@@ -604,6 +616,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
       lease,
       payments: paymentsByLease.get(lease.id) || [],
       rhythm,
+      asOfDate,
     });
     const openingDebtRemaining = Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0);
     const lateFeesRemaining = (lateFeesAppliedByLease.get(lease.id) || 0) - (lateFeesPaidByLease.get(lease.id) || 0);

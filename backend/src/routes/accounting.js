@@ -73,6 +73,7 @@ const { streamAccountingReportPdf, formatMonthLabel } = require('../services/pdf
 const { getClosingOverview } = require('../services/closingOverview');
 const logger = require('../utils/logger');
 
+const { getMonthBilan, storeBilanSnapshot, getStoredBilan, MONTH_RE } = require('../services/monthBilan');
 const router = Router();
 router.use(requireAuth);
 // Module strictement financier : réservé à la comptabilité (le DG passe
@@ -1712,6 +1713,35 @@ router.get('/rent-month/:month/bilan', canAccounting, async (req, res, next) => 
   }
 });
 
+// GET /api/accounting/month-bilan/:month — bilan détaillé d'un mois (entrées, sorties, par Bien, point
+// propriétaires, point locataires à la fin du mois, dépenses, charges, contrôles). Mois clôturé : renvoie la
+// PHOTO FIGÉE prise à la clôture (`source: 'snapshot'`) et signale par `drift` si une reconstruction avec les
+// données actuelles donne un autre résultat (régularisation postérieure). Sinon `source: 'live'`.
+router.get('/month-bilan/:month', canAccounting, async (req, res, next) => {
+  const month = req.params.month;
+  if (!MONTH_RE.test(month)) return next(new ApiError(400, 'Mois invalide (AAAA-MM)'));
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const live = await getMonthBilan(req.user.tenantId, month, { scopeAgentId });
+    const closed = await isPeriodClosed(req.user.tenantId, `${month}-01`);
+    const stored = closed ? await getStoredBilan(req.user.tenantId, month) : null;
+    if (stored) {
+      const key = (b) => JSON.stringify([b.treasury, b.cabinet, b.inflows.lines, b.outflows.lines]);
+      return res.json({
+        source: 'snapshot',
+        frozenAt: stored.frozenAt,
+        isClosed: true,
+        drift: key(stored.snapshot) !== key(live),
+        bilan: stored.snapshot,
+        live,
+      });
+    }
+    res.json({ source: 'live', isClosed: closed, drift: false, bilan: live });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/accounting/arrears — centre de relance groupée (étape 10) : liste
 // complète des locataires en retard sur tout le portefeuille (téléphone,
 // bien/unité inclus pour construire les liens WhatsApp), tout le portefeuille
@@ -2103,6 +2133,19 @@ router.post('/periods', requireRole('dg'), async (req, res, next) => {
         periodEnd,
         error: snapshotErr.message,
       });
+    }
+
+    // Photo figée du bilan détaillé du mois (calendaire) — même principe : jamais bloquante.
+    if (legacyPeriod) {
+      try {
+        await storeBilanSnapshot(req.user.tenantId, legacyPeriod, req.user.id);
+      } catch (bilanErr) {
+        logger.error('Échec de la photo du bilan à la clôture (période tout de même clôturée)', {
+          tenantId: req.user.tenantId,
+          period: legacyPeriod,
+          error: bilanErr.message,
+        });
+      }
     }
 
     // Exercice SYSCOHADA : si cette période est la dernière d'un exercice encore ouvert, le signale
