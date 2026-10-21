@@ -50,7 +50,11 @@ async function sumCount(db, sql, params) {
   return { total: n(row.total), count: n(row.n) };
 }
 
-async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool } = {}) {
+/**
+ * `light: true` : uniquement les totaux (entrées/sorties, trésorerie, résultat cabinet) — sans le détail par
+ * propriétaire, le point locataires ni les contrôles. Utilisé par le tableau de bord (appelé souvent).
+ */
+async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, light = false } = {}) {
   if (!MONTH_RE.test(month)) throw new Error('Mois invalide (AAAA-MM)');
   const first = firstDayOf(month);
   const last = commission.lastDayOfMonth(month);
@@ -163,10 +167,9 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool }
   })();
 
   // Soldes séquestre : ouverture (veille du 1er) → clôture (fin du mois) + mouvement du mois.
-  const [opening, closing] = await Promise.all([
-    commission.getEscrowBalances(tenantId, db, dayBefore(first)),
-    commission.getEscrowBalances(tenantId, db, last),
-  ]);
+  const [opening, closing] = light
+    ? [new Map(), new Map()]
+    : await Promise.all([commission.getEscrowBalances(tenantId, db, dayBefore(first)), commission.getEscrowBalances(tenantId, db, last)]);
   const ownerIds = new Set([...opening.keys(), ...closing.keys(), ...cells.map((c) => c.ownerId)]);
   const owners = [...ownerIds]
     .map((ownerId) => {
@@ -193,7 +196,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool }
 
   // ── POINT LOCATAIRES (état à la fin du mois) ───────────────────────────────────────────────
   let tenants = { asOf, totalOwed: 0, count: 0, list: [] };
-  if (!isFuture) {
+  if (!isFuture && !light) {
     const arrears = await listPortfolioArrears(tenantId, scopeAgentId, last < today ? last : null);
     tenants = {
       asOf,
@@ -261,7 +264,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool }
   const cellsCommission = cells.reduce((s, c) => s + c.commission, 0);
   const escrowDelta = owners.reduce((s, o) => s + (o.closingBalance - o.openingBalance), 0);
   const expectedDelta = cellsNet - (commissionAtCollection ? cellsCommission : 0) - ownerPayouts.total;
-  const controls = [
+  const controls = light ? [] : [
     {
       key: 'flux_proprietaires',
       label: 'Loyers + dette initiale + prorata − dépenses de Biens (par Bien) = entrées − dépenses du mois',

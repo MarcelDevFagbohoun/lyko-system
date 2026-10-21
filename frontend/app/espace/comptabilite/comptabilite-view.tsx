@@ -713,11 +713,17 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         trend={{ value: `${totals.tenantArrearsCount} locataire(s) en retard`, direction: "flat" }}
       />
       <StatCard
-        label="Solde net"
+        label={totals.treasuryNet != null ? "Trésorerie réelle" : "Solde net"}
         icon={<Scale size={16} />}
-        value={formatFcfa(totals.netCashFlow)}
-        tone={totals.netCashFlow >= 0 ? "success" : "danger"}
-        trend={{ value: "Encaissé + frais d'agence + commission vente, moins reversé et dépenses de l'entreprise", direction: totals.netCashFlow >= 0 ? "up" : "down" }}
+        value={formatFcfa(totals.treasuryNet ?? totals.netCashFlow)}
+        tone={(totals.treasuryNet ?? totals.netCashFlow) >= 0 ? "success" : "danger"}
+        trend={{
+          value:
+            totals.treasuryNet != null
+              ? `${formatFcfa(totals.treasuryIn ?? 0)} entrés − ${formatFcfa(totals.treasuryOut ?? 0)} sortis, argent des propriétaires inclus (le résultat du cabinet est à part)`
+              : "Encaissé + frais d'agence + commission vente, moins reversé et dépenses de l'entreprise",
+          direction: (totals.treasuryNet ?? totals.netCashFlow) >= 0 ? "up" : "down",
+        }}
       />
     </div>
   );

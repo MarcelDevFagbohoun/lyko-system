@@ -199,6 +199,10 @@ export type AccountingDashboard = {
     saleCommissionsCollected: number;
     saleCommissionsCollectedCount: number;
     netCashFlow: number;
+    /** Trésorerie réelle du mois (toutes entrées − toutes sorties) ; `null` hors mois calendaire unique. */
+    treasuryNet: number | null;
+    treasuryIn: number | null;
+    treasuryOut: number | null;
   };
   expensesByCategory: { category: ExpenseCategory; total: number }[];
   unpaidChargesByType: { utilityType: UtilityType; total: number; count: number }[];

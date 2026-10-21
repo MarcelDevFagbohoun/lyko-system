@@ -162,11 +162,17 @@ function TableauDeBordContent() {
                   trend={{ value: `${money.totals.unpaidChargesCount} facture(s)`, direction: "flat" }}
                 />
                 <StatCard
-                  label="Solde net (mois)"
+                  label="Trésorerie réelle (mois)"
                   icon={<Scale size={16} />}
-                  value={formatFcfa(money.totals.netCashFlow)}
-                  tone={money.totals.netCashFlow >= 0 ? "success" : "danger"}
-                  trend={{ value: "Encaissé, moins reversé et dépenses", direction: money.totals.netCashFlow >= 0 ? "up" : "down" }}
+                  value={formatFcfa(money.totals.treasuryNet ?? money.totals.netCashFlow)}
+                  tone={(money.totals.treasuryNet ?? money.totals.netCashFlow) >= 0 ? "success" : "danger"}
+                  trend={{
+                    value:
+                      money.totals.treasuryNet != null
+                        ? `${formatFcfa(money.totals.treasuryIn ?? 0)} entrés − ${formatFcfa(money.totals.treasuryOut ?? 0)} sortis (argent des propriétaires inclus)`
+                        : "Encaissé, moins reversé et dépenses",
+                    direction: (money.totals.treasuryNet ?? money.totals.netCashFlow) >= 0 ? "up" : "down",
+                  }}
                 />
                 {money.cabinetRevenue && (
                   <StatCard

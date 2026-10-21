@@ -1221,7 +1221,9 @@ async function computeAccountingDashboard(user, { from, to }) {
     // Portée « Biens gérés » (étape 14) : un agent restreint (rare ici, ce
     // module exige `comptabilite`) ne voit que ses propres impayés.
     const scopeAgentId = await resolvePropertyScope(user);
-    const portfolioArrears = await listPortfolioArrears(user.tenantId, scopeAgentId);
+    // Mois déjà terminé : impayés tels qu'ils étaient À LA FIN de la période (jamais l'état d'aujourd'hui).
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const portfolioArrears = await listPortfolioArrears(user.tenantId, scopeAgentId, to < todayStr ? to : null);
     const tenantArrears = portfolioArrears.map((a) => ({
       leaseId: a.leaseId,
       renterName: a.renterName,
@@ -1274,6 +1276,12 @@ async function computeAccountingDashboard(user, { from, to }) {
     // sur une plage personnalisée dans Comptabilité), plutôt que d'afficher un chiffre à cheval sur
     // plusieurs mois qui n'aurait pas le même sens que la carte du tableau de bord.
     const cabinetRevenue = from.slice(0, 7) === to.slice(0, 7) ? await getCabinetRevenue(user.tenantId, from.slice(0, 7)) : null;
+
+    // Trésorerie RÉELLE du mois (toutes entrées − toutes sorties, argent des propriétaires, cautions et charges
+    // en transit inclus) : distincte du résultat du cabinet ci-dessus (décision du 21/10/2026, « les deux,
+    // séparés »). `null` hors mois calendaire unique.
+    const treasury =
+      from.slice(0, 7) === to.slice(0, 7) ? (await getMonthBilan(user.tenantId, from.slice(0, 7), { light: true })).treasury : null;
 
     const rentCollected = Number(rentRow.total);
     const ownerPayouts = Number(payoutRow.total);
@@ -1341,6 +1349,9 @@ async function computeAccountingDashboard(user, { from, to }) {
         // Même principe que `entryFeesCollected` : 100 % produit du cabinet, s'ajoute au flux net.
         saleCommissionsCollected,
         saleCommissionsCollectedCount: Number(saleCommissionRow.n),
+        treasuryNet: treasury ? treasury.net : null,
+        treasuryIn: treasury ? treasury.in : null,
+        treasuryOut: treasury ? treasury.out : null,
         netCashFlow: rentCollected - ownerPayouts - expensesTotal + entryFeesCollected + saleCommissionsCollected,
       },
       expensesByCategory: byCategory.map((r) => ({ category: r.category, total: Number(r.total) })),

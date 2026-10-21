@@ -797,7 +797,7 @@ function MonthRecap({ dashboard }: { dashboard: AccountingDashboard }) {
     // Charges SONEB/SBEE impayées (demande utilisateur, 2026-10-18 : « une clôture nous devons
     // avoir ... les charges »), cumulées (pas bornées au mois, comme ailleurs sur ce total).
     { label: "Charges SONEB/SBEE impayées", value: t.unpaidCharges },
-    { label: "Solde net", value: t.netCashFlow },
+    { label: "Trésorerie réelle du mois", value: t.treasuryNet ?? t.netCashFlow },
   ];
   return (
     <div className="flex flex-col gap-2">
