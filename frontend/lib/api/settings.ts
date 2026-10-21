@@ -9,11 +9,6 @@ export type TenantSettings = {
   signatureUrl: string | null;
   roleTitles: RoleTitles;
   roleTitlePresets: RoleTitlePresets;
-  kkiapayEnabled: boolean;
-  kkiapaySandbox: boolean;
-  kkiapayPublicKey: string | null;
-  /** Les clés privée/secrète ne sont jamais renvoyées — seulement si elles sont déjà enregistrées. */
-  kkiapayConfigured: boolean;
   /** Paiements sortants FedaPay (salaires, reversements, paiements libres). La clé secrète n'est jamais renvoyée. */
   fedapayEnabled: boolean;
   fedapaySandbox: boolean;
@@ -45,11 +40,6 @@ export function updateSettings(
     dgTitle?: string;
     comptableTitle?: string;
     agentTitle?: string;
-    kkiapayEnabled?: boolean;
-    kkiapaySandbox?: boolean;
-    kkiapayPublicKey?: string;
-    kkiapayPrivateKey?: string;
-    kkiapaySecretKey?: string;
     fedapayEnabled?: boolean;
     fedapaySandbox?: boolean;
     fedapaySecretKey?: string;
@@ -70,14 +60,9 @@ export function updateSettings(
   if (input.dgTitle !== undefined) fd.append("dgTitle", input.dgTitle);
   if (input.comptableTitle !== undefined) fd.append("comptableTitle", input.comptableTitle);
   if (input.agentTitle !== undefined) fd.append("agentTitle", input.agentTitle);
-  if (input.kkiapayEnabled !== undefined) fd.append("kkiapayEnabled", String(input.kkiapayEnabled));
-  if (input.kkiapaySandbox !== undefined) fd.append("kkiapaySandbox", String(input.kkiapaySandbox));
-  if (input.kkiapayPublicKey !== undefined) fd.append("kkiapayPublicKey", input.kkiapayPublicKey);
   // Champs écriture seule : n'envoyer que si l'utilisateur a tapé quelque
   // chose (une chaîne vide laisserait la clé déjà stockée inchangée côté
   // serveur, mais autant ne pas l'envoyer du tout).
-  if (input.kkiapayPrivateKey) fd.append("kkiapayPrivateKey", input.kkiapayPrivateKey);
-  if (input.kkiapaySecretKey) fd.append("kkiapaySecretKey", input.kkiapaySecretKey);
   if (input.fedapayEnabled !== undefined) fd.append("fedapayEnabled", String(input.fedapayEnabled));
   if (input.fedapaySandbox !== undefined) fd.append("fedapaySandbox", String(input.fedapaySandbox));
   if (input.fedapayCollectEnabled !== undefined) fd.append("fedapayCollectEnabled", String(input.fedapayCollectEnabled));

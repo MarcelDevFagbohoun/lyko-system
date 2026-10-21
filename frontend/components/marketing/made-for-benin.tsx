@@ -8,7 +8,7 @@ import { SectionHeading } from "@/components/marketing/section-heading";
 const ITEMS = [
   { icon: Banknote, title: "Tout en FCFA", text: "Montants entiers, jamais de décimales parasites, numéros de téléphone béninois contrôlés." },
   { icon: Droplets, title: "SONEB & SBEE", text: "Relevés de compteurs, facture mère, décompteurs par logement et point avec le propriétaire." },
-  { icon: Smartphone, title: "Mobile Money & carte", text: "Paiement en ligne optionnel via KKiaPay, activé par chaque entreprise avec son propre compte." },
+  { icon: Smartphone, title: "Mobile Money & carte", text: "Paiement en ligne optionnel via FedaPay, activé par chaque entreprise avec son propre compte." },
   { icon: MessageCircle, title: "WhatsApp au quotidien", text: "Relances de loyer et de charges, quittances : un message prêt à envoyer, en un clic." },
   { icon: Scale, title: "Plan SYSCOHADA", text: "Comptabilité générale sur le plan SYSCOHADA, en option, à côté de la comptabilité simple." },
 ] as const;

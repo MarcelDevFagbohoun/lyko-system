@@ -28,7 +28,7 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
-  kkiapay: 'Paiement en ligne (KKiaPay)',
+  kkiapay: 'Paiement en ligne',
   caution: 'Prélevé sur la caution',
 };
 
@@ -677,7 +677,7 @@ router.post('/:id/payment-links', async (req, res, next) => {
     const charge = await loadCharge(pool, req.user.tenantId, id, scopeAgentId);
     if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée.');
 
-    const [[tenant]] = await pool.query('SELECT kkiapay_enabled, fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {
+    const [[tenant]] = await pool.query('SELECT fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {
       id: req.user.tenantId,
     });
     if (!tenant?.fedapay_collect_enabled) {

@@ -30,7 +30,6 @@ const marketplaceAccountRoutes = require('./marketplaceAccounts');
 const documentRoutes = require('./documents');
 const documentVerificationRoutes = require('./documentVerification');
 const paymentLinkRoutes = require('./paymentLinks');
-const kkiapayWebhookRoutes = require('./kkiapayWebhook');
 const fedapayCollectRoutes = require('./fedapayCollect');
 const receiptShareRoutes = require('./receiptShare');
 const glAccountsRoutes = require('./gl/glAccounts');
@@ -96,10 +95,9 @@ router.use('/documents', documentRoutes);
 // Vérification publique d'authenticité par code (étape 29) : PUBLIQUE, aucune
 // auth — même piège, doit être montée avant `utilityReadingRoutes`.
 router.use('/verify', documentVerificationRoutes);
-// Page publique de paiement (lien KKiaPay généré par le personnel) et
-// webhook KKiaPay : PUBLIQUES, aucune auth — même piège, mêmes raisons.
+// Page publique de paiement (lien généré par le personnel) :
+// PUBLIQUE, aucune auth — même piège, mêmes raisons.
 router.use('/pay', paymentLinkRoutes);
-router.use('/webhooks', kkiapayWebhookRoutes);
 // Encaissement FedaPay (retour client + webhook signé) : PUBLIQUES, même piège de montage que ci-dessus.
 router.use(fedapayCollectRoutes);
 // Lien de partage direct d'une quittance (WhatsApp) : PUBLIQUE, aucune auth —

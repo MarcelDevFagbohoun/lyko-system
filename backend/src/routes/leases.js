@@ -2331,7 +2331,7 @@ router.post('/:leaseId/payment-links', canPayments, async (req, res, next) => {
     const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
     if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé');
 
-    const [[tenant]] = await pool.query('SELECT kkiapay_enabled, fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {
+    const [[tenant]] = await pool.query('SELECT fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {
       id: req.user.tenantId,
     });
     if (!tenant?.fedapay_collect_enabled) {

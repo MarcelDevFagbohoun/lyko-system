@@ -57,9 +57,6 @@ export type PortalDashboard = {
     companyName: string | null;
     logoUrl: string | null;
     onlinePaymentEnabled: boolean;
-    kkiapayEnabled: boolean;
-    kkiapaySandbox: boolean;
-    kkiapayPublicKey: string | null;
   };
   renter: { firstName: string; lastName: string };
   activeLease: {
@@ -102,24 +99,6 @@ export function startPortalChargeCheckout(token: string, chargeId: number) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",
-  });
-}
-
-export type KkiapayVerifyResult = { alreadyRecorded: boolean; amount?: number };
-
-export function verifyPortalRentPayment(token: string, transactionId: string) {
-  return apiFetch<KkiapayVerifyResult>(`/api/portal/${token}/payments/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transactionId }),
-  });
-}
-
-export function verifyPortalChargePayment(token: string, chargeId: number, transactionId: string) {
-  return apiFetch<KkiapayVerifyResult>(`/api/portal/${token}/charges/${chargeId}/payments/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transactionId }),
   });
 }
 

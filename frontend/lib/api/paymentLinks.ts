@@ -30,8 +30,6 @@ export type PaymentLinkInfo = {
   kind: "loyer" | "charge";
   amount: number;
   onlinePaymentEnabled: boolean;
-  kkiapaySandbox: boolean;
-  kkiapayPublicKey: string | null;
 };
 
 export function getPaymentLink(token: string) {
@@ -52,15 +50,5 @@ export function confirmOnlinePayment(reference: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ reference }),
-  });
-}
-
-export type KkiapayVerifyResult = { alreadyRecorded: boolean; amount?: number };
-
-export function verifyPaymentLink(token: string, transactionId: string) {
-  return apiFetch<KkiapayVerifyResult>(`/api/pay/${token}/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transactionId }),
   });
 }

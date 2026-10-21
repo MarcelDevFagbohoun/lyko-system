@@ -10,7 +10,6 @@ const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { hashToken } = require('../utils/tokens');
-const { verifyAndRecordKkiapay } = require('../services/paymentVerification');
 const { startCheckout } = require('../services/onlinePayments');
 
 const router = Router();
@@ -30,7 +29,7 @@ router.use(payLimiter);
  * inconnu, expiré ou déjà payé ne se distinguent jamais — pas d'énumération). */
 async function loadPaymentLink(token) {
   const [rows] = await pool.query(
-    `SELECT pl.*, t.company_name, t.logo_path, t.kkiapay_enabled, t.kkiapay_sandbox, t.kkiapay_public_key, t.fedapay_collect_enabled
+    `SELECT pl.*, t.company_name, t.logo_path, t.fedapay_collect_enabled
      FROM payment_links pl
      JOIN tenants t ON t.id = pl.tenant_id
      WHERE pl.token_hash = :hash LIMIT 1`,
@@ -58,8 +57,6 @@ router.get('/:token', async (req, res, next) => {
       kind: link.kind,
       amount: Number(link.amount),
       onlinePaymentEnabled: !!link.fedapay_collect_enabled,
-      kkiapaySandbox: !!link.kkiapay_sandbox,
-      kkiapayPublicKey: link.kkiapay_enabled ? link.kkiapay_public_key : null,
     });
   } catch (err) {
     next(err);
@@ -80,32 +77,6 @@ router.post('/:token/checkout', async (req, res, next) => {
       amount: Number(link.amount),
       customer: { name: 'Locataire' },
     }));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/pay/:token/verify — confirme le paiement effectué via le widget.
-router.post('/:token/verify', async (req, res, next) => {
-  const transactionId = typeof req.body?.transactionId === 'string' ? req.body.transactionId.trim() : '';
-  if (!transactionId) return next(new ApiError(400, 'transactionId requis'));
-
-  try {
-    const link = await loadPaymentLink(req.params.token);
-    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: link.tenant_id });
-
-    const result = await verifyAndRecordKkiapay({
-      tenant: tenantRows[0],
-      transactionId,
-      kind: link.kind === 'loyer' ? 'rent' : 'charge',
-      leaseId: link.lease_id,
-      chargeId: link.charge_id,
-      linkId: link.id,
-      // Référence posée par la page publique à l'ouverture du widget — voir
-      // `frontend/lib/kkiapay.ts` et `frontend/app/payer/[token]/payer-view.tsx`.
-      expectedReference: `t${link.tenant_id}:link:${req.params.token}`,
-    });
-    res.json(result);
   } catch (err) {
     next(err);
   }

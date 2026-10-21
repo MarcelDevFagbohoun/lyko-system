@@ -2,7 +2,6 @@
 
 const { ApiError } = require('../middleware/error');
 const { pool } = require('../config/db');
-const kkiapay = require('./kkiapay');
 const { recordRentPayment } = require('../routes/leases');
 const { recordUtilityPayment, loadCharge } = require('../routes/charges');
 const { notifyRentPaymentsRecorded, notifyUtilityPaymentRecorded } = require('./payments/notify');
@@ -21,82 +20,6 @@ async function loadActiveLeaseForPayment(conn, tenantId, leaseId) {
   if (rows[0].status !== 'active') throw new ApiError(400, 'Ce bail est terminé');
   rows[0].id = leaseId;
   return rows[0];
-}
-
-/**
- * Point d'entrée UNIQUE pour enregistrer un paiement confirmé par KKiaPay —
- * appelé par les trois chemins possibles (callback client du portail,
- * callback client d'un lien de paiement, webhook), jamais dupliqué :
- *
- *   1. Vérifie d'abord si `transactionId` a déjà été enregistré (idempotence
- *      applicative, avant même de rappeler KKiaPay — évite un aller-retour
- *      réseau inutile sur un webhook retenté).
- *   2. Revérifie la transaction CÔTÉ SERVEUR auprès de KKiaPay — jamais
- *      confiance sur le seul fait que l'appelant dise « succès ».
- *   3. Enregistre via `recordRentPayment`/`recordUtilityPayment` (seuls
- *      points d'insertion dans rent_payments/utility_payments), avec
- *      `recordedBy: null` (aucun employé n'a saisi ce paiement) et le
- *      montant CONFIRMÉ par KKiaPay — jamais un montant fourni par le client.
- *   4. Si `linkId` est fourni (paiement via un lien généré par le
- *      personnel), marque ce lien comme payé.
- *
- * `kind`: 'rent' (leaseId requis) ou 'charge' (chargeId requis).
- *
- * `expectedReference` : la référence interne (`t<tenantId>:rent:<leaseId>` /
- * `:charge:<chargeId>` / `:link:<token>`) posée dans `data`/`partnerId` du
- * widget QUAND CE paiement précis a été ouvert (voir `frontend/lib/kkiapay.ts`).
- * Protège contre un scénario précis : un tiers qui connaîtrait le
- * `transactionId` RÉEL d'un paiement appartenant à quelqu'un d'autre (ex. un
- * autre locataire de la même entreprise) pourrait sinon le soumettre à SON
- * PROPRE contexte (son propre bail/lien) — la revérification KKiaPay
- * confirmerait bien que la transaction existe et a réussi (elle appartient
- * réellement à cette entreprise), mais SANS ce contrôle, le paiement de l'un
- * se retrouverait crédité au bail de l'autre. Si la réponse de KKiaPay
- * n'échoue PAS explicitement ce contrôle (champ de référence absent de leur
- * réponse — à confirmer lors du premier test en sandbox réel), on ne bloque
- * pas : le webhook + l'idempotence par transactionId restent la protection
- * de base dans ce cas.
- */
-async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, chargeId, linkId, expectedReference }) {
-  if (!tenant.kkiapay_enabled) {
-    throw new ApiError(400, 'Le paiement en ligne est désactivé pour cette entreprise');
-  }
-  if (kind !== 'rent' && kind !== 'charge') {
-    throw new ApiError(400, 'Type de paiement invalide');
-  }
-
-  const table = kind === 'rent' ? 'rent_payments' : 'utility_payments';
-  const [existing] = await pool.query(
-    `SELECT id FROM ${table} WHERE tenant_id = :t AND kkiapay_transaction_id = :tx LIMIT 1`,
-    { t: tenant.id, tx: transactionId },
-  );
-  if (existing[0]) {
-    return { alreadyRecorded: true };
-  }
-
-  // Haute #4 (étape 51) : seul chemin de paiement qui ne vérifiait jamais la clôture de mois — un
-  // paiement confirmé par KKiaPay sur une période déjà clôturée pouvait donc glisser une écriture dans
-  // un mois censé être figé. Vérifié AVANT l'appel réseau à KKiaPay (échec rapide, inutile de le
-  // solliciter pour une date qu'on refusera de toute façon) ; la date réelle est toujours « aujourd'hui »
-  // (un paiement en ligne ne peut jamais être antidaté), voir `todayIso()` plus bas.
-  await assertPeriodOpen(tenant.id, todayIso());
-
-  const verification = await kkiapay.verifyTransaction(tenant, transactionId);
-  if (!verification.success) {
-    throw new ApiError(400, `Paiement non confirmé par KKiaPay (statut : ${verification.status ?? 'inconnu'})`);
-  }
-  if (!verification.amount || verification.amount <= 0) {
-    throw new ApiError(502, 'KKiaPay n\'a renvoyé aucun montant confirmé pour cette transaction');
-  }
-  const echoedReference =
-    verification.raw?.partnerId ?? verification.raw?.partner_id ?? verification.raw?.data ?? verification.raw?.reference;
-  if (expectedReference && echoedReference && echoedReference !== expectedReference) {
-    throw new ApiError(409, 'Cette transaction ne correspond pas à ce paiement (référence différente)');
-  }
-
-  return recordConfirmedOnlinePayment({
-    tenant, kind, leaseId, chargeId, linkId, transactionKey: transactionId, amount: verification.amount, paymentMethod: 'kkiapay',
-  });
 }
 
 /**
@@ -146,7 +69,7 @@ async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, l
 
     if (linkId) {
       // Bug corrigé (audit sécurité/logique) : le lien était marqué « payé »
-      // pour toute transaction KKiaPay confirmée, sans comparer son montant à
+      // pour toute transaction le prestataire de paiement confirmée, sans comparer son montant à
       // celui réellement attendu (`payment_links.amount`) — un montant
       // insuffisant (transaction mal formée, ou une autre transaction réelle
       // du même compte marchand délibérément soumise ici) affichait quand
@@ -188,4 +111,4 @@ async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, l
   }
 }
 
-module.exports = { verifyAndRecordKkiapay, recordConfirmedOnlinePayment };
+module.exports = { recordConfirmedOnlinePayment };
