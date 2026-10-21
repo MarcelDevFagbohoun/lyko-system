@@ -12,6 +12,7 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const billing = require('../services/billing');
+const refunds = require('../services/refunds');
 const { streamSubscriptionInvoicePdf } = require('../services/pdf');
 const { getPlan } = require('../constants/plans');
 const logger = require('../utils/logger');
@@ -46,7 +47,25 @@ router.post('/webhook', limiter, async (req, res) => {
   }
 });
 
+// Lien reçu par courriel après validation du remboursement : informations puis saisie des coordonnées (usage unique).
+router.get('/refund-link/:token', limiter, async (req, res, next) => {
+  try { res.json(await refunds.tokenInfo(req.params.token)); } catch (err) { next(err); }
+});
+router.post('/refund-link/:token', limiter, async (req, res, next) => {
+  try {
+    await refunds.submitDetails(req.params.token, req.body ?? {});
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 router.use(requireAuth, requireRole('dg'));
+
+router.post('/refund-requests', checkoutLimiter, async (req, res, next) => {
+  try { res.status(201).json(await refunds.requestRefund({ tenantId: req.user.tenantId, userId: req.user.id, reason: req.body?.reason })); } catch (err) { next(err); }
+});
+router.get('/refund-requests', async (req, res, next) => {
+  try { res.json({ refunds: await refunds.listRefunds({ tenantId: req.user.tenantId }) }); } catch (err) { next(err); }
+});
 
 router.get('/subscription', async (req, res, next) => {
   try { res.json(await billing.describe(req.user.tenantId)); } catch (err) { next(err); }

@@ -18,6 +18,21 @@ function signAccessToken(payload) {
   });
 }
 
+// Back-office de la plateforme : clé DÉRIVÉE et distincte de celle des employés — un jeton employé ne peut jamais
+// ouvrir le back-office, et inversement (séparation cryptographique, pas seulement un champ `role`).
+const crypto = require('crypto');
+function adminSecret() {
+  return process.env.PLATFORM_ADMIN_JWT_SECRET || crypto.createHmac('sha256', config.jwt.accessSecret).update('lyko-platform-admin-v1').digest('hex');
+}
+function signAdminToken(payload) {
+  return jwt.sign({ ...payload, realm: 'platform_admin' }, adminSecret(), { expiresIn: '8h', issuer: config.jwt.issuer });
+}
+function verifyAdminToken(token) {
+  const p = jwt.verify(token, adminSecret(), { issuer: config.jwt.issuer, algorithms: ['HS256'] });
+  if (p.realm !== 'platform_admin') throw new Error('realm');
+  return p;
+}
+
 function signRefreshToken(payload) {
   return jwt.sign(payload, config.jwt.refreshSecret, {
     expiresIn: config.jwt.refreshTtl,
@@ -57,6 +72,8 @@ function verifyMarketplaceToken(token) {
 }
 
 module.exports = {
+  signAdminToken,
+  verifyAdminToken,
   signAccessToken,
   signRefreshToken,
   verifyAccessToken,

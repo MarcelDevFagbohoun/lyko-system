@@ -158,4 +158,14 @@ async function sendSubscriptionReminderEmail({ to, dgName, companyName, planLabe
   return sendViaResend({ to, subject: safeHeader(expired ? 'Votre abonnement Lyko System a pris fin' : `Votre abonnement Lyko System se termine dans ${daysLeft} jour${daysLeft > 1 ? 's' : ''}`), html });
 }
 
-module.exports = { sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };
+/** Courriel d'information du back-office / remboursement : titre, paragraphes (échappés), lien optionnel. */
+async function sendBillingEmail({ to, subject, heading, paragraphs, linkUrl = null, linkLabel = null }) {
+  const html = wrapHtml(`
+    <h1 style="margin:0 0 12px;font-size:20px;">${escapeHtml(heading)}</h1>
+    ${paragraphs.map((p) => `<p style="margin:0 0 14px;font-size:14px;color:${MUTED};">${escapeHtml(p)}</p>`).join('')}
+    ${linkUrl ? `<p style="margin:0;font-size:14px;"><a href="${escapeHtml(linkUrl)}" style="color:#1a2b5f;font-weight:bold;">${escapeHtml(linkLabel || 'Ouvrir')}</a></p>` : ''}
+  `);
+  return sendViaResend({ to, subject: safeHeader(subject), html });
+}
+
+module.exports = { sendBillingEmail, sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };

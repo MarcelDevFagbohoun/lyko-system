@@ -125,6 +125,8 @@ config.features = {
 
 // Compte FedaPay DE LA PLATEFORME (encaisse les abonnements) — distinct des clés de chaque entreprise cliente.
 config.platform = {
+  adminEmail: process.env.PLATFORM_ADMIN_EMAIL || '', // reçoit les demandes de remboursement
+  refundFeePercent: Number(process.env.PLATFORM_REFUND_FEE_PERCENT || 3), // estimation des frais FedaPay retenus (modifiable à la validation)
   fedapaySecretKey: process.env.PLATFORM_FEDAPAY_SECRET_KEY || '',
   fedapayWebhookSecret: process.env.PLATFORM_FEDAPAY_WEBHOOK_SECRET || '',
   fedapaySandbox: process.env.PLATFORM_FEDAPAY_SANDBOX !== 'false',
