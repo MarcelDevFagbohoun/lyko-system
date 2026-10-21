@@ -134,3 +134,25 @@ test('assistant IA : routes non montées par défaut', async () => {
   const r = await call('GET', '/api/assistant/settings');
   assert.equal(r.status, 404);
 });
+
+test('portail propriétaire public : fermé hors offre ou abonnement expiré, ouvert avec Pro', async () => {
+  const { hashToken } = require('../src/utils/tokens');
+  const tok = 'owner-portal-token-'.padEnd(40, 'x');
+  await pool.query('UPDATE owners SET portal_token_hash = :h WHERE id = :id', { h: hashToken(tok), id: fx.ownerId });
+  const get = async () => (await fetch(`${base}/api/owner-portal/${tok}`)).status;
+  await setSub('demarrage');
+  assert.equal(await get(), 403);
+  await setSub('pro', 'active', 'DATE_SUB(NOW(), INTERVAL 1 SECOND)');
+  assert.equal(await get(), 403);
+  await setSub('pro');
+  assert.equal(await get(), 200);
+});
+
+test('locataires : le portail et le paiement restent ouverts quand l’entreprise est expirée', async () => {
+  const { hashToken } = require('../src/utils/tokens');
+  const tok = 'renter-portal-token-'.padEnd(40, 'y');
+  await pool.query('UPDATE renters SET portal_token_hash = :h WHERE id = :id', { h: hashToken(tok), id: fx.renterId });
+  await setSub('pro', 'active', 'DATE_SUB(NOW(), INTERVAL 1 SECOND)');
+  const r = await fetch(`${base}/api/portal/${tok}`);
+  assert.equal(r.status, 200);
+});

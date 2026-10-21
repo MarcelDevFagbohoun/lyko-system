@@ -184,3 +184,8 @@ Restent à trancher :
 3. Entreprises existantes : tout en `interne`, ou certaines à basculer sur une vraie offre.
 4. Facturation : TVA et mentions légales, à valider avec un comptable.
 5. Qui administre la plateforme (comptes `platform_admins`).
+
+---
+## Avancement (21/10/2026)
+Étapes 1 à 5 réalisées sur la branche `saas-fondations` : catalogue et limites, facturation FedaPay, back-office et
+remboursement, écrans, durcissement (portail propriétaire soumis à l'offre). Mise en service : voir `SAAS_DEPLOY.md`.

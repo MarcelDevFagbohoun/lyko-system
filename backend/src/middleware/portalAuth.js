@@ -3,6 +3,7 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('./error');
 const { hashToken } = require('../utils/tokens');
+const { assertFeature } = require('../services/entitlements');
 
 /**
  * Authentification du portail locataire : le token du lien (jamais un mot
@@ -57,6 +58,14 @@ async function requireOwnerPortalToken(req, res, next) {
     );
     if (!rows[0]) {
       return next(new ApiError(404, 'Lien invalide ou expiré'));
+    }
+    // Portail propriétaire = fonction de l'offre (Pro et plus) et de l'abonnement actif de l'entreprise. Message neutre :
+    // le propriétaire n'a pas à connaître l'état de facturation de son gestionnaire.
+    try {
+      await assertFeature(rows[0].tenant_id, 'owner_portal');
+    } catch (e) {
+      if (e instanceof ApiError) return next(new ApiError(403, "Ce portail est momentanément indisponible. Contactez votre gestionnaire."));
+      throw e;
     }
     req.portalOwner = { id: rows[0].id, tenantId: rows[0].tenant_id, name: rows[0].name };
     next();
