@@ -18,6 +18,7 @@
 const cron = require('node-cron');
 const logger = require('../utils/logger');
 const { runMonthlyRentDigest } = require('./monthlyRentDigest');
+const { runPaymentStatusJob } = require('./paymentStatusJob');
 const { runDailyArrearsDigest } = require('./dailyArrearsDigest');
 const { runBalanceAlertJob } = require('./balanceAlertJob');
 const { runClosingReminderJob } = require('./closingReminderJob');
@@ -63,6 +64,8 @@ function startScheduler() {
   // utilisateur, 2026-10-18). Fréquence fine : le délai annoncé (« dans 2 minutes ») doit rester
   // précis, pas une fenêtre d'une heure.
   cron.schedule('* * * * *', runSafely("email de bienvenue (inscription)", runWelcomeEmailJob));
+  // Chaque minute — relecture du statut des paiements sortants FedaPay en cours (le serveur ne croit jamais un statut externe).
+  cron.schedule('* * * * *', runSafely('suivi des paiements sortants', runPaymentStatusJob));
   // Toutes les heures — inscriptions jamais vérifiées après 24h : nettoyage.
   cron.schedule('0 * * * *', runSafely('nettoyage des inscriptions abandonnées', runRegistrationCleanupJob));
 

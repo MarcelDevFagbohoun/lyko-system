@@ -16,6 +16,21 @@ const PRIMARY = '#1E3A8A';
 const INK = '#0F172A';
 const MUTED = '#64748B';
 
+/** Échappe tout texte inséré dans un gabarit HTML : un nom saisi par un utilisateur ne doit jamais injecter de balises. */
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Retire retours à la ligne et caractères de contrôle d'une valeur destinée à un en-tête (sujet) : anti-injection d'en-têtes. */
+function safeHeader(value) {
+  return String(value ?? '').replace(/[\r\n\u0000-\u001f]+/g, ' ').trim().slice(0, 150);
+}
+
 function wrapHtml(bodyHtml) {
   return `<!doctype html>
 <html lang="fr">
@@ -56,7 +71,7 @@ async function sendVerificationCodeEmail({ to, dgName, companyName, code }) {
   const html = wrapHtml(`
     <h1 style="margin:0 0 12px;font-size:20px;">Confirmez votre email</h1>
     <p style="margin:0 0 20px;font-size:14px;color:${MUTED};">
-      Bonjour ${dgName}, voici le code à saisir pour activer le compte de « ${companyName} » sur Lyko System.
+      Bonjour ${escapeHtml(dgName)}, voici le code à saisir pour activer le compte de « ${escapeHtml(companyName)} » sur Lyko System.
     </p>
     <div style="margin:0 0 20px;padding:16px;background:#F1F5F9;border-radius:8px;text-align:center;">
       <span style="font-family:'Courier New',monospace;font-size:32px;font-weight:bold;letter-spacing:0.15em;color:${PRIMARY};">${code}</span>
@@ -82,9 +97,9 @@ function platformExplanationHtml() {
 
 async function sendWelcomeEmail({ to, dgName, companyName }) {
   const html = wrapHtml(`
-    <h1 style="margin:0 0 12px;font-size:20px;">Bienvenue, ${dgName}</h1>
+    <h1 style="margin:0 0 12px;font-size:20px;">Bienvenue, ${escapeHtml(dgName)}</h1>
     <p style="margin:0 0 16px;font-size:14px;color:${MUTED};">
-      Le compte de « ${companyName} » est actif. Voici un aperçu de ce que vous pouvez faire sur Lyko System :
+      Le compte de « ${escapeHtml(companyName)} » est actif. Voici un aperçu de ce que vous pouvez faire sur Lyko System :
     </p>
     ${platformExplanationHtml()}
     <a href="${config.frontendUrl}/espace" style="display:inline-block;padding:10px 20px;background:${PRIMARY};color:#FFFFFF;text-decoration:none;border-radius:6px;font-size:14px;">
@@ -94,4 +109,42 @@ async function sendWelcomeEmail({ to, dgName, companyName }) {
   return sendViaResend({ to, subject: 'Bienvenue sur Lyko System', html });
 }
 
-module.exports = { sendVerificationCodeEmail, sendWelcomeEmail };
+const PURPOSE_LABELS = {
+  salaire: 'Salaire',
+  reversement_proprietaire: 'Reversement de loyers',
+  autre: 'Paiement',
+  loyer: 'Loyer',
+  charge: 'Charges (eau/électricité)',
+};
+
+function formatAmount(amount) {
+  return `${Math.round(Number(amount)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} FCFA`;
+}
+
+/**
+ * Confirmation de paiement. `direction` : 'out' (l'entreprise a payé le destinataire) ou 'in' (le destinataire a
+ * payé l'entreprise). Contient uniquement montant, objet, référence et date — jamais de numéro de téléphone ni
+ * de donnée bancaire. Tout texte variable est échappé.
+ */
+async function sendPaymentConfirmationEmail({ to, recipientName, companyName, direction, purpose, amount, reference, dateLabel, label, downloadHint }) {
+  const intro =
+    direction === 'out'
+      ? `${escapeHtml(companyName)} vous a envoyé un paiement.`
+      : `${escapeHtml(companyName)} a bien reçu votre paiement.`;
+  const html = wrapHtml(`
+    <h1 style="margin:0 0 12px;font-size:20px;">${direction === 'out' ? 'Paiement envoyé' : 'Paiement reçu'}</h1>
+    <p style="margin:0 0 16px;font-size:14px;color:${MUTED};">Bonjour ${escapeHtml(recipientName)}, ${intro}</p>
+    <table role="presentation" width="100%" style="margin:0 0 16px;font-size:14px;border-collapse:collapse;">
+      <tr><td style="padding:6px 0;color:${MUTED};">Objet</td><td style="padding:6px 0;text-align:right;">${escapeHtml(PURPOSE_LABELS[purpose] ?? 'Paiement')}${label ? ` — ${escapeHtml(label)}` : ''}</td></tr>
+      <tr><td style="padding:6px 0;color:${MUTED};">Montant</td><td style="padding:6px 0;text-align:right;font-weight:bold;">${escapeHtml(formatAmount(amount))}</td></tr>
+      <tr><td style="padding:6px 0;color:${MUTED};">Date</td><td style="padding:6px 0;text-align:right;">${escapeHtml(dateLabel)}</td></tr>
+      <tr><td style="padding:6px 0;color:${MUTED};">Référence</td><td style="padding:6px 0;text-align:right;font-family:'Courier New',monospace;">${escapeHtml(reference)}</td></tr>
+    </table>
+    ${downloadHint ? `<p style="margin:0 0 8px;font-size:13px;color:${MUTED};">${escapeHtml(downloadHint)}</p>` : ''}
+    <p style="margin:0;font-size:12px;color:${MUTED};">Conservez cet e-mail comme preuve de paiement. Si cette opération vous semble inconnue, contactez ${escapeHtml(companyName)}.</p>
+  `);
+  const subject = safeHeader(`${direction === 'out' ? 'Paiement envoyé' : 'Paiement reçu'} — ${formatAmount(amount)} — ${reference}`);
+  return sendViaResend({ to, subject, html });
+}
+
+module.exports = { sendVerificationCodeEmail, sendWelcomeEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };

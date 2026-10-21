@@ -44,6 +44,20 @@ const updateSettingsSchema = z.object({
   kkiapayPrivateKey: z.string().trim().max(255).optional().or(z.literal('')),
   kkiapaySecretKey: z.string().trim().max(255).optional().or(z.literal('')),
 
+  // Envoi d'argent (FedaPay Payouts) — désactivé par défaut. Clé secrète : écriture seule (jamais renvoyée).
+  // Plafonds : par paiement et par jour, en FCFA.
+  fedapayEnabled: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+  fedapaySandbox: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+  fedapaySecretKey: z.string().trim().max(255).optional().or(z.literal('')),
+  paymentsPerOrderLimit: z.coerce.number().int().min(1000).max(100_000_000).optional(),
+  paymentsDailyLimit: z.coerce.number().int().min(1000).max(1_000_000_000).optional(),
+
   // Convention de paiement du loyer par défaut (avance/terme échu) — pré-
   // remplit chaque nouveau bail (demande directe de l'utilisateur, 2026-09-24).
   defaultRentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),

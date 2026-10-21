@@ -864,6 +864,46 @@ function streamPayslipPdf(res, { tenant, employee, payslip, issuer }) {
   doc.end();
 }
 
+/**
+ * Avis de paiement (ordre sortant FedaPay confirmé `sent`) : preuve remise au bénéficiaire / au cabinet.
+ * Le numéro Mobile Money est TOUJOURS masqué ; aucune donnée de clé ou d'identifiant technique n'y figure.
+ */
+function streamPaymentAdvicePdf(res, { tenant, order }) {
+  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="avis-paiement-${order.reference}.pdf"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  doc.pipe(res);
+
+  doc.rect(0, 0, doc.page.width, 5).fill(PRIMARY);
+  doc.font(FONT_SANS_BOLD).fontSize(15).fillColor(INK).text(tenant.company_name, 50, 44, { width: 230 });
+  doc.font(FONT_SANS_BOLD).fontSize(20).fillColor(PRIMARY).text('AVIS DE PAIEMENT', 285, 40, { width: 260, align: 'right' });
+  doc.font(FONT_MONO_BOLD).fontSize(10).fillColor(INK_SOFT).text(order.reference, 285, doc.y + 2, { width: 260, align: 'right' });
+
+  let y = 120;
+  doc.moveTo(50, y).lineTo(545, y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
+  y += 18;
+  const purposeLabels = { salaire: 'Salaire', reversement_proprietaire: 'Reversement propriétaire', autre: 'Paiement' };
+  const sentIso = order.sent_at instanceof Date ? order.sent_at.toISOString().slice(0, 10) : String(order.sent_at).slice(0, 10);
+  const rows = [
+    ['Nature', purposeLabels[order.purpose] ?? order.purpose, false],
+    ['Bénéficiaire', order.beneficiary_name, false],
+    ['Compte Mobile Money', `${String(order.operator).toUpperCase()} ${order.beneficiary_phone_masked}`, true],
+    ['Motif', order.label, false],
+    ['Date d\'envoi', formatDateFr(sentIso), true],
+    ['Montant versé', formatFcfa(order.amount), true],
+    ['Statut', 'Envoi confirmé', false],
+  ];
+  for (const [label, value, mono] of rows) y += drawRow(doc, label, String(value), y, { mono });
+  y += 14;
+  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text(
+    'Document généré automatiquement. Il atteste de l\'envoi des fonds par le prestataire de paiement à la date indiquée.',
+    50, y, { width: 495 },
+  );
+  drawFooter(doc);
+  doc.end();
+}
+
 /** « Article N — Titre », puis le corps — page neuve avant le titre s'il ne reste pas assez de place
  * pour au moins amorcer le paragraphe (jamais un titre orphelin en bas de page). */
 function drawContractArticle(doc, number, title, body) {
@@ -2393,6 +2433,7 @@ module.exports = {
   streamReceiptPdf,
   streamEntryReceiptPdf,
   streamPayslipPdf,
+  streamPaymentAdvicePdf,
   streamLeaseContractPdf,
   streamOwnerStatementPdf,
   streamUtilityCarnetPdf,

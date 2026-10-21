@@ -15,6 +15,7 @@ const accountingRoutes = require('./accounting');
 const chargeRoutes = require('./charges');
 const assistantRoutes = require('./assistant');
 const utilityReadingRoutes = require('./utilityReadings');
+const paymentOrderRoutes = require('./payments');
 const dashboardRoutes = require('./dashboard');
 const portalRoutes = require('./portal');
 const ownerPortalRoutes = require('./ownerPortal');
@@ -103,6 +104,8 @@ router.use('/webhooks', kkiapayWebhookRoutes);
 router.use('/recu', receiptShareRoutes);
 // Relevé de compteurs par immeuble (étape 9bis) : routes /properties/:id/utility-*
 // et /utility-batches/* — montées à la racine de /api (permission `charges`).
+// Paiements sortants FedaPay (authentifié) — monté avant `utilityReadingRoutes`, même piège que ci-dessus.
+router.use('/payments', paymentOrderRoutes);
 router.use(utilityReadingRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/dashboard', dashboardRoutes);

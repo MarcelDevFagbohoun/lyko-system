@@ -173,6 +173,79 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+/**
+ * Enregistre un paiement de salaire DANS la transaction fournie : dépense « salaires » (NET versé), fiche de paie
+ * et écriture comptable. Extrait de `POST /` pour être aussi appelé quand un paiement FedaPay est confirmé
+ * (`services/payments/effects.js`). `data` = champs du schéma `createPayslipSchema`.
+ */
+async function recordPayslip(conn, { tenantId, employee, data, createdBy, grossAmount, netAmount, skipIdempotency = false }) {
+  // Bug évité (même classe que partout ailleurs dans ce projet) : re-vérifie SOUS VERROU, dans la
+  // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+  await assertPeriodOpenLocked(conn, tenantId, data.paidAt);
+
+  if (data.idempotencyKey && !skipIdempotency) {
+    await claimIdempotencyKey(conn, tenantId, 'payslip', data.idempotencyKey);
+  }
+
+  const employeeName = `${employee.first_name} ${employee.last_name}`;
+  const [expenseResult] = await conn.query(
+    `INSERT INTO expenses (tenant_id, category, label, amount, expense_date, payment_method, payment_status, paid_at, recorded_by)
+     VALUES (:tenantId, 'salaires', :label, :amount, :date, :paymentMethod, 'paid', :date, :recordedBy)`,
+    {
+      tenantId: tenantId,
+      label: `Salaire ${data.period} — ${employeeName}`,
+      amount: netAmount,
+      date: data.paidAt,
+      paymentMethod: data.paymentMethod,
+      recordedBy: createdBy,
+    },
+  );
+  const expenseId = expenseResult.insertId;
+
+  const [payslipResult] = await conn.query(
+    `INSERT INTO payslips
+       (tenant_id, user_id, period, base_amount, bonus_amount, bonus_label, deduction_amount, deduction_label,
+        gross_amount, net_amount, payment_method, paid_at, expense_id, created_by)
+     VALUES
+       (:tenantId, :userId, :period, :baseAmount, :bonusAmount, :bonusLabel, :deductionAmount, :deductionLabel,
+        :grossAmount, :netAmount, :paymentMethod, :paidAt, :expenseId, :createdBy)`,
+    {
+      tenantId: tenantId,
+      userId: data.userId,
+      period: data.period,
+      baseAmount: data.baseAmount,
+      bonusAmount: data.bonusAmount,
+      bonusLabel: data.bonusLabel,
+      deductionAmount: data.deductionAmount,
+      deductionLabel: data.deductionLabel,
+      grossAmount,
+      netAmount,
+      paymentMethod: data.paymentMethod,
+      paidAt: data.paidAt,
+      expenseId,
+      createdBy: createdBy,
+    },
+  );
+  const payslipId = payslipResult.insertId;
+
+  if (await isModuleActive(conn, tenantId)) {
+    await genererEcriture(conn, {
+      tenantId: tenantId,
+      operationType: 'salaire_paye',
+      entryDate: data.paidAt,
+      amount: netAmount,
+      paymentMethod: data.paymentMethod,
+      narrationVars: { mois: data.period, employe: employeeName },
+      sourceTable: 'expenses',
+      sourceId: expenseId,
+      createdBy: createdBy,
+      context: {},
+    });
+  }
+
+  return { payslipId, expenseId, netAmount };
+}
+
 // POST /api/payslips — paie un salaire : crée la fiche ET la dépense correspondante (NET versé),
 // avec l'écriture comptable `salaire_paye` si la comptabilité avancée est active.
 router.post('/', async (req, res, next) => {
@@ -205,77 +278,16 @@ router.post('/', async (req, res, next) => {
     const netAmount = grossAmount - data.deductionAmount;
 
     await conn.beginTransaction();
-    // Bug évité (même classe que partout ailleurs dans ce projet) : re-vérifie SOUS VERROU, dans la
-    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
-    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
-
-    if (data.idempotencyKey) {
-      await claimIdempotencyKey(conn, req.user.tenantId, 'payslip', data.idempotencyKey);
-    }
-
-    const employeeName = `${employee.first_name} ${employee.last_name}`;
-    const [expenseResult] = await conn.query(
-      `INSERT INTO expenses (tenant_id, category, label, amount, expense_date, payment_method, payment_status, paid_at, recorded_by)
-       VALUES (:tenantId, 'salaires', :label, :amount, :date, :paymentMethod, 'paid', :date, :recordedBy)`,
-      {
-        tenantId: req.user.tenantId,
-        label: `Salaire ${data.period} — ${employeeName}`,
-        amount: netAmount,
-        date: data.paidAt,
-        paymentMethod: data.paymentMethod,
-        recordedBy: req.user.id,
-      },
-    );
-    const expenseId = expenseResult.insertId;
-
-    const [payslipResult] = await conn.query(
-      `INSERT INTO payslips
-         (tenant_id, user_id, period, base_amount, bonus_amount, bonus_label, deduction_amount, deduction_label,
-          gross_amount, net_amount, payment_method, paid_at, expense_id, created_by)
-       VALUES
-         (:tenantId, :userId, :period, :baseAmount, :bonusAmount, :bonusLabel, :deductionAmount, :deductionLabel,
-          :grossAmount, :netAmount, :paymentMethod, :paidAt, :expenseId, :createdBy)`,
-      {
-        tenantId: req.user.tenantId,
-        userId: data.userId,
-        period: data.period,
-        baseAmount: data.baseAmount,
-        bonusAmount: data.bonusAmount,
-        bonusLabel: data.bonusLabel,
-        deductionAmount: data.deductionAmount,
-        deductionLabel: data.deductionLabel,
-        grossAmount,
-        netAmount,
-        paymentMethod: data.paymentMethod,
-        paidAt: data.paidAt,
-        expenseId,
-        createdBy: req.user.id,
-      },
-    );
-    const payslipId = payslipResult.insertId;
-
-    if (await isModuleActive(conn, req.user.tenantId)) {
-      await genererEcriture(conn, {
-        tenantId: req.user.tenantId,
-        operationType: 'salaire_paye',
-        entryDate: data.paidAt,
-        amount: netAmount,
-        paymentMethod: data.paymentMethod,
-        narrationVars: { mois: data.period, employe: employeeName },
-        sourceTable: 'expenses',
-        sourceId: expenseId,
-        createdBy: req.user.id,
-        context: {},
-      });
-    }
-
+    const { payslipId, netAmount: paidNet } = await recordPayslip(conn, {
+      tenantId: req.user.tenantId, employee, data, createdBy: req.user.id, grossAmount, netAmount,
+    });
     await conn.commit();
     logger.info('Salaire payé', {
       tenantId: req.user.tenantId,
       payslipId,
       userId: data.userId,
       period: data.period,
-      netAmount,
+      netAmount: paidNet,
       by: req.user.id,
     });
 
@@ -376,3 +388,4 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.recordPayslip = recordPayslip;

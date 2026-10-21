@@ -412,6 +412,68 @@ router.patch('/:id', canManage, async (req, res, next) => {
   }
 });
 
+/**
+ * Enregistre un versement propriétaire DANS la transaction fournie (verrou du propriétaire, plafond de solde,
+ * insertion, écriture comptable). Extrait de `POST /:id/payouts` pour être aussi appelé quand un paiement
+ * FedaPay est confirmé (`services/payments/effects.js`) : `skipBalanceCheck` — l'argent est déjà parti, le
+ * plafond a été vérifié (et réservé) à la création de l'ordre ; `skipIdempotency` — l'ordre porte sa propre clé.
+ */
+async function recordOwnerPayout(conn, { tenantId, ownerId, owner, data, recordedBy, skipBalanceCheck = false, skipIdempotency = false }) {
+  const id = ownerId;
+  // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
+  // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
+  await assertPeriodOpenLocked(conn, tenantId, data.paidAt);
+  // Sérialise les versements d'un même propriétaire : le solde est vérifié APRÈS ce verrou et DANS la
+  // transaction (garde-fou de l'audit comptable A2, voir services/commission.js
+  // `assertPayoutWithinBalance`) — deux versements simultanés, chacun inférieur au solde, ne peuvent
+  // plus le dépasser ensemble.
+  await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
+    id,
+    tenantId: tenantId,
+  });
+  // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
+  if (data.idempotencyKey && !skipIdempotency) await claimIdempotencyKey(conn, tenantId, 'owner_payout', data.idempotencyKey);
+  if (!skipBalanceCheck) await assertPayoutWithinBalance(tenantId, id, data.amount, conn);
+
+  const [result] = await conn.query(
+    `INSERT INTO owner_payouts (tenant_id, owner_id, amount, period_label, paid_at, payment_method, notes, recorded_by)
+     VALUES (:tenantId, :ownerId, :amount, :periodLabel, :paidAt, :paymentMethod, :notes, :recordedBy)`,
+    {
+      tenantId: tenantId,
+      ownerId: id,
+      amount: data.amount,
+      periodLabel: data.periodLabel,
+      paidAt: data.paidAt,
+      paymentMethod: data.paymentMethod,
+      notes: data.notes,
+      recordedBy: recordedBy,
+    },
+  );
+
+  // Module comptabilité SYSCOHADA (nouveau) — voir le commentaire identique
+  // dans routes/leases.js `recordRentPayment` : rien ne change pour une
+  // entreprise qui n'a pas activé le module. Cette route ne passait pas
+  // par une transaction explicite avant cette modification — nécessaire
+  // pour que versement et écriture comptable réussissent ou échouent
+  // ensemble (exigence explicite : « même transaction SQL »).
+  if (await isModuleActive(conn, tenantId)) {
+    await genererEcriture(conn, {
+      tenantId: tenantId,
+      operationType: 'reversement_proprietaire',
+      entryDate: data.paidAt,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      narrationVars: { proprietaire: owner.name },
+      sourceTable: 'owner_payouts',
+      sourceId: result.insertId,
+      createdBy: recordedBy,
+      context: { ownerId: id },
+    });
+  }
+
+  return result.insertId;
+}
+
 // POST /api/owners/:id/payouts — enregistrer un versement (loyers nets reversés).
 router.post('/:id/payouts', canPayout, async (req, res, next) => {
   const id = Number(req.params.id);
@@ -431,66 +493,18 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
     await conn.beginTransaction();
-    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
-    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
-    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
-    // Sérialise les versements d'un même propriétaire : le solde est vérifié APRÈS ce verrou et DANS la
-    // transaction (garde-fou de l'audit comptable A2, voir services/commission.js
-    // `assertPayoutWithinBalance`) — deux versements simultanés, chacun inférieur au solde, ne peuvent
-    // plus le dépasser ensemble.
-    await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
-      id,
-      tenantId: req.user.tenantId,
+    const payoutId = await recordOwnerPayout(conn, {
+      tenantId: req.user.tenantId, ownerId: id, owner, data, recordedBy: req.user.id,
     });
-    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
-    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'owner_payout', data.idempotencyKey);
-    await assertPayoutWithinBalance(req.user.tenantId, id, data.amount, conn);
-
-    const [result] = await conn.query(
-      `INSERT INTO owner_payouts (tenant_id, owner_id, amount, period_label, paid_at, payment_method, notes, recorded_by)
-       VALUES (:tenantId, :ownerId, :amount, :periodLabel, :paidAt, :paymentMethod, :notes, :recordedBy)`,
-      {
-        tenantId: req.user.tenantId,
-        ownerId: id,
-        amount: data.amount,
-        periodLabel: data.periodLabel,
-        paidAt: data.paidAt,
-        paymentMethod: data.paymentMethod,
-        notes: data.notes,
-        recordedBy: req.user.id,
-      },
-    );
-
-    // Module comptabilité SYSCOHADA (nouveau) — voir le commentaire identique
-    // dans routes/leases.js `recordRentPayment` : rien ne change pour une
-    // entreprise qui n'a pas activé le module. Cette route ne passait pas
-    // par une transaction explicite avant cette modification — nécessaire
-    // pour que versement et écriture comptable réussissent ou échouent
-    // ensemble (exigence explicite : « même transaction SQL »).
-    if (await isModuleActive(conn, req.user.tenantId)) {
-      await genererEcriture(conn, {
-        tenantId: req.user.tenantId,
-        operationType: 'reversement_proprietaire',
-        entryDate: data.paidAt,
-        amount: data.amount,
-        paymentMethod: data.paymentMethod,
-        narrationVars: { proprietaire: owner.name },
-        sourceTable: 'owner_payouts',
-        sourceId: result.insertId,
-        createdBy: req.user.id,
-        context: { ownerId: id },
-      });
-    }
-
     await conn.commit();
 
     logger.info('Versement propriétaire enregistré', {
       tenantId: req.user.tenantId,
       ownerId: id,
-      payoutId: result.insertId,
+      payoutId,
       by: req.user.id,
     });
-    res.status(201).json({ payoutId: result.insertId });
+    res.status(201).json({ payoutId });
   } catch (err) {
     await conn.rollback().catch(() => {});
     next(err);
@@ -903,3 +917,4 @@ router.post('/:id/reactivate-mandate', canMandate, async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.recordOwnerPayout = recordOwnerPayout;

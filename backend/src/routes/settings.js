@@ -49,6 +49,12 @@ function toPublicSettings(tenant) {
     kkiapaySandbox: !!tenant.kkiapay_sandbox,
     kkiapayPublicKey: tenant.kkiapay_public_key,
     kkiapayConfigured: !!(tenant.kkiapay_private_key_enc && tenant.kkiapay_secret_key_enc),
+    // Envoi d'argent (FedaPay) : la clé secrète n'est JAMAIS renvoyée, seulement son existence.
+    fedapayEnabled: !!tenant.fedapay_enabled,
+    fedapaySandbox: !!tenant.fedapay_sandbox,
+    fedapayConfigured: !!tenant.fedapay_secret_key_enc,
+    paymentsPerOrderLimit: Number(tenant.payments_per_order_limit ?? 0),
+    paymentsDailyLimit: Number(tenant.payments_daily_limit ?? 0),
     // Convention de paiement du loyer par défaut (avance/terme échu) —
     // pré-remplit chaque nouveau bail, voir constants/rentTiming.js.
     defaultRentTiming: tenant.default_rent_timing,
@@ -141,6 +147,33 @@ router.patch(
         }
         fields.push('kkiapay_enabled = :kkiapayEnabled');
         params.kkiapayEnabled = data.kkiapayEnabled;
+      }
+
+      if (data.fedapaySandbox !== undefined) {
+        fields.push('fedapay_sandbox = :fedapaySandbox');
+        params.fedapaySandbox = data.fedapaySandbox;
+      }
+      if (data.fedapaySecretKey) {
+        fields.push('fedapay_secret_key_enc = :fedapaySecretKeyEnc');
+        params.fedapaySecretKeyEnc = encryptSecret(data.fedapaySecretKey);
+      }
+      if (data.paymentsPerOrderLimit !== undefined) {
+        fields.push('payments_per_order_limit = :paymentsPerOrderLimit');
+        params.paymentsPerOrderLimit = data.paymentsPerOrderLimit;
+      }
+      if (data.paymentsDailyLimit !== undefined) {
+        fields.push('payments_daily_limit = :paymentsDailyLimit');
+        params.paymentsDailyLimit = data.paymentsDailyLimit;
+      }
+      if (data.fedapayEnabled !== undefined) {
+        if (data.fedapayEnabled) {
+          const [[current]] = await pool.query('SELECT fedapay_secret_key_enc FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+          if (!(data.fedapaySecretKey || current?.fedapay_secret_key_enc)) {
+            throw new ApiError(400, "Renseignez la clé secrète FedaPay avant d'activer les paiements sortants.");
+          }
+        }
+        fields.push('fedapay_enabled = :fedapayEnabled');
+        params.fedapayEnabled = data.fedapayEnabled;
       }
 
       if (data.defaultRentTiming !== undefined) {
