@@ -114,4 +114,13 @@ const config = {
   },
 };
 
+// Indicateurs de lancement du SaaS (voir SAAS_PLAN.md). Faux par défaut : le comportement actuel ne change pas
+// tant qu'on ne les active pas explicitement.
+config.features = {
+  // Assistant IA : reporté à une version ultérieure. Faux = routes non montées, aucun bouton, aucun appel d'IA.
+  assistant: process.env.ASSISTANT_FEATURE_ENABLED === 'true',
+  // Abonnements appliqués (fonctions et limites par offre). Faux = toutes les entreprises se comportent comme « interne ».
+  subscriptionsEnforced: process.env.SUBSCRIPTIONS_ENFORCED === 'true',
+};
+
 module.exports = config;

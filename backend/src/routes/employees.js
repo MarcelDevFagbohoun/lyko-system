@@ -11,6 +11,7 @@ const { getPermissionsBulk } = require('../services/permissions');
 const { PERMISSIONS, DEFAULT_PERMISSIONS_BY_ROLE } = require('../constants/permissions');
 const logger = require('../utils/logger');
 
+const { assertWithinLimit } = require('../services/entitlements');
 const router = Router();
 
 // Écran « Gestion des employés » : réservé au DG (section 5).
@@ -242,6 +243,7 @@ router.post('/', async (req, res, next) => {
     const permissions = data.permissions;
 
     await conn.beginTransaction();
+    await assertWithinLimit(req.user.tenantId, 'users', conn);
 
     const [result] = await conn.query(
       `INSERT INTO users (tenant_id, first_name, last_name, phone, identifier, email, password_hash, role, must_change_password)

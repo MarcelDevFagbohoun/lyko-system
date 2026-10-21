@@ -41,6 +41,7 @@ const EMAIL_VERIFICATION_MAX_ATTEMPTS = 5;
 // tâche planifiée `jobs/welcomeEmailJob.js` (survit à un redémarrage, contrairement à un minuteur).
 const WELCOME_EMAIL_DELAY_MINUTES = 2;
 
+const { createInitialSubscription } = require('../services/entitlements');
 const router = Router();
 
 /**
@@ -245,6 +246,7 @@ router.post('/register', registerLimiter, upload.single('logo'), async (req, res
       { companyName: data.companyName, rccm: data.rccm, ifu: data.ifu, phone: data.phone, country: data.country },
     );
     const tenantId = tenantResult.insertId;
+    await createInitialSubscription(conn, tenantId);
 
     const passwordHash = await hashPassword(data.password);
     const code = generateEmailVerificationCode();

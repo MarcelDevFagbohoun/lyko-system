@@ -1,5 +1,6 @@
 "use client";
 
+import { ASSISTANT_ENABLED } from "@/lib/features";
 import * as React from "react";
 import Link from "next/link";
 import { ArrowLeft, Sparkles, Stamp, PenTool, CreditCard, ExternalLink, Landmark, PlayCircle, PauseCircle, Loader2, Receipt, Plus, Pencil, Trash2, X } from "lucide-react";
@@ -232,7 +233,7 @@ function ParametresContent() {
 
         <SectionLabel cadre="administration" />
         <CardToneProvider tone={CADRES.administration.tone}>
-          <AssistantSection accessToken={accessToken} />
+          {ASSISTANT_ENABLED && <AssistantSection accessToken={accessToken} />}
         </CardToneProvider>
 
         <form onSubmit={handleSave} className="flex flex-col gap-6">

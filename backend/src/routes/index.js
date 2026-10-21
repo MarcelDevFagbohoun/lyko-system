@@ -44,6 +44,9 @@ const glBankReconciliationRoutes = require('./gl/glBankReconciliation');
 const glSettingsRoutes = require('./gl/glSettings');
 const glIrfRoutes = require('./gl/glIrf');
 const fileRoutes = require('./files');
+const config = require('../config/env');
+const { requireAuth } = require('../middleware/auth');
+const { requireFeature } = require('../services/entitlements');
 
 const router = Router();
 
@@ -65,7 +68,8 @@ router.use('/accounting', accountingRoutes);
 router.use('/charges', chargeRoutes);
 router.use('/sale-properties', salePropertyRoutes);
 router.use('/payslips', payslipRoutes);
-router.use('/assistant', assistantRoutes);
+// Assistant IA reporté à une version ultérieure (ASSISTANT_FEATURE_ENABLED=true pour le réactiver).
+if (config.features.assistant) router.use('/assistant', assistantRoutes);
 // Portail locataire (lien secret, pas de compte employé) : `/portal/:token/*`.
 // DOIT être monté avant `utilityReadingRoutes` ci-dessous : ce dernier n'a pas
 // de préfixe (monté à la racine de /api) et exige `requireAuth` dès son entrée,
@@ -114,6 +118,7 @@ router.use('/settings', settingsRoutes);
 router.use('/dashboard', dashboardRoutes);
 // Module comptabilité SYSCOHADA (espace Comptabilité avancée, livrable 6) —
 // authentifié, aucun piège de montage (pas de préfixe public en dessous).
+router.use('/gl', requireAuth, requireFeature('advanced_accounting'));
 router.use('/gl/accounts', glAccountsRoutes);
 router.use('/gl/journals', glJournalsRoutes);
 router.use('/gl/fiscal-years', glFiscalYearsRoutes);

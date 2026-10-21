@@ -24,8 +24,9 @@ const { toActor } = require('../utils/actor');
 const { streamPayslipPdf } = require('../services/pdf');
 const logger = require('../utils/logger');
 
+const { requireFeature } = require('../services/entitlements');
 const router = Router();
-router.use(requireAuth, requireRole('dg'));
+router.use(requireAuth, requireRole('dg'), requireFeature('payroll'));
 
 async function loadTenant(tenantId) {
   const [rows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });

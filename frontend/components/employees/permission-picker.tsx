@@ -1,6 +1,7 @@
 "use client";
 
 import type { PermissionCatalogEntry, PermissionKey } from "@/lib/api/employees";
+import { ASSISTANT_ENABLED } from "@/lib/features";
 import { cn } from "@/lib/utils";
 
 /** Sélecteur de permissions par module (section 5) — le DG coche ce que l'employé peut voir. */
@@ -19,7 +20,7 @@ export function PermissionPicker({
 
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-      {catalog.map((perm) => {
+      {catalog.filter((perm) => ASSISTANT_ENABLED || perm.key !== "assistant").map((perm) => {
         const checked = value.includes(perm.key);
         return (
           <label

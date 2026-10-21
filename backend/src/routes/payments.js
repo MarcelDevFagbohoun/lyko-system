@@ -17,8 +17,9 @@ const { verifyAuditChain } = require('../services/payments/audit');
 const { maskPhone } = require('../services/payments/phone');
 const { streamPaymentAdvicePdf } = require('../services/pdf');
 
+const { requireFeature } = require('../services/entitlements');
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireFeature('payouts'));
 
 const sendLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

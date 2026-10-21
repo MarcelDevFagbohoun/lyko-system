@@ -53,6 +53,7 @@ async function assertMeterNumbersAvailable(conn, tenantId, { sonebMeterNumber, s
   }
 }
 
+const { assertWithinLimit } = require('../services/entitlements');
 const router = Router();
 // Les Biens/Unités sont le patrimoine des propriétaires ET le logement des
 // locataires : gérables par qui a `locataires` (formulaire historique,
@@ -459,6 +460,8 @@ router.post('/:id/units', async (req, res, next) => {
     await assertMeterNumbersAvailable(conn, req.user.tenantId, data);
     const code = await nextUnitCode(conn, property.code, propertyId);
 
+    await conn.beginTransaction();
+    await assertWithinLimit(req.user.tenantId, 'units', conn);
     const [result] = await conn.query(
       `INSERT INTO property_units
          (tenant_id, property_id, code, designation, designation_custom, monthly_rent,
@@ -479,9 +482,12 @@ router.post('/:id/units', async (req, res, next) => {
       },
     );
 
+    await conn.commit();
+
     logger.info('Unité créée', { tenantId: req.user.tenantId, propertyId, unitId: result.insertId, code, by: req.user.id });
     res.status(201).json({ unitId: result.insertId, code });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
   } finally {
     conn.release();

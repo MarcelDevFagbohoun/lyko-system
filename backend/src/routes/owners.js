@@ -44,6 +44,7 @@ async function assertOwnerPhoneAvailable(tenantId, phone, excludeOwnerId) {
   if (rows[0]) throw new ApiError(409, 'Ce numéro de téléphone est déjà utilisé par un autre propriétaire');
 }
 
+const { assertWithinLimit, requireFeature } = require('../services/entitlements');
 const router = Router();
 router.use(requireAuth);
 
@@ -362,17 +363,24 @@ router.post('/', canManage, async (req, res, next) => {
   }
   const data = parsed.data;
 
+  const conn = await pool.getConnection();
   try {
     await assertOwnerPhoneAvailable(req.user.tenantId, data.phone);
-    const [result] = await pool.query(
+    await conn.beginTransaction();
+    await assertWithinLimit(req.user.tenantId, 'owners', conn);
+    const [result] = await conn.query(
       `INSERT INTO owners (tenant_id, name, phone, email, address, notes, created_by)
        VALUES (:tenantId, :name, :phone, :email, :address, :notes, :createdBy)`,
       { tenantId: req.user.tenantId, ...data, createdBy: req.user.id },
     );
+    await conn.commit();
     logger.info('Propriétaire créé', { tenantId: req.user.tenantId, ownerId: result.insertId, by: req.user.id });
     res.status(201).json({ ownerId: result.insertId });
   } catch (err) {
+    await conn.rollback().catch(() => {});
     next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -731,7 +739,7 @@ router.get('/:id/carnet-charges.pdf', requireAnyPermission('charges', 'proprieta
 });
 
 // GET /api/owners/:id/statement.pdf — relevé (patrimoine + historique des versements).
-router.get('/:id/statement.pdf', canReadDocs, async (req, res, next) => {
+router.get('/:id/statement.pdf', canReadDocs, requireFeature('owner_portal'), async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -803,7 +811,7 @@ router.get('/:id/statement.pdf', canReadDocs, async (req, res, next) => {
 // PDF, sans compte ni mot de passe. Un seul lien valide à la fois —
 // régénérer révoque immédiatement l'ancien. Le token en clair n'est renvoyé
 // qu'ici, une seule fois (même principe que le portail locataire).
-router.post('/:id/portal-link', canManage, async (req, res, next) => {
+router.post('/:id/portal-link', canManage, requireFeature('owner_portal'), async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 

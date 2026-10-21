@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
 import { EspaceSidebar } from "@/components/espace/espace-sidebar";
 import { CardToneProvider } from "@/components/ui/card";
+import { ASSISTANT_ENABLED } from "@/lib/features";
 import { AssistantWidget } from "@/components/assistant/assistant-widget";
 import { CADRES, cadreForPath } from "@/lib/module-theme";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,7 @@ export default function EspaceLayout({ children }: { children: React.ReactNode }
         {status === "authenticated" && <div aria-hidden className={cn("h-1 w-full", cadre.solid)} />}
         <CardToneProvider tone={cadre.tone}>{children}</CardToneProvider>
       </main>
-      {status === "authenticated" && <AssistantWidget />}
+      {ASSISTANT_ENABLED && status === "authenticated" && <AssistantWidget />}
     </div>
   );
 }

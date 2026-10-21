@@ -29,8 +29,9 @@ const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const logger = require('../utils/logger');
 
+const { requireFeature } = require('../services/entitlements');
 const router = Router();
-router.use(requireAuth, requirePermission('biens_a_vendre'));
+router.use(requireAuth, requirePermission('biens_a_vendre'), requireFeature('sale_properties'));
 
 const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
 const TYPE_LABELS = Object.fromEntries(SALE_PROPERTY_TYPES.map((t) => [t.key, t.label]));

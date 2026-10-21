@@ -7,6 +7,7 @@
  * annulations, route HTTP en flux (SSE).
  */
 
+process.env.ASSISTANT_FEATURE_ENABLED = 'true'; // l'assistant est désactivé par défaut (SaaS) : ce test l'exerce explicitement
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
