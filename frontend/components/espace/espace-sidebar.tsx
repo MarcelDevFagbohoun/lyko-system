@@ -16,6 +16,7 @@ import {
   Calculator,
   BellRing,
   Briefcase,
+  CreditCard,
   History,
   Clock,
   Lock,
@@ -129,6 +130,7 @@ export function EspaceSidebar() {
       items: [
         isDg && { href: "/espace/employes", label: "Employés", icon: Briefcase },
         isDg && { href: "/espace/journal", label: "Journal", icon: History },
+        isDg && { href: "/espace/abonnement", label: "Abonnement", icon: CreditCard },
         !isDg && { href: "/espace/historique", label: "Historique", icon: Clock },
       ],
     },

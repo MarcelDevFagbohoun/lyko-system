@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
 import { EspaceSidebar } from "@/components/espace/espace-sidebar";
 import { CardToneProvider } from "@/components/ui/card";
+import { SubscriptionGate } from "@/components/billing/subscription-gate";
 import { ASSISTANT_ENABLED } from "@/lib/features";
 import { AssistantWidget } from "@/components/assistant/assistant-widget";
 import { CADRES, cadreForPath } from "@/lib/module-theme";
@@ -39,7 +40,9 @@ export default function EspaceLayout({ children }: { children: React.ReactNode }
       <main key={pathname} className={cn("animate-page-in", status === "authenticated" && "lg:pl-sidebar")}>
         {/* Filet de la couleur du cadre : dit d'un coup d'œil dans quelle rubrique du menu l'on se trouve. */}
         {status === "authenticated" && <div aria-hidden className={cn("h-1 w-full", cadre.solid)} />}
-        <CardToneProvider tone={cadre.tone}>{children}</CardToneProvider>
+        <CardToneProvider tone={cadre.tone}>
+          <SubscriptionGate>{children}</SubscriptionGate>
+        </CardToneProvider>
       </main>
       {ASSISTANT_ENABLED && status === "authenticated" && <AssistantWidget />}
     </div>
