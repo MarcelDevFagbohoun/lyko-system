@@ -7,19 +7,15 @@
 // (`owner_payouts`, étape 5).
 //
 // Règles métier (fixées avec l'utilisateur) :
-//   1. Recette nette d'un Bien pour un mois = paiements de loyer de toutes
-//      ses unités pour ce mois − dépenses rattachées à ce Bien pour ce mois
-//      (dépenses « Bien » + dépenses d'une Unité précise de ce Bien).
-//   2. Commission cabinet = Recette nette × (taux / 100). Part propriétaire
-//      = Recette nette − Commission cabinet.
-//   3. Le taux de commission est historisé par Propriétaire : chaque
-//      modification clôture l'ancien taux (`ends_on`) et insère une nouvelle
-//      ligne, jamais un UPDATE du taux existant — les recettes des mois
-//      passés restent donc calculées avec le taux réellement en vigueur à
-//      l'époque, même après un changement ultérieur.
-//   4. Convention retenue pour « le taux du mois » quand il change en cours
-//      de mois : le taux actif au **dernier jour** du mois (le mois est
-//      calculé une fois clos, avec le taux en vigueur à cette date-là).
+//   1. Base caisse, mois civil (1er → 30/31) : chaque flux (loyer, dette initiale réglée, prorata
+//      d'entrée, dépense payée du Bien) compte dans le mois où l'argent est RÉELLEMENT entré/sorti
+//      (`paid_at`), quel que soit le mois de loyer couvert. Recette nette d'un Bien = entrées − dépenses.
+//   2. Commission cabinet = Σ (flux × taux / 100) où le taux est celui EN VIGUEUR AU JOUR DU FLUX
+//      (décision du 21/10/2026), arrondie une fois par (propriétaire, Bien, mois). Part propriétaire
+//      = recette nette − commission.
+//   3. Le taux de commission est historisé par Propriétaire : chaque modification clôture l'ancien taux
+//      (`ends_on`) et insère une nouvelle ligne, jamais un UPDATE — un loyer encaissé avant le
+//      changement garde son ancien taux, même s'il couvre un mois postérieur.
 
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
@@ -102,85 +98,166 @@ async function getTauxCommissionActif(tenantId, ownerId, yearMonth) {
   return getActiveCommissionRate(tenantId, ownerId, lastDayOfMonth(yearMonth));
 }
 
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// Chargeur UNIQUE des flux propriétaire (refonte du 21/10/2026, « vérification des calculs d'un mois »)
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// Avant : getRecetteNetteMaison, getEscrowBalances et getCabinetRevenue relisaient chacun leurs propres
+// requêtes, avec des conventions qui divergeaient (mois de loyer vs mois d'encaissement, taux du dernier
+// jour du mois vs taux du jour). Désormais TOUT part de ce chargeur, donc trois vues du même argent ne
+// peuvent plus se contredire.
+//
+// Conventions (décisions de l'utilisateur) :
+//   - Base caisse : chaque flux est daté de son encaissement/décaissement RÉEL (`paid_at`,
+//     `entry_prorata_received_at`) ; le « mois » d'un flux est ce mois-là (mois civil, 1er → 30/31).
+//   - Un loyer payé en avance ou en retard compte dans le mois où l'argent est entré.
+//   - Le propriétaire d'un flux est celui en vigueur à la date du flux (`property_owner_history`).
+//   - Le taux de commission d'un flux est celui en vigueur à la date du flux (jour du paiement).
+//   - Arrondi de la commission à la maille PROPRIÉTAIRE + BIEN + MOIS (somme des montants × taux du jour,
+//     arrondie une seule fois) — identique dans la fiche du Bien, le séquestre et le revenu du cabinet.
+
+/** Sous-requête SQL commune : propriétaire en vigueur à la date `dateExpr` (repli : propriétaire actuel). */
+function ownerJoin(dateExpr) {
+  return `LEFT JOIN property_owner_history poh ON poh.property_id = p.id
+       AND poh.starts_on <= ${dateExpr} AND (poh.ends_on IS NULL OR poh.ends_on > ${dateExpr})`;
+}
+
 /**
- * Recette nette d'un Bien pour un mois donné : somme des paiements de loyer
- * de toutes ses unités (`rent_payments.covers_month = yearMonth`) moins la
- * somme des dépenses rattachées à ce Bien pour ce mois (`expenses.property_id`,
- * qu'elles visent le Bien entier ou une Unité précise en son sein).
- *
- * Deux requêtes d'agrégation strictement séparées (jamais un JOIN entre
- * paiements et dépenses, qui dupliquerait les montants sommés) :
- *   - paiements : `rent_payments → leases → property_units`, une chaîne de
- *     relations many-to-one (chaque paiement a EXACTEMENT un bail, chaque
- *     bail EXACTEMENT une unité) — aucun risque de doublon en sommant.
- *   - dépenses : lecture directe de `expenses.property_id`, sans jointure.
+ * Tous les flux « argent du propriétaire » du tenant : loyers, dette initiale réglée, prorata d'entrée
+ * (entrées, `amount` > 0) et dépenses payées rattachées à un Bien (sorties, `amount` > 0, `kind` =
+ * 'expenses'). Dates renvoyées en 'AAAA-MM-JJ' (formatées par SQL : aucun décalage de fuseau possible).
+ * Filtres : `asOfDate` (flux <= date), `month` ('AAAA-MM', flux de ce mois), `propertyId`.
  */
-// Mois civil d'un loyer (étape 2c) : `covers_month` pour un bail calendaire ; pour un bail
-// non-calendaire (`covers_month` NULL), le mois où COMMENCE la période payée — même règle que le
-// récapitulatif « Loyers du mois » (`summarizeRentMonth`). Sans ce repli, un seul paiement de ce type
-// faisait planter le séquestre (et tout le tableau de bord comptable) sur un mois `null`.
-async function getRecetteNetteMaison(tenantId, propertyId, yearMonth) {
-  const [paymentRows] = await pool.query(
-    `SELECT COALESCE(SUM(rp.amount), 0) AS total
-     FROM rent_payments rp
+async function loadOwnerFlows(tenantId, db = pool, { asOfDate = null, month = null, propertyId = null } = {}) {
+  const params = { tenantId };
+  if (asOfDate) params.asOfDate = asOfDate;
+  if (month) params.month = month;
+  if (propertyId) params.propertyId = propertyId;
+  const filters = (col) =>
+    `${asOfDate ? ` AND ${col} <= :asOfDate` : ''}${month ? ` AND DATE_FORMAT(${col}, '%Y-%m') = :month` : ''}${
+      propertyId ? ' AND p.id = :propertyId' : ''
+    }`;
+
+  const select = (dateCol, amountExpr, kind, from, where) =>
+    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id,
+            DATE_FORMAT(${dateCol}, '%Y-%m-%d') AS flow_date, ${amountExpr} AS amount, '${kind}' AS kind
+     ${from}
+     ${ownerJoin(dateCol)}
+     WHERE ${where}${filters(dateCol)}`;
+
+  const rentFrom = `FROM rent_payments rp
      JOIN leases l ON l.id = rp.lease_id
      JOIN property_units u ON u.id = l.unit_id
-     WHERE rp.tenant_id = :tenantId AND u.property_id = :propertyId AND COALESCE(rp.covers_month, DATE_FORMAT(rp.covers_period_start, '%Y-%m')) = :yearMonth
-       AND rp.deleted_at IS NULL`,
-    { tenantId, propertyId, yearMonth },
-  );
-  // Dette initiale réglée + prorata d'entrée (étape 42) — mêmes sources que `getEscrowBalances`, dont ce
-  // calcul doit rester cohérent (même mois, même recette nette) : les deux appartiennent au propriétaire
-  // au même titre qu'un loyer, groupés ici par mois de RÈGLEMENT effectif (pas de loyer concerné).
-  const [openingDebtRows] = await pool.query(
-    `SELECT COALESCE(SUM(lodp.amount), 0) AS total
-     FROM lease_opening_debt_payments lodp
+     JOIN properties p ON p.id = u.property_id`;
+  const debtFrom = `FROM lease_opening_debt_payments lodp
      JOIN leases l ON l.id = lodp.lease_id
      JOIN property_units u ON u.id = l.unit_id
-     WHERE lodp.tenant_id = :tenantId AND u.property_id = :propertyId
-       AND DATE_FORMAT(lodp.paid_at, '%Y-%m') = :yearMonth`,
-    { tenantId, propertyId, yearMonth },
-  );
-  const [prorataRows] = await pool.query(
-    `SELECT COALESCE(SUM(l.entry_prorata_amount), 0) AS total
-     FROM leases l
+     JOIN properties p ON p.id = u.property_id`;
+  const prorataFrom = `FROM leases l
      JOIN property_units u ON u.id = l.unit_id
-     WHERE l.tenant_id = :tenantId AND u.property_id = :propertyId
-       AND l.entry_prorata_received_at IS NOT NULL AND DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') = :yearMonth`,
-    { tenantId, propertyId, yearMonth },
-  );
-  // Haute #7 (étape 51) : base caisse réelle (`paid_at`), jamais `expense_date` — doit rester cohérent
-  // avec `getEscrowBalances` (même correctif), sous peine de rouvrir la divergence corrigée en Haute #2.
-  const [expenseRows] = await pool.query(
-    `SELECT COALESCE(SUM(amount), 0) AS total
-     FROM expenses
-     WHERE tenant_id = :tenantId AND property_id = :propertyId AND deleted_at IS NULL
-       AND payment_status = 'paid' AND DATE_FORMAT(paid_at, '%Y-%m') = :yearMonth`,
-    { tenantId, propertyId, yearMonth },
-  );
+     JOIN properties p ON p.id = u.property_id`;
+  const expenseFrom = `FROM expenses e
+     JOIN properties p ON p.id = e.property_id`;
 
-  const breakdown = {
-    rent: Number(paymentRows[0].total),
-    openingDebt: Number(openingDebtRows[0].total),
-    prorata: Number(prorataRows[0].total),
-  };
+  const sql = [
+    select('rp.paid_at', 'rp.amount', 'rent', rentFrom, 'rp.tenant_id = :tenantId AND rp.deleted_at IS NULL'),
+    select('lodp.paid_at', 'lodp.amount', 'openingDebt', debtFrom, 'lodp.tenant_id = :tenantId'),
+    select(
+      'l.entry_prorata_received_at',
+      'l.entry_prorata_amount',
+      'prorata',
+      prorataFrom,
+      'l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL',
+    ),
+    // Base caisse : une dépense « à crédit » encore impayée (paid_at NULL) ne réduit aucun solde.
+    select(
+      'e.paid_at',
+      'e.amount',
+      'expenses',
+      expenseFrom,
+      "e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.property_id IS NOT NULL AND e.payment_status = 'paid'",
+    ),
+  ].join('\nUNION ALL\n');
+
+  const [rows] = await db.query(sql, params);
+  return rows.map((r) => ({
+    ownerId: r.owner_id,
+    propertyId: r.property_id,
+    date: r.flow_date,
+    ym: r.flow_date.slice(0, 7),
+    kind: r.kind,
+    amount: Number(r.amount),
+  }));
+}
+
+/** Taux historisés de TOUS les propriétaires du tenant : Map(ownerId → [{rate, startsOn, endsOn}]). */
+async function loadRatesByOwner(tenantId, db = pool) {
+  const [rows] = await db.query(
+    `SELECT owner_id, rate, DATE_FORMAT(starts_on, '%Y-%m-%d') AS starts_on, DATE_FORMAT(ends_on, '%Y-%m-%d') AS ends_on
+     FROM owner_commission_rates WHERE tenant_id = :tenantId ORDER BY owner_id, starts_on`,
+    { tenantId },
+  );
+  const map = new Map();
+  for (const r of rows) {
+    if (!map.has(r.owner_id)) map.set(r.owner_id, []);
+    map.get(r.owner_id).push({ rate: Number(r.rate), startsOn: r.starts_on, endsOn: r.ends_on });
+  }
+  return map;
+}
+
+async function loadCommissionAtCollection(tenantId, db = pool) {
+  const [rows] = await db.query('SELECT gl_commission_timing FROM tenants WHERE id = :tenantId LIMIT 1', { tenantId });
+  return (rows[0]?.gl_commission_timing ?? 'encaissement') === 'encaissement';
+}
+
+/**
+ * Fonction PURE : regroupe des flux par (propriétaire, Bien, mois d'encaissement). Pour chaque cellule :
+ * les 4 composantes, la recette nette et la commission « brute » = Σ (montant signé × taux du jour du
+ * flux / 100), arrondie UNE fois (`commission`). Une dépense compte en négatif (elle réduit la base).
+ */
+function buildOwnerCells(flows, ratesByOwner) {
+  const cells = new Map();
+  for (const f of flows) {
+    const key = `${f.ownerId}|${f.propertyId}|${f.ym}`;
+    let c = cells.get(key);
+    if (!c) {
+      c = { ownerId: f.ownerId, propertyId: f.propertyId, ym: f.ym, rent: 0, openingDebt: 0, prorata: 0, expenses: 0, commissionRaw: 0 };
+      cells.set(key, c);
+    }
+    c[f.kind] += f.amount;
+    const rate = pickRateValidAt(ratesByOwner.get(f.ownerId) || [], f.date)?.rate ?? 0;
+    c.commissionRaw += (f.kind === 'expenses' ? -f.amount : f.amount) * (rate / 100);
+  }
+  for (const c of cells.values()) {
+    c.recetteNette = c.rent + c.openingDebt + c.prorata - c.expenses;
+    c.commission = Math.round(c.commissionRaw);
+  }
+  return cells;
+}
+
+/**
+ * Recette nette d'un Bien pour un mois d'ENCAISSEMENT ('AAAA-MM') : loyers + dette initiale réglée +
+ * prorata d'entrée reçus ce mois-là, moins les dépenses du Bien payées ce mois-là. (Avant la refonte du
+ * 21/10/2026, les loyers étaient rangés par mois « couvert » : un loyer d'octobre payé en septembre
+ * apparaissait en octobre sur la fiche du Bien mais en septembre dans le séquestre — incohérence supprimée.)
+ */
+async function getRecetteNetteMaison(tenantId, propertyId, yearMonth) {
+  const flows = await loadOwnerFlows(tenantId, pool, { month: yearMonth, propertyId });
+  const breakdown = { rent: 0, openingDebt: 0, prorata: 0 };
+  let totalExpenses = 0;
+  for (const f of flows) {
+    if (f.kind === 'expenses') totalExpenses += f.amount;
+    else breakdown[f.kind] += f.amount;
+  }
   const totalPayments = breakdown.rent + breakdown.openingDebt + breakdown.prorata;
-  const totalExpenses = Number(expenseRows[0].total);
   return { totalPayments, totalExpenses, recetteNette: totalPayments - totalExpenses, breakdown };
 }
 
 /**
- * Recette d'un Bien pour un mois, ventilée entre le cabinet et le
- * propriétaire : recette nette, taux appliqué (celui en vigueur ce mois-là),
- * commission cabinet, part propriétaire. Si aucun taux n'a jamais été défini
- * pour ce propriétaire, la commission est calculée à 0 % (`rateDefined:
- * false` dans la réponse, pour que l'écran invite explicitement le DG à en
- * définir un plutôt que de laisser croire à une part propriétaire de 100 %
- * volontaire).
- *
- * Lève une erreur si le Bien n'existe pas pour ce tenant (l'appelant doit
- * l'avoir déjà vérifié via `loadProperty`, mais on ne fait pas confiance à
- * un `ownerId` fourni par le client : on le relit ici).
+ * Recette d'un Bien pour un mois, ventilée entre le cabinet et le propriétaire : recette nette,
+ * commission (chaque encaissement/dépense au taux du JOUR où il a eu lieu), part propriétaire.
+ * `rate` = taux appliqué au dernier flux du mois (ou, à défaut de flux, taux du dernier jour du mois) ;
+ * `rateChangedInMonth` signale un mois où plusieurs taux ont coexisté. Si aucun taux n'a jamais été défini
+ * pour ce propriétaire, la commission vaut 0 % (`rateDefined: false`).
  */
 async function getRecetteProprietaire(tenantId, propertyId, yearMonth) {
   const [propertyRows] = await pool.query(
@@ -192,18 +269,32 @@ async function getRecetteProprietaire(tenantId, propertyId, yearMonth) {
     err.status = 404;
     throw err;
   }
-  // Étape 51bis : le propriétaire EN VIGUEUR ce mois-là (`property_owner_history`), jamais le
-  // propriétaire ACTUEL — sinon réattribuer un Bien changerait rétroactivement à qui appartient la
-  // recette d'un mois déjà passé. Repli sur le propriétaire actuel seulement si aucune période ne couvre
-  // cette date (mois antérieur à la création du Bien : aucune recette possible, sans conséquence).
-  const ownerId = (await resolveOwnerAtDate(tenantId, propertyId, lastDayOfMonth(yearMonth))) ?? propertyRows[0].owner_id;
+  const lastDay = lastDayOfMonth(yearMonth);
+  // Étape 51bis : propriétaire EN VIGUEUR ce mois-là, jamais le propriétaire ACTUEL.
+  const ownerId = (await resolveOwnerAtDate(tenantId, propertyId, lastDay)) ?? propertyRows[0].owner_id;
 
-  const { totalPayments, totalExpenses, recetteNette, breakdown } = await getRecetteNetteMaison(tenantId, propertyId, yearMonth);
-  const rateInfo = await getTauxCommissionActif(tenantId, ownerId, yearMonth);
-  const rate = rateInfo ? rateInfo.rate : 0;
+  const [flows, ratesByOwner] = await Promise.all([
+    loadOwnerFlows(tenantId, pool, { month: yearMonth, propertyId }),
+    loadRatesByOwner(tenantId),
+  ]);
+  const cells = [...buildOwnerCells(flows, ratesByOwner).values()];
+  const breakdown = { rent: 0, openingDebt: 0, prorata: 0 };
+  let totalExpenses = 0;
+  let commissionCabinet = 0;
+  for (const c of cells) {
+    breakdown.rent += c.rent;
+    breakdown.openingDebt += c.openingDebt;
+    breakdown.prorata += c.prorata;
+    totalExpenses += c.expenses;
+    commissionCabinet += c.commission;
+  }
+  const totalPayments = breakdown.rent + breakdown.openingDebt + breakdown.prorata;
+  const recetteNette = totalPayments - totalExpenses;
 
-  const commissionCabinet = Math.round(recetteNette * (rate / 100));
-  const partProprietaire = recetteNette - commissionCabinet;
+  const ownerRates = ratesByOwner.get(ownerId) || [];
+  const lastFlowDate = flows.reduce((max, f) => (f.date > max ? f.date : max), '');
+  const rateInfo = pickRateValidAt(ownerRates, lastFlowDate || lastDay);
+  const distinctRates = new Set(flows.map((f) => pickRateValidAt(ownerRates, f.date)?.rate ?? 0));
 
   return {
     propertyId,
@@ -213,209 +304,66 @@ async function getRecetteProprietaire(tenantId, propertyId, yearMonth) {
     totalExpenses,
     recetteNette,
     breakdown,
-    rate,
+    rate: rateInfo ? rateInfo.rate : 0,
     rateDefined: !!rateInfo,
     rateStartsOn: rateInfo?.startsOn ?? null,
+    rateChangedInMonth: distinctRates.size > 1,
     commissionCabinet,
-    partProprietaire,
+    partProprietaire: recetteNette - commissionCabinet,
   };
 }
 
 /**
- * Solde séquestre par propriétaire (mandat) : part propriétaire cumulée de
- * TOUS ses Biens depuis toujours (même calcul mois par mois que
- * `getRecetteProprietaire` ci-dessus, sommé sur l'historique complet) moins
- * les versements déjà effectués (`owner_payouts`) — combien le cabinet
- * détient ACTUELLEMENT pour son compte, jamais encore reversé. Calculé pour
- * TOUS les propriétaires du tenant en 4 requêtes agrégées (jamais une
- * boucle par propriétaire) : réutilisé par la fiche propriétaire ET le
- * total portefeuille du tableau de bord comptable.
+ * Solde séquestre par propriétaire (mandat) : part propriétaire cumulée de TOUS ses Biens (flux du
+ * chargeur ci-dessus, commission au taux du jour de chaque flux) moins les versements déjà effectués
+ * (`owner_payouts`). Calculé pour tous les propriétaires du tenant en une passe ; volontairement PAS
+ * filtré par la portée agent (voir `routes/owners.js`).
  *
- * Volontairement PAS filtré par la portée agent (`services/scope.js`) : un
- * solde séquestre est par nature une vue de bout en bout d'un propriétaire
- * (tous ses Biens, même hors de la portée d'un agent restreint) — comme les
- * versements et l'historique de commission déjà affichés sans filtre sur la
- * fiche propriétaire (`routes/owners.js`). Pour cette raison, jamais exposé
- * sur la LISTE des propriétaires (qui, elle, scope ses agrégats par agent) :
- * un montant partiel y serait trompeur, puisque les versements couvrent
- * l'ensemble des Biens d'un propriétaire, pas seulement ceux visibles par
- * un agent restreint.
- */
-/**
- * `asOfDate` (demande utilisateur, 2026-10-18 : bilan de clôture — « les propriétaires reversé et
- * non ») : reconstruit le solde de chaque propriétaire tel qu'il était à la date de clôture d'un
- * mois PASSÉ, plutôt que le solde courant — borne chaque source (encaissements, dette initiale,
- * prorata, dépenses, versements) par `<= asOfDate`. `null` (défaut) garde EXACTEMENT le
- * comportement historique (solde courant, aucun changement pour tout appelant existant).
+ * `asOfDate` (bilan de clôture) : reconstruit le solde tel qu'il était à une date passée — borne chaque
+ * source (flux, versements) par `<= asOfDate`. `null` = solde courant.
+ *
+ * Si `tenants.gl_commission_timing = 'reversement'`, la commission n'est prélevée comptablement qu'au
+ * reversement (`computeReversementDeductions`) : le solde disponible reste alors BRUT (commission = 0 ici),
+ * sinon elle serait déduite deux fois (audit du 30/09/2026).
  */
 async function getEscrowBalances(tenantId, db = pool, asOfDate = null) {
-  const cutoff = asOfDate ? { asOfDate } : {};
-  const cutoffSql = (column) => (asOfDate ? ` AND ${column} <= :asOfDate` : '');
-  // Bug corrigé (audit comptable du 30/09/2026) : si l'entreprise a activé
-  // `gl_commission_timing = 'reversement'` (Comptabilité avancée → Règles
-  // comptables), la commission n'est prélevée comptablement qu'AU MOMENT du
-  // reversement (voir `computeReversementDeductions`,
-  // `services/gl/glAccountResolver.js`) — jamais à l'encaissement du loyer.
-  // Ce calcul du solde séquestre disponible déduisait pourtant TOUJOURS la
-  // commission au fil de l'eau, comme en mode 'encaissement' : le solde
-  // affiché/plafonné était donc déjà net, et la commission se retrouvait
-  // prélevée une SECONDE fois par l'écriture GL du reversement. En mode
-  // 'reversement', le solde disponible reste donc BRUT (commission = 0 ici,
-  // exactement comme le fait déjà `genererEcriture` pour `loyer_encaisse`).
-  const [timingRows] = await db.query('SELECT gl_commission_timing FROM tenants WHERE id = :tenantId LIMIT 1', {
-    tenantId,
-  });
-  const commissionDeductedAtCollection = (timingRows[0]?.gl_commission_timing ?? 'encaissement') === 'encaissement';
-
-  // Étape 51bis : chaque montant est désormais attribué au propriétaire EN VIGUEUR à la date réelle de
-  // l'événement (`property_owner_history`, migration 078), jamais au propriétaire ACTUEL de `properties`
-  // — réattribuer un Bien à un autre propriétaire ne doit plus réécrire silencieusement l'historique déjà
-  // perçu/dépensé sous l'ancien. Un Bien jamais réattribué n'a qu'une période ouverte depuis sa création :
-  // ce JOIN produit alors exactement le même résultat qu'avant pour tout tenant qui n'a jamais réattribué.
-  // `LEFT JOIN` + `COALESCE(poh.owner_id, p.owner_id)` : un évènement daté AVANT la plus ancienne période
-  // suivie pour ce Bien (ex. un paiement backdaté à l'onboarding, antérieur à la création du Bien dans
-  // l'app) retombe sur le propriétaire ACTUEL plutôt que de disparaître silencieusement du total — mieux
-  // vaut l'ancien comportement (imprécis) que de perdre de l'argent dans l'agrégat.
-  const [paymentRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, COALESCE(rp.covers_month, DATE_FORMAT(rp.covers_period_start, '%Y-%m')) AS ym, SUM(rp.amount) AS total
-     FROM rent_payments rp
-     JOIN leases l ON l.id = rp.lease_id
-     JOIN property_units u ON u.id = l.unit_id
-     JOIN properties p ON p.id = u.property_id
-     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
-       AND poh.starts_on <= rp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > rp.paid_at)
-     WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL${cutoffSql('rp.paid_at')}
-     GROUP BY owner_id, p.id, ym`,
-    { tenantId, ...cutoff },
-  );
-  // Dette initiale réglée (étape 42, demande explicite de l'utilisateur : « lorsqu'un impayé est payé
-  // on doit aussi l'ajouter dans le compte séquestré ») — jusqu'ici, seul le RESTE DÛ apparaissait
-  // (`getUnpaidOpeningDebtByOwner`, volontairement à part) ; la part déjà RÉGLÉE, elle, n'entrait dans
-  // aucun total « argent détenu pour ce propriétaire ». Groupée par mois de RÈGLEMENT (`paid_at`), pas
-  // par mois de loyer (cette dette n'en a pas) — même traitement comptable qu'un loyer (voir
-  // `dette_initiale_encaissee`, glOperationTypes).
-  const [openingDebtRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, DATE_FORMAT(lodp.paid_at, '%Y-%m') AS ym, SUM(lodp.amount) AS total
-     FROM lease_opening_debt_payments lodp
-     JOIN leases l ON l.id = lodp.lease_id
-     JOIN property_units u ON u.id = l.unit_id
-     JOIN properties p ON p.id = u.property_id
-     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
-       AND poh.starts_on <= lodp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > lodp.paid_at)
-     WHERE lodp.tenant_id = :tenantId${cutoffSql('lodp.paid_at')}
-     GROUP BY owner_id, p.id, ym`,
-    { tenantId, ...cutoff },
-  );
-  // Prorata d'entrée réglé (étape 42) — un seul montant par bail (pas un historique de paiements comme
-  // la dette initiale ci-dessus), groupé par mois de règlement effectif (`entry_prorata_received_at`) ;
-  // absent tant que rien n'a été concrètement encaissé (`IS NOT NULL`).
-  const [prorataRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') AS ym, SUM(l.entry_prorata_amount) AS total
-     FROM leases l
-     JOIN property_units u ON u.id = l.unit_id
-     JOIN properties p ON p.id = u.property_id
-     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
-       AND poh.starts_on <= l.entry_prorata_received_at AND (poh.ends_on IS NULL OR poh.ends_on > l.entry_prorata_received_at)
-     WHERE l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL${cutoffSql('l.entry_prorata_received_at')}
-     GROUP BY owner_id, p.id, ym`,
-    { tenantId, ...cutoff },
-  );
-  // Haute #7 (étape 51) : groupée par mois de RÈGLEMENT réel (`paid_at`), jamais la date d'engagement
-  // (`expense_date`) — une dépense « à crédit » encore impayée ne doit réduire aucun solde séquestre tant
-  // qu'aucun argent n'est réellement sorti (même principe de base caisse que le reste de cette fonction).
-  const [expenseRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, p.id AS property_id, DATE_FORMAT(e.paid_at, '%Y-%m') AS ym, SUM(e.amount) AS total
-     FROM expenses e
-     JOIN properties p ON p.id = e.property_id
-     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
-       AND poh.starts_on <= e.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > e.paid_at)
-     WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.property_id IS NOT NULL
-       AND e.payment_status = 'paid'${cutoffSql('e.paid_at')}
-     GROUP BY owner_id, p.id, ym`,
-    { tenantId, ...cutoff },
-  );
-  const [rateRows] = await db.query(
-    `SELECT owner_id, rate, starts_on, ends_on FROM owner_commission_rates
-     WHERE tenant_id = :tenantId ORDER BY owner_id, starts_on`,
-    { tenantId },
-  );
+  const [commissionDeductedAtCollection, flows, ratesByOwner] = await Promise.all([
+    loadCommissionAtCollection(tenantId, db),
+    loadOwnerFlows(tenantId, db, { asOfDate }),
+    loadRatesByOwner(tenantId, db),
+  ]);
   const [payoutRows] = await db.query(
-    `SELECT owner_id, COALESCE(SUM(amount), 0) AS total FROM owner_payouts WHERE tenant_id = :tenantId${cutoffSql('paid_at')} GROUP BY owner_id`,
-    { tenantId, ...cutoff },
+    `SELECT owner_id, COALESCE(SUM(amount), 0) AS total FROM owner_payouts
+     WHERE tenant_id = :tenantId${asOfDate ? ' AND paid_at <= :asOfDate' : ''} GROUP BY owner_id`,
+    asOfDate ? { tenantId, asOfDate } : { tenantId },
   );
-
-  // (owner_id -> propertyId -> (mois -> { rent, openingDebt, prorata, expenses })) : les quatre
-  // agrégats ne se recoupent jamais sur la même ligne (requêtes séparées, voir `getRecetteNetteMaison`),
-  // on les fusionne ici cellule par cellule. Trois sources distinctes plutôt qu'un seul total
-  // « payments » : le DÉTAIL de ce qui compose le solde séquestre doit rester lisible (demande
-  // explicite de l'utilisateur), pas seulement son montant.
-  //
-  // Bug corrigé (audit comptable du 30/09/2026) : la clé était auparavant seulement (owner, mois) —
-  // la commission d'un propriétaire à PLUSIEURS Biens était donc arrondie UNE FOIS sur le total combiné
-  // de tous ses Biens pour ce mois, alors que `getRecetteProprietaire` (fiche d'UN Bien) l'arrondit
-  // Bien par Bien. Pour un même mois, la somme des fiches de chaque Bien pouvait alors différer de
-  // quelques FCFA du solde séquestre agrégé — deux vues du même argent en désaccord. La clé inclut
-  // maintenant `propertyId`, et l'arrondi de la commission se fait à CETTE granularité (Bien + mois,
-  // identique à `getRecetteProprietaire`), avant d'être sommé au niveau du propriétaire.
-  const byOwnerPropertyMonth = new Map();
-  function cell(ownerId, propertyId, ym) {
-    if (!byOwnerPropertyMonth.has(ownerId)) byOwnerPropertyMonth.set(ownerId, new Map());
-    const byProperty = byOwnerPropertyMonth.get(ownerId);
-    if (!byProperty.has(propertyId)) byProperty.set(propertyId, new Map());
-    const monthMap = byProperty.get(propertyId);
-    if (!monthMap.has(ym)) monthMap.set(ym, { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 });
-    return monthMap.get(ym);
-  }
-  for (const r of paymentRows) cell(r.owner_id, r.property_id, r.ym).rent = Number(r.total);
-  for (const r of openingDebtRows) cell(r.owner_id, r.property_id, r.ym).openingDebt = Number(r.total);
-  for (const r of prorataRows) cell(r.owner_id, r.property_id, r.ym).prorata = Number(r.total);
-  for (const r of expenseRows) cell(r.owner_id, r.property_id, r.ym).expenses = Number(r.total);
-
-  const ratesByOwner = new Map();
-  for (const r of rateRows) {
-    if (!ratesByOwner.has(r.owner_id)) ratesByOwner.set(r.owner_id, []);
-    ratesByOwner.get(r.owner_id).push({ rate: Number(r.rate), startsOn: isoDate(r.starts_on), endsOn: isoDate(r.ends_on) });
-  }
-  // Même convention que `getTauxCommissionActif` : le taux en vigueur au
-  // dernier jour du mois concerné.
-  function rateAt(ownerId, atDate) {
-    const rates = ratesByOwner.get(ownerId) || [];
-    const match = rates.find((r) => r.startsOn <= atDate && (!r.endsOn || r.endsOn >= atDate));
-    return match ? match.rate : 0;
-  }
-
   const payoutsByOwner = new Map(payoutRows.map((r) => [r.owner_id, Number(r.total)]));
 
   const balances = new Map();
-  for (const [ownerId, byProperty] of byOwnerPropertyMonth) {
-    let totalCollected = 0;
-    const breakdown = { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 };
-    for (const months of byProperty.values()) {
-      for (const [ym, m] of months) {
-        breakdown.rent += m.rent;
-        breakdown.openingDebt += m.openingDebt;
-        breakdown.prorata += m.prorata;
-        breakdown.expenses += m.expenses;
-        const recetteNette = m.rent + m.openingDebt + m.prorata - m.expenses;
-        const rate = rateAt(ownerId, lastDayOfMonth(ym));
-        // Arrondi à la granularité BIEN + MOIS (jamais sur le total combiné de tous les Biens de ce
-        // mois) — voir le commentaire détaillé ci-dessus.
-        const commissionCabinet = commissionDeductedAtCollection ? Math.round(recetteNette * (rate / 100)) : 0;
-        totalCollected += recetteNette - commissionCabinet;
-      }
+  for (const c of buildOwnerCells(flows, ratesByOwner).values()) {
+    if (!balances.has(c.ownerId)) {
+      balances.set(c.ownerId, { totalCollected: 0, totalPayouts: 0, balance: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } });
     }
-    const totalPayouts = payoutsByOwner.get(ownerId) ?? 0;
-    balances.set(ownerId, { totalCollected, totalPayouts, balance: totalCollected - totalPayouts, breakdown });
+    const b = balances.get(c.ownerId);
+    b.breakdown.rent += c.rent;
+    b.breakdown.openingDebt += c.openingDebt;
+    b.breakdown.prorata += c.prorata;
+    b.breakdown.expenses += c.expenses;
+    b.totalCollected += c.recetteNette - (commissionDeductedAtCollection ? c.commission : 0);
   }
-  // Un propriétaire sans aucune recette mais avec un versement déjà
-  // enregistré (situation anormale, ne doit jamais faire planter le calcul) :
-  // inclus quand même, avec un solde négatif explicite plutôt qu'absent.
-  const emptyBreakdown = { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 };
+  for (const [ownerId, b] of balances) {
+    b.totalPayouts = payoutsByOwner.get(ownerId) ?? 0;
+    b.balance = b.totalCollected - b.totalPayouts;
+  }
+  // Versement sans aucune recette (anormal) : inclus avec un solde négatif explicite plutôt qu'absent.
   for (const [ownerId, totalPayouts] of payoutsByOwner) {
-    if (!balances.has(ownerId)) balances.set(ownerId, { totalCollected: 0, totalPayouts, balance: -totalPayouts, breakdown: emptyBreakdown });
+    if (!balances.has(ownerId)) {
+      balances.set(ownerId, { totalCollected: 0, totalPayouts, balance: -totalPayouts, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } });
+    }
   }
   return balances;
 }
+
 
 /**
  * Bilan de clôture (demande utilisateur, 2026-10-18 : « les propriétaires reversé et non ») —
@@ -496,179 +444,59 @@ async function getDepositsHeldByOwner(tenantId, ownerId, db = pool) {
 }
 
 /**
- * Revenu du CABINET lui-même pour un mois donné, tous propriétaires confondus (étape 44, demande
- * explicite de l'utilisateur : « les dépenses doivent être déduites de la recette du cabinet ») —
- * distinct de `getRecetteProprietaire` (par Bien, part reversée à UN propriétaire) et de
- * `netCashFlow` du tableau de bord (trésorerie brute, mélange recette propriétaire et cabinet).
- *
- * Quatre sources 100 % cabinet, jamais reversées à un propriétaire :
- *   1. Commission — base dépend de `tenants.gl_commission_timing` (même réglage que la Comptabilité
- *      avancée) : en mode 'encaissement' (défaut), sur la recette nette de CHAQUE Bien encaissée ce
- *      mois-ci, au taux en vigueur ce mois-là pour son propriétaire ; en mode 'reversement', sur les
- *      VERSEMENTS propriétaire réglés ce mois-ci — jamais les deux à la fois, pour rester cohérent
- *      avec le moment où le grand livre SYSCOHADA reconnaît cette même commission en produit.
- *   2. Frais d'agence à l'entrée (`leases.entry_fee_amount`, 100 % cabinet, voir `frais_agence_encaisse`).
- *   3. Pénalités de retard RÉELLEMENT réglées (étape 44bis, `late_fee_payments.paid_at`) — jamais la
- *      date d'application (`late_fees.applied_at`), qui n'est qu'une créance tant que rien n'est payé.
- *
- * Moins les dépenses de FONCTIONNEMENT du cabinet (`expenses.property_id IS NULL`, jamais celles
- * facturées à un Bien — déjà déduites côté propriétaire dans `getRecetteNetteMaison`, ne jamais les
- * compter deux fois).
+ * Revenu du CABINET lui-même pour un mois civil ('AAAA-MM'), tous propriétaires confondus, en base caisse :
+ *   1. Commission — mode 'encaissement' (défaut) : somme des commissions de chaque (propriétaire, Bien)
+ *      pour les flux encaissés CE mois-ci, chaque flux au taux du jour où il a eu lieu (mêmes cellules que
+ *      le séquestre et la fiche du Bien : aucune divergence d'arrondi) ; mode 'reversement' : commission
+ *      sur les VERSEMENTS réglés ce mois-ci, au taux du jour de chaque versement.
+ *   2. Frais d'agence à l'entrée (100 % cabinet).
+ *   3. Pénalités de retard RÉELLEMENT réglées (`late_fee_payments.paid_at`).
+ *   4. Commission sur vente de biens (`sold_at`).
+ * Moins les dépenses de FONCTIONNEMENT du cabinet (`expenses.property_id IS NULL`, payées ce mois-ci) ;
+ * celles facturées à un Bien sont déjà déduites côté propriétaire.
  */
 async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
-  const atDate = lastDayOfMonth(yearMonth);
-
-  // Bug corrigé (audit comptabilité avancée du 02/10/2026) : cette fonction calculait TOUJOURS la
-  // commission au fil du loyer encaissé, même quand l'entreprise a activé `gl_commission_timing =
-  // 'reversement'` (Comptabilité avancée → Règles comptables) — où le grand livre, lui, ne reconnaît
-  // la commission en produit qu'AU MOMENT du reversement effectif au propriétaire (voir
-  // `computeReversementDeductions`, `services/gl/glAccountResolver.js`). Le tableau de bord
-  // "comptabilité simple" annonçait donc un revenu du cabinet différent de celui du compte de résultat
-  // SYSCOHADA pour le même mois — déjà corrigé pour le solde séquestre (`getEscrowBalances`), jamais
-  // propagé ici.
-  const [timingRows] = await db.query('SELECT gl_commission_timing FROM tenants WHERE id = :tenantId LIMIT 1', {
-    tenantId,
-  });
-  const commissionAtCollection = (timingRows[0]?.gl_commission_timing ?? 'encaissement') === 'encaissement';
-
-  // Étape 51bis : propriétaire EN VIGUEUR à la date réelle de chaque événement (`property_owner_history`,
-  // migration 078), jamais le propriétaire ACTUEL — voir le même correctif dans `getEscrowBalances`.
-  const [paymentRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, SUM(rp.amount) AS total
-     FROM rent_payments rp
-     JOIN leases l ON l.id = rp.lease_id
-     JOIN property_units u ON u.id = l.unit_id
-     JOIN properties p ON p.id = u.property_id
-     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
-       AND poh.starts_on <= rp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > rp.paid_at)
-     WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL AND COALESCE(rp.covers_month, DATE_FORMAT(rp.covers_period_start, '%Y-%m')) = :yearMonth
-     GROUP BY owner_id`,
-    { tenantId, yearMonth },
-  );
-  const [openingDebtRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, SUM(lodp.amount) AS total
-     FROM lease_opening_debt_payments lodp
-     JOIN leases l ON l.id = lodp.lease_id
-     JOIN property_units u ON u.id = l.unit_id
-     JOIN properties p ON p.id = u.property_id
-     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
-       AND poh.starts_on <= lodp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > lodp.paid_at)
-     WHERE lodp.tenant_id = :tenantId AND DATE_FORMAT(lodp.paid_at, '%Y-%m') = :yearMonth
-     GROUP BY owner_id`,
-    { tenantId, yearMonth },
-  );
-  const [prorataRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, SUM(l.entry_prorata_amount) AS total
-     FROM leases l
-     JOIN property_units u ON u.id = l.unit_id
-     JOIN properties p ON p.id = u.property_id
-     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
-       AND poh.starts_on <= l.entry_prorata_received_at AND (poh.ends_on IS NULL OR poh.ends_on > l.entry_prorata_received_at)
-     WHERE l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL
-       AND DATE_FORMAT(l.entry_prorata_received_at, '%Y-%m') = :yearMonth
-     GROUP BY owner_id`,
-    { tenantId, yearMonth },
-  );
-  // Haute #7 (étape 51) : filtrée sur `paid_at` (règlement RÉEL), jamais `expense_date` (simple date
-  // d'engagement) — une dépense « à crédit » (`payment_status='unpaid'`, `paid_at` encore NULL) ne doit
-  // JAMAIS réduire la recette nette d'un propriétaire tant qu'aucun argent n'est réellement sorti (même
-  // principe de base caisse déjà appliqué au loyer/aux pénalités ci-dessus). `paid_at` vaut déjà
-  // `expense_date` pour une dépense payée immédiatement (voir POST /expenses) : comportement inchangé
-  // dans ce cas, seul le cas « à crédit » est corrigé.
-  const [propertyExpenseRows] = await db.query(
-    `SELECT COALESCE(poh.owner_id, p.owner_id) AS owner_id, SUM(e.amount) AS total
-     FROM expenses e
-     JOIN properties p ON p.id = e.property_id
-     LEFT JOIN property_owner_history poh ON poh.property_id = p.id
-       AND poh.starts_on <= e.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > e.paid_at)
-     WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.property_id IS NOT NULL
-       AND e.payment_status = 'paid' AND DATE_FORMAT(e.paid_at, '%Y-%m') = :yearMonth
-     GROUP BY owner_id`,
-    { tenantId, yearMonth },
-  );
-  const [rateRows] = await db.query(
-    `SELECT owner_id, rate, starts_on, ends_on FROM owner_commission_rates WHERE tenant_id = :tenantId`,
-    { tenantId },
-  );
-
-  const byOwner = new Map();
-  function cell(ownerId) {
-    if (!byOwner.has(ownerId)) byOwner.set(ownerId, { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 });
-    return byOwner.get(ownerId);
-  }
-  for (const r of paymentRows) cell(r.owner_id).rent = Number(r.total);
-  for (const r of openingDebtRows) cell(r.owner_id).openingDebt = Number(r.total);
-  for (const r of prorataRows) cell(r.owner_id).prorata = Number(r.total);
-  for (const r of propertyExpenseRows) cell(r.owner_id).expenses = Number(r.total);
-
-  const ratesByOwner = new Map();
-  for (const r of rateRows) {
-    if (!ratesByOwner.has(r.owner_id)) ratesByOwner.set(r.owner_id, []);
-    ratesByOwner.get(r.owner_id).push({ rate: Number(r.rate), startsOn: isoDate(r.starts_on), endsOn: isoDate(r.ends_on) });
-  }
+  const [commissionAtCollection, ratesByOwner] = await Promise.all([
+    loadCommissionAtCollection(tenantId, db),
+    loadRatesByOwner(tenantId, db),
+  ]);
 
   let commission = 0;
   if (commissionAtCollection) {
-    for (const [ownerId, m] of byOwner) {
-      const recetteNette = m.rent + m.openingDebt + m.prorata - m.expenses;
-      const rate = pickRateValidAt(ratesByOwner.get(ownerId) || [], atDate)?.rate ?? 0;
-      commission += Math.round(recetteNette * (rate / 100));
-    }
+    const flows = await loadOwnerFlows(tenantId, db, { month: yearMonth });
+    for (const c of buildOwnerCells(flows, ratesByOwner).values()) commission += c.commission;
   } else {
-    // 'reversement' : la commission du mois est celle prélevée sur les VERSEMENTS effectivement
-    // réglés ce mois-ci (même base que l'écriture GL `reversement_proprietaire`,
-    // `taux_commission_reversement`), jamais sur le loyer encaissé — sans quoi un cabinet en mode
-    // reversement ne verrait JAMAIS sa commission apparaître ici, même une fois le versement fait.
     const [payoutRows] = await db.query(
-      `SELECT owner_id, SUM(amount) AS total FROM owner_payouts
-       WHERE tenant_id = :tenantId AND DATE_FORMAT(paid_at, '%Y-%m') = :yearMonth
-       GROUP BY owner_id`,
+      `SELECT owner_id, DATE_FORMAT(paid_at, '%Y-%m-%d') AS paid_on, amount FROM owner_payouts
+       WHERE tenant_id = :tenantId AND DATE_FORMAT(paid_at, '%Y-%m') = :yearMonth`,
       { tenantId, yearMonth },
     );
+    const rawByOwner = new Map();
     for (const r of payoutRows) {
-      const rate = pickRateValidAt(ratesByOwner.get(r.owner_id) || [], atDate)?.rate ?? 0;
-      commission += Math.round(Number(r.total) * (rate / 100));
+      const rate = pickRateValidAt(ratesByOwner.get(r.owner_id) || [], r.paid_on)?.rate ?? 0;
+      rawByOwner.set(r.owner_id, (rawByOwner.get(r.owner_id) ?? 0) + Number(r.amount) * (rate / 100));
     }
+    for (const raw of rawByOwner.values()) commission += Math.round(raw);
   }
 
-  const [entryFeeRows] = await db.query(
+  const sum = async (sql) => Number((await db.query(sql, { tenantId, yearMonth }))[0][0].total);
+  const entryFees = await sum(
     `SELECT COALESCE(SUM(entry_fee_amount), 0) AS total FROM leases
-     WHERE tenant_id = :tenantId AND entry_fee_received_at IS NOT NULL
-       AND DATE_FORMAT(entry_fee_received_at, '%Y-%m') = :yearMonth`,
-    { tenantId, yearMonth },
+     WHERE tenant_id = :tenantId AND entry_fee_received_at IS NOT NULL AND DATE_FORMAT(entry_fee_received_at, '%Y-%m') = :yearMonth`,
   );
-  const entryFees = Number(entryFeeRows[0].total);
-
-  // Pénalités de retard RÉELLEMENT réglées (étape 44bis, `late_fee_payments`) — groupées par mois de
-  // RÈGLEMENT effectif (`paid_at`), jamais par date d'application (`late_fees.applied_at`) : cette
-  // recette est en base de caisse, comme les trois sources ci-dessus, jamais une créance non encaissée.
-  const [lateFeeRows] = await db.query(
+  const lateFees = await sum(
     `SELECT COALESCE(SUM(amount), 0) AS total FROM late_fee_payments
      WHERE tenant_id = :tenantId AND DATE_FORMAT(paid_at, '%Y-%m') = :yearMonth`,
-    { tenantId, yearMonth },
   );
-  const lateFees = Number(lateFeeRows[0].total);
-
-  // Commission sur vente d'un bien à vendre (bouton « Vendu », demande utilisateur 2026-10-18) — 100 %
-  // produit du cabinet (même principe que `entryFees` ci-dessus), groupée par mois de vente RÉELLE
-  // (`sold_at`), jamais par date de création de la fiche.
-  const [saleCommissionRows] = await db.query(
+  const saleCommissions = await sum(
     `SELECT COALESCE(SUM(commission_amount), 0) AS total FROM sale_properties
-     WHERE tenant_id = :tenantId AND status = 'vendu' AND deleted_at IS NULL
-       AND DATE_FORMAT(sold_at, '%Y-%m') = :yearMonth`,
-    { tenantId, yearMonth },
+     WHERE tenant_id = :tenantId AND status = 'vendu' AND deleted_at IS NULL AND DATE_FORMAT(sold_at, '%Y-%m') = :yearMonth`,
   );
-  const saleCommissions = Number(saleCommissionRows[0].total);
-
-  // Haute #7 (étape 51) : même correctif que propertyExpenseRows ci-dessus — base caisse réelle
-  // (`paid_at`), jamais la date d'engagement.
-  const [cabinetExpenseRows] = await db.query(
+  const expenses = await sum(
     `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
      WHERE tenant_id = :tenantId AND property_id IS NULL AND deleted_at IS NULL
        AND payment_status = 'paid' AND DATE_FORMAT(paid_at, '%Y-%m') = :yearMonth`,
-    { tenantId, yearMonth },
   );
-  const expenses = Number(cabinetExpenseRows[0].total);
 
   return {
     yearMonth,
@@ -676,6 +504,7 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
     netCabinetIncome: commission + entryFees + lateFees + saleCommissions - expenses,
   };
 }
+
 
 /**
  * Dette initiale des locataires non encore réglée, agrégée par
@@ -762,6 +591,9 @@ module.exports = {
   lastDayOfMonth,
   pickRateValidAt,
   resolveOwnerAtDate,
+  loadOwnerFlows,
+  loadRatesByOwner,
+  buildOwnerCells,
   assertPayoutWithinBalance,
   getActiveCommissionRate,
   getTauxCommissionActif,
