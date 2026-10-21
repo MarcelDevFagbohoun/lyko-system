@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, ChevronDown, ChevronUp, Landmark, UserPlus, Percent, LogOut } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, ChevronDown, ChevronUp, Landmark, UserPlus, Percent, LogOut, Tag } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf, downloadAuthenticatedFile } from "@/lib/api/client";
 import {
@@ -671,6 +671,13 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         trend={{ value: `${totals.entryFeesCollectedCount} locataire(s) — produit de l'entreprise, jamais reversé`, direction: "flat" }}
       />
       <StatCard
+        label="Commission sur ventes de biens"
+        icon={<Tag size={16} />}
+        value={formatFcfa(totals.saleCommissionsCollected)}
+        tone={totals.saleCommissionsCollected > 0 ? "success" : "default"}
+        trend={{ value: `${totals.saleCommissionsCollectedCount} vente(s) — produit de l'entreprise, jamais reversé`, direction: "flat" }}
+      />
+      <StatCard
         label="Versé aux propriétaires"
         icon={<TrendingDown size={16} />}
         value={formatFcfa(totals.ownerPayouts)}
@@ -710,7 +717,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         icon={<Scale size={16} />}
         value={formatFcfa(totals.netCashFlow)}
         tone={totals.netCashFlow >= 0 ? "success" : "danger"}
-        trend={{ value: "Encaissé + frais d'agence, moins reversé et dépenses de l'entreprise", direction: totals.netCashFlow >= 0 ? "up" : "down" }}
+        trend={{ value: "Encaissé + frais d'agence + commission vente, moins reversé et dépenses de l'entreprise", direction: totals.netCashFlow >= 0 ? "up" : "down" }}
       />
     </div>
   );

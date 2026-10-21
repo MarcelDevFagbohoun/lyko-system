@@ -4,7 +4,8 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
-import { normalizeBeninPhone, RCCM_RE, IFU_RE, PASSWORD_RE, passwordStrength } from "@/lib/validation/auth";
+import { RCCM_RE, IFU_RE, PASSWORD_RE, passwordStrength, isValidRegistrationPhone } from "@/lib/validation/auth";
+import { REGISTRATION_COUNTRIES, type RegistrationCountryCode } from "@/lib/constants/registration-countries";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -14,10 +15,14 @@ type FormState = {
   companyName: string;
   rccm: string;
   ifu: string;
+  email: string;
+  country: RegistrationCountryCode;
   phone: string;
   password: string;
   confirmPassword: string;
 };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const INITIAL_FORM: FormState = {
   firstName: "",
@@ -25,6 +30,8 @@ const INITIAL_FORM: FormState = {
   companyName: "",
   rccm: "",
   ifu: "",
+  email: "",
+  country: "BJ",
   phone: "",
   password: "",
   confirmPassword: "",
@@ -67,8 +74,11 @@ export function RegisterForm() {
     if (!form.ifu) e.ifu = "IFU requis";
     else if (!IFU_RE.test(form.ifu)) e.ifu = "IFU invalide (13 chiffres)";
 
+    if (!form.email) e.email = "Email requis";
+    else if (!EMAIL_RE.test(form.email)) e.email = "Email invalide";
+
     if (!form.phone) e.phone = "Numéro requis";
-    else if (!normalizeBeninPhone(form.phone)) e.phone = "Numéro béninois invalide (ex. 0161234567)";
+    else if (!isValidRegistrationPhone(form.country, form.phone)) e.phone = "Numéro invalide pour le pays choisi";
 
     if (!form.password) e.password = "Mot de passe requis";
     else if (!PASSWORD_RE.test(form.password))
@@ -101,6 +111,7 @@ export function RegisterForm() {
       companyName: true,
       rccm: true,
       ifu: true,
+      email: true,
       phone: true,
       password: true,
       confirmPassword: true,
@@ -116,13 +127,15 @@ export function RegisterForm() {
       fd.append("companyName", form.companyName.trim());
       fd.append("rccm", form.rccm.trim().toUpperCase());
       fd.append("ifu", form.ifu.trim());
+      fd.append("email", form.email.trim());
+      fd.append("country", form.country);
       fd.append("phone", form.phone.trim());
       fd.append("password", form.password);
       fd.append("confirmPassword", form.confirmPassword);
       if (logo) fd.append("logo", logo);
 
-      await register(fd);
-      router.push("/espace");
+      const { email } = await register(fd);
+      router.push(`/inscription/verifier?email=${encodeURIComponent(email)}`);
     } catch (err) {
       setServerError(err instanceof ApiError ? err.message : "Une erreur est survenue. Réessayez.");
     } finally {
@@ -173,6 +186,23 @@ export function RegisterForm() {
         />
       </Field>
 
+      <Field
+        label="Email"
+        htmlFor="email"
+        required
+        hint="Un code à 8 chiffres y sera envoyé pour confirmer votre compte."
+        error={touched.email ? errors.email : undefined}
+      >
+        <Input
+          id="email"
+          type="email"
+          value={form.email}
+          onChange={(e) => set("email", e.target.value)}
+          onBlur={() => markTouched("email")}
+          autoComplete="email"
+        />
+      </Field>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field
           label="RCCM"
@@ -200,22 +230,38 @@ export function RegisterForm() {
         </Field>
       </div>
 
-      <Field
-        label="Numéro à contacter"
-        htmlFor="phone"
-        required
-        hint="Ex. 0161234567"
-        error={touched.phone ? errors.phone : undefined}
-      >
-        <Input
-          id="phone"
-          value={form.phone}
-          onChange={(e) => set("phone", e.target.value)}
-          onBlur={() => markTouched("phone")}
-          inputMode="tel"
-          autoComplete="tel"
-        />
-      </Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Pays" htmlFor="country" required>
+          <select
+            id="country"
+            value={form.country}
+            onChange={(e) => set("country", e.target.value as RegistrationCountryCode)}
+            className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            {REGISTRATION_COUNTRIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.label} (+{c.callingCode})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field
+          label="Numéro à contacter"
+          htmlFor="phone"
+          required
+          hint="Numéro réel, selon le pays choisi"
+          error={touched.phone ? errors.phone : undefined}
+        >
+          <Input
+            id="phone"
+            value={form.phone}
+            onChange={(e) => set("phone", e.target.value)}
+            onBlur={() => markTouched("phone")}
+            inputMode="tel"
+            autoComplete="tel"
+          />
+        </Field>
+      </div>
 
       <Field
         label="Logo de l'entreprise (optionnel)"

@@ -607,6 +607,13 @@ function FinalizedView({
 
         <BillingReportSection zones={report.zones} />
 
+        {report.rentArrearsAmount > 0 && (
+          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+            <span className="text-body-sm text-ink">Arriérés de loyer réglés par la caution</span>
+            <span className="tabular text-body-sm text-danger-fg">- {formatFcfa(report.rentArrearsAmount)}</span>
+          </div>
+        )}
+
         {report.otherDeductionsAmount > 0 && (
           <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <span className="text-body-sm text-ink">{report.otherDeductionsNote || "Autres retenues"}</span>
@@ -681,11 +688,22 @@ function FinalizedView({
         )}
 
         {report.reopenedAt && (
-          <p className="text-body-xs text-ink-muted">
-            Corrigée le {new Date(report.reopenedAt).toLocaleDateString("fr-FR")}
-            {report.reopenedBy && ` par ${report.reopenedBy.name} (${report.reopenedBy.roleLabel})`}
-            {report.reopenReason && ` — motif : ${report.reopenReason}`}.
-          </p>
+          <div className="rounded-lg border border-border bg-surface-muted p-3">
+            <p className="text-body-xs text-ink-muted">
+              Corrigée le {new Date(report.reopenedAt).toLocaleDateString("fr-FR")}
+              {report.reopenedBy && ` par ${report.reopenedBy.name} (${report.reopenedBy.roleLabel})`}
+              {report.reopenReason && ` — motif : ${report.reopenReason}`}.
+            </p>
+            {report.correctionChanges && report.correctionChanges.length > 0 ? (
+              <ul className="mt-1 list-disc pl-5 text-body-xs text-ink-muted">
+                {report.correctionChanges.map((change, i) => (
+                  <li key={i}>{change}</li>
+                ))}
+              </ul>
+            ) : report.correctionChanges ? (
+              <p className="mt-1 text-body-xs text-ink-muted">Aucun changement de contenu détecté par rapport à la version précédente.</p>
+            ) : null}
+          </div>
         )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -162,6 +162,78 @@ function compareCondition(moveInCondition, moveOutCondition) {
   return 'same';
 }
 
+// Dupliqué volontairement de `services/pdf.js` (même raison que
+// `compareCondition` ci-dessus : pas de paquet partagé entre les modules de
+// ce fichier et pdf.js).
+const CONDITION_LABELS = { BE: 'Bon état', ME: 'Mauvais état', SR: 'Sous réserve' };
+
+/**
+ * Photo du contenu d'une fiche au moment de sa réouverture (étape « crédibilité
+ * des corrections », 2026-10-17) — comparé au contenu final lors de la
+ * refinalisation pour produire `correction_changes` (voir `diffInspectionReport`).
+ */
+function snapshotForCorrection(zones, generalNotes, tenantReserves) {
+  return { zones, generalNotes: generalNotes ?? null, tenantReserves: tenantReserves ?? null };
+}
+
+/**
+ * Liste, en français, ce qui a changé entre le contenu d'une fiche au moment
+ * de sa réouverture (`before`, voir `snapshotForCorrection`) et son contenu
+ * au moment de la refinalisation (`after`, même forme). Affichée au
+ * locataire/propriétaire (écran + PDF) en plus du motif déjà enregistré par
+ * le DG à la réouverture — pour que « ceci a été corrigé » dise aussi quoi,
+ * et pas seulement quand.
+ */
+function diffInspectionReport(before, after) {
+  const changes = [];
+  const beforeZones = new Map((before.zones ?? []).map((z) => [z.key, z]));
+
+  for (const zone of after.zones ?? []) {
+    const beforeZone = beforeZones.get(zone.key);
+    if (!beforeZone) {
+      changes.push(`« ${zone.label} » : pièce ajoutée`);
+      continue;
+    }
+    const beforeItems = new Map(beforeZone.items.map((it) => [it.key, it]));
+    for (const item of zone.items) {
+      const beforeItem = beforeItems.get(item.key);
+      if (!beforeItem) {
+        changes.push(`${zone.label} — ${item.label} : élément ajouté`);
+        continue;
+      }
+      if ((beforeItem.condition ?? null) !== (item.condition ?? null)) {
+        const from = CONDITION_LABELS[beforeItem.condition] ?? 'non renseigné';
+        const to = CONDITION_LABELS[item.condition] ?? 'non renseigné';
+        changes.push(`${zone.label} — ${item.label} : état « ${from} » → « ${to} »`);
+      }
+      if ((beforeItem.comment ?? '') !== (item.comment ?? '')) {
+        changes.push(`${zone.label} — ${item.label} : observation modifiée`);
+      }
+      const beforePhotoCount = beforeItem.photoUrls?.length ?? 0;
+      const afterPhotoCount = item.photoUrls?.length ?? 0;
+      if (beforePhotoCount !== afterPhotoCount) {
+        changes.push(`${zone.label} — ${item.label} : ${afterPhotoCount > beforePhotoCount ? 'photo ajoutée' : 'photo retirée'}`);
+      }
+      if (Number(beforeItem.deduction || 0) !== Number(item.deduction || 0)) {
+        changes.push(`${zone.label} — ${item.label} : montant de retenue modifié`);
+      }
+      beforeItems.delete(item.key);
+    }
+    for (const removedItem of beforeItems.values()) {
+      changes.push(`${zone.label} — ${removedItem.label} : élément retiré`);
+    }
+    beforeZones.delete(zone.key);
+  }
+  for (const removedZone of beforeZones.values()) {
+    changes.push(`« ${removedZone.label} » : pièce retirée`);
+  }
+
+  if ((before.generalNotes ?? '') !== (after.generalNotes ?? '')) changes.push('Notes générales modifiées');
+  if ((before.tenantReserves ?? '') !== (after.tenantReserves ?? '')) changes.push('Réserves du locataire modifiées');
+
+  return changes;
+}
+
 function isoDate(d) {
   if (!d) return null;
   return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
@@ -199,6 +271,11 @@ function toPublicInspectionReport(row) {
     reopenedAt: isoDateTime(row.reopened_at),
     reopenedBy: toActor(row.reopener_first_name, row.reopener_last_name, row.reopener_role),
     reopenReason: row.reopen_reason,
+    // Ce qui a changé lors de la DERNIÈRE correction (même portée que
+    // `reopenedAt` ci-dessus — un seul emplacement, pas un historique) :
+    // liste vide si la fiche a été rouverte puis refinalisée sans aucun
+    // changement de contenu détecté (ex. juste une nouvelle signature).
+    correctionChanges: row.correction_changes ?? null,
   };
 }
 
@@ -215,6 +292,11 @@ function toPublicMoveOutReport(row) {
     // `netRefund` ci-dessous (calculé par la route au moment de la finalisation).
     peintureDeductionAmount: Number(row.peinture_deduction_amount),
     peintureDeductionNote: row.peinture_deduction_note,
+    // Arriérés de loyer réglés par la caution à la sortie (demande utilisateur, 2026-10-18) —
+    // déjà inclus dans `totalDeductions`/`netRefund` ci-dessous, affiché à part pour la
+    // transparence (le locataire doit voir pourquoi sa caution est amputée, pas seulement le
+    // total). Toujours 0 pour une fiche finalisée avant cette étape.
+    rentArrearsAmount: Number(row.rent_arrears_amount),
     depositAmount: Number(row.deposit_amount),
     totalDeductions: Number(row.total_deductions),
     netRefund: Number(row.net_refund),
@@ -274,4 +356,6 @@ module.exports = {
   toPublicInspectionReport,
   toPublicMoveOutReport,
   isoDate,
+  snapshotForCorrection,
+  diffInspectionReport,
 };

@@ -14,6 +14,7 @@ import {
   createPayment,
   generatePortalLink,
   receiptPdfPath,
+  entryReceiptPdfPath,
   moveOutReportPdfPath,
   generateReceiptShareLink,
   receiptShareUrl,
@@ -250,32 +251,59 @@ function LocataireContent() {
               <CardDescription>Baux précédents de ce locataire.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col divide-y divide-border">
-              {pastLeases.map((l) => (
-                <div key={l.id} className="flex items-center justify-between py-3">
-                  <div>
-                    <p className="font-label-md text-ink">
-                      {l.unit.designationLabel} ({l.unit.code})
-                    </p>
-                    <p className="text-body-xs text-ink-muted">
-                      {l.startDate} → {l.endDate ?? "—"} · {formatFcfa(l.monthlyRent)}
-                    </p>
+              {pastLeases.map((l) => {
+                // Archive des locataires (étape du 2026-10-18, demande utilisateur : « conserver les
+                // locataires qui ont quitté la maison avec tous les points financiers ») — ce bail
+                // terminé garde tout son historique en base (voir `services/leaseEntryReceipt.js`,
+                // `services/leaseDeposits.js`) ; cette carte l'affiche désormais plutôt que de s'en
+                // tenir à une simple ligne de dates.
+                const totalPaid = l.payments.reduce((sum, p) => sum + p.amount, 0);
+                return (
+                  <div key={l.id} className="flex flex-col gap-2 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="font-label-md text-ink">
+                          {l.unit.designationLabel} ({l.unit.code})
+                        </p>
+                        <p className="text-body-xs text-ink-muted">
+                          {l.startDate} → {l.endDate ?? "—"} · {formatFcfa(l.monthlyRent)}/mois
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {l.moveOutReport && canReadMoveOutPdf ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => accessToken && openAuthenticatedPdf(moveOutReportPdfPath(l.id), accessToken)}
+                          >
+                            <FileDown size={14} />
+                            PV de sortie
+                          </Button>
+                        ) : (
+                          <Badge variant="neutral">Terminé</Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-xs text-ink-soft">
+                      <span>Total loyers payés : <strong className="text-ink">{formatFcfa(totalPaid)}</strong></span>
+                      {l.depositAmount > 0 && (
+                        <span>
+                          Caution : {formatFcfa(l.depositAmount)} ({l.depositStatus === "held" ? "conservée" : "restituée"})
+                        </span>
+                      )}
+                      {l.entryReceiptNumber && accessToken && canReadDocs && (
+                        <button
+                          type="button"
+                          onClick={() => openAuthenticatedPdf(entryReceiptPdfPath(l.id), accessToken)}
+                          className="text-primary hover:underline"
+                        >
+                          Reçu d&apos;entrée {l.entryReceiptNumber}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {l.moveOutReport && canReadMoveOutPdf ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => accessToken && openAuthenticatedPdf(moveOutReportPdfPath(l.id), accessToken)}
-                      >
-                        <FileDown size={14} />
-                        PV de sortie
-                      </Button>
-                    ) : (
-                      <Badge variant="neutral">Terminé</Badge>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
         )}
@@ -828,6 +856,24 @@ function LeaseCard({
           <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
             <span className="font-label-sm uppercase tracking-wider text-ink-muted">Les 12 mois en un coup d&apos;œil</span>
             <RentStrip months={lease.rentStrip} variant="full" />
+          </div>
+        )}
+
+        {lease.entryReceiptNumber && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-border p-4">
+            <div>
+              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Reçu d&apos;entrée</span>
+              <p className="text-body-sm text-ink">{lease.entryReceiptNumber}</p>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => accessToken && openAuthenticatedPdf(entryReceiptPdfPath(lease.id), accessToken)}
+            >
+              <FileDown size={16} />
+              Télécharger
+            </Button>
           </div>
         )}
 

@@ -47,6 +47,20 @@ const LocationPicker = dynamic(() => import("@/components/properties/location-pi
   loading: () => <div className="flex h-[280px] items-center justify-center rounded-lg border border-border-strong bg-surface-muted text-body-sm text-ink-muted">Chargement de la carte…</div>,
 });
 
+// Un numéro de compteur SONEB/SBEE réel compte en général 14 caractères, mais
+// ce n'est plus bloquant (certains compteurs réels dérogent à cette règle) :
+// un écart est signalé à l'écran, jamais en empêchant l'enregistrement.
+const METER_NUMBER_LENGTH = 14;
+
+function warnIfMeterNumberLengthUnusual(toast: ReturnType<typeof useToast>, label: string, value: string) {
+  const trimmed = value.trim();
+  if (trimmed && trimmed.length !== METER_NUMBER_LENGTH) {
+    toast.warning(
+      `N° compteur ${label} : ${trimmed.length} caractère${trimmed.length > 1 ? "s" : ""} au lieu de ${METER_NUMBER_LENGTH} habituellement. Enregistré quand même — vérifiez qu'il est correct.`
+    );
+  }
+}
+
 const UNIT_STATUS_BADGE = {
   libre: { variant: "success" as const, label: "Libre" },
   loue: { variant: "neutral" as const, label: "Loué" },
@@ -1175,6 +1189,8 @@ function EditUnitForm({
     if (!accessToken) return;
     setSubmitting(true);
     setError(null);
+    warnIfMeterNumberLengthUnusual(toast, "SONEB", sonebMeterNumber);
+    warnIfMeterNumberLengthUnusual(toast, "SBEE", sbeeMeterNumber);
     try {
       await updateUnit(accessToken, propertyId, unit.id, {
         designation,
@@ -1298,6 +1314,8 @@ function NewUnitForm({
     if (!accessToken) return;
     setSubmitting(true);
     setError(null);
+    warnIfMeterNumberLengthUnusual(toast, "SONEB", sonebMeterNumber);
+    warnIfMeterNumberLengthUnusual(toast, "SBEE", sbeeMeterNumber);
     try {
       const res = await createUnit(accessToken, propertyId, {
         designation,

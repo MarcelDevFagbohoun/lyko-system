@@ -9,7 +9,8 @@ export type PermissionKey =
   | "charges"
   | "documents_juridiques"
   | "comptabilite_avancee"
-  | "assistant";
+  | "assistant"
+  | "biens_a_vendre";
 
 export type EmployeeRole = "comptable" | "agent";
 

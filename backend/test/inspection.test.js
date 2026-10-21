@@ -16,6 +16,8 @@ const {
   normalizeStoredItems,
   toPublicInspectionReport,
   toPublicMoveOutReport,
+  snapshotForCorrection,
+  diffInspectionReport,
 } = require('../src/services/inspection');
 
 test('computeItemDeduction — sans ligne de facturation, garde le montant libre existant', () => {
@@ -165,4 +167,86 @@ test('toPublicInspectionReport — expose tenantReserves et l’historique de r�
   assert.equal(report.tenantReserves, "Le locataire conteste l'état du carrelage.");
   assert.equal(report.reopenReason, 'Erreur de saisie sur la zone chambre');
   assert.equal(report.reopenedBy.name, 'Audit DG');
+});
+
+test('toPublicInspectionReport — expose correctionChanges', () => {
+  const row = {
+    id: 1,
+    status: 'finalized',
+    conducted_at: '2026-09-29',
+    items: { zones: [] },
+    general_notes: null,
+    tenant_reserves: null,
+    correction_changes: ['Salon — Climatiseur : état « Bon état » → « Mauvais état »'],
+  };
+  const report = toPublicInspectionReport(row);
+  assert.deepEqual(report.correctionChanges, ['Salon — Climatiseur : état « Bon état » → « Mauvais état »']);
+});
+
+/**
+ * Diff des corrections (demande utilisateur, 2026-10-17) : ce qui a changé
+ * entre le contenu d'une fiche au moment de sa réouverture et son contenu
+ * refinalisé, affiché au locataire/propriétaire en plus du motif déjà
+ * enregistré par le DG — pour que « ceci a été corrigé » dise aussi quoi.
+ */
+function zone(key, label, items) {
+  return { key, label, custom: false, items };
+}
+function item(key, label, overrides = {}) {
+  return { key, label, custom: false, condition: null, comment: null, photoUrls: [], deduction: 0, ...overrides };
+}
+
+test('diffInspectionReport — détecte un changement d’état sur un élément', () => {
+  const before = snapshotForCorrection([zone('salon', 'Salon', [item('clim', 'Climatiseur', { condition: 'BE' })])], null, null);
+  const after = snapshotForCorrection([zone('salon', 'Salon', [item('clim', 'Climatiseur', { condition: 'ME' })])], null, null);
+  const changes = diffInspectionReport(before, after);
+  assert.deepEqual(changes, ['Salon — Climatiseur : état « Bon état » → « Mauvais état »']);
+});
+
+test('diffInspectionReport — détecte une observation modifiée et une photo ajoutée', () => {
+  const before = snapshotForCorrection(
+    [zone('salon', 'Salon', [item('clim', 'Climatiseur', { comment: 'Fonctionne mal', photoUrls: [] })])],
+    null,
+    null,
+  );
+  const after = snapshotForCorrection(
+    [zone('salon', 'Salon', [item('clim', 'Climatiseur', { comment: 'Ne fonctionne plus du tout', photoUrls: ['/uploads/x.jpg'] })])],
+    null,
+    null,
+  );
+  const changes = diffInspectionReport(before, after);
+  assert.deepEqual(changes, ['Salon — Climatiseur : observation modifiée', 'Salon — Climatiseur : photo ajoutée']);
+});
+
+test('diffInspectionReport — détecte une pièce ajoutée et un élément retiré', () => {
+  const before = snapshotForCorrection(
+    [zone('salon', 'Salon', [item('clim', 'Climatiseur'), item('lampe', 'Lampe')])],
+    null,
+    null,
+  );
+  const after = snapshotForCorrection(
+    [zone('salon', 'Salon', [item('clim', 'Climatiseur')]), zone('chambre_2', 'Chambre 2', [item('lampe', 'Lampe')])],
+    null,
+    null,
+  );
+  const changes = diffInspectionReport(before, after);
+  assert.deepEqual(changes, ['Salon — Lampe : élément retiré', '« Chambre 2 » : pièce ajoutée']);
+});
+
+test('diffInspectionReport — détecte les notes générales et les réserves du locataire modifiées', () => {
+  const before = snapshotForCorrection([], 'Note initiale', null);
+  const after = snapshotForCorrection([], 'Note corrigée', 'Nouvelle réserve');
+  const changes = diffInspectionReport(before, after);
+  assert.deepEqual(changes, ['Notes générales modifiées', 'Réserves du locataire modifiées']);
+});
+
+test('diffInspectionReport — aucun changement renvoie une liste vide', () => {
+  const zones = [zone('salon', 'Salon', [item('clim', 'Climatiseur', { condition: 'BE' })])];
+  const before = snapshotForCorrection(zones, 'Note', 'Réserve');
+  const after = snapshotForCorrection(
+    [zone('salon', 'Salon', [item('clim', 'Climatiseur', { condition: 'BE' })])],
+    'Note',
+    'Réserve',
+  );
+  assert.deepEqual(diffInspectionReport(before, after), []);
 });

@@ -46,8 +46,14 @@ export function OwnerPicker({
     onSelect(owner);
   }
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
+  // Bug corrigé (trouvé en vérifiant « Biens à vendre », 2026-10-18) : ce composant s'utilise
+  // toujours À L'INTÉRIEUR du <form> d'une page (fiche Bien, Bien à vendre…) — un <form> imbriqué
+  // dans un autre n'est pas valide en HTML, et le clic sur « Créer et sélectionner » déclenchait une
+  // vraie soumission native du navigateur (rechargement de page) au lieu du handler React : toute la
+  // saisie en cours (y compris celle du formulaire parent) était perdue en silence, sans aucune
+  // erreur visible. Jamais un <form> ici désormais — juste un bouton classique + Entrée au clavier
+  // reproduite manuellement sur les deux champs ci-dessous.
+  async function handleCreate() {
     if (!accessToken || !newName.trim()) return;
     setSubmitting(true);
     setError(null);
@@ -64,6 +70,9 @@ export function OwnerPicker({
         createdAt: new Date().toISOString(),
         hasPortalLink: false,
         portalLinkCreatedAt: null,
+        mandateEndedAt: null,
+        mandateEndedBy: null,
+        mandateEndReason: null,
         propertiesCount: 0,
         unitsCount: 0,
         unitsOccupied: 0,
@@ -81,26 +90,32 @@ export function OwnerPicker({
   }
 
   if (creating) {
+    function onEnter(e: React.KeyboardEvent) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (!submitting && newName.trim()) handleCreate();
+      }
+    }
     return (
-      <form onSubmit={handleCreate} className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-4">
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-4">
         {error && <p className="text-body-sm text-danger-fg">{error}</p>}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Nom du propriétaire" htmlFor="newOwnerName" required>
-            <Input id="newOwnerName" value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus />
+            <Input id="newOwnerName" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={onEnter} autoFocus />
           </Field>
           <Field label="Téléphone (optionnel)" htmlFor="newOwnerPhone" hint="Ex. 0161234567">
-            <Input id="newOwnerPhone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} inputMode="tel" />
+            <Input id="newOwnerPhone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} onKeyDown={onEnter} inputMode="tel" />
           </Field>
         </div>
         <div className="flex items-center gap-2">
-          <Button type="submit" size="sm" disabled={submitting || !newName.trim()}>
+          <Button type="button" size="sm" onClick={handleCreate} disabled={submitting || !newName.trim()}>
             {submitting ? "Création…" : "Créer et sélectionner"}
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => setCreating(false)} disabled={submitting}>
             Annuler
           </Button>
         </div>
-      </form>
+      </div>
     );
   }
 

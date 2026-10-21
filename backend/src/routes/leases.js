@@ -23,9 +23,9 @@ const {
   reopenInspectionReportSchema,
 } = require('../validators/inspections');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
-const { computeArrears, allocateRentPayment } = require('../services/rentTracking');
+const { computeArrears, allocateRentPayment, computeRentOwed } = require('../services/rentTracking');
 const { claimIdempotencyKey, hasRecentIdenticalRentPayment, DUPLICATE_MESSAGE } = require('../services/paymentGuards');
-const { streamReceiptPdf, streamMoveOutPdf, streamMoveInPdf, streamLeaseContractPdf } = require('../services/pdf');
+const { streamReceiptPdf, streamEntryReceiptPdf, streamMoveOutPdf, streamMoveInPdf, streamLeaseContractPdf } = require('../services/pdf');
 const { buildContractData, loadContractRow, toPublicContract } = require('../services/leaseContract');
 const { assertPeriodOpen, assertPeriodOpenLocked } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
@@ -50,6 +50,8 @@ const {
   recomputeItemDeductions,
   toPublicInspectionReport,
   toPublicMoveOutReport,
+  snapshotForCorrection,
+  diffInspectionReport,
 } = require('../services/inspection');
 const { assertUploadType, randomFileName, toProtectedFileUrl, stripFileUrlPrefix } = require('../utils/uploads');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
@@ -1057,6 +1059,46 @@ router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req,
   }
 });
 
+// GET /api/leases/:leaseId/entry-receipt.pdf — reçu d'entrée (caution, frais
+// d'agence, cautions supplémentaires, prorata), créé une fois pour toutes à
+// la signature du bail (voir routes/renters.js) — 404 si rien n'a été payé à
+// la signature (aucun reçu n'a alors été créé).
+router.get('/:leaseId/entry-receipt.pdf', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+
+    const [entryReceiptRows] = await pool.query('SELECT * FROM lease_entry_receipts WHERE lease_id = :leaseId LIMIT 1', {
+      leaseId,
+    });
+    if (!entryReceiptRows[0]) {
+      throw new ApiError(404, "Aucun reçu d'entrée pour ce bail : rien n'a été payé à la signature.");
+    }
+
+    const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: lease.renter_id });
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+    const [issuerRows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', {
+      id: entryReceiptRows[0].created_by,
+    });
+    const issuance = await getOrCreateIssuance(req.user.tenantId, 'recu_entree', entryReceiptRows[0].id);
+
+    streamEntryReceiptPdf(res, {
+      tenant: tenantRows[0],
+      renter: renterRows[0],
+      property: lease,
+      lease,
+      entryReceipt: entryReceiptRows[0],
+      issuer: issuerRows[0] || null,
+      verificationCode: issuance.verification_code,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/leases/:leaseId/payments/:paymentId/receipt-link — lien de
 // partage direct de CETTE quittance (envoi automatique par WhatsApp juste
 // après le paiement, voir frontend PaymentRegister). Idempotent : rappeler
@@ -1294,13 +1336,29 @@ router.post(
           ? req.body.tenantReserves.trim().slice(0, 2000)
           : null;
 
+      // Correction (étape « crédibilité », 2026-10-17) : si cette fiche vient
+      // d'être rouverte, le diff contenu avant/après réouverture est calculé
+      // ici, au moment où le contenu redevient définitif — jamais pendant le
+      // brouillon, qui peut encore changer plusieurs fois.
+      const correctionChanges = report.reopened_at && report.pre_reopen_snapshot
+        ? diffInspectionReport(report.pre_reopen_snapshot, snapshotForCorrection(zones, report.general_notes, tenantReserves))
+        : null;
+
       await pool.query(
         `UPDATE move_in_reports
          SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
              tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
-             tenant_reserves = :tenantReserves
+             tenant_reserves = :tenantReserves,
+             correction_changes = :correctionChanges, pre_reopen_snapshot = NULL
          WHERE lease_id = :leaseId`,
-        { by: req.user.id, tenantSig: tenantSignaturePath, agentSig: agentSignaturePath, tenantReserves, leaseId },
+        {
+          by: req.user.id,
+          tenantSig: tenantSignaturePath,
+          agentSig: agentSignaturePath,
+          tenantReserves,
+          leaseId,
+          correctionChanges: correctionChanges ? JSON.stringify(correctionChanges) : null,
+        },
       );
 
       logger.info('État des lieux d’entrée finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
@@ -1331,13 +1389,15 @@ router.post('/:leaseId/move-in-report/reopen', canReopenInspection, async (req, 
     const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
     assertFinalized(report, 'état des lieux d’entrée');
 
+    const snapshot = snapshotForCorrection(normalizeStoredItems(report.items), report.general_notes, report.tenant_reserves);
     await pool.query(
       `UPDATE move_in_reports
        SET status = 'draft', finalized_at = NULL, finalized_by = NULL,
            tenant_signature_path = NULL, agent_signature_path = NULL,
-           reopened_at = NOW(), reopened_by = :by, reopen_reason = :reason
+           reopened_at = NOW(), reopened_by = :by, reopen_reason = :reason,
+           pre_reopen_snapshot = :snapshot, correction_changes = NULL
        WHERE lease_id = :leaseId`,
-      { by: req.user.id, reason: parsed.data.reason, leaseId },
+      { by: req.user.id, reason: parsed.data.reason, leaseId, snapshot: JSON.stringify(snapshot) },
     );
     await deleteInspectionFile(report.tenant_signature_path);
     await deleteInspectionFile(report.agent_signature_path);
@@ -1697,7 +1757,50 @@ router.post(
           ).peintureOverflow;
 
       const itemsDeductions = sumDeductions(zones);
-      const totalDeductions = itemsDeductions + Number(report.other_deductions_amount) + peintureOverflow;
+
+      // Arriérés de loyer réglés par la caution à la sortie (demande utilisateur, 2026-10-18) :
+      // jusqu'ici, un locataire quittant en devant encore du loyer voyait cette dette simplement
+      // disparaître (`leases.status = 'ended'` exclut immédiatement le bail de
+      // `listPortfolioArrears`) sans jamais être réglée — la caution ne protégeait que contre les
+      // dégradations. Même calcul EXACT que ce qui s'affiche comme « impayé » sur le tableau de
+      // bord/les relances (`computeRentOwed`, extrait de `listPortfolioArrears`), daté au jour de
+      // la sortie (`report.conducted_at`), jamais rejoué sur une correction (`isCorrection` — déjà
+      // réglé à la première finalisation). Priorité aux dégradations déjà calculées ci-dessus :
+      // les arriérés ne consomment que ce qu'il reste de la caution après elles, plafonnés comme
+      // tout le reste à son montant — jamais de découvert tracé au-delà.
+      let rentArrearsAmount;
+      let rentArrearsAllocationBasis = null; // { arrears, rhythm, isCalendaire } — réutilisé plus bas pour générer les lignes rent_payments.
+      if (isCorrection) {
+        rentArrearsAmount = Number(report.rent_arrears_amount);
+      } else {
+        const isCalendaireForArrears = lease.rent_due_day != null;
+        const [existingPayments] = await conn.query(
+          'SELECT covers_month, covers_period_start, amount FROM rent_payments WHERE lease_id = :leaseId AND deleted_at IS NULL',
+          { leaseId },
+        );
+        const rhythmForArrears = { mode: isCalendaireForArrears ? 'calendaire' : 'jour_fixe' };
+        const { arrears, rentOwed } = computeRentOwed({
+          lease,
+          payments: existingPayments.map((p) => ({
+            coversMonth: isCalendaireForArrears
+              ? p.covers_month
+              : p.covers_period_start instanceof Date
+                ? p.covers_period_start.toISOString().slice(0, 10)
+                : String(p.covers_period_start).slice(0, 10),
+            amount: Number(p.amount),
+          })),
+          rhythm: rhythmForArrears,
+          asOfDate: report.conducted_at instanceof Date ? report.conducted_at.toISOString().slice(0, 10) : report.conducted_at,
+        });
+        const remainingDepositAfterDamages = Math.max(
+          0,
+          Number(report.deposit_amount) - itemsDeductions - Number(report.other_deductions_amount) - peintureOverflow,
+        );
+        rentArrearsAmount = Math.min(rentOwed, remainingDepositAfterDamages);
+        rentArrearsAllocationBasis = { arrears, rhythm: rhythmForArrears, isCalendaire: isCalendaireForArrears };
+      }
+
+      const totalDeductions = itemsDeductions + Number(report.other_deductions_amount) + peintureOverflow + rentArrearsAmount;
       const depositAmount = Number(report.deposit_amount);
       const netRefund = Math.max(0, depositAmount - totalDeductions);
 
@@ -1733,14 +1836,21 @@ router.post(
       await conn.beginTransaction();
       await assertPeriodOpenLocked(conn, req.user.tenantId, report.conducted_at);
 
+      // Correction (étape « crédibilité », 2026-10-17) : même principe que
+      // pour l'entrée — le diff n'a de sens qu'en cas de réouverture réelle.
+      const correctionChanges = isCorrection && report.pre_reopen_snapshot
+        ? diffInspectionReport(report.pre_reopen_snapshot, snapshotForCorrection(zones, report.general_notes, tenantReserves))
+        : null;
+
       await conn.query(
         `UPDATE move_out_reports
          SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
              tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
              tenant_reserves = :tenantReserves,
              total_deductions = :totalDeductions, net_refund = :netRefund, refund_payment_method = :refundMethod,
-             peinture_overflow_amount = :peintureOverflow,
-             gl_regularized_at = NULL, gl_regularized_by = NULL
+             peinture_overflow_amount = :peintureOverflow, rent_arrears_amount = :rentArrearsAmount,
+             gl_regularized_at = NULL, gl_regularized_by = NULL,
+             correction_changes = :correctionChanges, pre_reopen_snapshot = NULL
          WHERE lease_id = :leaseId`,
         {
           by: req.user.id,
@@ -1751,7 +1861,9 @@ router.post(
           netRefund,
           refundMethod: netRefund > 0 ? refundPaymentMethod : null,
           peintureOverflow,
+          rentArrearsAmount,
           leaseId,
+          correctionChanges: correctionChanges ? JSON.stringify(correctionChanges) : null,
         },
       );
 
@@ -1776,6 +1888,42 @@ router.post(
           renterName,
           createdBy: req.user.id,
         });
+
+        // Arriérés de loyer réglés par la caution (voir calcul ci-dessus) : enregistrés comme des
+        // paiements RÉELS (`rent_payments`, mode 'caution') — jamais seulement une ligne de
+        // retenue sur le PV — pour que toute vue qui lit l'historique des paiements (point mensuel
+        // de clôture, fiche du locataire) voie ces mois comme soldés, exactement comme le demande
+        // l'utilisateur (« il ne doit plus être dans les mois suivants »). Aucune quittance ni
+        // écriture GL automatique ici : même traitement « à régulariser manuellement » que le
+        // reste d'une caution retenue (voir `depositAccountingNote` ci-dessous) — pas plus
+        // automatisé que les dégradations, qui ne le sont pas non plus aujourd'hui.
+        if (rentArrearsAmount > 0 && rentArrearsAllocationBasis) {
+          const { arrears, rhythm: arrearsRhythm, isCalendaire: arrearsIsCalendaire } = rentArrearsAllocationBasis;
+          const { allocations } = allocateRentPayment({
+            rhythm: arrearsRhythm,
+            nextDueMonth: arrears.nextDueMonth,
+            monthlyRent: lease.monthly_rent,
+            alreadyPaidForNextDueMonth: arrears.paidForNextDueMonth,
+            amount: rentArrearsAmount,
+          });
+          for (const alloc of allocations) {
+            const coversPeriodStart = arrearsIsCalendaire ? `${alloc.coversMonth}-01` : alloc.coversMonth;
+            await conn.query(
+              `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, notes, recorded_by)
+               VALUES (:tenantId, :leaseId, :coversMonth, :coversPeriodStart, :amount, 'caution', :paidAt, :notes, :recordedBy)`,
+              {
+                tenantId: req.user.tenantId,
+                leaseId,
+                coversMonth: arrearsIsCalendaire ? alloc.coversMonth : null,
+                coversPeriodStart,
+                amount: alloc.amount,
+                paidAt: report.conducted_at,
+                notes: 'Réglé par la caution à la sortie',
+                recordedBy: req.user.id,
+              },
+            );
+          }
+        }
       }
       finalizedAdditionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId, conn);
 
@@ -1803,8 +1951,9 @@ router.post(
             context: { leaseId },
           });
         } else if (depositAmount > 0) {
-          depositAccountingNote =
-            'Caution avec retenue : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d\'une retenue sur caution n\'est pas encore automatisé). Ce rappel reste visible dans « Mes tâches » jusqu\'à ce qu\'il soit marqué réglé.';
+          depositAccountingNote = rentArrearsAmount > 0
+            ? `Caution avec retenue (dont ${rentArrearsAmount} FCFA d'arriérés de loyer réglés via la caution) : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d'une retenue sur caution n'est pas encore automatisé). Ce rappel reste visible dans « Mes tâches » jusqu'à ce qu'il soit marqué réglé.`
+            : 'Caution avec retenue : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d\'une retenue sur caution n\'est pas encore automatisé). Ce rappel reste visible dans « Mes tâches » jusqu\'à ce qu\'il soit marqué réglé.';
         }
       }
 
@@ -1887,13 +2036,15 @@ router.post('/:leaseId/move-out-report/reopen', canReopenInspection, async (req,
       });
     }
 
+    const snapshot = snapshotForCorrection(normalizeStoredItems(report.items), report.general_notes, report.tenant_reserves);
     await conn.query(
       `UPDATE move_out_reports
        SET status = 'draft', finalized_at = NULL, finalized_by = NULL,
            tenant_signature_path = NULL, agent_signature_path = NULL,
-           reopened_at = NOW(), reopened_by = :by, reopen_reason = :reason
+           reopened_at = NOW(), reopened_by = :by, reopen_reason = :reason,
+           pre_reopen_snapshot = :snapshot, correction_changes = NULL
        WHERE lease_id = :leaseId`,
-      { by: req.user.id, reason: parsed.data.reason, leaseId },
+      { by: req.user.id, reason: parsed.data.reason, leaseId, snapshot: JSON.stringify(snapshot) },
     );
 
     await conn.commit();

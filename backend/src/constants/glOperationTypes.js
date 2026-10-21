@@ -12,6 +12,7 @@ const GL_OPERATION_TYPES = [
   'dette_initiale_encaissee',
   'prorata_entree_encaisse',
   'frais_agence_encaisse',
+  'vente_bien_commission_encaissee',
   'charge_locative_encaissee',
   'charge_locative_reglee_par_caution',
   'caution_recue',

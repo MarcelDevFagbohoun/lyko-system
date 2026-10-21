@@ -1,6 +1,9 @@
 'use strict';
 
 const { pool } = require('../config/db');
+const { UNIT_DESIGNATIONS } = require('../constants/properties');
+
+const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
 
 /** Mois suivant au format 'YYYY-MM'. */
 function addMonth(yearMonth) {
@@ -490,6 +493,51 @@ function recentMonthlyLateCount(payments, rentDueDay, rentTiming, rhythm, rentDu
  * éviter tout risque de dépendance circulaire avec `accountingPeriods.js`, qui n'importe rien de ce
  * fichier aujourd'hui mais reste un service de bas niveau à ne jamais coupler en dur.
  */
+/**
+ * Loyer en retard dû par UN bail, à une date donnée (`asOfDate`, par défaut aujourd'hui) — extrait
+ * de `listPortfolioArrears` (demande utilisateur, 2026-10-18 : régler les arriérés via la caution à
+ * la sortie d'un locataire doit utiliser EXACTEMENT le même calcul que ce qui s'affiche comme
+ * « impayé » sur le tableau de bord/les relances, jamais une variante légèrement différente qui
+ * laisserait les deux désaccord). `payments` déjà filtrées sur ce bail, `rhythm` du tenant.
+ */
+function computeRentOwed({ lease, payments, rhythm, asOfDate = null }) {
+  const startDate = lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
+  const today = asOfDate ? new Date(`${asOfDate}T00:00:00Z`) : new Date();
+  const arrears = computeArrears(
+    {
+      startDate,
+      createdAt: lease.created_at,
+      upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
+      rentDueDay: lease.rent_due_day,
+      rentDueOffsetDays: lease.rent_due_offset_days,
+      rentTiming: lease.rent_timing,
+      monthlyRent: lease.monthly_rent,
+      entryProration: lease.entry_proration,
+      payments,
+      rhythm,
+    },
+    today,
+  );
+  if (arrears.status !== 'late') return { arrears, unpaidMonths: 0, rentOwed: 0 };
+
+  const todayIso = today.toISOString().slice(0, 10);
+  const baselineKey = baselineMonthOf({
+    startDate,
+    createdAt: lease.created_at,
+    upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
+    entryProration: lease.entry_proration,
+    rentDueDay: lease.rent_due_day,
+    rhythm,
+  });
+  const currentKey = periodKeyContainingToday(rhythm, baselineKey, todayIso);
+  const unpaidMonths = Math.max(1, periodsBetweenInclusive(rhythm, arrears.nextDueMonth, currentKey));
+  // Audit comptable, anomalie A1 : le mois en cours (`nextDueMonth`) peut déjà être partiellement
+  // réglé (`paidForNextDueMonth`) — ne jamais compter le loyer plein de ce mois sans en déduire ce
+  // qui est déjà payé, sous peine de facturer deux fois le même reliquat.
+  const rentOwed = Math.max(0, unpaidMonths * Number(lease.monthly_rent) - arrears.paidForNextDueMonth);
+  return { arrears, unpaidMonths, rentOwed };
+}
+
 async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   const { getTenantRhythm } = require('./accountingPeriods');
   const rhythm = await getTenantRhythm(tenantId);
@@ -550,19 +598,10 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
   const lateFeesAppliedByLease = new Map(lateFeesApplied.map((r) => [r.lease_id, Number(r.applied)]));
   const lateFeesPaidByLease = new Map(lateFeesPaid.map((r) => [r.lease_id, Number(r.paid)]));
 
-  const todayIso = new Date().toISOString().slice(0, 10);
   const results = [];
   for (const lease of activeLeases) {
-    const startDate = lease.start_date instanceof Date ? lease.start_date.toISOString().slice(0, 10) : lease.start_date;
-    const arrears = computeArrears({
-      startDate,
-      createdAt: lease.created_at,
-      upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
-      rentDueDay: lease.rent_due_day,
-      rentDueOffsetDays: lease.rent_due_offset_days,
-      rentTiming: lease.rent_timing,
-      monthlyRent: lease.monthly_rent,
-      entryProration: lease.entry_proration,
+    const { arrears, unpaidMonths, rentOwed } = computeRentOwed({
+      lease,
       payments: paymentsByLease.get(lease.id) || [],
       rhythm,
     });
@@ -573,21 +612,6 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null) {
     // jamais soldé (onboarding), et/ou une pénalité de retard non réglée —
     // aucune n'empêche les autres d'apparaître dans la liste de relance.
     if (arrears.status === 'late' || openingDebtRemaining > 0 || lateFeesRemaining > 0) {
-      const baselineKey = baselineMonthOf({
-        startDate,
-        createdAt: lease.created_at,
-        upToDateAtOnboarding: !!lease.up_to_date_at_onboarding,
-        entryProration: lease.entry_proration,
-        rentDueDay: lease.rent_due_day,
-        rhythm,
-      });
-      const currentKey = periodKeyContainingToday(rhythm, baselineKey, todayIso);
-      const unpaidMonths = arrears.status === 'late' ? Math.max(1, periodsBetweenInclusive(rhythm, arrears.nextDueMonth, currentKey)) : 0;
-      // Audit comptable, anomalie A1 : le mois en cours (`nextDueMonth`)
-      // peut déjà être partiellement réglé (`paidForNextDueMonth`) — ne
-      // JAMAIS compter le loyer plein de ce mois sans en déduire ce qui est
-      // déjà payé, sous peine de facturer deux fois le même reliquat.
-      const rentOwed = Math.max(0, unpaidMonths * Number(lease.monthly_rent) - arrears.paidForNextDueMonth);
       results.push({
         leaseId: lease.id,
         renterId: lease.renter_id,
@@ -960,6 +984,54 @@ function buildRentStrip(
  * période) — avant cette étape, un seul bail de ce type faisait planter tout le récapitulatif
  * (échéance calculée sur un `rentDueDay` absent).
  */
+/**
+ * État d'UN bail pour un mois donné — extrait de `summarizeRentMonth` (étape « point financier par
+ * locataire sur un mois clôturé », 2026-10-18) pour être partagé avec `listRentMonthDetails`
+ * ci-dessous, sans dupliquer ni risquer de faire diverger ce calcul déjà éprouvé. `null` = ce bail
+ * est hors champ pour ce mois (pas encore commencé / avant suivi), même filtre qu'avant.
+ */
+function computeLeaseMonthState(lease, month, todayIso, rhythm, currentPeriodKey) {
+  const rent = Number(lease.monthlyRent) || 0;
+  const paid = Number(lease.paid) || 0;
+  const startDate = toIsoDateString(lease.startDate);
+  const leaseRhythm = rhythm ?? { mode: lease.rentDueDay != null ? 'calendaire' : 'jour_fixe' };
+  const isCalendaire = leaseRhythm.mode === 'calendaire';
+  const baselineMonth = baselineMonthOf({
+    startDate,
+    createdAt: lease.createdAt,
+    upToDateAtOnboarding: lease.upToDateAtOnboarding,
+    entryProration: lease.entryProration,
+    rentDueDay: lease.rentDueDay,
+    rhythm: leaseRhythm,
+  });
+  let periodKey = month;
+  let leaseCurrentKey = currentPeriodKey;
+  if (!isCalendaire && /^\d{4}-\d{2}$/.test(month)) {
+    periodKey = periodKeyStartingInMonth(leaseRhythm, baselineMonth, month);
+    if (!periodKey) return null;
+    leaseCurrentKey = periodKeyContainingToday(leaseRhythm, baselineMonth, todayIso);
+  }
+  const state = rentMonthState(
+    {
+      month: periodKey,
+      paid,
+      rent,
+      rentDueDay: lease.rentDueDay,
+      rentDueOffsetDays: lease.rentDueOffsetDays,
+      rentTiming: lease.rentTiming,
+      startMonth: isCalendaire ? startDate.slice(0, 7) : startDate,
+      endMonth: lease.endDate ? (isCalendaire ? toIsoDateString(lease.endDate).slice(0, 7) : toIsoDateString(lease.endDate)) : null,
+      baselineMonth,
+      rhythm: leaseRhythm,
+      currentPeriodKey: leaseCurrentKey,
+    },
+    todayIso,
+  );
+  if (state.status === 'hors_bail' || state.status === 'avant_suivi') return null;
+  const remaining = Math.max(0, rent - paid);
+  return { rent, paid, remaining, status: state.status, late: state.late };
+}
+
 function summarizeRentMonth(leases, month, today = new Date(), rhythm, currentPeriodKey) {
   const todayIso = today.toISOString().slice(0, 10);
   const out = {
@@ -972,53 +1044,49 @@ function summarizeRentMonth(leases, month, today = new Date(), rhythm, currentPe
     counts: { leases: 0, paye: 0, partiel: 0, en_retard: 0, a_payer: 0, a_venir: 0, late: 0 },
   };
   for (const lease of leases) {
-    const rent = Number(lease.monthlyRent) || 0;
-    const paid = Number(lease.paid) || 0;
-    const startDate = toIsoDateString(lease.startDate);
-    const leaseRhythm = rhythm ?? { mode: lease.rentDueDay != null ? 'calendaire' : 'jour_fixe' };
-    const isCalendaire = leaseRhythm.mode === 'calendaire';
-    const baselineMonth = baselineMonthOf({
-      startDate,
-      createdAt: lease.createdAt,
-      upToDateAtOnboarding: lease.upToDateAtOnboarding,
-      entryProration: lease.entryProration,
-      rentDueDay: lease.rentDueDay,
-      rhythm: leaseRhythm,
-    });
-    let periodKey = month;
-    let leaseCurrentKey = currentPeriodKey;
-    if (!isCalendaire && /^\d{4}-\d{2}$/.test(month)) {
-      periodKey = periodKeyStartingInMonth(leaseRhythm, baselineMonth, month);
-      if (!periodKey) continue;
-      leaseCurrentKey = periodKeyContainingToday(leaseRhythm, baselineMonth, todayIso);
-    }
-    const state = rentMonthState(
-      {
-        month: periodKey,
-        paid,
-        rent,
-        rentDueDay: lease.rentDueDay,
-        rentDueOffsetDays: lease.rentDueOffsetDays,
-        rentTiming: lease.rentTiming,
-        startMonth: isCalendaire ? startDate.slice(0, 7) : startDate,
-        endMonth: lease.endDate ? (isCalendaire ? toIsoDateString(lease.endDate).slice(0, 7) : toIsoDateString(lease.endDate)) : null,
-        baselineMonth,
-        rhythm: leaseRhythm,
-        currentPeriodKey: leaseCurrentKey,
-      },
-      todayIso,
-    );
-    if (state.status === 'hors_bail' || state.status === 'avant_suivi') continue;
-    const remaining = Math.max(0, rent - paid);
+    const result = computeLeaseMonthState(lease, month, todayIso, rhythm, currentPeriodKey);
+    if (!result) continue;
     out.counts.leases += 1;
-    out.counts[state.status] += 1;
-    if (state.late) out.counts.late += 1;
-    out.expected += rent;
-    out.remaining += remaining;
-    out.collected += rent - remaining;
-    if (state.late) out.lateRemaining += remaining;
-    else out.upcomingRemaining += remaining;
+    out.counts[result.status] += 1;
+    if (result.late) out.counts.late += 1;
+    out.expected += result.rent;
+    out.remaining += result.remaining;
+    out.collected += result.rent - result.remaining;
+    if (result.late) out.lateRemaining += result.remaining;
+    else out.upcomingRemaining += result.remaining;
   }
+  return out;
+}
+
+/**
+ * Détail PAR LOCATAIRE du récapitulatif « Loyers du mois » (étape « point financier par locataire
+ * sur un mois clôturé », demande utilisateur 2026-10-18) — même calcul que `summarizeRentMonth`
+ * (partage `computeLeaseMonthState`), mais une ligne par bail plutôt qu'un total agrégé. `leases`
+ * porte ici en plus l'identité (nom du locataire, unité, bien) à simplement reporter sur chaque ligne.
+ */
+function listRentMonthDetails(leases, month, today = new Date(), rhythm, currentPeriodKey) {
+  const todayIso = today.toISOString().slice(0, 10);
+  const out = [];
+  for (const lease of leases) {
+    const result = computeLeaseMonthState(lease, month, todayIso, rhythm, currentPeriodKey);
+    if (!result) continue;
+    out.push({
+      leaseId: lease.id,
+      renterId: lease.renterId,
+      renterName: lease.renterName,
+      unitLabel: lease.unitLabel,
+      propertyLabel: lease.propertyLabel,
+      monthlyRent: result.rent,
+      paid: result.paid,
+      remaining: result.remaining,
+      status: result.status,
+      late: result.late,
+    });
+  }
+  // Les plus préoccupants en premier : en retard, puis partiel, puis à payer, le reste ensuite —
+  // jamais un ordre arbitraire pour une liste que le DG lit justement pour repérer les problèmes.
+  const STATUS_ORDER = { en_retard: 0, partiel: 1, a_payer: 2, a_venir: 3, paye: 4 };
+  out.sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
   return out;
 }
 
@@ -1072,11 +1140,72 @@ async function computeRentMonthSummary(tenantId, month, scopeAgentId = null) {
   );
 }
 
+/**
+ * Point financier de CHAQUE locataire pour un mois (étape clôture, demande utilisateur
+ * 2026-10-18 : « lorsqu'on clique sur le mois clôturé, le point financier de chaque locataire dans
+ * ce mois-là ») — même requête que `computeRentMonthSummary`, avec en plus l'identité (locataire,
+ * unité, bien) nécessaire pour en faire une liste plutôt qu'un total. Fonctionne pour n'importe quel
+ * mois, pas seulement un mois clôturé : un mois déjà clôturé ne peut plus recevoir de paiement
+ * rétroactif (période fermée), donc son résultat y est de toute façon figé — nul besoin de relire
+ * `lease_balance_snapshots` (qui ne garde qu'un solde d'impayés cumulé, pas le détail par mois).
+ */
+async function listRentMonthRenters(tenantId, month, scopeAgentId = null) {
+  const [y, m] = month.split('-').map(Number);
+  const firstDay = `${month}-01`;
+  const lastDay = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const params = { tenantId, month, firstDay, lastDay };
+  let scopeClause = '';
+  if (scopeAgentId != null) {
+    scopeClause = 'AND p.agent_id = :scopeAgentId';
+    params.scopeAgentId = scopeAgentId;
+  }
+  const [leases] = await pool.query(
+    `SELECT l.id, l.start_date, l.end_date, l.created_at, l.up_to_date_at_onboarding, l.rent_due_day, l.rent_due_offset_days,
+            l.rent_timing, l.monthly_rent, l.entry_proration, COALESCE(pay.paid, 0) AS paid,
+            r.id AS renter_id, r.first_name, r.last_name,
+            u.code AS unit_code, u.designation, u.designation_custom,
+            p.code AS property_code, p.address
+     FROM leases l
+     JOIN property_units u ON u.id = l.unit_id
+     JOIN properties p ON p.id = u.property_id
+     JOIN renters r ON r.id = l.renter_id
+     LEFT JOIN (
+       SELECT lease_id, SUM(amount) AS paid FROM rent_payments
+       WHERE covers_period_start BETWEEN :firstDay AND :lastDay AND deleted_at IS NULL GROUP BY lease_id
+     ) pay ON pay.lease_id = l.id
+     WHERE l.tenant_id = :tenantId AND l.start_date <= :lastDay
+       AND (l.status = 'active' OR (l.end_date IS NOT NULL AND l.end_date >= :firstDay)) ${scopeClause}`,
+    params,
+  );
+  return listRentMonthDetails(
+    leases.map((l) => ({
+      startDate: l.start_date,
+      endDate: l.end_date,
+      createdAt: l.created_at,
+      upToDateAtOnboarding: !!l.up_to_date_at_onboarding,
+      rentDueDay: l.rent_due_day,
+      rentDueOffsetDays: l.rent_due_offset_days,
+      rentTiming: l.rent_timing,
+      monthlyRent: Number(l.monthly_rent),
+      entryProration: l.entry_proration,
+      paid: Number(l.paid),
+      id: l.id,
+      renterId: l.renter_id,
+      renterName: `${l.first_name} ${l.last_name}`,
+      unitLabel: `${l.designation === 'autre' ? l.designation_custom : DESIGNATION_LABELS[l.designation] ?? l.designation} (${l.unit_code})`,
+      propertyLabel: l.address ? `${l.property_code} · ${l.address}` : l.property_code,
+    })),
+    month,
+  );
+}
+
 module.exports = {
   computeArrears,
   buildRentStrip,
   summarizeRentMonth,
   computeRentMonthSummary,
+  listRentMonthDetails,
+  listRentMonthRenters,
   rentMonthState,
   addMonth,
   addPeriod,
@@ -1093,6 +1222,7 @@ module.exports = {
   isPaymentLate,
   recentMonthlyLateCount,
   listPortfolioArrears,
+  computeRentOwed,
   listPredictiveLateAlerts,
   snapshotLeaseBalances,
   firstRegularDueDate,

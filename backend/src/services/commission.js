@@ -241,7 +241,16 @@ async function getRecetteProprietaire(tenantId, propertyId, yearMonth) {
  * l'ensemble des Biens d'un propriétaire, pas seulement ceux visibles par
  * un agent restreint.
  */
-async function getEscrowBalances(tenantId, db = pool) {
+/**
+ * `asOfDate` (demande utilisateur, 2026-10-18 : bilan de clôture — « les propriétaires reversé et
+ * non ») : reconstruit le solde de chaque propriétaire tel qu'il était à la date de clôture d'un
+ * mois PASSÉ, plutôt que le solde courant — borne chaque source (encaissements, dette initiale,
+ * prorata, dépenses, versements) par `<= asOfDate`. `null` (défaut) garde EXACTEMENT le
+ * comportement historique (solde courant, aucun changement pour tout appelant existant).
+ */
+async function getEscrowBalances(tenantId, db = pool, asOfDate = null) {
+  const cutoff = asOfDate ? { asOfDate } : {};
+  const cutoffSql = (column) => (asOfDate ? ` AND ${column} <= :asOfDate` : '');
   // Bug corrigé (audit comptable du 30/09/2026) : si l'entreprise a activé
   // `gl_commission_timing = 'reversement'` (Comptabilité avancée → Règles
   // comptables), la commission n'est prélevée comptablement qu'AU MOMENT du
@@ -275,9 +284,9 @@ async function getEscrowBalances(tenantId, db = pool) {
      JOIN properties p ON p.id = u.property_id
      LEFT JOIN property_owner_history poh ON poh.property_id = p.id
        AND poh.starts_on <= rp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > rp.paid_at)
-     WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL
+     WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL${cutoffSql('rp.paid_at')}
      GROUP BY owner_id, p.id, ym`,
-    { tenantId },
+    { tenantId, ...cutoff },
   );
   // Dette initiale réglée (étape 42, demande explicite de l'utilisateur : « lorsqu'un impayé est payé
   // on doit aussi l'ajouter dans le compte séquestré ») — jusqu'ici, seul le RESTE DÛ apparaissait
@@ -293,9 +302,9 @@ async function getEscrowBalances(tenantId, db = pool) {
      JOIN properties p ON p.id = u.property_id
      LEFT JOIN property_owner_history poh ON poh.property_id = p.id
        AND poh.starts_on <= lodp.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > lodp.paid_at)
-     WHERE lodp.tenant_id = :tenantId
+     WHERE lodp.tenant_id = :tenantId${cutoffSql('lodp.paid_at')}
      GROUP BY owner_id, p.id, ym`,
-    { tenantId },
+    { tenantId, ...cutoff },
   );
   // Prorata d'entrée réglé (étape 42) — un seul montant par bail (pas un historique de paiements comme
   // la dette initiale ci-dessus), groupé par mois de règlement effectif (`entry_prorata_received_at`) ;
@@ -307,9 +316,9 @@ async function getEscrowBalances(tenantId, db = pool) {
      JOIN properties p ON p.id = u.property_id
      LEFT JOIN property_owner_history poh ON poh.property_id = p.id
        AND poh.starts_on <= l.entry_prorata_received_at AND (poh.ends_on IS NULL OR poh.ends_on > l.entry_prorata_received_at)
-     WHERE l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL
+     WHERE l.tenant_id = :tenantId AND l.entry_prorata_received_at IS NOT NULL${cutoffSql('l.entry_prorata_received_at')}
      GROUP BY owner_id, p.id, ym`,
-    { tenantId },
+    { tenantId, ...cutoff },
   );
   // Haute #7 (étape 51) : groupée par mois de RÈGLEMENT réel (`paid_at`), jamais la date d'engagement
   // (`expense_date`) — une dépense « à crédit » encore impayée ne doit réduire aucun solde séquestre tant
@@ -321,9 +330,9 @@ async function getEscrowBalances(tenantId, db = pool) {
      LEFT JOIN property_owner_history poh ON poh.property_id = p.id
        AND poh.starts_on <= e.paid_at AND (poh.ends_on IS NULL OR poh.ends_on > e.paid_at)
      WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL AND e.property_id IS NOT NULL
-       AND e.payment_status = 'paid'
+       AND e.payment_status = 'paid'${cutoffSql('e.paid_at')}
      GROUP BY owner_id, p.id, ym`,
-    { tenantId },
+    { tenantId, ...cutoff },
   );
   const [rateRows] = await db.query(
     `SELECT owner_id, rate, starts_on, ends_on FROM owner_commission_rates
@@ -331,8 +340,8 @@ async function getEscrowBalances(tenantId, db = pool) {
     { tenantId },
   );
   const [payoutRows] = await db.query(
-    `SELECT owner_id, COALESCE(SUM(amount), 0) AS total FROM owner_payouts WHERE tenant_id = :tenantId GROUP BY owner_id`,
-    { tenantId },
+    `SELECT owner_id, COALESCE(SUM(amount), 0) AS total FROM owner_payouts WHERE tenant_id = :tenantId${cutoffSql('paid_at')} GROUP BY owner_id`,
+    { tenantId, ...cutoff },
   );
 
   // (owner_id -> propertyId -> (mois -> { rent, openingDebt, prorata, expenses })) : les quatre
@@ -406,6 +415,84 @@ async function getEscrowBalances(tenantId, db = pool) {
     if (!balances.has(ownerId)) balances.set(ownerId, { totalCollected: 0, totalPayouts, balance: -totalPayouts, breakdown: emptyBreakdown });
   }
   return balances;
+}
+
+/**
+ * Bilan de clôture (demande utilisateur, 2026-10-18 : « les propriétaires reversé et non ») —
+ * pour CHAQUE propriétaire ayant déjà perçu une recette, reconstruit son solde exactement comme
+ * il était à la date de clôture du mois (`getEscrowBalances(tenantId, db, asOfDate)`) et le
+ * classe : « reversé » (solde nul ou négatif à cette date — rien ne lui était plus dû) ou « non
+ * reversé » (solde encore positif — il lui restait de l'argent dû). Décision explicite de
+ * l'utilisateur (option B) : reconstruction historique, pas un simple « a reçu un versement ce
+ * mois-ci » (qui confondrait un versement pour un AUTRE mois avec le solde réel de celui-ci).
+ */
+async function getOwnerPayoutStatusAsOf(tenantId, asOfDate, db = pool) {
+  const balances = await getEscrowBalances(tenantId, db, asOfDate);
+  const ownerIds = [...balances.keys()];
+  if (ownerIds.length === 0) return { reversed: [], notReversed: [] };
+
+  const [ownerRows] = await db.query('SELECT id, name FROM owners WHERE tenant_id = :tenantId', { tenantId });
+  const ownerNameById = new Map(ownerRows.map((o) => [o.id, o.name]));
+
+  const reversed = [];
+  const notReversed = [];
+  for (const [ownerId, b] of balances) {
+    const entry = { ownerId, ownerName: ownerNameById.get(ownerId) ?? 'Propriétaire', balance: b.balance, totalCollected: b.totalCollected, totalPayouts: b.totalPayouts };
+    if (b.balance > 0) notReversed.push(entry);
+    else reversed.push(entry);
+  }
+  reversed.sort((a, b) => a.ownerName.localeCompare(b.ownerName));
+  notReversed.sort((a, b) => b.balance - a.balance);
+  return { reversed, notReversed };
+}
+
+/**
+ * Cautions actuellement détenues pour un propriétaire — demande utilisateur, 2026-10-17 : « je veux
+ * que Recette nette cumulée soit détaillé ; la caution et le loyer ». Décision explicite : jamais
+ * fondu dans `getEscrowBalances`/`totalCollected` ci-dessus (qui plafonne le reversement possible au
+ * propriétaire) — une caution n'est pas un revenu, c'est l'argent du locataire, conservé puis
+ * restitué (en tout ou partie) à son départ. Affichée À CÔTÉ, comme un fait séparé.
+ *
+ * « Détenues » = non encore restituées (`status = 'held'`) — une caution déjà rendue au locataire ne
+ * représente plus rien que le cabinet détienne aujourd'hui, contrairement à `totalCollected` qui, lui,
+ * reste volontairement CUMULÉ (jamais réduit par un reversement, suivi à part via `balance`).
+ *
+ * Deux sources distinctes, jamais recoupées (un bail a au plus une caution de loyer, et
+ * indépendamment au plus une ligne par type dans `lease_deposits`) :
+ *   - la caution de loyer (`leases.deposit_amount`), réellement reçue (`deposit_received_at`) et pas
+ *     encore restituée (`deposit_status = 'held'`) ;
+ *   - les cautions supplémentaires (étape 43 : SBEE/SONEB/peinture), `lease_deposits.status = 'held'`.
+ *
+ * Scope : propriétaire ACTUEL du Bien (`properties.owner_id`), pas l'historique
+ * (`property_owner_history`) — contrairement à `getEscrowBalances` qui attribue un revenu DÉJÀ ENCAISSÉ
+ * au propriétaire en vigueur à l'époque, une caution encore détenue aujourd'hui est une obligation de
+ * restitution qui suit le mandat ACTUEL, quel qu'ait été le propriétaire au moment de l'encaissement.
+ */
+async function getDepositsHeldByOwner(tenantId, ownerId, db = pool) {
+  const [depositRows] = await db.query(
+    `SELECT COALESCE(SUM(l.deposit_amount), 0) AS total
+     FROM leases l
+     JOIN property_units u ON u.id = l.unit_id
+     JOIN properties p ON p.id = u.property_id
+     WHERE l.tenant_id = :tenantId AND p.owner_id = :ownerId
+       AND l.deposit_received_at IS NOT NULL AND l.deposit_status = 'held'`,
+    { tenantId, ownerId },
+  );
+  const [additionalRows] = await db.query(
+    `SELECT ld.type, COALESCE(SUM(ld.amount), 0) AS total
+     FROM lease_deposits ld
+     JOIN leases l ON l.id = ld.lease_id
+     JOIN property_units u ON u.id = l.unit_id
+     JOIN properties p ON p.id = u.property_id
+     WHERE ld.tenant_id = :tenantId AND p.owner_id = :ownerId AND ld.status = 'held'
+     GROUP BY ld.type`,
+    { tenantId, ownerId },
+  );
+
+  const breakdown = { depositLoyer: Number(depositRows[0].total), sbee: 0, soneb: 0, peinture: 0 };
+  for (const r of additionalRows) breakdown[r.type] = Number(r.total);
+  const total = breakdown.depositLoyer + breakdown.sbee + breakdown.soneb + breakdown.peinture;
+  return { total, breakdown };
 }
 
 /**
@@ -562,6 +649,17 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
   );
   const lateFees = Number(lateFeeRows[0].total);
 
+  // Commission sur vente d'un bien à vendre (bouton « Vendu », demande utilisateur 2026-10-18) — 100 %
+  // produit du cabinet (même principe que `entryFees` ci-dessus), groupée par mois de vente RÉELLE
+  // (`sold_at`), jamais par date de création de la fiche.
+  const [saleCommissionRows] = await db.query(
+    `SELECT COALESCE(SUM(commission_amount), 0) AS total FROM sale_properties
+     WHERE tenant_id = :tenantId AND status = 'vendu' AND deleted_at IS NULL
+       AND DATE_FORMAT(sold_at, '%Y-%m') = :yearMonth`,
+    { tenantId, yearMonth },
+  );
+  const saleCommissions = Number(saleCommissionRows[0].total);
+
   // Haute #7 (étape 51) : même correctif que propertyExpenseRows ci-dessus — base caisse réelle
   // (`paid_at`), jamais la date d'engagement.
   const [cabinetExpenseRows] = await db.query(
@@ -574,8 +672,8 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
 
   return {
     yearMonth,
-    breakdown: { commission, entryFees, lateFees, expenses },
-    netCabinetIncome: commission + entryFees + lateFees - expenses,
+    breakdown: { commission, entryFees, lateFees, saleCommissions, expenses },
+    netCabinetIncome: commission + entryFees + lateFees + saleCommissions - expenses,
   };
 }
 
@@ -671,6 +769,8 @@ module.exports = {
   getRecetteProprietaire,
   getCabinetRevenue,
   getEscrowBalances,
+  getOwnerPayoutStatusAsOf,
+  getDepositsHeldByOwner,
   getUnpaidOpeningDebtByOwner,
   getOwnersWithoutCommissionRate,
 };

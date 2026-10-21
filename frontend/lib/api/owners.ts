@@ -15,6 +15,11 @@ export type Owner = {
   /** Un lien de portail a déjà été généré pour ce propriétaire (jamais le token lui-même). */
   hasPortalLink: boolean;
   portalLinkCreatedAt: string | null;
+  /** Archive des propriétaires (étape du 2026-10-18) — mandat terminé volontairement par le DG,
+   * jamais automatique. `null` = mandat actif. Fiche en lecture seule une fois renseigné. */
+  mandateEndedAt: string | null;
+  mandateEndedBy: Actor;
+  mandateEndReason: string | null;
 };
 
 export type OwnerListItem = Owner & {
@@ -98,11 +103,23 @@ export type EscrowBalance = {
   breakdown: { rent: number; openingDebt: number; prorata: number; expenses: number };
 };
 
+/**
+ * Cautions actuellement détenues (demande utilisateur, 2026-10-17) — jamais mélangées à
+ * `EscrowBalance` ci-dessus : une caution n'est pas un revenu, c'est l'argent du locataire, conservé
+ * puis restitué. `depositLoyer` = caution de loyer (`leases.deposit_amount`), les trois autres =
+ * cautions supplémentaires (étape 43, SBEE/SONEB/peinture) — seulement celles non encore restituées.
+ */
+export type DepositsHeld = {
+  total: number;
+  breakdown: { depositLoyer: number; sbee: number; soneb: number; peinture: number };
+};
+
 export function getOwner(accessToken: string, id: number) {
   return apiFetch<{
     owner: Owner;
     properties: OwnerProperty[];
     escrowBalance: EscrowBalance;
+    depositsHeld: DepositsHeld;
     /** Impayés des locataires à l'entrée, non réglés (montant brut, jamais mélangé à `escrowBalance`). */
     openingDebtUnpaid: number;
     payouts: OwnerPayout[];
@@ -139,6 +156,24 @@ export function updateOwner(accessToken: string, id: number, input: UpdateOwnerI
     accessToken,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+}
+
+/** Archive ce propriétaire (DG uniquement) — bloqué tant qu'il a encore au moins un Bien rattaché. */
+export function endOwnerMandate(accessToken: string, id: number, reason: string) {
+  return apiFetch<{ owner: Owner }>(`/api/owners/${id}/end-mandate`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/** Unique porte de sortie de l'archive (ex. un règlement tardif après le départ) — DG uniquement. */
+export function reactivateOwnerMandate(accessToken: string, id: number) {
+  return apiFetch<{ owner: Owner }>(`/api/owners/${id}/reactivate-mandate`, {
+    method: "POST",
+    accessToken,
   });
 }
 

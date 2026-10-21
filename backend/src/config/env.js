@@ -101,6 +101,17 @@ const config = {
     // Conversations conservées au plus ce nombre de jours (purge opportuniste).
     retentionDays: int('AI_RETENTION_DAYS', 90),
   },
+
+  // Email (Resend) — vérification d'email obligatoire à l'inscription du DG (demande
+  // utilisateur, 2026-10-18) + email de bienvenue différé. Contrairement à l'assistant IA
+  // ci-dessus, PAS de dégradation silencieuse en production (l'inscription ne pourrait plus
+  // jamais être confirmée) — mais en dev/test, sans clé, `services/email/resendClient.js` se
+  // contente de journaliser l'email au lieu de l'envoyer, pour ne jamais bloquer le
+  // développement local ni la suite de tests sur un vrai appel réseau.
+  email: {
+    apiKey: process.env.RESEND_API_KEY || '',
+    fromAddress: process.env.EMAIL_FROM_ADDRESS || 'service@cabinetmconseil.com',
+  },
 };
 
 module.exports = config;

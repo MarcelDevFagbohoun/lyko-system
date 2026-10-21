@@ -6,7 +6,7 @@ import { UserRound, Plus, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { listOwners, type OwnerListItem } from "@/lib/api/owners";
 import { ApiError } from "@/lib/api/client";
-import { formatFcfa } from "@/lib/utils";
+import { formatFcfa, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,9 @@ function ProprietairesContent() {
   const [query, setQuery] = React.useState("");
   const [owners, setOwners] = React.useState<OwnerListItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // Archive des propriétaires (étape du 2026-10-18) : mandat terminé volontairement par le DG, jamais
+  // automatique — voir `proprietaire-view.tsx` pour l'action « Mettre fin au mandat ».
+  const [tab, setTab] = React.useState<"actifs" | "archives">("actifs");
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
@@ -91,45 +94,139 @@ function ProprietairesContent() {
             </CardContent>
           </Card>
         ) : owners ? (
-          <Table>
-            <TableHeader>
-              <tr>
-                <TableHead>Propriétaire</TableHead>
-                <TableHead className="text-center">Biens</TableHead>
-                <TableHead className="text-center">Unités occupées</TableHead>
-                <TableHead className="text-right">Loyers mensuels en cours</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </tr>
-            </TableHeader>
-            <TableBody>
-              {owners.map((o) => (
-                <TableRow key={o.id}>
-                  <TableCell>
-                    <div className="font-label-md text-ink">{o.name}</div>
-                    {o.phone && <div className="text-body-xs text-ink-muted">{o.phone}</div>}
-                  </TableCell>
-                  <TableCell className="text-center text-ink-soft">{o.propertiesCount}</TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={o.unitsOccupied > 0 ? "success" : "neutral"}>
-                      {o.unitsOccupied}/{o.unitsCount}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right tabular font-currency-table text-ink">
-                    {formatFcfa(o.monthlyRentTotal)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Link href={`/espace/proprietaires/${o.id}`}>
-                      <Button variant="ghost" size="sm">
-                        Voir le détail
-                      </Button>
-                    </Link>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <OwnersTable owners={owners} tab={tab} onTabChange={setTab} />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      role="tab"
+      aria-selected={active}
+      className={cn(
+        "rounded-md px-3 py-1.5 font-label-sm transition-colors",
+        active ? "bg-surface text-ink shadow-sm" : "text-ink-muted hover:text-ink",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Archive des propriétaires (étape du 2026-10-18, demande utilisateur) : un propriétaire dont le
+ * mandat a été terminé par le DG (`mandateEndedAt`, jamais automatique sur « 0 Bien ») passe dans
+ * l'onglet « Archivés », à part de la liste active — même principe que les locataires sans bail actif
+ * (voir `locataires-view.tsx`). L'onglet Archivés affiche la date/le motif de fin plutôt que des
+ * colonnes de patrimoine (toujours à 0 — un mandat ne peut se terminer qu'avec 0 Bien rattaché).
+ */
+function OwnersTable({
+  owners,
+  tab,
+  onTabChange,
+}: {
+  owners: OwnerListItem[];
+  tab: "actifs" | "archives";
+  onTabChange: (tab: "actifs" | "archives") => void;
+}) {
+  const active = owners.filter((o) => !o.mandateEndedAt);
+  const archived = owners.filter((o) => o.mandateEndedAt);
+  const shown = tab === "actifs" ? active : archived;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div role="tablist" className="flex w-fit gap-1 rounded-lg bg-surface-muted p-1">
+        <TabButton active={tab === "actifs"} onClick={() => onTabChange("actifs")}>
+          Actifs ({active.length})
+        </TabButton>
+        <TabButton active={tab === "archives"} onClick={() => onTabChange("archives")}>
+          Archivés ({archived.length})
+        </TabButton>
+      </div>
+
+      {shown.length === 0 ? (
+        <Card>
+          <CardContent className="py-8 text-center text-body-sm text-ink-muted">
+            {tab === "actifs" ? "Aucun propriétaire actif." : "Aucun propriétaire archivé."}
+          </CardContent>
+        </Card>
+      ) : (
+        <Table>
+          <TableHeader>
+            <tr>
+              <TableHead>Propriétaire</TableHead>
+              {tab === "actifs" ? (
+                <>
+                  <TableHead className="text-center">Biens</TableHead>
+                  <TableHead className="text-center">Unités occupées</TableHead>
+                  <TableHead className="text-right">Loyers mensuels en cours</TableHead>
+                </>
+              ) : (
+                <>
+                  <TableHead>Mandat terminé le</TableHead>
+                  <TableHead>Motif</TableHead>
+                </>
+              )}
+              <TableHead className="text-right">Actions</TableHead>
+            </tr>
+          </TableHeader>
+          <TableBody>
+            {shown.map((o) => (
+              <TableRow key={o.id}>
+                <TableCell>
+                  <div className="font-label-md text-ink">{o.name}</div>
+                  {o.phone && <div className="text-body-xs text-ink-muted">{o.phone}</div>}
+                </TableCell>
+                {tab === "actifs" ? (
+                  <>
+                    <TableCell className="text-center text-ink-soft">{o.propertiesCount}</TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant={o.unitsOccupied > 0 ? "success" : "neutral"}>
+                        {o.unitsOccupied}/{o.unitsCount}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular font-currency-table text-ink">
+                      {formatFcfa(o.monthlyRentTotal)}
+                    </TableCell>
+                  </>
+                ) : (
+                  <>
+                    <TableCell className="text-ink-soft">
+                      {o.mandateEndedAt && new Date(o.mandateEndedAt).toLocaleDateString("fr-FR")}
+                      {o.mandateEndedBy && (
+                        <div className="text-body-xs text-ink-muted">
+                          par {o.mandateEndedBy.name} ({o.mandateEndedBy.roleLabel})
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="max-w-xs text-ink-soft">{o.mandateEndReason}</TableCell>
+                  </>
+                )}
+                <TableCell className="text-right">
+                  <Link href={`/espace/proprietaires/${o.id}`}>
+                    <Button variant="ghost" size="sm">
+                      Voir le détail
+                    </Button>
+                  </Link>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
     </div>
   );
 }

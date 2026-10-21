@@ -22,6 +22,7 @@ const { assertPeriodOpen, assertPeriodOpenLocked, getTenantRhythm } = require('.
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { recordAdditionalDeposits, listLeaseDeposits, toPublic: toPublicLeaseDeposit } = require('../services/leaseDeposits');
 const { ADDITIONAL_DEPOSIT_TYPE_KEYS } = require('../constants/leaseDeposits');
+const { createEntryReceiptIfAnyPayment } = require('../services/leaseEntryReceipt');
 const logger = require('../utils/logger');
 
 const router = Router();
@@ -329,6 +330,10 @@ function toPublicLease(row) {
     entryProrataReceivedMethod: row.entry_prorata_received_method ?? null,
     rentDueDay: row.rent_due_day,
     rentDueOffsetDays: row.rent_due_offset_days,
+    // Reçu d'entrée (demande utilisateur, 2026-10-17) — `null` si rien n'a été payé à la signature
+    // (voir `services/leaseEntryReceipt.js`). Le numéro suffit : la route de téléchargement ne prend
+    // que l'id du bail, jamais celui du reçu.
+    entryReceiptNumber: row.entry_receipt_number ?? null,
     rentTiming: row.rent_timing,
     startDate: isoDate(row.start_date),
     endDate: isoDate(row.end_date),
@@ -365,6 +370,7 @@ const PAYMENT_METHOD_LABELS = {
   virement: 'Virement bancaire',
   cheque: 'Chèque',
   kkiapay: 'Paiement en ligne (KKiaPay)',
+  caution: 'Prélevé sur la caution',
 };
 
 // Colonnes communes bail + unité + bien + propriétaire, réutilisées par la
@@ -379,6 +385,7 @@ const LEASE_UNIT_PROPERTY_SELECT = `
   l.rent_due_day, l.rent_due_offset_days, l.rent_timing, l.start_date, l.end_date, l.status AS lease_status,
   l.created_at AS lease_created_at,
   lu.first_name AS lease_creator_first_name, lu.last_name AS lease_creator_last_name, lu.role AS lease_creator_role,
+  ler.receipt_number AS entry_receipt_number,
   u.id AS unit_id, u.code AS unit_code, u.designation, u.designation_custom,
   u.soneb_meter_number, u.sbee_meter_number, u.furnished,
   p.id AS property_id, p.code AS property_code, p.address, p.property_type, p.levels,
@@ -387,6 +394,8 @@ const LEASE_UNIT_PROPERTY_SELECT = `
 // Jointure sur l'auteur du bail — à ajouter au FROM partout où
 // LEASE_UNIT_PROPERTY_SELECT est utilisé.
 const LEASE_CREATOR_JOIN = 'LEFT JOIN users lu ON lu.id = l.created_by';
+// Reçu d'entrée (demande utilisateur, 2026-10-17) — au plus une ligne par bail, voir migration 091.
+const LEASE_ENTRY_RECEIPT_JOIN = 'LEFT JOIN lease_entry_receipts ler ON ler.lease_id = l.id';
 
 // GET /api/renters — liste avec bail actif et statut de paiement.
 router.get('/', canRead, async (req, res, next) => {
@@ -418,6 +427,7 @@ router.get('/', canRead, async (req, res, next) => {
        LEFT JOIN users ru ON ru.id = r.created_by
        LEFT JOIN leases l ON l.renter_id = r.id AND l.status = 'active'
        ${LEASE_CREATOR_JOIN}
+       ${LEASE_ENTRY_RECEIPT_JOIN}
        LEFT JOIN property_units u ON u.id = l.unit_id
        LEFT JOIN properties p ON p.id = u.property_id
        LEFT JOIN owners o ON o.id = p.owner_id
@@ -449,9 +459,53 @@ router.get('/', canRead, async (req, res, next) => {
       }
     }
 
+    // Archive des locataires (demande utilisateur, 2026-10-18) : un locataire sans bail actif reste
+    // dans la liste (voir le commentaire plus haut) mais la liste frontend le classe à part — elle a
+    // besoin, pour l'y afficher utilement, du DERNIER bail terminé (jamais plusieurs, une seule
+    // ligne par locataire) : date de sortie, dernière unité occupée. `ROW_NUMBER()` plutôt qu'une
+    // sous-requête corrélée par ligne (MySQL 8) — une seule requête pour tous les locataires archivés
+    // de cette page, jamais une par locataire.
+    const rentersWithoutActiveLease = rows.filter((r) => !r.lease_id).map((r) => r.id);
+    const lastEndedLeaseByRenter = new Map();
+    if (rentersWithoutActiveLease.length > 0) {
+      const placeholders = rentersWithoutActiveLease.map(() => '?').join(',');
+      const [endedRows] = await pool.query(
+        `SELECT * FROM (
+           SELECT l.renter_id, l.monthly_rent, l.end_date,
+                  u.code AS unit_code, u.designation, u.designation_custom,
+                  p.address, o.name AS owner_name,
+                  ROW_NUMBER() OVER (PARTITION BY l.renter_id ORDER BY l.end_date DESC, l.id DESC) AS rn
+           FROM leases l
+           JOIN property_units u ON u.id = l.unit_id
+           JOIN properties p ON p.id = u.property_id
+           JOIN owners o ON o.id = p.owner_id
+           WHERE l.tenant_id = ? AND l.renter_id IN (${placeholders}) AND l.status = 'ended'
+         ) t WHERE rn = 1`,
+        [req.user.tenantId, ...rentersWithoutActiveLease],
+      );
+      for (const r of endedRows) {
+        lastEndedLeaseByRenter.set(r.renter_id, {
+          unitCode: r.unit_code,
+          designationLabel: unitDesignationLabel(r),
+          ownerName: r.owner_name,
+          address: r.address,
+          monthlyRent: Number(r.monthly_rent),
+          endDate: isoDate(r.end_date),
+        });
+      }
+    }
+
     const renters = rows.map((row) => {
       const renter = toPublicRenter(row);
-      if (!row.lease_id) return { ...renter, activeLease: null, arrears: null, rentStrip: null };
+      if (!row.lease_id) {
+        return {
+          ...renter,
+          activeLease: null,
+          arrears: null,
+          rentStrip: null,
+          lastEndedLease: lastEndedLeaseByRenter.get(row.id) ?? null,
+        };
+      }
       const lease = toPublicLease(row);
       const rhythm = { mode: lease.rentDueDay != null ? 'calendaire' : 'jour_fixe' };
       const leasePayments = paymentsByLease.get(row.lease_id) || [];
@@ -481,7 +535,7 @@ router.get('/', canRead, async (req, res, next) => {
         payments: leasePayments,
         rhythm,
       });
-      return { ...renter, activeLease: lease, arrears, rentStrip };
+      return { ...renter, activeLease: lease, arrears, rentStrip, lastEndedLease: null };
     });
 
     res.json({ renters });
@@ -514,6 +568,7 @@ router.get('/:id', canRead, async (req, res, next) => {
       `SELECT l.*, ${LEASE_UNIT_PROPERTY_SELECT}
        FROM leases l
        ${LEASE_CREATOR_JOIN}
+       ${LEASE_ENTRY_RECEIPT_JOIN}
        JOIN property_units u ON u.id = l.unit_id
        JOIN properties p ON p.id = u.property_id
        JOIN owners o ON o.id = p.owner_id
@@ -843,6 +898,21 @@ router.post('/', canManage, async (req, res, next) => {
     });
     const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId, conn);
 
+    // Reçu d'entrée (demande utilisateur, 2026-10-17) : regroupe caution, frais d'agence, cautions
+    // supplémentaires et prorata en UN seul reçu dès que l'un d'eux a réellement été payé à la
+    // signature — voir `services/leaseEntryReceipt.js`. Relit la ligne `leases` fraîche (plutôt que de
+    // dupliquer la condition « montant > 0 ET mode de règlement fourni » déjà appliquée par
+    // `recordDepositReceived`/`recordEntryFeeReceived`/`recordEntryProrataReceived` ci-dessus) : c'est
+    // elle qui fait foi de ce qui a été réellement marqué reçu.
+    const [freshLeaseRows] = await conn.query('SELECT * FROM leases WHERE id = :id LIMIT 1', { id: leaseId });
+    const entryReceipt = await createEntryReceiptIfAnyPayment(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      createdBy: req.user.id,
+      lease: freshLeaseRows[0],
+      additionalDeposits,
+    });
+
     await conn.query("UPDATE property_units SET status = 'loue' WHERE id = :unitId", { unitId: data.unitId });
     const clearedMarketplacePhotos = await clearMarketplaceListing(conn, req.user.tenantId, data.unitId);
 
@@ -872,6 +942,7 @@ router.post('/', canManage, async (req, res, next) => {
       // d'être ajouté au compte séquestre du propriétaire, jamais un simple « bail créé » muet.
       entryProrata: { proration: entryProration, amount: entryProrataAmount, days: prorata.days, dueDate: prorata.dueDate },
       additionalDeposits,
+      entryReceipt: entryReceipt ? { id: entryReceipt.id, number: entryReceipt.receiptNumber } : null,
       portalLink: { token: portalToken, path: `/portail/${portalToken}` },
     });
   } catch (err) {
@@ -1094,6 +1165,16 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
     });
     const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId, conn);
 
+    // Reçu d'entrée (demande utilisateur, 2026-10-17) — même principe que `POST /` ci-dessus.
+    const [freshLeaseRows] = await conn.query('SELECT * FROM leases WHERE id = :id LIMIT 1', { id: leaseId });
+    const entryReceipt = await createEntryReceiptIfAnyPayment(conn, {
+      tenantId: req.user.tenantId,
+      leaseId,
+      createdBy: req.user.id,
+      lease: freshLeaseRows[0],
+      additionalDeposits,
+    });
+
     await conn.query("UPDATE property_units SET status = 'loue' WHERE id = :unitId", { unitId: data.unitId });
     const clearedMarketplacePhotos = await clearMarketplaceListing(conn, req.user.tenantId, data.unitId);
 
@@ -1107,6 +1188,7 @@ router.post('/:id/leases', canManage, async (req, res, next) => {
       unitId: data.unitId,
       entryProrata: { proration: entryProration, amount: entryProrataAmount, days: prorata.days, dueDate: prorata.dueDate },
       additionalDeposits,
+      entryReceipt: entryReceipt ? { id: entryReceipt.id, number: entryReceipt.receiptNumber } : null,
     });
   } catch (err) {
     await conn.rollback().catch(() => {});

@@ -22,6 +22,8 @@ const taskRoutes = require('./tasks');
 const assignedTaskRoutes = require('./assignedTasks');
 const historyRoutes = require('./history');
 const marketplaceRoutes = require('./marketplace');
+const salePropertyRoutes = require('./saleProperties');
+const payslipRoutes = require('./payslips');
 const marketplaceAccountRoutes = require('./marketplaceAccounts');
 const documentRoutes = require('./documents');
 const documentVerificationRoutes = require('./documentVerification');
@@ -58,6 +60,8 @@ router.use('/inspection-catalog', inspectionCatalogRoutes);
 router.use('/complaints', complaintRoutes);
 router.use('/accounting', accountingRoutes);
 router.use('/charges', chargeRoutes);
+router.use('/sale-properties', salePropertyRoutes);
+router.use('/payslips', payslipRoutes);
 router.use('/assistant', assistantRoutes);
 // Portail locataire (lien secret, pas de compte employé) : `/portal/:token/*`.
 // DOIT être monté avant `utilityReadingRoutes` ci-dessous : ce dernier n'a pas

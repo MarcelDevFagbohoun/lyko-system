@@ -108,6 +108,12 @@ const recetteQuerySchema = z.object({
   mois: z.string().regex(/^\d{4}-\d{2}$/, 'Mois invalide (AAAA-MM)'),
 });
 
+// Fin de mandat (demande utilisateur, 2026-10-18) — action volontaire du DG, motif obligatoire,
+// même exigence que l'annulation d'un reversement ci-dessus.
+const endMandateSchema = z.object({
+  reason: z.string().trim().min(5, 'Motif requis (5 caractères minimum)').max(500, 'Trop long'),
+});
+
 module.exports = {
   createOwnerSchema,
   updateOwnerSchema,
@@ -116,4 +122,5 @@ module.exports = {
   cancelChargeRemittanceSchema,
   updateCommissionRateSchema,
   recetteQuerySchema,
+  endMandateSchema,
 };

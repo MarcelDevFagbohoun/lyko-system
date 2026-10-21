@@ -50,8 +50,22 @@ const {
   lastDayOfPeriod,
 } = require('../services/accountingPeriods');
 const { isLastPeriodOfFiscalYear } = require('../services/gl/glClosingService');
-const { listPortfolioArrears, listPredictiveLateAlerts, snapshotLeaseBalances, computeRentMonthSummary, paymentPeriodKey } = require('../services/rentTracking');
-const { getEscrowBalances, getUnpaidOpeningDebtByOwner, getOwnersWithoutCommissionRate, getCabinetRevenue } = require('../services/commission');
+const {
+  listPortfolioArrears,
+  listPredictiveLateAlerts,
+  snapshotLeaseBalances,
+  computeRentMonthSummary,
+  listRentMonthRenters,
+  paymentPeriodKey,
+  periodEndOf,
+} = require('../services/rentTracking');
+const {
+  getEscrowBalances,
+  getOwnerPayoutStatusAsOf,
+  getUnpaidOpeningDebtByOwner,
+  getOwnersWithoutCommissionRate,
+  getCabinetRevenue,
+} = require('../services/commission');
 const { listDeletedEntries } = require('../services/activity');
 const { resolvePropertyScope } = require('../services/scope');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
@@ -91,6 +105,7 @@ const PAYMENT_METHOD_LABELS = {
   virement: 'Virement bancaire',
   cheque: 'Chèque',
   kkiapay: 'Paiement en ligne (KKiaPay)',
+  caution: 'Prélevé sur la caution',
 };
 
 function isoDate(d) {
@@ -1128,6 +1143,15 @@ async function computeAccountingDashboard(user, { from, to }) {
        FROM leases WHERE tenant_id = :tenantId AND entry_fee_received_at BETWEEN :from AND :to`,
       params,
     );
+    // Commission sur vente d'un bien à vendre (bouton « Vendu », demande utilisateur 2026-10-18) —
+    // même principe que `entryFeeRow` ci-dessus : 100 % produit du cabinet, groupée par date de vente
+    // réelle (`sold_at`).
+    const [[saleCommissionRow]] = await pool.query(
+      `SELECT COALESCE(SUM(commission_amount), 0) AS total, COUNT(*) AS n
+       FROM sale_properties
+       WHERE tenant_id = :tenantId AND status = 'vendu' AND deleted_at IS NULL AND sold_at BETWEEN :from AND :to`,
+      params,
+    );
     // Dépenses du CABINET uniquement (`property_id IS NULL`) : les travaux
     // facturés à un Bien précis ne sont pas un coût de fonctionnement de
     // l'entreprise — ils sont déjà déduits de la recette du PROPRIÉTAIRE
@@ -1255,6 +1279,7 @@ async function computeAccountingDashboard(user, { from, to }) {
     const expensesTotal = Number(expenseRow.total);
     const propertyExpensesTotal = Number(propertyExpenseRow.total);
     const entryFeesCollected = Number(entryFeeRow.total);
+    const saleCommissionsCollected = Number(saleCommissionRow.total);
 
     const period = from.slice(0, 7);
     const closed = await isPeriodClosed(user.tenantId, from);
@@ -1312,7 +1337,10 @@ async function computeAccountingDashboard(user, { from, to }) {
         // propriétaires (déjà déduite via `ownerPayouts`).
         entryFeesCollected,
         entryFeesCollectedCount: Number(entryFeeRow.n),
-        netCashFlow: rentCollected - ownerPayouts - expensesTotal + entryFeesCollected,
+        // Même principe que `entryFeesCollected` : 100 % produit du cabinet, s'ajoute au flux net.
+        saleCommissionsCollected,
+        saleCommissionsCollectedCount: Number(saleCommissionRow.n),
+        netCashFlow: rentCollected - ownerPayouts - expensesTotal + entryFeesCollected + saleCommissionsCollected,
       },
       expensesByCategory: byCategory.map((r) => ({ category: r.category, total: Number(r.total) })),
       unpaidChargesByType: unpaidByType.map((r) => ({
@@ -1639,6 +1667,46 @@ router.get('/rent-month', canAccounting, async (req, res, next) => {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const summary = await computeRentMonthSummary(req.user.tenantId, month, scopeAgentId);
     res.json({ ...summary, isCurrentMonth: month === currentMonth });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/rent-month/:month/renters — point financier de CHAQUE locataire pour ce mois
+// (demande utilisateur, 2026-10-18 : cliquer un mois clôturé dans l'historique de clôture doit
+// montrer le détail par locataire, pas seulement le total déjà affiché par `/rent-month` ci-dessus).
+router.get('/rent-month/:month/renters', canAccounting, async (req, res, next) => {
+  const month = req.params.month;
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return next(new ApiError(400, 'Mois invalide (AAAA-MM)'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const renters = await listRentMonthRenters(req.user.tenantId, month, scopeAgentId);
+    res.json({ month, renters });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/rent-month/:month/bilan — bilan complet d'un mois (demande utilisateur,
+// 2026-10-18 : « une clôture nous devons avoir tous les détails, les propriétaires reversés et
+// non, les recettes du mois, les points essentiels du mois, les charges — une sorte de bilan du
+// mois »). Réutilise `computeAccountingDashboard` tel quel pour les recettes/dépenses/charges
+// (déjà capable de détecter un mois clôturé) ; les locataires (point mensuel détaillé) restent
+// sur `/rent-month/:month/renters` ci-dessus, inchangé — ce bilan y renvoie en complément plutôt
+// que de dupliquer cette liste. Le statut « reversé/non reversé » des propriétaires est
+// reconstruit À LA DATE DE FIN DE CE MOIS (décision explicite de l'utilisateur, option B) — jamais
+// leur solde actuel, qui mélangerait des versements d'autres mois.
+router.get('/rent-month/:month/bilan', canAccounting, async (req, res, next) => {
+  const month = req.params.month;
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return next(new ApiError(400, 'Mois invalide (AAAA-MM)'));
+
+  try {
+    const from = `${month}-01`;
+    const to = periodEndOf(month);
+    const dashboard = await computeAccountingDashboard(req.user, { from, to });
+    const owners = await getOwnerPayoutStatusAsOf(req.user.tenantId, to);
+    res.json({ month, dashboard, owners });
   } catch (err) {
     next(err);
   }

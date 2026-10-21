@@ -491,7 +491,7 @@ test("getCabinetRevenue — aucune donnée sur le mois : tout à zéro, jamais u
   const rev = await getCabinetRevenue(fx.tenantId, '2019-01');
   assert.deepEqual(rev, {
     yearMonth: '2019-01',
-    breakdown: { commission: 0, entryFees: 0, lateFees: 0, expenses: 0 },
+    breakdown: { commission: 0, entryFees: 0, lateFees: 0, saleCommissions: 0, expenses: 0 },
     netCabinetIncome: 0,
   });
 });

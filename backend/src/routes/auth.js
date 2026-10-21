@@ -9,15 +9,37 @@ const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth } = require('../middleware/auth');
-const { registerSchema, loginSchema, employeeLoginSchema, changePasswordSchema } = require('../validators/auth');
+const {
+  registerSchema,
+  loginSchema,
+  employeeLoginSchema,
+  changePasswordSchema,
+  verifyEmailSchema,
+  resendVerificationCodeSchema,
+} = require('../validators/auth');
 const { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH } = require('../utils/password');
+const {
+  generateEmailVerificationCode,
+  hashVerificationCode,
+  verifyVerificationCode,
+  DUMMY_CODE_HASH,
+} = require('../utils/verificationCode');
 const { issueSession, rotateRefreshToken, revokeRefreshToken } = require('../services/session');
 const { getPermissions } = require('../services/permissions');
 const { REFRESH_COOKIE_NAME, refreshCookieOptions } = require('../utils/cookies');
 const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { assertNotLocked, recordFailure, recordSuccess } = require('../middleware/loginThrottle');
 const { resolveRoleLabels } = require('../constants/roles');
+const { sendVerificationCodeEmail } = require('../services/email/sendEmail');
 const logger = require('../utils/logger');
+
+// Code à 8 chiffres (demande utilisateur, 2026-10-18) : expire 15 min après l'envoi, 5 essais
+// maximum avant qu'un nouveau code soit requis (voir /verify-email ci-dessous).
+const EMAIL_VERIFICATION_TTL_MINUTES = 15;
+const EMAIL_VERIFICATION_MAX_ATTEMPTS = 5;
+// Email de bienvenue (demande utilisateur) : envoyé ~2 minutes après la vérification, via la
+// tâche planifiée `jobs/welcomeEmailJob.js` (survit à un redémarrage, contrairement à un minuteur).
+const WELCOME_EMAIL_DELAY_MINUTES = 2;
 
 const router = Router();
 
@@ -45,6 +67,27 @@ const registerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Trop de demandes d'inscription, réessayez plus tard." },
+});
+
+// Vérification d'email (demande utilisateur, 2026-10-18) : quota généreux (code à ressaisir
+// plusieurs fois en cas de faute de frappe) mais borné — le plafond d'essais par code
+// (`EMAIL_VERIFICATION_MAX_ATTEMPTS`, appliqué en base) reste la défense principale contre le
+// brute-force, ce limiteur casse juste un flood pur.
+const verifyEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de tentatives, réessayez plus tard.' },
+});
+
+const resendCodeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de demandes de renvoi, réessayez plus tard.' },
 });
 
 const changePasswordLimiter = rateLimit({
@@ -108,6 +151,9 @@ function toPublicTenant(tenant) {
     rccm: tenant.rccm,
     ifu: tenant.ifu,
     contactPhone: tenant.contact_phone,
+    // Pays choisi à l'inscription (demande utilisateur, 2026-10-18) — `null` pour toute
+    // entreprise inscrite avant cette étape.
+    country: tenant.country ?? null,
     logoUrl: tenant.logo_path ? `/uploads/${tenant.logo_path}` : null,
     // Nom des 3 postes chez cette entreprise (Réglages, DG uniquement) —
     // affiché partout (badge, journal, documents), voir constants/roles.js.
@@ -148,6 +194,7 @@ async function respondWithSession(res, row) {
       rccm: row.rccm,
       ifu: row.ifu,
       contact_phone: row.contact_phone,
+      country: row.country,
       logo_path: row.logo_path,
       dg_title: row.dg_title,
       comptable_title: row.comptable_title,
@@ -163,7 +210,10 @@ async function respondWithSession(res, row) {
   });
 }
 
-// POST /api/auth/register — inscription de l'entreprise (section 4.2/4.3).
+// POST /api/auth/register — inscription de l'entreprise (section 4.2/4.3). Vérification d'email
+// OBLIGATOIRE (demande utilisateur, 2026-10-18) : le compte est créé mais AUCUNE session n'est
+// émise ici — contrairement au comportement historique (connexion immédiate) — tant que le code
+// à 8 chiffres reçu par email n'a pas été saisi (voir POST /verify-email ci-dessous).
 router.post('/register', registerLimiter, upload.single('logo'), async (req, res, next) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -173,32 +223,53 @@ router.post('/register', registerLimiter, upload.single('logo'), async (req, res
 
   const conn = await pool.getConnection();
   try {
-    const [existing] = await conn.query('SELECT id FROM users WHERE phone = :phone LIMIT 1', {
+    const [existingPhone] = await conn.query('SELECT id FROM users WHERE phone = :phone LIMIT 1', {
       phone: data.phone,
     });
-    if (existing.length > 0) {
+    if (existingPhone.length > 0) {
       throw new ApiError(409, 'Ce numéro est déjà associé à un compte');
+    }
+    // Vérification globale (pas seulement par entreprise, contrairement à `uq_users_tenant_email`
+    // qui s'applique aux employés) : une inscription crée une entreprise TOUTE NEUVE, donc
+    // l'unicité par tenant ne protège de rien ici — sans ce contrôle, la même personne pourrait
+    // réinscrire plusieurs cabinets avec le même email, ou deux vérifications en attente
+    // partageant un email se mélangeraient. Restreint aux comptes DG : un employé peut très bien
+    // partager son email personnel avec l'entreprise qu'il crée par ailleurs.
+    const [existingEmail] = await conn.query("SELECT id FROM users WHERE email = :email AND role = 'dg' LIMIT 1", {
+      email: data.email,
+    });
+    if (existingEmail.length > 0) {
+      throw new ApiError(409, 'Cet email est déjà associé à un compte administrateur.');
     }
 
     await conn.beginTransaction();
 
     const [tenantResult] = await conn.query(
-      `INSERT INTO tenants (company_name, rccm, ifu, contact_phone)
-       VALUES (:companyName, :rccm, :ifu, :phone)`,
-      { companyName: data.companyName, rccm: data.rccm, ifu: data.ifu, phone: data.phone },
+      `INSERT INTO tenants (company_name, rccm, ifu, contact_phone, country)
+       VALUES (:companyName, :rccm, :ifu, :phone, :country)`,
+      { companyName: data.companyName, rccm: data.rccm, ifu: data.ifu, phone: data.phone, country: data.country },
     );
     const tenantId = tenantResult.insertId;
 
     const passwordHash = await hashPassword(data.password);
+    const code = generateEmailVerificationCode();
+    const codeHash = await hashVerificationCode(code);
     const [userResult] = await conn.query(
-      `INSERT INTO users (tenant_id, first_name, last_name, phone, password_hash, role)
-       VALUES (:tenantId, :firstName, :lastName, :phone, :passwordHash, 'dg')`,
+      `INSERT INTO users
+         (tenant_id, first_name, last_name, phone, email, password_hash, role,
+          email_verification_code_hash, email_verification_expires_at)
+       VALUES
+         (:tenantId, :firstName, :lastName, :phone, :email, :passwordHash, 'dg',
+          :codeHash, DATE_ADD(NOW(), INTERVAL :ttl MINUTE))`,
       {
         tenantId,
         firstName: data.firstName,
         lastName: data.lastName,
         phone: data.phone,
+        email: data.email,
         passwordHash,
+        codeHash,
+        ttl: EMAIL_VERIFICATION_TTL_MINUTES,
       },
     );
     const userId = userResult.insertId;
@@ -218,40 +289,119 @@ router.post('/register', registerLimiter, upload.single('logo'), async (req, res
 
     await conn.commit();
 
-    const user = {
-      id: userId,
-      tenant_id: tenantId,
-      role: 'dg',
-      first_name: data.firstName,
-      last_name: data.lastName,
-      phone: data.phone,
-      email: null,
-      must_change_password: 0,
-    };
-    const tenant = {
-      id: tenantId,
-      company_name: data.companyName,
-      rccm: data.rccm,
-      ifu: data.ifu,
-      contact_phone: data.phone,
-      logo_path: logoPath,
-      default_rent_timing: 'avance', // valeur par défaut de la colonne, entreprise juste créée
-      default_entry_proration: 'aucun', // valeur par défaut de la colonne, entreprise juste créée
-      deposit_sbee_enabled: 0, // valeur par défaut de la colonne, entreprise juste créée
-      deposit_soneb_enabled: 0,
-      deposit_peinture_enabled: 0,
-    };
+    // Envoi best-effort (demande utilisateur) : un échec de Resend ne doit jamais faire échouer
+    // l'inscription elle-même (le compte/code existent déjà en base, « renvoyer le code » reste
+    // toujours possible) — voir le commentaire détaillé dans services/email/sendEmail.js.
+    await sendVerificationCodeEmail({ to: data.email, dgName: data.firstName, companyName: data.companyName, code });
 
-    const { accessToken, refreshToken } = await issueSession(user);
-    res.cookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieOptions());
-
-    logger.info('Nouvelle entreprise inscrite', { tenantId, userId });
-    res.status(201).json({ user: toPublicUser(user), tenant: toPublicTenant(tenant), accessToken });
+    logger.info('Nouvelle entreprise inscrite (vérification d\'email en attente)', { tenantId, userId });
+    res.status(201).json({ pendingVerification: true, email: data.email });
   } catch (err) {
     await conn.rollback().catch(() => {});
     next(err);
   } finally {
     conn.release();
+  }
+});
+
+/**
+ * Vérifie le code à 8 chiffres et, si valide, termine réellement l'inscription : marque l'email
+ * vérifié, programme l'email de bienvenue (~2 min plus tard, voir `jobs/welcomeEmailJob.js`) et
+ * ÉMET LA SESSION (seul endroit, avec /login, à le faire) — avant cette étape, aucun token
+ * n'existe pour ce compte.
+ */
+router.post('/verify-email', verifyEmailLimiter, async (req, res, next) => {
+  const parsed = verifyEmailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const { email, code } = parsed.data;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
+              t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
+              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled,
+              (u.email_verification_expires_at IS NULL OR u.email_verification_expires_at < NOW()) AS is_expired
+       FROM users u JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.email = :email AND u.role = 'dg' AND u.email_verified_at IS NULL LIMIT 1`,
+      { email },
+    );
+    const row = rows[0];
+    // Même garde de temporisation que /login (DUMMY_CODE_HASH) : la comparaison s'exécute
+    // TOUJOURS, même si aucune vérification en attente ne correspond à cet email.
+    const codeOk = await verifyVerificationCode(code, row ? row.email_verification_code_hash : DUMMY_CODE_HASH);
+    if (!row) {
+      throw new ApiError(400, 'Code invalide ou compte déjà vérifié.');
+    }
+    if (row.email_verification_attempts >= EMAIL_VERIFICATION_MAX_ATTEMPTS) {
+      throw new ApiError(429, 'Trop de tentatives — demandez un nouveau code.');
+    }
+    // Bug évité (audit horloge) : comparaison de dates faite ENTIÈREMENT en SQL (`NOW()` des deux
+    // côtés), jamais en rapatriant la date en JS pour la comparer à `new Date()` — l'horloge MySQL
+    // de ce projet est décalée d'une heure par rapport à l'horloge du serveur Node (voir mémoire
+    // projet « DB is WAT but mislabeled UTC »), un mélange des deux aurait rendu ce code JAMAIS
+    // expiré en pratique.
+    if (row.is_expired) {
+      throw new ApiError(400, 'Ce code a expiré — demandez-en un nouveau.');
+    }
+    if (!codeOk) {
+      await pool.query('UPDATE users SET email_verification_attempts = email_verification_attempts + 1 WHERE id = :id', {
+        id: row.id,
+      });
+      throw new ApiError(400, 'Code incorrect.');
+    }
+
+    await pool.query(
+      `UPDATE users
+       SET email_verified_at = NOW(), email_verification_code_hash = NULL, email_verification_expires_at = NULL,
+           welcome_email_due_at = DATE_ADD(NOW(), INTERVAL :delay MINUTE)
+       WHERE id = :id`,
+      { id: row.id, delay: WELCOME_EMAIL_DELAY_MINUTES },
+    );
+
+    logger.info('Email vérifié — inscription finalisée', { tenantId: row.tenant_id, userId: row.id });
+    await respondWithSession(res, row);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Renvoie un nouveau code (compte non encore vérifié) — invalide l'ancien, réinitialise les essais. */
+router.post('/resend-verification-code', resendCodeLimiter, async (req, res, next) => {
+  const parsed = resendVerificationCodeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const { email } = parsed.data;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT u.id, u.first_name, t.company_name
+       FROM users u JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.email = :email AND u.role = 'dg' AND u.email_verified_at IS NULL LIMIT 1`,
+      { email },
+    );
+    const row = rows[0];
+    // Réponse générique volontaire (comme /login) : ne révèle jamais si cet email correspond à
+    // une inscription en attente.
+    if (row) {
+      const code = generateEmailVerificationCode();
+      const codeHash = await hashVerificationCode(code);
+      await pool.query(
+        `UPDATE users
+         SET email_verification_code_hash = :codeHash,
+             email_verification_expires_at = DATE_ADD(NOW(), INTERVAL :ttl MINUTE),
+             email_verification_attempts = 0
+         WHERE id = :id`,
+        { id: row.id, codeHash, ttl: EMAIL_VERIFICATION_TTL_MINUTES },
+      );
+      await sendVerificationCodeEmail({ to: email, dgName: row.first_name, companyName: row.company_name, code });
+      logger.info('Code de vérification renvoyé', { userId: row.id });
+    }
+    res.json({ message: 'Si un compte en attente existe pour cet email, un nouveau code a été envoyé.' });
+  } catch (err) {
+    next(err);
   }
 });
 
@@ -268,7 +418,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     assertNotLocked(throttleKey);
 
     const [rows] = await pool.query(
-      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
+      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
               t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
               t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
@@ -291,6 +441,16 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     if (row.status !== 'active') {
       throw new ApiError(403, 'Ce compte a été désactivé. Contactez votre direction.');
     }
+    // Vérification d'email obligatoire (demande utilisateur, 2026-10-18) : un DG dont
+    // l'inscription n'a jamais été confirmée ne doit JAMAIS pouvoir se connecter, même avec le
+    // bon mot de passe — `details.code`/`details.email` permettent au frontend de rediriger
+    // directement vers l'écran de saisie du code plutôt qu'une simple erreur sans suite.
+    if (!row.email_verified_at) {
+      throw new ApiError(403, "Email non confirmé — saisissez le code reçu par email.", {
+        code: ['email_not_verified'],
+        email: [row.email],
+      });
+    }
 
     recordSuccess(throttleKey);
     await respondWithSession(res, row);
@@ -312,7 +472,7 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
     assertNotLocked(throttleKey);
 
     const [rows] = await pool.query(
-      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
+      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
               t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
               t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
@@ -410,7 +570,7 @@ router.post('/logout', async (req, res, next) => {
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.logo_path,
+      `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
               t.dg_title, t.comptable_title, t.agent_title, t.kkiapay_enabled, t.default_rent_timing, t.default_entry_proration,
               t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
@@ -428,6 +588,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
         rccm: row.rccm,
         ifu: row.ifu,
         contact_phone: row.contact_phone,
+        country: row.country,
         logo_path: row.logo_path,
         dg_title: row.dg_title,
         comptable_title: row.comptable_title,

@@ -7,12 +7,19 @@ const { PERMISSION_KEYS } = require('../constants/permissions');
 const permissionsSchema = z.array(z.enum(PERMISSION_KEYS)).default([]);
 
 // Email optionnel : chaîne vide traitée comme absence d'email (null en base).
+// Bug corrigé (trouvé en vérifiant « Biens à vendre », 2026-10-18) : le commentaire de
+// `updateEmployeeSchema` ci-dessous documentait depuis le début que `null` devait pouvoir effacer
+// l'email, mais ce schéma n'acceptait jamais `null` — seulement `undefined` ou `''`. Le frontend
+// (`editer-view.tsx`) envoie pourtant bien `email: null` quand le champ est vide, ce qui faisait
+// échouer TOUTE sauvegarde sur la fiche d'un employé sans email (le cas courant), pas seulement un
+// changement d'email — y compris l'attribution d'une permission. `.nullable()` ajouté.
 const emailSchema = z
   .string()
   .trim()
   .toLowerCase()
   .email('Email invalide')
   .optional()
+  .nullable()
   .or(z.literal(''))
   .transform((v) => (v ? v : null));
 

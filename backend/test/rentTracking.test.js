@@ -17,6 +17,7 @@ const {
   recentMonthlyLateCount,
   buildRentStrip,
   summarizeRentMonth,
+  listRentMonthDetails,
   firstRegularDueDate,
   computeEntryProrata,
 } = require('../src/services/rentTracking');
@@ -461,6 +462,44 @@ test('summarizeRentMonth — cohérent avec la frise : même état de chaque bai
     assert.equal(one.counts.late, septembre.late ? 1 : 0);
     assert.equal(one.remaining, septembre.remaining);
   }
+});
+
+// ── Point financier par locataire sur un mois (listRentMonthDetails, étape clôture 2026-10-18) ──
+
+test('listRentMonthDetails — une ligne par bail suivi (mêmes baux hors sujet ignorés que summarizeRentMonth), identité reportée telle quelle', () => {
+  const leases = [
+    { ...lease({ monthlyRent: 75000, paid: 75000 }), id: 1, renterId: 10, renterName: 'A Payé', unitLabel: 'Studio (U1)', propertyLabel: 'BIEN-001' },
+    { ...lease({ monthlyRent: 100000, paid: 40000 }), id: 2, renterId: 11, renterName: 'B Partiel', unitLabel: 'Studio (U2)', propertyLabel: 'BIEN-001' },
+    { ...lease({ monthlyRent: 60000, rentDueDay: 28 }), id: 3, renterId: 12, renterName: 'C À payer', unitLabel: 'Studio (U3)', propertyLabel: 'BIEN-002' },
+    { ...lease({ monthlyRent: 999999, endDate: '2026-08-31' }), id: 4, renterId: 13, renterName: 'E Hors bail', unitLabel: 'Studio (U4)', propertyLabel: 'BIEN-002' },
+  ];
+  const details = listRentMonthDetails(leases, '2026-09', TODAY);
+  assert.equal(details.length, 3, 'le bail déjà terminé fin août doit être exclu, comme dans summarizeRentMonth');
+  assert.ok(!details.some((d) => d.renterId === 13));
+
+  const paye = details.find((d) => d.renterId === 10);
+  assert.equal(paye.status, 'paye');
+  assert.equal(paye.monthlyRent, 75000);
+  assert.equal(paye.paid, 75000);
+  assert.equal(paye.remaining, 0);
+  assert.equal(paye.unitLabel, 'Studio (U1)');
+  assert.equal(paye.propertyLabel, 'BIEN-001');
+
+  const partiel = details.find((d) => d.renterId === 11);
+  assert.equal(partiel.status, 'partiel');
+  assert.equal(partiel.remaining, 60000);
+  assert.equal(partiel.late, true, "l'échéance du 5 est déjà passée le 22 septembre");
+});
+
+test('listRentMonthDetails — triée du plus préoccupant au moins préoccupant (en_retard, partiel, a_payer, a_venir, paye)', () => {
+  const leases = [
+    { ...lease({ monthlyRent: 50000, paid: 50000 }), id: 1, renterId: 1, renterName: 'Payé', unitLabel: 'U', propertyLabel: 'P' },
+    { ...lease({ monthlyRent: 50000, rentDueDay: 28 }), id: 2, renterId: 2, renterName: 'À payer', unitLabel: 'U', propertyLabel: 'P' },
+    { ...lease({ monthlyRent: 50000, paid: 20000 }), id: 3, renterId: 3, renterName: 'Partiel en retard', unitLabel: 'U', propertyLabel: 'P' },
+    { ...lease({ monthlyRent: 50000 }), id: 4, renterId: 4, renterName: 'Rien, en retard', unitLabel: 'U', propertyLabel: 'P' },
+  ];
+  const details = listRentMonthDetails(leases, '2026-09', TODAY);
+  assert.deepEqual(details.map((d) => d.status), ['en_retard', 'partiel', 'a_payer', 'paye']);
 });
 
 // ───────────────────────────── prorata d'entrée (étape 42) ─────────────────────────────

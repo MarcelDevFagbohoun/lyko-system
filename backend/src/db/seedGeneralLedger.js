@@ -265,6 +265,24 @@ const RULES = [
     ],
   },
   {
+    operation_type: 'vente_bien_commission_encaissee',
+    label: 'Encaisser la commission sur une vente de bien',
+    journal: 'OD',
+    narration_template: 'Commission sur vente — {bien}',
+    note:
+      "Commission du cabinet sur la vente d'un bien à vendre (catalogue « Biens à vendre », demande "
+      + "utilisateur 2026-10-18) — même principe que `frais_agence_encaisse` ci-dessus : 100 % produit "
+      + "du CABINET, jamais reversé au propriétaire éventuellement lié à ce bien, donc aucune ligne "
+      + "`tiers_proprietaire`. Montant = prix FINAL de vente × pourcentage perçu (calculé côté serveur, "
+      + "jamais transmis par le client — voir routes/saleProperties.js). Compte 706 réutilisé (même "
+      + "réserve qu'au-dessus : à revoir avec l'expert-comptable si une distinction séparée s'avère "
+      + "utile au reporting).",
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', account: '706', formula: 'montant_total' },
+    ],
+  },
+  {
     operation_type: 'charge_locative_encaissee',
     label: 'Encaisser une charge SONEB/SBEE',
     journal: 'OD',

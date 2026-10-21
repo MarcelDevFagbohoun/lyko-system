@@ -28,6 +28,10 @@ const PERMISSIONS = [
   // Assistant IA (chat Claude). Ne s'applique que si la direction a activé l'assistant pour
   // l'entreprise (Réglages) ; jamais pré-cochée à la création d'un employé.
   { key: 'assistant', label: 'Assistant IA' },
+  // Biens à vendre (demande utilisateur, 2026-10-18) : catalogue interne des maisons/terrains que le
+  // cabinet est chargé de vendre — jamais pré-cochée à la création d'un employé (accès volontairement
+  // restreint, accordé au cas par cas par le DG).
+  { key: 'biens_a_vendre', label: 'Biens à vendre' },
 ];
 
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);

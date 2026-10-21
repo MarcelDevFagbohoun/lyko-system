@@ -16,25 +16,14 @@ const propertyTypeSchema = z.enum(PROPERTY_TYPE_KEYS, {
   errorMap: () => ({ message: 'Type de bien invalide' }),
 });
 
-// Numéro de compteur SONEB/SBEE — format béninois réel : exactement 14
-// caractères (indication directe de l'utilisateur, jamais deviné). Optionnel
-// (une unité peut ne pas avoir son compteur suivi), mais s'il est renseigné,
-// la longueur doit être exacte. L'unicité (un même compteur physique ne peut
-// pas appartenir à deux Unités) est vérifiée séparément — voir
-// routes/properties.js `assertMeterNumbersAvailable` + migration 059.
-const meterNumberSchema = z
-  .string()
-  .trim()
-  .optional()
-  .or(z.literal(''))
-  .transform((v, ctx) => {
-    if (!v) return null;
-    if (v.length !== 14) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Le numéro de compteur doit contenir exactement 14 caractères' });
-      return z.NEVER;
-    }
-    return v;
-  });
+// Numéro de compteur SONEB/SBEE — format béninois réel : 14 caractères en
+// temps normal. Ce n'est plus une contrainte bloquante (certains compteurs
+// réels ne la respectent pas) : un numéro d'une autre longueur est accepté,
+// l'écart est signalé côté frontend sous forme d'avertissement, jamais en
+// invalidant le formulaire. L'unicité (un même compteur physique ne peut pas
+// appartenir à deux Unités) est vérifiée séparément — voir routes/properties.js
+// `assertMeterNumbersAvailable` + migration 059.
+const meterNumberSchema = optionalText(30);
 
 // Coordonnées GPS (étape 13, idée n°10 : carte du portefeuille) : placées à la
 // main par le DG sur une carte, jamais géocodées depuis l'adresse texte libre.

@@ -19,6 +19,8 @@ import {
   History,
   Clock,
   Lock,
+  Tag,
+  HandCoins,
   Settings,
   Stamp,
   LogOut,
@@ -79,6 +81,9 @@ export function EspaceSidebar() {
   const canAccounting = isDg || user.permissions.includes("comptabilite");
   const canAccountingAdvanced = isDg || user.permissions.includes("comptabilite_avancee");
   const canCharges = isDg || user.permissions.includes("charges");
+  // Biens à vendre (demande utilisateur, 2026-10-18) — jamais accordée par défaut, le DG décide au cas
+  // par cas (voir constants/permissions.js) : accès volontairement restreint, pas "tout comptable/agent".
+  const canSaleProperties = isDg || user.permissions.includes("biens_a_vendre");
 
   const rawGroups: { cadre: Cadre; items: (NavItem | false)[] }[] = [
     {
@@ -91,6 +96,7 @@ export function EspaceSidebar() {
         (canLocataires || canProprietaires) && { href: "/espace/biens", label: "Nos biens", icon: Building2 },
         { href: "/espace/proprietaires", label: "Propriétaires", icon: Landmark },
         { href: "/espace/locataires", label: "Locataires", icon: Users },
+        canSaleProperties && { href: "/espace/biens-a-vendre", label: "Biens à vendre", icon: Tag },
       ],
     },
     {
@@ -109,6 +115,10 @@ export function EspaceSidebar() {
         canAccounting && { href: "/espace/comptabilite#depenses", label: "Dépenses", icon: Banknote },
         canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité avancée", icon: Calculator },
         canCharges && { href: "/espace/charges", label: "Charges", icon: Receipt },
+        // Salaires (demande utilisateur, 2026-10-18) : réservé au DG, jamais délégable via une
+        // permission — la rémunération du personnel reste une donnée sensible (même principe que
+        // `/espace/employes`).
+        isDg && { href: "/espace/salaires", label: "Salaires", icon: HandCoins },
       ],
     },
     {

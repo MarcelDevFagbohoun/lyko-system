@@ -63,6 +63,16 @@ export function UnifiedLoginForm() {
       }
       router.push(searchParams.get("next") || "/espace");
     } catch (err) {
+      // Vérification d'email obligatoire (demande utilisateur, 2026-10-18) : le DG n'a jamais
+      // saisi le code reçu à l'inscription — redirige directement vers cet écran plutôt que de
+      // laisser une simple erreur sans suite (voir routes/auth.js, `details.code`).
+      if (err instanceof ApiError && err.details?.code?.[0] === "email_not_verified") {
+        const email = err.details.email?.[0];
+        const params = new URLSearchParams({ reason: "unverified" });
+        if (email) params.set("email", email);
+        router.push(`/inscription/verifier?${params.toString()}`);
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Une erreur est survenue. Réessayez.");
     } finally {
       setSubmitting(false);

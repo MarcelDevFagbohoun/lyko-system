@@ -2,10 +2,19 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Copy, Check, MessageCircle } from "lucide-react";
+import { ArrowLeft, Copy, Check, MessageCircle, FileDown } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { ApiError } from "@/lib/api/client";
-import { createRenter, RENT_TIMING_LABELS, type PaymentMethod, type RentTiming, type AdditionalDepositType, type AdditionalDeposit } from "@/lib/api/renters";
+import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
+import {
+  createRenter,
+  entryReceiptPdfPath,
+  RENT_TIMING_LABELS,
+  type PaymentMethod,
+  type RentTiming,
+  type AdditionalDepositType,
+  type AdditionalDeposit,
+  type EntryReceiptRef,
+} from "@/lib/api/renters";
 import type { Unit } from "@/lib/api/properties";
 import { normalizeBeninPhone, buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa, previewEntryProrata } from "@/lib/utils";
@@ -102,11 +111,13 @@ export function NouveauView() {
 
 type CreatedRenter = {
   renterId: number;
+  leaseId: number;
   firstName: string;
   phone: string;
   portalUrl: string;
   entryProrata: { proration: "aucun" | "prorata"; amount: number; days: number; dueDate: string };
   additionalDeposits: AdditionalDeposit[];
+  entryReceipt: EntryReceiptRef;
 };
 
 function NouveauContent() {
@@ -292,11 +303,13 @@ function NouveauContent() {
       });
       setResult({
         renterId: res.renterId,
+        leaseId: res.leaseId,
         firstName: form.firstName.trim(),
         phone: form.phone.trim(),
         portalUrl: `${window.location.origin}${res.portalLink.path}`,
         entryProrata: res.entryProrata,
         additionalDeposits: res.additionalDeposits,
+        entryReceipt: res.entryReceipt,
       });
     } catch (err) {
       setServerError(err instanceof ApiError ? err.message : "Une erreur est survenue. Réessayez.");
@@ -317,7 +330,7 @@ function NouveauContent() {
         </Link>
 
         {result ? (
-          <PortalLinkSuccessPanel renter={result} />
+          <PortalLinkSuccessPanel renter={result} accessToken={accessToken} />
         ) : (
         <Card className="max-w-2xl">
           <CardHeader>
@@ -720,7 +733,7 @@ function NouveauContent() {
  * employé (`app/espace/employes/nouveau`). Si perdu, on repasse par
  * « Régénérer le lien » sur la fiche du locataire.
  */
-function PortalLinkSuccessPanel({ renter }: { renter: CreatedRenter }) {
+function PortalLinkSuccessPanel({ renter, accessToken }: { renter: CreatedRenter; accessToken: string | null }) {
   const [copied, setCopied] = React.useState(false);
 
   async function copy() {
@@ -765,6 +778,23 @@ function PortalLinkSuccessPanel({ renter }: { renter: CreatedRenter }) {
           <div className="rounded-lg border border-primary-border bg-primary-bg px-4 py-3 text-body-sm text-ink">
             Cautions supplémentaires enregistrées :{" "}
             {renter.additionalDeposits.map((d) => `${d.typeLabel} (${formatFcfa(d.amount)})`).join(", ")}.
+          </div>
+        )}
+        {renter.entryReceipt && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-success-border bg-success-bg px-4 py-3">
+            <span className="text-body-sm text-ink">
+              Reçu d&apos;entrée <strong>{renter.entryReceipt.number}</strong> généré (caution, frais d&apos;agence, cautions
+              supplémentaires et prorata payés à la signature).
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => accessToken && openAuthenticatedPdf(entryReceiptPdfPath(renter.leaseId), accessToken)}
+            >
+              <FileDown size={16} />
+              Télécharger
+            </Button>
           </div>
         )}
         <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface-muted px-4 py-3">

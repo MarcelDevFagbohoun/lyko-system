@@ -29,6 +29,9 @@ export type AuthTenant = {
   rccm: string;
   ifu: string;
   contactPhone: string;
+  // Pays choisi à l'inscription (demande utilisateur, 2026-10-18) — `null` pour toute entreprise
+  // inscrite avant cette étape.
+  country: string | null;
   logoUrl: string | null;
   // Nom des 3 postes chez cette entreprise (Réglages) — remplace les
   // libellés fixes "Admin"/"Comptable"/"Agent" partout où un rôle est
@@ -61,7 +64,12 @@ type AuthState = {
 type AuthContextValue = AuthState & {
   login: (phone: string, password: string) => Promise<void>;
   loginEmployee: (identifier: string, role: "comptable" | "agent", password: string) => Promise<void>;
-  register: (formData: FormData) => Promise<void>;
+  // Vérification d'email obligatoire (demande utilisateur, 2026-10-18) : l'inscription ne
+  // connecte plus immédiatement — elle renvoie l'email pour lequel un code à 8 chiffres vient
+  // d'être envoyé. `verifyEmail`/`resendVerificationCode` complètent le flux.
+  register: (formData: FormData) => Promise<{ email: string }>;
+  verifyEmail: (email: string, code: string) => Promise<void>;
+  resendVerificationCode: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string, confirmNewPassword: string) => Promise<void>;
   updateMyProfile: (input: { avatar?: File; stamp?: File; signature?: File }) => Promise<void>;
@@ -184,11 +192,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const register = React.useCallback(async (formData: FormData) => {
+    const res = await apiFetch<{ pendingVerification: true; email: string }>("/api/auth/register", {
+      method: "POST",
+      body: formData,
+    });
+    return { email: res.email };
+  }, []);
+
+  const verifyEmail = React.useCallback(async (email: string, code: string) => {
     const res = await apiFetch<{ user: AuthUser; tenant: AuthTenant; accessToken: string }>(
-      "/api/auth/register",
-      { method: "POST", body: formData },
+      "/api/auth/verify-email",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code }),
+      },
     );
     setState({ user: res.user, tenant: res.tenant, accessToken: res.accessToken, status: "authenticated" });
+  }, []);
+
+  const resendVerificationCode = React.useCallback(async (email: string) => {
+    await apiFetch("/api/auth/resend-verification-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
   }, []);
 
   const logout = React.useCallback(async () => {
@@ -239,8 +267,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = React.useMemo<AuthContextValue>(
-    () => ({ ...state, login, loginEmployee, register, logout, changePassword, updateMyProfile, refreshUser }),
-    [state, login, loginEmployee, register, logout, changePassword, updateMyProfile, refreshUser],
+    () => ({
+      ...state,
+      login,
+      loginEmployee,
+      register,
+      verifyEmail,
+      resendVerificationCode,
+      logout,
+      changePassword,
+      updateMyProfile,
+      refreshUser,
+    }),
+    [state, login, loginEmployee, register, verifyEmail, resendVerificationCode, logout, changePassword, updateMyProfile, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

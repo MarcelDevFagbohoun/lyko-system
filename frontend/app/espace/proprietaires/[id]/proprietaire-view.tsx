@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Phone, Mail, MapPin, FileDown, Wallet, Building2, ShieldCheck, Pencil, Percent, Link2, Copy, Check, MessageCircle, Landmark } from "lucide-react";
+import { ArrowLeft, Phone, Mail, MapPin, FileDown, Wallet, Building2, ShieldCheck, Pencil, Percent, Link2, Copy, Check, MessageCircle, Landmark, UserX, UserCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import type { ChargeAccount } from "@/lib/api/charges";
@@ -13,6 +13,8 @@ import {
   createPayout,
   updateCommissionRate,
   generateOwnerPortalLink,
+  endOwnerMandate,
+  reactivateOwnerMandate,
   statementPdfPath,
   type Owner,
   type OwnerProperty,
@@ -20,6 +22,7 @@ import {
   type CreatePayoutInput,
   type CommissionRate,
   type EscrowBalance,
+  type DepositsHeld,
   type OwnerChargeRemittance,
 } from "@/lib/api/owners";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
@@ -84,6 +87,7 @@ function ProprietaireContent() {
   const [properties, setProperties] = React.useState<OwnerProperty[] | null>(null);
   const [payouts, setPayouts] = React.useState<OwnerPayout[] | null>(null);
   const [escrowBalance, setEscrowBalance] = React.useState<EscrowBalance | null>(null);
+  const [depositsHeld, setDepositsHeld] = React.useState<DepositsHeld | null>(null);
   const [openingDebtUnpaid, setOpeningDebtUnpaid] = React.useState(0);
   const [chargesAccount, setChargesAccount] = React.useState<ChargeAccount | null>(null);
   const [chargeRemittances, setChargeRemittances] = React.useState<OwnerChargeRemittance[]>([]);
@@ -100,6 +104,7 @@ function ProprietaireContent() {
         setProperties(res.properties);
         setPayouts(res.payouts);
         setEscrowBalance(res.escrowBalance);
+        setDepositsHeld(res.depositsHeld);
         setOpeningDebtUnpaid(res.openingDebtUnpaid);
         setChargesAccount(res.chargesAccount);
         setChargeRemittances(res.chargeRemittances);
@@ -137,6 +142,12 @@ function ProprietaireContent() {
     .reduce((sum, u) => sum + u.monthlyRent, 0);
   const unitsCount = properties.flatMap((p) => p.units).length;
   const unitsOccupied = properties.flatMap((p) => p.units).filter((u) => u.status === "loue").length;
+  // Archive des propriétaires (étape du 2026-10-18, demande utilisateur) : mandat terminé
+  // volontairement par le DG — fiche en LECTURE SEULE (décision explicite), seule
+  // « Réactiver le mandat » (DG) permet d'en ressortir. Jamais mélangé au patrimoine/aux chiffres
+  // ci-dessus, qui restent affichés tels quels (l'historique financier doit rester visible).
+  const archived = !!owner.mandateEndedAt;
+  const isDg = user?.role === "dg";
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -161,7 +172,7 @@ function ProprietaireContent() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="font-display text-headline-xl text-ink">{owner.name}</h1>
-              {canManage && (
+              {canManage && !archived && (
                 <button
                   type="button"
                   onClick={() => setEditingOwner(true)}
@@ -212,7 +223,11 @@ function ProprietaireContent() {
         </div>
         )}
 
-        {canManage && <PortalLinkCard owner={owner} accessToken={accessToken} onGenerated={load} />}
+        {isDg && (
+          <MandateCard owner={owner} properties={properties} accessToken={accessToken} onChanged={load} />
+        )}
+
+        {canManage && !archived && <PortalLinkCard owner={owner} accessToken={accessToken} onGenerated={load} />}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card>
@@ -287,7 +302,7 @@ function ProprietaireContent() {
           <CommissionCard
             ownerId={owner.id}
             ownerName={owner.name}
-            isDg={user?.role === "dg"}
+            isDg={isDg && !archived}
             activeRate={activeCommissionRate}
             rates={commissionRates}
             accessToken={accessToken}
@@ -295,7 +310,7 @@ function ProprietaireContent() {
           />
         )}
 
-        <EscrowBalanceCard escrow={escrowBalance} openingDebtUnpaid={openingDebtUnpaid} />
+        <EscrowBalanceCard escrow={escrowBalance} depositsHeld={depositsHeld} openingDebtUnpaid={openingDebtUnpaid} />
 
         {chargesAccount && (
           <ChargeRemittanceCard
@@ -304,7 +319,7 @@ function ProprietaireContent() {
             account={chargesAccount}
             remittances={chargeRemittances}
             accessToken={accessToken}
-            canRecord={canPayout}
+            canRecord={canPayout && !archived}
             onChanged={load}
           />
         )}
@@ -339,7 +354,7 @@ function ProprietaireContent() {
             <CardDescription>Historique des loyers nets reversés à ce propriétaire.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            {canPayout && (
+            {canPayout && !archived && (
               <PayoutForm ownerId={owner.id} ownerName={owner.name} accessToken={accessToken} onRecorded={load} />
             )}
 
@@ -385,7 +400,15 @@ function ProprietaireContent() {
  * Un solde négatif (versé plus que ce qui a été réellement collecté net)
  * est signalé plutôt que masqué — situation anormale à vérifier.
  */
-function EscrowBalanceCard({ escrow, openingDebtUnpaid }: { escrow: EscrowBalance | null; openingDebtUnpaid: number }) {
+function EscrowBalanceCard({
+  escrow,
+  depositsHeld,
+  openingDebtUnpaid,
+}: {
+  escrow: EscrowBalance | null;
+  depositsHeld: DepositsHeld | null;
+  openingDebtUnpaid: number;
+}) {
   if (!escrow) return null;
   const isNegative = escrow.balance < 0;
   return (
@@ -450,6 +473,42 @@ function EscrowBalanceCard({ escrow, openingDebtUnpaid }: { escrow: EscrowBalanc
             </div>
           )}
         </div>
+        {/* Cautions détenues (demande utilisateur, 2026-10-17) — ligne distincte, JAMAIS mélangée à la
+            recette nette cumulée ci-dessus : une caution n'est pas un revenu, c'est l'argent du
+            locataire, conservé puis restitué (voir `getDepositsHeldByOwner`, backend). */}
+        {depositsHeld && depositsHeld.total > 0 && (
+          <div className="mt-4 flex flex-col gap-1.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm">
+            <div className="flex items-center justify-between">
+              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Cautions détenues</span>
+              <span className="tabular font-currency-table text-ink">{formatFcfa(depositsHeld.total)}</span>
+            </div>
+            {depositsHeld.breakdown.depositLoyer > 0 && (
+              <div className="flex items-center justify-between text-ink-soft">
+                <span>Caution de loyer</span>
+                <span className="tabular">{formatFcfa(depositsHeld.breakdown.depositLoyer)}</span>
+              </div>
+            )}
+            {depositsHeld.breakdown.sbee > 0 && (
+              <div className="flex items-center justify-between text-ink-soft">
+                <span>Caution SBEE</span>
+                <span className="tabular">{formatFcfa(depositsHeld.breakdown.sbee)}</span>
+              </div>
+            )}
+            {depositsHeld.breakdown.soneb > 0 && (
+              <div className="flex items-center justify-between text-ink-soft">
+                <span>Caution SONEB</span>
+                <span className="tabular">{formatFcfa(depositsHeld.breakdown.soneb)}</span>
+              </div>
+            )}
+            {depositsHeld.breakdown.peinture > 0 && (
+              <div className="flex items-center justify-between text-ink-soft">
+                <span>Caution peinture</span>
+                <span className="tabular">{formatFcfa(depositsHeld.breakdown.peinture)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Ligne distincte, jamais mélangée aux chiffres ci-dessus (décision
             explicite de l'utilisateur) : de l'argent pas encore réellement
             collecté ne doit jamais se confondre avec le solde réel détenu. */}
@@ -459,6 +518,150 @@ function EscrowBalanceCard({ escrow, openingDebtUnpaid }: { escrow: EscrowBalanc
             <span className="tabular font-currency-table text-warning-fg">{formatFcfa(openingDebtUnpaid)}</span>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Archive des propriétaires (demande utilisateur, 2026-10-18) : contrairement à un bail, rien
+ * n'indiquait jusqu'ici qu'un propriétaire avait quitté le cabinet — action VOLONTAIRE du DG
+ * (jamais automatique sur « 0 Bien »), motif obligatoire, bloquée tant qu'il reste au moins un Bien
+ * rattaché. Une fois le mandat terminé, la fiche devient en LECTURE SEULE (décision explicite) —
+ * cette carte reste la seule porte de sortie (« Réactiver le mandat »), pour un règlement tardif
+ * par exemple.
+ */
+function MandateCard({
+  owner,
+  properties,
+  accessToken,
+  onChanged,
+}: {
+  owner: Owner;
+  properties: OwnerProperty[];
+  accessToken: string | null;
+  onChanged: () => void;
+}) {
+  const [ending, setEnding] = React.useState(false);
+  const [reason, setReason] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const toast = useToast();
+
+  if (owner.mandateEndedAt) {
+    async function handleReactivate() {
+      if (!accessToken) return;
+      setSubmitting(true);
+      setError(null);
+      try {
+        await reactivateOwnerMandate(accessToken, owner.id);
+        toast.success("Mandat réactivé.");
+        onChanged();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Impossible de réactiver ce mandat.");
+      } finally {
+        setSubmitting(false);
+      }
+    }
+
+    return (
+      <Card className="border-warning-border bg-warning-bg">
+        <CardContent className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-label-md text-warning-fg">
+              Mandat terminé le {new Date(owner.mandateEndedAt).toLocaleDateString("fr-FR")}
+              {owner.mandateEndedBy && ` par ${owner.mandateEndedBy.name} (${owner.mandateEndedBy.roleLabel})`}
+            </p>
+            {owner.mandateEndReason && <p className="mt-1 text-body-sm text-ink-soft">Motif : {owner.mandateEndReason}</p>}
+            <p className="mt-1 text-body-xs text-ink-muted">
+              Fiche en lecture seule. Réactivez le mandat pour pouvoir à nouveau y enregistrer quelque chose.
+            </p>
+            {error && <p className="mt-1 text-body-xs text-danger-fg">{error}</p>}
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={handleReactivate} disabled={submitting}>
+            <UserCheck size={16} />
+            {submitting ? "Réactivation…" : "Réactiver le mandat"}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const blockedByProperties = properties.length > 0;
+
+  async function handleEnd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accessToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await endOwnerMandate(accessToken, owner.id, reason.trim());
+      toast.success("Mandat terminé — ce propriétaire est désormais archivé.");
+      setEnding(false);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de terminer ce mandat.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!ending) {
+    return (
+      <div className="flex flex-col gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-fit text-ink-muted"
+          onClick={() => setEnding(true)}
+          disabled={blockedByProperties}
+        >
+          <UserX size={15} />
+          Mettre fin au mandat
+        </Button>
+        {blockedByProperties && (
+          <p className="text-body-xs text-ink-muted">
+            Ce propriétaire a encore {properties.length} Bien{properties.length > 1 ? "s" : ""} rattaché
+            {properties.length > 1 ? "s" : ""} — réattribuez-les d&apos;abord pour pouvoir terminer son mandat.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <Card className="border-danger-border">
+      <CardHeader>
+        <CardTitle>Mettre fin au mandat de {owner.name}</CardTitle>
+        <CardDescription>
+          Ce propriétaire passera dans l&apos;archive, sa fiche en lecture seule. Réversible (« Réactiver le mandat »).
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleEnd} className="flex flex-col gap-3">
+          {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+          <Field label="Motif" htmlFor="mandateReason" required>
+            <textarea
+              id="mandateReason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              required
+              minLength={5}
+              className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              placeholder="Pourquoi ce propriétaire quitte le cabinet…"
+            />
+          </Field>
+          <div className="flex items-center gap-2">
+            <Button type="submit" variant="destructive" disabled={submitting}>
+              {submitting ? "Enregistrement…" : "Confirmer la fin du mandat"}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setEnding(false)} disabled={submitting}>
+              Annuler
+            </Button>
+          </div>
+        </form>
       </CardContent>
     </Card>
   );

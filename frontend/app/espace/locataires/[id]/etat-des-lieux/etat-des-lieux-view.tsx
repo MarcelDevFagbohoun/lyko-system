@@ -342,11 +342,22 @@ function FinalizedView({
           </p>
         )}
         {report.reopenedAt && (
-          <p className="text-body-xs text-ink-muted">
-            Corrigée le {new Date(report.reopenedAt).toLocaleDateString("fr-FR")}
-            {report.reopenedBy && ` par ${report.reopenedBy.name} (${report.reopenedBy.roleLabel})`}
-            {report.reopenReason && ` — motif : ${report.reopenReason}`}.
-          </p>
+          <div className="rounded-lg border border-border bg-surface-muted p-3">
+            <p className="text-body-xs text-ink-muted">
+              Corrigée le {new Date(report.reopenedAt).toLocaleDateString("fr-FR")}
+              {report.reopenedBy && ` par ${report.reopenedBy.name} (${report.reopenedBy.roleLabel})`}
+              {report.reopenReason && ` — motif : ${report.reopenReason}`}.
+            </p>
+            {report.correctionChanges && report.correctionChanges.length > 0 ? (
+              <ul className="mt-1 list-disc pl-5 text-body-xs text-ink-muted">
+                {report.correctionChanges.map((change, i) => (
+                  <li key={i}>{change}</li>
+                ))}
+              </ul>
+            ) : report.correctionChanges ? (
+              <p className="mt-1 text-body-xs text-ink-muted">Aucun changement de contenu détecté par rapport à la version précédente.</p>
+            ) : null}
+          </div>
         )}
 
         <div className="flex flex-wrap items-center gap-3">

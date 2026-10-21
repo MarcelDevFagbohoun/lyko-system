@@ -28,6 +28,7 @@ const PAYMENT_METHOD_LABELS = {
   virement: 'Virement bancaire',
   cheque: 'Chèque',
   kkiapay: 'Paiement en ligne (KKiaPay)',
+  caution: 'Prélevé sur la caution',
 };
 
 function isoDate(d) {

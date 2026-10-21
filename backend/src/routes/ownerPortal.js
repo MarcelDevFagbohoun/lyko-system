@@ -56,6 +56,7 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
+  caution: 'Prélevé sur la caution',
 };
 
 /** Patrimoine du propriétaire (Biens + unités + locataire en cours), même requête que la fiche employé. */

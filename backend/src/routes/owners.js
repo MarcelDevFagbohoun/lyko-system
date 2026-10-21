@@ -11,10 +11,11 @@ const {
   createChargeRemittanceSchema,
   cancelChargeRemittanceSchema,
   updateCommissionRateSchema,
+  endMandateSchema,
 } = require('../validators/owners');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { streamOwnerStatementPdf, streamUtilityCarnetPdf } = require('../services/pdf');
-const { getEscrowBalances, getUnpaidOpeningDebtByOwner, pickRateValidAt, assertPayoutWithinBalance } = require('../services/commission');
+const { getEscrowBalances, getDepositsHeldByOwner, getUnpaidOpeningDebtByOwner, pickRateValidAt, assertPayoutWithinBalance } = require('../services/commission');
 const { toActor } = require('../utils/actor');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { getChargeAccount, assertRemittanceWithinBalance, listRemittances } = require('../services/utilityRemittance');
@@ -65,6 +66,9 @@ const canPayout = requireAnyPermission('proprietaires', 'comptabilite');
 // Modifier le taux de commission : DG uniquement (cahier des charges), pas
 // même le comptable — c'est une décision de gérance, pas une saisie.
 const canCommission = requireRole('dg');
+// Terminer/réactiver le mandat d'un propriétaire (demande utilisateur, 2026-10-18) : DG uniquement,
+// même principe que le taux de commission ci-dessus — une décision de gérance.
+const canMandate = requireRole('dg');
 
 const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
 const PROPERTY_TYPE_LABELS = Object.fromEntries(PROPERTY_TYPES.map((t) => [t.key, t.label]));
@@ -74,6 +78,7 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
+  caution: 'Prélevé sur la caution',
 };
 
 function isoDate(d) {
@@ -95,8 +100,21 @@ function toPublicOwner(row, extra = {}) {
     // création du lien) — juste de quoi afficher « Générer » ou « Régénérer ».
     hasPortalLink: !!row.portal_token_hash,
     portalLinkCreatedAt: row.portal_link_created_at,
+    // Archive des propriétaires (demande utilisateur, 2026-10-18) — mandat terminé volontairement
+    // par le DG, jamais automatique (voir `POST /:id/end-mandate`).
+    mandateEndedAt: row.mandate_ended_at,
+    mandateEndedBy: toActor(row.mandate_ender_first_name, row.mandate_ender_last_name, row.mandate_ender_role),
+    mandateEndReason: row.mandate_end_reason,
     ...extra,
   };
+}
+
+/** Lecture seule une fois le mandat terminé (décision explicite de l'utilisateur, 2026-10-18) —
+ * seule `POST /:id/reactivate-mandate` (DG) permet d'en sortir, par exemple pour un règlement tardif. */
+function assertMandateActive(owner) {
+  if (owner.mandate_ended_at) {
+    throw new ApiError(409, 'Le mandat de ce propriétaire est terminé — réactivez-le avant d’enregistrer quoi que ce soit.');
+  }
 }
 
 function unitDesignationLabel(row) {
@@ -112,8 +130,11 @@ function unitDesignationLabel(row) {
  */
 async function loadOwner(conn, tenantId, ownerId, scopeAgentId = null) {
   const [rows] = await conn.query(
-    `SELECT o.*, cu.first_name AS creator_first_name, cu.last_name AS creator_last_name, cu.role AS creator_role
-     FROM owners o LEFT JOIN users cu ON cu.id = o.created_by
+    `SELECT o.*, cu.first_name AS creator_first_name, cu.last_name AS creator_last_name, cu.role AS creator_role,
+            mu.first_name AS mandate_ender_first_name, mu.last_name AS mandate_ender_last_name, mu.role AS mandate_ender_role
+     FROM owners o
+     LEFT JOIN users cu ON cu.id = o.created_by
+     LEFT JOIN users mu ON mu.id = o.mandate_ended_by
      WHERE o.id = :id AND o.tenant_id = :tenantId LIMIT 1`,
     { id: ownerId, tenantId },
   );
@@ -154,12 +175,14 @@ router.get('/', canRead, async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT o.*,
               cu.first_name AS creator_first_name, cu.last_name AS creator_last_name, cu.role AS creator_role,
+              mu.first_name AS mandate_ender_first_name, mu.last_name AS mandate_ender_last_name, mu.role AS mandate_ender_role,
               COUNT(DISTINCT p.id) AS properties_count,
               COUNT(u.id) AS units_count,
               SUM(CASE WHEN u.status = 'loue' THEN 1 ELSE 0 END) AS units_occupied,
               SUM(CASE WHEN u.status = 'loue' THEN u.monthly_rent ELSE 0 END) AS monthly_rent_total
        FROM owners o
        LEFT JOIN users cu ON cu.id = o.created_by
+       LEFT JOIN users mu ON mu.id = o.mandate_ended_by
        LEFT JOIN properties p ON p.owner_id = o.id ${propertyJoinScope}
        LEFT JOIN property_units u ON u.property_id = p.id
        WHERE ${where}
@@ -273,6 +296,9 @@ router.get('/:id', canRead, async (req, res, next) => {
     // comme les versements/taux de commission ci-dessous sur cette même page.
     const escrowBalances = await getEscrowBalances(req.user.tenantId);
     const escrow = escrowBalances.get(id) ?? { totalCollected: 0, totalPayouts: 0, balance: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } };
+    // Cautions détenues (demande utilisateur, 2026-10-17) — affichées à côté de la recette nette
+    // cumulée ci-dessus, jamais fondues dedans (voir le commentaire de `getDepositsHeldByOwner`).
+    const depositsHeld = await getDepositsHeldByOwner(req.user.tenantId, id);
     const unpaidOpeningDebtByOwner = await getUnpaidOpeningDebtByOwner(req.user.tenantId);
     // Charges SONEB/SBEE encaissées à reverser (étape 31) — solde de bout en
     // bout du propriétaire, jamais scopé par agent (comme le séquestre ci-dessus).
@@ -290,6 +316,9 @@ router.get('/:id', canRead, async (req, res, next) => {
         // dette initiale réglée, prorata d'entrée — avant commission et dépenses, pour rester lisible.
         breakdown: escrow.breakdown,
       },
+      // Cautions actuellement détenues (demande utilisateur, 2026-10-17) — à part de la recette nette
+      // cumulée ci-dessus : ce n'est pas un revenu, voir `getDepositsHeldByOwner`.
+      depositsHeld,
       // Dette initiale des locataires non encore réglée — volontairement à
       // part du solde séquestre ci-dessus (voir `getUnpaidOpeningDebtByOwner`).
       openingDebtUnpaid: unpaidOpeningDebtByOwner.get(id) ?? 0,
@@ -360,7 +389,8 @@ router.patch('/:id', canManage, async (req, res, next) => {
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    assertMandateActive(owner);
     await assertOwnerPhoneAvailable(req.user.tenantId, data.phone, id);
 
     const fields = [];
@@ -397,6 +427,7 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    assertMandateActive(owner);
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
     await conn.beginTransaction();
@@ -486,7 +517,8 @@ router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    assertMandateActive(owner);
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
     await conn.beginTransaction();
@@ -556,7 +588,8 @@ router.delete('/:id/charge-remittances/:remittanceId', canPayout, async (req, re
   const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    assertMandateActive(owner);
     const [rows] = await pool.query(
       'SELECT id, paid_at, amount, deleted_at FROM owner_charge_remittances WHERE id = :remittanceId AND owner_id = :id AND tenant_id = :tenantId LIMIT 1',
       { remittanceId, id, tenantId: req.user.tenantId },
@@ -612,7 +645,8 @@ router.put('/:id/commission-rate', canCommission, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadOwner(conn, req.user.tenantId, id, scopeAgentId);
+    const owner = await loadOwner(conn, req.user.tenantId, id, scopeAgentId);
+    assertMandateActive(owner);
 
     const [activeRows] = await conn.query(
       `SELECT id, starts_on FROM owner_commission_rates
@@ -761,7 +795,8 @@ router.post('/:id/portal-link', canManage, async (req, res, next) => {
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    assertMandateActive(owner);
 
     const token = generatePortalToken();
     await pool.query('UPDATE owners SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id', {
@@ -771,6 +806,97 @@ router.post('/:id/portal-link', canManage, async (req, res, next) => {
 
     logger.info('Lien du portail propriétaire (re)généré', { tenantId: req.user.tenantId, ownerId: id, by: req.user.id });
     res.status(201).json({ token, path: `/portail/proprietaire/${token}` });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/owners/:id/end-mandate — archive ce propriétaire (demande utilisateur, 2026-10-18) :
+// action volontaire du DG, jamais automatique sur « 0 Bien ». Motif obligatoire, bloquée tant qu'il
+// reste au moins un Bien rattaché (il faut d'abord les réattribuer/supprimer) — un mandat terminé ne
+// doit jamais laisser un Bien sans propriétaire géré. La fiche devient ensuite en lecture seule
+// (`assertMandateActive` ci-dessus) jusqu'à une éventuelle réactivation.
+router.post('/:id/end-mandate', canMandate, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = endMandateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    const owner = await loadOwner(pool, req.user.tenantId, id, null);
+    if (owner.mandate_ended_at) throw new ApiError(409, 'Le mandat de ce propriétaire est déjà terminé.');
+
+    const [[{ count }]] = await pool.query(
+      'SELECT COUNT(*) AS count FROM properties WHERE owner_id = :id AND tenant_id = :tenantId',
+      { id, tenantId: req.user.tenantId },
+    );
+    if (count > 0) {
+      throw new ApiError(
+        409,
+        `Ce propriétaire a encore ${count} Bien${count > 1 ? 's' : ''} rattaché${count > 1 ? 's' : ''} — réattribuez-les d'abord.`,
+      );
+    }
+
+    // Audit comptabilité avancée (2026-10-18) : si le module SYSCOHADA est actif pour cette
+    // entreprise, ce propriétaire peut avoir un ou plusieurs comptes tiers (ex. 165 caution, 411/421
+    // loyers) avec un solde non nul — un mandat qui se termine avec de l'argent encore en jeu doit
+    // être régularisé avant d'être archivé, pas juste rangé à part en silence. N'affecte que les
+    // entreprises ayant activé le module (la requête ne trouve simplement aucune ligne sinon).
+    const [glBalanceRows] = await pool.query(
+      `SELECT a.label AS account_label, a.code AS account_code,
+              COALESCE(SUM(CASE WHEN el.side = 'debit' THEN el.amount ELSE 0 END), 0) AS total_debit,
+              COALESCE(SUM(CASE WHEN el.side = 'credit' THEN el.amount ELSE 0 END), 0) AS total_credit
+       FROM gl_third_parties tp
+       JOIN gl_accounts a ON a.id = tp.control_account_id
+       LEFT JOIN gl_entry_lines el ON el.third_party_id = tp.id
+       LEFT JOIN gl_entries e ON e.id = el.entry_id AND e.tenant_id = tp.tenant_id
+       WHERE tp.tenant_id = :tenantId AND tp.party_type = 'owner' AND tp.source_table = 'owners' AND tp.source_id = :id
+       GROUP BY tp.id, a.label, a.code
+       HAVING total_debit <> total_credit`,
+      { tenantId: req.user.tenantId, id },
+    );
+    if (glBalanceRows.length > 0) {
+      const details = glBalanceRows.map((r) => `${r.account_label} (${r.account_code})`).join(', ');
+      throw new ApiError(
+        409,
+        `Ce propriétaire a encore un solde non nul en comptabilité avancée (${details}) — régularisez-le d'abord.`,
+      );
+    }
+
+    await pool.query(
+      `UPDATE owners SET mandate_ended_at = NOW(), mandate_ended_by = :by, mandate_end_reason = :reason WHERE id = :id`,
+      { by: req.user.id, reason: parsed.data.reason, id },
+    );
+
+    logger.info('Mandat propriétaire terminé', { tenantId: req.user.tenantId, ownerId: id, by: req.user.id });
+    const updated = await loadOwner(pool, req.user.tenantId, id, null);
+    res.json({ owner: toPublicOwner(updated) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/owners/:id/reactivate-mandate — unique porte de sortie de l'archive (ex. un règlement
+// tardif après le départ). DG uniquement, aucune précondition (toujours possible).
+router.post('/:id/reactivate-mandate', canMandate, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const owner = await loadOwner(pool, req.user.tenantId, id, null);
+    if (!owner.mandate_ended_at) throw new ApiError(409, 'Le mandat de ce propriétaire est déjà actif.');
+
+    await pool.query(
+      `UPDATE owners SET mandate_ended_at = NULL, mandate_ended_by = NULL, mandate_end_reason = NULL WHERE id = :id`,
+      { id },
+    );
+
+    logger.info('Mandat propriétaire réactivé', { tenantId: req.user.tenantId, ownerId: id, by: req.user.id });
+    const updated = await loadOwner(pool, req.user.tenantId, id, null);
+    res.json({ owner: toPublicOwner(updated) });
   } catch (err) {
     next(err);
   }

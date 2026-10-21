@@ -33,8 +33,17 @@ const config: Config = {
         ink: {
           DEFAULT: "#0F172A", // titres & texte principal (slate-900)
           soft: "#334155", // corps secondaire (slate-700)
-          muted: "#64748B", // métadonnées, placeholders (slate-500)
-          faint: "#94A3B8", // placeholders désactivés
+          // Accessibilité (demande utilisateur, 2026-10-17 : « les couleurs doivent être pures et
+          // lisibles », pour une personne malvoyante) — `muted` était slate-500 (#64748B, ~4,76:1 sur
+          // blanc, à peine au-dessus du minimum AA 4,5:1) : trop fragile pour des libellés déjà petits
+          // (12px) et en MAJUSCULES espacées (`StatCard`, en-têtes de section...), qui réduisent encore
+          // la lisibilité perçue malgré un ratio nominal suffisant. Passé à slate-600 (~7,6:1, niveau
+          // AAA). `faint` reprend l'ancienne valeur de `muted` (~4,76:1, AA) au lieu de slate-400
+          // (~2,56:1, sous le minimum même pour du grand texte) : plusieurs usages réels (dates, lecture
+          // de compteur précédente, en-têtes de menu) ne sont pas de simples placeholders désactivés
+          // (seuls ceux-là sont exemptés du contraste minimal) et doivent rester lisibles.
+          muted: "#475569", // métadonnées, libellés (slate-600)
+          faint: "#64748B", // placeholders désactivés, texte très secondaire (slate-500)
         },
 
         // ── Marque / primaire ───────────────────────────────

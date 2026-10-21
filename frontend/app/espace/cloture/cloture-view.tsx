@@ -22,11 +22,15 @@ import {
   getClosingOverview,
   listClosedPeriods,
   closePeriod,
+  getRentMonthRenters,
+  getRentMonthBilan,
   type AccountingDashboard,
   type AccountingPeriod,
   type ClosingCheck,
   type ClosingMonthStatus,
   type ClosingOverview,
+  type RentMonthRenter,
+  type OwnerPayoutStatusEntry,
 } from "@/lib/api/accounting";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
@@ -79,6 +83,9 @@ function ClotureContent() {
   const [overview, setOverview] = React.useState<ClosingOverview | null>(null);
   const [closedPeriods, setClosedPeriods] = React.useState<AccountingPeriod[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // Point financier par locataire sur un mois clôturé (demande utilisateur, 2026-10-18) — ouvert en
+  // cliquant une ligne de « Historique des clôtures » ci-dessous.
+  const [detailMonth, setDetailMonth] = React.useState<string | null>(null);
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
@@ -137,9 +144,12 @@ function ClotureContent() {
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               {closedPeriods.map((p) => (
-                <div
+                <button
                   key={p.periodStart}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2.5"
+                  type="button"
+                  disabled={!p.period}
+                  onClick={() => p.period && setDetailMonth(p.period)}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2.5 text-left transition-colors enabled:hover:border-primary enabled:hover:bg-primary-bg/40 disabled:cursor-default"
                 >
                   <span className="inline-flex items-center gap-2 font-label-md text-ink">
                     <Lock size={14} className="text-ink-muted" />
@@ -150,11 +160,155 @@ function ClotureContent() {
                     Clôturé le {formatDateLabel(p.closedAt.slice(0, 10))}
                     {p.closedBy ? ` par ${p.closedBy.name} (${p.closedBy.roleLabel})` : ""}
                   </span>
-                </div>
+                </button>
               ))}
             </CardContent>
           </Card>
         )}
+      </div>
+
+      {detailMonth && (
+        <MonthRentersModal month={detailMonth} accessToken={accessToken} onClose={() => setDetailMonth(null)} />
+      )}
+    </div>
+  );
+}
+
+const STATUS_BADGE: Record<RentMonthRenter["status"], { variant: "success" | "warning" | "danger" | "info" | "neutral"; label: string }> = {
+  paye: { variant: "success", label: "Payé" },
+  partiel: { variant: "warning", label: "Partiel" },
+  en_retard: { variant: "danger", label: "En retard" },
+  a_payer: { variant: "info", label: "À payer" },
+  a_venir: { variant: "neutral", label: "À venir" },
+};
+
+/**
+ * Point financier de chaque locataire pour un mois clôturé (demande utilisateur, 2026-10-18) —
+ * ouverte en cliquant une ligne de « Historique des clôtures ». Fonctionne par construction pour
+ * n'importe quel mois (voir `listRentMonthRenters`, backend) : un mois déjà clôturé ne reçoit plus
+ * aucun paiement rétroactif, le résultat y est donc déjà figé de fait.
+ */
+function MonthRentersModal({
+  month,
+  accessToken,
+  onClose,
+}: {
+  month: string;
+  accessToken: string | null;
+  onClose: () => void;
+}) {
+  const [renters, setRenters] = React.useState<RentMonthRenter[] | null>(null);
+  const [bilan, setBilan] = React.useState<{
+    dashboard: AccountingDashboard;
+    owners: { reversed: OwnerPayoutStatusEntry[]; notReversed: OwnerPayoutStatusEntry[] };
+  } | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!accessToken) return;
+    setRenters(null);
+    setBilan(null);
+    setError(null);
+    Promise.all([getRentMonthRenters(accessToken, month), getRentMonthBilan(accessToken, month)])
+      .then(([rentersRes, bilanRes]) => {
+        setRenters(rentersRes.renters);
+        setBilan({ dashboard: bilanRes.dashboard, owners: bilanRes.owners });
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger le détail de ce mois."));
+  }, [accessToken, month]);
+
+  React.useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="month-renters-title"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-4xl flex-col gap-4 overflow-y-auto rounded-lg border border-border bg-surface p-5 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h2 id="month-renters-title" className="font-display text-headline-sm capitalize text-ink">
+            Bilan — {monthLabelFr(month)}
+          </h2>
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+            Fermer
+          </Button>
+        </div>
+
+        {error && (
+          <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">
+            {error}
+          </div>
+        )}
+
+        {bilan && (
+          <>
+            <MonthRecap dashboard={bilan.dashboard} />
+            <OwnerPayoutStatusSection owners={bilan.owners} />
+          </>
+        )}
+
+        <p className="font-label-sm uppercase tracking-wider text-ink-muted">Locataires</p>
+        {renters === null && !error ? (
+          <p className="text-body-sm text-ink-muted">Chargement…</p>
+        ) : renters && renters.length === 0 ? (
+          <p className="text-body-sm text-ink-muted">Aucun locataire suivi sur ce mois.</p>
+        ) : renters ? (
+          <div className="overflow-y-auto">
+            <table className="w-full border-collapse text-body-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-body-xs uppercase tracking-wider text-ink-muted">
+                  <th className="py-2 pr-2 font-label-sm">Locataire</th>
+                  <th className="py-2 pr-2 font-label-sm">Bien</th>
+                  <th className="py-2 pr-2 text-right font-label-sm">Loyer</th>
+                  <th className="py-2 pr-2 text-right font-label-sm">Payé</th>
+                  <th className="py-2 pr-2 text-right font-label-sm">Reste</th>
+                  <th className="py-2 text-center font-label-sm">Statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                {renters.map((r) => {
+                  const badge = STATUS_BADGE[r.status];
+                  return (
+                    <tr key={r.leaseId} className="border-b border-border-subtle last:border-0">
+                      <td className="py-2 pr-2">
+                        <Link
+                          href={`/espace/locataires/${r.renterId}`}
+                          className="font-label-sm text-primary hover:underline"
+                        >
+                          {r.renterName}
+                        </Link>
+                      </td>
+                      <td className="py-2 pr-2 text-ink-soft">
+                        <div>{r.unitLabel}</div>
+                        <div className="text-body-xs text-ink-muted">{r.propertyLabel}</div>
+                      </td>
+                      <td className="py-2 pr-2 text-right tabular text-ink">{formatFcfa(r.monthlyRent)}</td>
+                      <td className="py-2 pr-2 text-right tabular text-ink">{formatFcfa(r.paid)}</td>
+                      <td className="py-2 pr-2 text-right tabular text-ink">{formatFcfa(r.remaining)}</td>
+                      <td className="py-2 text-center">
+                        <Badge variant={badge.variant} dot>
+                          {badge.label}
+                        </Badge>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -627,6 +781,61 @@ function CheckRow({ check }: { check: ClosingCheck }) {
   );
 }
 
+/**
+ * Propriétaires reversés / non reversés (demande utilisateur, 2026-10-18) — statut reconstruit à
+ * la date de fin de ce mois précis (voir `getOwnerPayoutStatusAsOf`), jamais le solde actuel.
+ */
+function OwnerPayoutStatusSection({
+  owners,
+}: {
+  owners: { reversed: OwnerPayoutStatusEntry[]; notReversed: OwnerPayoutStatusEntry[] };
+}) {
+  if (owners.reversed.length === 0 && owners.notReversed.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="font-label-sm uppercase tracking-wider text-ink-muted">Propriétaires</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-warning-border bg-warning-bg p-3">
+          <p className="mb-2 font-label-sm text-warning-fg">
+            Non reversés ({owners.notReversed.length})
+          </p>
+          {owners.notReversed.length === 0 ? (
+            <p className="text-body-xs text-ink-muted">Aucun — tous étaient à jour à la fin de ce mois.</p>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {owners.notReversed.map((o) => (
+                <li key={o.ownerId} className="flex items-center justify-between text-body-sm">
+                  <Link href={`/espace/proprietaires/${o.ownerId}`} className="text-primary hover:underline">
+                    {o.ownerName}
+                  </Link>
+                  <span className="tabular text-warning-fg">{formatFcfa(o.balance)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="rounded-lg border border-success-border bg-success-bg p-3">
+          <p className="mb-2 font-label-sm text-success-fg">Reversés ({owners.reversed.length})</p>
+          {owners.reversed.length === 0 ? (
+            <p className="text-body-xs text-ink-muted">Aucun propriétaire concerné à cette date.</p>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {owners.reversed.map((o) => (
+                <li key={o.ownerId} className="flex items-center justify-between text-body-sm">
+                  <Link href={`/espace/proprietaires/${o.ownerId}`} className="text-primary hover:underline">
+                    {o.ownerName}
+                  </Link>
+                  <span className="tabular text-success-fg">Soldé</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Récapitulatif des montants du mois (point 4) — mêmes totaux que le tableau de bord comptable. */
 function MonthRecap({ dashboard }: { dashboard: AccountingDashboard }) {
   const t = dashboard.totals;
@@ -635,6 +844,10 @@ function MonthRecap({ dashboard }: { dashboard: AccountingDashboard }) {
     { label: "Frais d'agence", value: t.entryFeesCollected },
     { label: "Dépenses", value: t.expenses },
     { label: "Reversés aux propriétaires", value: t.ownerPayouts },
+    // Charges SONEB/SBEE impayées (demande utilisateur, 2026-10-18 : « une clôture nous devons
+    // avoir ... les charges »), cumulées (pas bornées au mois, comme ailleurs sur ce total).
+    { label: "Charges SONEB/SBEE impayées", value: t.unpaidCharges },
+    { label: "Solde net", value: t.netCashFlow },
   ];
   return (
     <div className="flex flex-col gap-2">

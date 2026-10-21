@@ -4,7 +4,21 @@
  * Le backend reste la source de vérité ; ces règles n'ont qu'un rôle d'UX.
  */
 
+import { isValidPhoneNumber, type CountryCode } from "libphonenumber-js";
+
 const PHONE_LOCAL_RE = /^0\d{9}$/;
+
+/**
+ * Numéro de téléphone à l'inscription (demande utilisateur, 2026-10-18) : le pays choisi
+ * détermine le format attendu. Même logique que `normalizeRegistrationPhone`
+ * (backend/src/validators/auth.js) — Bénin inchangé (`normalizeBeninPhone` ci-dessous), les 7
+ * autres pays UEMOA validés par `libphonenumber-js` (même bibliothèque que le backend, pour ne
+ * jamais diverger sur ce qui est accepté).
+ */
+export function isValidRegistrationPhone(country: string, phone: string): boolean {
+  if (country === "BJ") return normalizeBeninPhone(phone) !== null;
+  return isValidPhoneNumber(phone.trim(), country as CountryCode);
+}
 
 export function normalizeBeninPhone(raw: string): string | null {
   let s = raw.replace(/[\s.-]/g, "");

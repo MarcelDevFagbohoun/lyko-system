@@ -2,7 +2,11 @@ import { apiFetch, API_URL, type Actor } from "./client";
 import type { PropertyOwner, PropertyTypeKey, UnitDesignationKey } from "./properties";
 import type { InspectionCondition } from "@/lib/constants/inspection";
 
-export type PaymentMethod = "especes" | "mobile_money" | "virement" | "cheque" | "kkiapay";
+// "caution" (demande utilisateur, 2026-10-18) : jamais sélectionnable manuellement dans un
+// formulaire — uniquement une valeur d'AFFICHAGE pour un loyer réglé automatiquement par
+// prélèvement sur la caution à la sortie (voir routes/leases.js, `paymentMethodLabel` déjà
+// résolu côté serveur).
+export type PaymentMethod = "especes" | "mobile_money" | "virement" | "cheque" | "kkiapay" | "caution";
 
 /**
  * Convention de paiement du loyer (demande directe de l'utilisateur,
@@ -131,6 +135,8 @@ export type InspectionReport = {
   reopenedAt: string | null;
   reopenedBy: Actor;
   reopenReason: string | null;
+  /** Ce qui a changé lors de la dernière correction (calculé à la refinalisation) — `null` si jamais corrigée, [] si corrigée sans changement de contenu détecté. */
+  correctionChanges: string[] | null;
 };
 
 export type MoveInReport = InspectionReport;
@@ -142,6 +148,9 @@ export type MoveOutReport = InspectionReport & {
   /** Retenue sur la caution peinture (étape 43) — distincte de la caution de loyer ci-dessus. */
   peintureDeductionAmount: number;
   peintureDeductionNote: string | null;
+  /** Arriérés de loyer réglés par la caution à la sortie (demande utilisateur, 2026-10-18) — déjà
+   * inclus dans `totalDeductions`/`netRefund`, affiché à part pour la transparence. */
+  rentArrearsAmount: number;
   depositAmount: number;
   totalDeductions: number;
   netRefund: number;
@@ -206,6 +215,8 @@ export type Lease = {
   entryProrataReceivedMethod: PaymentMethod | null;
   /** Cautions supplémentaires (étape 43) — uniquement les types activés par l'entreprise et effectivement demandés à ce bail. */
   additionalDeposits: AdditionalDeposit[];
+  /** Reçu d'entrée (caution/frais d'agence/cautions supplémentaires/prorata) — `null` si rien n'a été payé à la signature. */
+  entryReceiptNumber: string | null;
   /** Jour d'échéance (1-28) — bail calendaire uniquement, `null` sinon (voir `rentDueOffsetDays`). */
   rentDueDay: number | null;
   /** Bail non-calendaire : jours après le début de la période où le loyer est dû, `null` sinon. */
@@ -242,7 +253,22 @@ export type Renter = {
   portalLinkCreatedAt: string | null;
 };
 
-export type RenterListItem = Renter & { activeLease: Lease | null; arrears: Arrears | null; rentStrip: RentStripMonth[] | null };
+/** Dernier bail TERMINÉ (demande utilisateur, 2026-10-18) — `null` tant qu'un bail est actif, sinon le plus récent déjà terminé. */
+export type LastEndedLease = {
+  unitCode: string;
+  designationLabel: string;
+  ownerName: string;
+  address: string | null;
+  monthlyRent: number;
+  endDate: string | null;
+};
+
+export type RenterListItem = Renter & {
+  activeLease: Lease | null;
+  arrears: Arrears | null;
+  rentStrip: RentStripMonth[] | null;
+  lastEndedLease: LastEndedLease | null;
+};
 
 export function listRenters(accessToken: string) {
   return apiFetch<{ renters: RenterListItem[] }>("/api/renters", { accessToken });
@@ -310,6 +336,9 @@ export type CreateRenterInput = {
   >;
 };
 
+/** Créé à la signature du bail dès que caution/frais d'agence/cautions supplémentaires/prorata ont réellement été payés — `null` si rien n'a été payé ce jour-là. */
+export type EntryReceiptRef = { id: number; number: string } | null;
+
 export function createRenter(accessToken: string, input: CreateRenterInput) {
   // Le lien du portail locataire est généré automatiquement à la création
   // (étape 13, idée n°2) — renvoyé une seule fois ici, comme un mot de passe
@@ -321,6 +350,7 @@ export function createRenter(accessToken: string, input: CreateRenterInput) {
     unitId: number;
     entryProrata: { proration: "aucun" | "prorata"; amount: number; days: number; dueDate: string };
     additionalDeposits: AdditionalDeposit[];
+    entryReceipt: EntryReceiptRef;
     portalLink: { token: string; path: string };
   }>(
     "/api/renters",
@@ -374,6 +404,7 @@ export function createLease(accessToken: string, renterId: number, input: Create
     unitId: number;
     entryProrata: { proration: "aucun" | "prorata"; amount: number; days: number; dueDate: string };
     additionalDeposits: AdditionalDeposit[];
+    entryReceipt: EntryReceiptRef;
   }>(`/api/renters/${renterId}/leases`, {
     method: "POST",
     accessToken,
@@ -482,6 +513,11 @@ export async function createPayment(
 
 export function receiptPdfPath(leaseId: number, paymentId: number) {
   return `/api/leases/${leaseId}/payments/${paymentId}/receipt.pdf`;
+}
+
+/** Reçu d'entrée (caution, frais d'agence, cautions supplémentaires, prorata) — créé à la signature du bail. */
+export function entryReceiptPdfPath(leaseId: number) {
+  return `/api/leases/${leaseId}/entry-receipt.pdf`;
 }
 
 export type LateFee = {

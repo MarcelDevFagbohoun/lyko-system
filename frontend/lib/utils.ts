@@ -1,9 +1,47 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
+
+/**
+ * Défaut `tailwind-merge` corrigé (demande utilisateur, 2026-10-17, en revoyant les couleurs des
+ * pages propriétaires/locataires pour la lisibilité) : nos tailles de police personnalisées
+ * (`text-body-sm`, `text-label-sm`...) ne sont pas dans la liste par défaut des tailles connues de
+ * tailwind-merge, qui les classe alors dans le même groupe que les couleurs de texte (`text-primary`,
+ * `text-danger-fg`...). Conséquence réelle et déjà repérée : un `<Button size="sm" variant="...">`
+ * perdait SA COULEUR DE TEXTE — `buttonVariants` émet d'abord la classe de couleur du variant, puis
+ * celle de taille, et `twMerge` ne gardait que la dernière, croyant les deux en conflit. Jusqu'ici
+ * contourné au cas par cas (`size="md"` à la place) plutôt que corrigé à la racine — cette extension
+ * déclare nos tailles personnalisées dans le groupe `font-size` de tailwind-merge, qui ne se confond
+ * plus jamais avec les couleurs, quelle que soit la taille utilisée.
+ */
+const customTwMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      "font-size": [
+        {
+          text: [
+            "headline-2xl",
+            "headline-xl",
+            "headline-lg",
+            "headline-md",
+            "headline-sm",
+            "body-lg",
+            "body-md",
+            "body-sm",
+            "body-xs",
+            "label-md",
+            "label-sm",
+            "currency-display",
+            "currency-table",
+          ],
+        },
+      ],
+    },
+  },
+});
 
 /** Fusionne des classes Tailwind conditionnelles sans conflit. */
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+  return customTwMerge(clsx(inputs));
 }
 
 /**

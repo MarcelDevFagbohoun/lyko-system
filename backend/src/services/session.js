@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const { pool } = require('../config/db');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { hashToken } = require('../utils/tokens');
@@ -10,6 +11,15 @@ const config = require('../config/env');
  * Émet une paire access/refresh pour un utilisateur et persiste l'empreinte
  * du refresh token en base (nécessaire pour la révocation à la déconnexion
  * et la rotation au rafraîchissement).
+ *
+ * Bug corrigé (découvert en testant la vérification d'email, 2026-10-18) : `jsonwebtoken` horodate
+ * `iat` à la SECONDE — deux sessions émises pour le MÊME utilisateur dans la même seconde (ex. un
+ * double-clic sur « Se connecter », ou ici `POST /verify-email` qui émet une session puis un
+ * `POST /login` immédiatement après) produisaient un refresh token BYTE IDENTIQUE, donc le même
+ * hash SHA-256 — `INSERT INTO refresh_tokens` échouait alors sur la contrainte UNIQUE
+ * (`uq_refresh_tokens_hash`) avec une 500 brute. Un `jti` aléatoire dans le refresh token (jamais
+ * dans l'access token, non stocké, sans effet sur sa vérification) rend chaque token unique même
+ * émis à la même seconde pour le même compte.
  */
 async function issueSession(user) {
   const payload = {
@@ -19,7 +29,7 @@ async function issueSession(user) {
     mustChangePassword: !!user.must_change_password,
   };
   const accessToken = signAccessToken(payload);
-  const refreshToken = signRefreshToken(payload);
+  const refreshToken = signRefreshToken({ ...payload, jti: crypto.randomUUID() });
 
   const expiresAt = new Date(Date.now() + msFromDuration(config.jwt.refreshTtl));
   await pool.query(
