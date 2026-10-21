@@ -23,15 +23,14 @@ import {
   listClosedPeriods,
   closePeriod,
   getRentMonthRenters,
-  getRentMonthBilan,
   type AccountingDashboard,
   type AccountingPeriod,
   type ClosingCheck,
   type ClosingMonthStatus,
   type ClosingOverview,
   type RentMonthRenter,
-  type OwnerPayoutStatusEntry,
 } from "@/lib/api/accounting";
+import { MonthBilanPanel } from "./month-bilan-panel";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -136,6 +135,25 @@ function ClotureContent() {
           </>
         )}
 
+        <Card>
+          <CardHeader>
+            <CardTitle>Consulter un mois</CardTitle>
+            <CardDescription>
+              Entrées, versements, point locataires, point propriétaires et dépenses de n&apos;importe quel mois,
+              clôturé ou non.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <input
+              type="month"
+              aria-label="Mois à consulter"
+              max={new Date().toISOString().slice(0, 7)}
+              onChange={(e) => e.target.value && setDetailMonth(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-body-md text-ink"
+            />
+          </CardContent>
+        </Card>
+
         {closedPeriods && closedPeriods.length > 0 && (
           <Card>
             <CardHeader>
@@ -198,22 +216,14 @@ function MonthRentersModal({
   onClose: () => void;
 }) {
   const [renters, setRenters] = React.useState<RentMonthRenter[] | null>(null);
-  const [bilan, setBilan] = React.useState<{
-    dashboard: AccountingDashboard;
-    owners: { reversed: OwnerPayoutStatusEntry[]; notReversed: OwnerPayoutStatusEntry[] };
-  } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!accessToken) return;
     setRenters(null);
-    setBilan(null);
     setError(null);
-    Promise.all([getRentMonthRenters(accessToken, month), getRentMonthBilan(accessToken, month)])
-      .then(([rentersRes, bilanRes]) => {
-        setRenters(rentersRes.renters);
-        setBilan({ dashboard: bilanRes.dashboard, owners: bilanRes.owners });
-      })
+    getRentMonthRenters(accessToken, month)
+      .then((rentersRes) => setRenters(rentersRes.renters))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger le détail de ce mois."));
   }, [accessToken, month]);
 
@@ -252,14 +262,9 @@ function MonthRentersModal({
           </div>
         )}
 
-        {bilan && (
-          <>
-            <MonthRecap dashboard={bilan.dashboard} />
-            <OwnerPayoutStatusSection owners={bilan.owners} />
-          </>
-        )}
+        <MonthBilanPanel month={month} accessToken={accessToken} />
 
-        <p className="font-label-sm uppercase tracking-wider text-ink-muted">Locataires</p>
+        <p className="font-label-sm uppercase tracking-wider text-ink-muted">Loyer de ce mois, locataire par locataire</p>
         {renters === null && !error ? (
           <p className="text-body-sm text-ink-muted">Chargement…</p>
         ) : renters && renters.length === 0 ? (
@@ -778,61 +783,6 @@ function CheckRow({ check }: { check: ClosingCheck }) {
       {icon}
       {content}
     </li>
-  );
-}
-
-/**
- * Propriétaires reversés / non reversés (demande utilisateur, 2026-10-18) — statut reconstruit à
- * la date de fin de ce mois précis (voir `getOwnerPayoutStatusAsOf`), jamais le solde actuel.
- */
-function OwnerPayoutStatusSection({
-  owners,
-}: {
-  owners: { reversed: OwnerPayoutStatusEntry[]; notReversed: OwnerPayoutStatusEntry[] };
-}) {
-  if (owners.reversed.length === 0 && owners.notReversed.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="font-label-sm uppercase tracking-wider text-ink-muted">Propriétaires</p>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="rounded-lg border border-warning-border bg-warning-bg p-3">
-          <p className="mb-2 font-label-sm text-warning-fg">
-            Non reversés ({owners.notReversed.length})
-          </p>
-          {owners.notReversed.length === 0 ? (
-            <p className="text-body-xs text-ink-muted">Aucun — tous étaient à jour à la fin de ce mois.</p>
-          ) : (
-            <ul className="flex flex-col gap-1">
-              {owners.notReversed.map((o) => (
-                <li key={o.ownerId} className="flex items-center justify-between text-body-sm">
-                  <Link href={`/espace/proprietaires/${o.ownerId}`} className="text-primary hover:underline">
-                    {o.ownerName}
-                  </Link>
-                  <span className="tabular text-warning-fg">{formatFcfa(o.balance)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="rounded-lg border border-success-border bg-success-bg p-3">
-          <p className="mb-2 font-label-sm text-success-fg">Reversés ({owners.reversed.length})</p>
-          {owners.reversed.length === 0 ? (
-            <p className="text-body-xs text-ink-muted">Aucun propriétaire concerné à cette date.</p>
-          ) : (
-            <ul className="flex flex-col gap-1">
-              {owners.reversed.map((o) => (
-                <li key={o.ownerId} className="flex items-center justify-between text-body-sm">
-                  <Link href={`/espace/proprietaires/${o.ownerId}`} className="text-primary hover:underline">
-                    {o.ownerName}
-                  </Link>
-                  <span className="tabular text-success-fg">Soldé</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }
 

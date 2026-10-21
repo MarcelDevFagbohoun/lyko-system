@@ -642,3 +642,107 @@ export function disposeFixedAsset(accessToken: string, id: number, input: { disp
     body: JSON.stringify(input),
   });
 }
+
+// ── Bilan détaillé d'un mois (GET /api/accounting/month-bilan/:month) ─────────────────────────────
+
+export type MonthBilanLines = Record<string, number>;
+export type MonthBilanProperty = {
+  propertyId: number;
+  propertyCode: string;
+  ownerId: number;
+  ownerName: string;
+  rent: number;
+  openingDebt: number;
+  prorata: number;
+  expenses: number;
+  netRevenue: number;
+  commission: number;
+  ownerShare: number;
+};
+export type MonthBilanOwner = {
+  ownerId: number;
+  ownerName: string;
+  openingBalance: number;
+  collected: number;
+  expenses: number;
+  commission: number;
+  payouts: number;
+  closingBalance: number;
+  status: "reverse" | "non_reverse";
+};
+export type MonthBilanTenant = {
+  leaseId: number;
+  renterName: string;
+  propertyCode: string;
+  unitCode: string;
+  monthlyRent: number;
+  daysLate: number;
+  unpaidMonths: number;
+  openingDebtRemaining: number;
+  lateFeesRemaining: number;
+  amountOwed: number;
+};
+export type MonthBilan = {
+  month: string;
+  from: string;
+  to: string;
+  isFuture: boolean;
+  commissionTiming: "encaissement" | "reversement";
+  inflows: {
+    total: number;
+    lines: MonthBilanLines;
+    rent: {
+      total: number;
+      count: number;
+      ceMois: number;
+      arriere: number;
+      avance: number;
+      fromDeposit: number;
+      cashTotal: number;
+      byMethod: { method: string; total: number; count: number }[];
+    };
+    counts: Record<string, number>;
+  };
+  outflows: { total: number; lines: MonthBilanLines; counts: Record<string, number> };
+  treasury: { in: number; out: number; net: number };
+  cabinet: {
+    commission: number;
+    entryFees: number;
+    lateFees: number;
+    saleCommissions: number;
+    expenses: number;
+    netIncome: number;
+  };
+  properties: MonthBilanProperty[];
+  owners: MonthBilanOwner[];
+  tenants: { asOf: string; totalOwed: number; count: number; list: MonthBilanTenant[] };
+  expenses: {
+    cabinetTotal: number;
+    propertyTotal: number;
+    byCategory: { category: string; total: number; count: number }[];
+    lines: { id: number; label: string; category: string; amount: number; paidAt: string; propertyCode: string | null }[];
+    engagedUnpaid: { total: number; count: number };
+  };
+  charges: {
+    billed: { total: number; count: number };
+    collected: { total: number; count: number };
+    remitted: { total: number; count: number };
+    unpaidAtEndOfMonth: { total: number; count: number };
+  };
+  controls: { key: string; label: string; ok: boolean; expected: number; actual: number }[];
+  allControlsOk: boolean;
+};
+
+export type MonthBilanResponse = {
+  source: "snapshot" | "live";
+  frozenAt?: string;
+  isClosed: boolean;
+  /** Mois clôturé dont la reconstruction actuelle diffère de la photo figée (régularisation postérieure). */
+  drift: boolean;
+  bilan: MonthBilan;
+  live?: MonthBilan;
+};
+
+export function getMonthBilan(accessToken: string, month: string) {
+  return apiFetch<MonthBilanResponse>(`/api/accounting/month-bilan/${encodeURIComponent(month)}`, { accessToken });
+}
