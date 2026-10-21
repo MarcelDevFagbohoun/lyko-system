@@ -979,6 +979,14 @@ function PayoutForm({
           {open ? "Fermer" : "Enregistrer un versement"}
         </Button>
       </div>
+      <p className="text-body-xs text-ink-muted">
+        Ce formulaire enregistre un versement déjà réglé (espèces, virement…). Pour l&apos;envoyer réellement en Mobile Money via
+        FedaPay,{" "}
+        <Link href="/espace/paiements" className="text-primary hover:underline">
+          utilisez la page Paiements
+        </Link>{" "}
+        — le versement y est enregistré automatiquement une fois confirmé.
+      </p>
 
       {open && error && <p className="text-body-sm text-danger-fg">{error}</p>}
 

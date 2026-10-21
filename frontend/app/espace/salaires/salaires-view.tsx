@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { FileDown, Trash2, Banknote } from "lucide-react";
+import Link from "next/link";
+import { FileDown, Trash2, Banknote, Send } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
@@ -66,12 +67,23 @@ function SalairesContent() {
   return (
     <div className="min-h-screen bg-canvas">
       <div className="content-shell flex flex-col gap-6 py-10">
-        <div>
-          <h1 className="font-display text-headline-xl text-ink">Salaires</h1>
-          <p className="text-body-md text-ink-soft">
-            Paiement des salaires du personnel — chaque fiche de paie réduit la recette de l&apos;entreprise et peut être téléchargée, signée par vous.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="font-display text-headline-xl text-ink">Salaires</h1>
+            <p className="text-body-md text-ink-soft">
+              Paiement des salaires du personnel — chaque fiche de paie réduit la recette de l&apos;entreprise et peut être téléchargée, signée par vous.
+            </p>
+          </div>
+          <Link href="/espace/paiements">
+            <Button variant="secondary">
+              <Send size={16} /> Payer par Mobile Money (FedaPay)
+            </Button>
+          </Link>
         </div>
+        <p className="-mt-3 text-body-xs text-ink-muted">
+          Le formulaire ci-dessous enregistre un salaire déjà réglé (espèces, virement…). Pour l&apos;envoyer réellement en Mobile
+          Money, utilisez « Payer par Mobile Money » ci-dessus — il crée la fiche de paie automatiquement une fois confirmé.
+        </p>
 
         {error && (
           <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2 text-body-sm text-danger-fg">{error}</div>
