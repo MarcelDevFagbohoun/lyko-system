@@ -47,6 +47,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { MonthGroupsToolbar, MonthHeaderRow, countLabel, useMonthGroups } from "@/components/ui/month-group";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { RentMonthCard } from "@/components/accounting/rent-month-card";
+import { OtherIncomesCard } from "@/components/accounting/other-incomes-card";
 import { sumBy } from "@/lib/group-by-month";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
@@ -540,6 +541,8 @@ function ComptabiliteContent() {
           </CardContent>
         </Card>
 
+        <OtherIncomesCard accessToken={accessToken} from={from} to={to} isClosed={isClosed} onChanged={load} />
+
         <FixedAssetsSection accessToken={accessToken} />
 
         {dashboard && dashboard.totals.unpaidChargesCount > 0 && (
@@ -676,6 +679,13 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
         value={formatFcfa(totals.saleCommissionsCollected)}
         tone={totals.saleCommissionsCollected > 0 ? "success" : "default"}
         trend={{ value: `${totals.saleCommissionsCollectedCount} vente(s) — produit de l'entreprise, jamais reversé`, direction: "flat" }}
+      />
+      <StatCard
+        label="Autres entrées"
+        icon={<TrendingUp size={16} />}
+        value={formatFcfa(totals.otherIncomes)}
+        tone={totals.otherIncomes > 0 ? "success" : "default"}
+        trend={{ value: `${totals.otherIncomesCount} entrée(s) — honoraires, intérêts, remboursements…`, direction: "flat" }}
       />
       <StatCard
         label="Versé aux propriétaires"

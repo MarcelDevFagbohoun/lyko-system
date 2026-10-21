@@ -181,7 +181,7 @@ function TableauDeBordContent() {
                     value={formatFcfa(money.cabinetRevenue.netCabinetIncome)}
                     tone={money.cabinetRevenue.netCabinetIncome >= 0 ? "success" : "danger"}
                     trend={{
-                      value: `Commission ${formatFcfa(money.cabinetRevenue.breakdown.commission)} + frais d'agence ${formatFcfa(money.cabinetRevenue.breakdown.entryFees)} + pénalités ${formatFcfa(money.cabinetRevenue.breakdown.lateFees)}${money.cabinetRevenue.breakdown.saleCommissions > 0 ? ` + commission vente ${formatFcfa(money.cabinetRevenue.breakdown.saleCommissions)}` : ""} − dépenses ${formatFcfa(money.cabinetRevenue.breakdown.expenses)}`,
+                      value: `Commission ${formatFcfa(money.cabinetRevenue.breakdown.commission)} + frais d'agence ${formatFcfa(money.cabinetRevenue.breakdown.entryFees)} + pénalités ${formatFcfa(money.cabinetRevenue.breakdown.lateFees)}${money.cabinetRevenue.breakdown.saleCommissions > 0 ? ` + commission vente ${formatFcfa(money.cabinetRevenue.breakdown.saleCommissions)}` : ""}${(money.cabinetRevenue.breakdown.otherIncomes ?? 0) > 0 ? ` + autres entrées ${formatFcfa(money.cabinetRevenue.breakdown.otherIncomes ?? 0)}` : ""} − dépenses ${formatFcfa(money.cabinetRevenue.breakdown.expenses)}`,
                       direction: money.cabinetRevenue.netCabinetIncome >= 0 ? "up" : "down",
                     }}
                   />

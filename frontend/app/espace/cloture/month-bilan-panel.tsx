@@ -22,6 +22,7 @@ const INFLOW_LABELS: Record<string, string> = {
   entryFees: "Frais d'agence",
   lateFees: "Pénalités de retard",
   saleCommissions: "Commissions de vente",
+  otherIncomes: "Autres entrées (honoraires, intérêts, remboursements…)",
   rentDeposits: "Cautions de loyer reçues",
   extraDeposits: "Cautions supplémentaires reçues",
   utilityCollected: "Charges SONEB/SBEE payées par les locataires",
@@ -241,6 +242,7 @@ function SyntheseTab({ b }: { b: MonthBilan }) {
               ["Frais d'agence", b.cabinet.entryFees],
               ["Pénalités de retard réglées", b.cabinet.lateFees],
               ["Commissions de vente", b.cabinet.saleCommissions],
+              ["Autres entrées", b.cabinet.otherIncomes ?? 0],
               ["− Dépenses de fonctionnement", -b.cabinet.expenses],
             ].map(([label, value]) => (
               <tr key={label as string} className="border-b border-border-subtle">

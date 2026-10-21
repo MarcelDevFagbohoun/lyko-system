@@ -1160,6 +1160,13 @@ async function computeAccountingDashboard(user, { from, to }) {
        WHERE tenant_id = :tenantId AND status = 'vendu' AND deleted_at IS NULL AND sold_at BETWEEN :from AND :to`,
       params,
     );
+    // Autres entrées du cabinet (Comptabilité → Autres entrées, 21/10/2026) : 100 % produit du cabinet.
+    const [[otherIncomeRow]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
+       FROM other_incomes
+       WHERE tenant_id = :tenantId AND deleted_at IS NULL AND income_date BETWEEN :from AND :to`,
+      params,
+    );
     // Dépenses du CABINET uniquement (`property_id IS NULL`) : les travaux
     // facturés à un Bien précis ne sont pas un coût de fonctionnement de
     // l'entreprise — ils sont déjà déduits de la recette du PROPRIÉTAIRE
@@ -1296,6 +1303,7 @@ async function computeAccountingDashboard(user, { from, to }) {
     const propertyExpensesTotal = Number(propertyExpenseRow.total);
     const entryFeesCollected = Number(entryFeeRow.total);
     const saleCommissionsCollected = Number(saleCommissionRow.total);
+    const otherIncomesCollected = Number(otherIncomeRow.total);
 
     const period = from.slice(0, 7);
     const closed = await isPeriodClosed(user.tenantId, from);
@@ -1356,10 +1364,12 @@ async function computeAccountingDashboard(user, { from, to }) {
         // Même principe que `entryFeesCollected` : 100 % produit du cabinet, s'ajoute au flux net.
         saleCommissionsCollected,
         saleCommissionsCollectedCount: Number(saleCommissionRow.n),
+        otherIncomes: otherIncomesCollected,
+        otherIncomesCount: Number(otherIncomeRow.n),
         treasuryNet: treasury ? treasury.net : null,
         treasuryIn: treasury ? treasury.in : null,
         treasuryOut: treasury ? treasury.out : null,
-        netCashFlow: rentCollected - ownerPayouts - expensesTotal + entryFeesCollected + saleCommissionsCollected,
+        netCashFlow: rentCollected - ownerPayouts - expensesTotal + entryFeesCollected + saleCommissionsCollected + otherIncomesCollected,
       },
       expensesByCategory: byCategory.map((r) => ({ category: r.category, total: Number(r.total) })),
       unpaidChargesByType: unpaidByType.map((r) => ({

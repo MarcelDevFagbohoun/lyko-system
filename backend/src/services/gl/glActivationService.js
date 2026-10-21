@@ -25,6 +25,7 @@ const { resolveExpensePosting } = require('./glExpensePosting');
 const { genererEcriture } = require('./glPostingService');
 const {
   EXPENSE_CATEGORY_TO_OPERATION_TYPE,
+  INCOME_CATEGORY_TO_OPERATION_TYPE,
   FIXED_ASSET_CATEGORY_TO_ACQUISITION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
 } = require('../../constants/glOperationTypes');
@@ -50,6 +51,7 @@ async function findEarliestOperationDate(conn, tenantId) {
        SELECT MIN(paid_at) AS d FROM rent_payments WHERE tenant_id = :tenantId AND deleted_at IS NULL
        UNION ALL SELECT MIN(paid_at) FROM utility_payments WHERE tenant_id = :tenantId
        UNION ALL SELECT MIN(expense_date) FROM expenses WHERE tenant_id = :tenantId AND deleted_at IS NULL
+       UNION ALL SELECT MIN(income_date) FROM other_incomes WHERE tenant_id = :tenantId AND deleted_at IS NULL
        UNION ALL SELECT MIN(paid_at) FROM owner_payouts WHERE tenant_id = :tenantId
        UNION ALL SELECT MIN(acquisition_date) FROM fixed_assets WHERE tenant_id = :tenantId
        UNION ALL SELECT MIN(paid_at) FROM lease_opening_debt_payments WHERE tenant_id = :tenantId
@@ -269,6 +271,30 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
         context: { supplierId: e.supplier_id },
       });
     }
+  }
+
+  const [otherIncomes] = await pool.query(
+    `SELECT id, category, label, amount, income_date, payment_method, recorded_by
+     FROM other_incomes WHERE tenant_id = :tenantId AND deleted_at IS NULL AND income_date >= :fromDate`,
+    { tenantId, fromDate },
+  );
+  for (const i of otherIncomes) {
+    const operationType = INCOME_CATEGORY_TO_OPERATION_TYPE[i.category];
+    if (!operationType) {
+      summary.errors.push(`other_incomes#${i.id} : catégorie sans correspondance comptable (${i.category})`);
+      continue;
+    }
+    operations.push({
+      sourceTable: 'other_incomes',
+      sourceId: i.id,
+      operationType,
+      entryDate: isoDate(i.income_date),
+      amount: Number(i.amount),
+      paymentMethod: i.payment_method,
+      narrationVars: { libelle: i.label, mois: isoDate(i.income_date).slice(0, 7) },
+      createdBy: i.recorded_by ?? createdBy,
+      context: {},
+    });
   }
 
   const [fixedAssets] = await pool.query(

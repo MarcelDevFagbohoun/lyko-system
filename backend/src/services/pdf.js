@@ -1764,7 +1764,9 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
 
   // Résumé financier : mêmes totaux que la carte du tableau de bord écran.
   const t = dashboard.totals;
-  const boxHeight = 150;
+  const hasOtherIncomes = Number(t.otherIncomes) > 0;
+  const ex = hasOtherIncomes ? 20 : 0;
+  const boxHeight = 150 + ex;
   drawPanel(doc, 50, y, 495, boxHeight);
   const boxY = y + 14;
   drawPanelRow(doc, 'Loyers encaissés', `+ ${formatFcfa(t.rentCollected)}`, 65, boxY, {
@@ -1777,23 +1779,30 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
     valueWidth: 180,
     valueColor: SUCCESS_FG,
   });
-  drawPanelRow(doc, 'Versements aux propriétaires', `- ${formatFcfa(t.ownerPayouts)}`, 65, boxY + 40, {
+  if (hasOtherIncomes) {
+    drawPanelRow(doc, 'Autres entrées (honoraires, intérêts, remboursements…)', `+ ${formatFcfa(t.otherIncomes)}`, 65, boxY + 40, {
+      labelWidth: 285,
+      valueWidth: 180,
+      valueColor: SUCCESS_FG,
+    });
+  }
+  drawPanelRow(doc, 'Versements aux propriétaires', `- ${formatFcfa(t.ownerPayouts)}`, 65, boxY + 40 + ex, {
     labelWidth: 285,
     valueWidth: 180,
     valueColor: DANGER_FG,
   });
-  drawPanelRow(doc, "Dépenses de l'entreprise", `- ${formatFcfa(t.expenses)}`, 65, boxY + 60, {
+  drawPanelRow(doc, "Dépenses de l'entreprise", `- ${formatFcfa(t.expenses)}`, 65, boxY + 60 + ex, {
     labelWidth: 285,
     valueWidth: 180,
     valueColor: DANGER_FG,
   });
-  doc.moveTo(65, boxY + 82).lineTo(530, boxY + 82).strokeColor(BORDER).lineWidth(1).stroke();
-  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(INK).text('Solde net', 65, boxY + 90);
+  doc.moveTo(65, boxY + 82 + ex).lineTo(530, boxY + 82 + ex).strokeColor(BORDER).lineWidth(1).stroke();
+  doc.font(FONT_SANS_BOLD).fontSize(11).fillColor(INK).text('Solde net', 65, boxY + 90 + ex);
   doc
     .font(FONT_MONO_BOLD)
     .fontSize(16)
     .fillColor(t.netCashFlow >= 0 ? PRIMARY : DANGER_FG)
-    .text(formatFcfa(t.netCashFlow), 300, boxY + 86, { width: 230, align: 'right' });
+    .text(formatFcfa(t.netCashFlow), 300, boxY + 86 + ex, { width: 230, align: 'right' });
   doc
     .font(FONT_SANS)
     .fontSize(8)
@@ -1803,7 +1812,7 @@ function streamAccountingReportPdf(res, { tenant, dashboard }) {
         `Charges impayées : ${formatFcfa(t.unpaidCharges)} (${t.unpaidChargesCount}) · ` +
         `Travaux facturés aux Biens (hors solde entreprise) : ${formatFcfa(t.propertyExpenses)}`,
       65,
-      boxY + 116,
+      boxY + 116 + ex,
       { width: 460 },
     );
   y += boxHeight + 20;

@@ -492,6 +492,10 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
     `SELECT COALESCE(SUM(commission_amount), 0) AS total FROM sale_properties
      WHERE tenant_id = :tenantId AND status = 'vendu' AND deleted_at IS NULL AND DATE_FORMAT(sold_at, '%Y-%m') = :yearMonth`,
   );
+  const otherIncomes = await sum(
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM other_incomes
+     WHERE tenant_id = :tenantId AND deleted_at IS NULL AND DATE_FORMAT(income_date, '%Y-%m') = :yearMonth`,
+  );
   const expenses = await sum(
     `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
      WHERE tenant_id = :tenantId AND property_id IS NULL AND deleted_at IS NULL
@@ -500,8 +504,8 @@ async function getCabinetRevenue(tenantId, yearMonth, db = pool) {
 
   return {
     yearMonth,
-    breakdown: { commission, entryFees, lateFees, saleCommissions, expenses },
-    netCabinetIncome: commission + entryFees + lateFees + saleCommissions - expenses,
+    breakdown: { commission, entryFees, lateFees, saleCommissions, otherIncomes, expenses },
+    netCabinetIncome: commission + entryFees + lateFees + saleCommissions + otherIncomes - expenses,
   };
 }
 

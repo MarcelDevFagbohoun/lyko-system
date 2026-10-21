@@ -198,6 +198,9 @@ export type AccountingDashboard = {
     // `entryFeesCollected` : 100 % produit du cabinet, déjà inclus dans `netCashFlow`.
     saleCommissionsCollected: number;
     saleCommissionsCollectedCount: number;
+    /** Autres entrées du cabinet (honoraires, intérêts, remboursements…) — 100 % produit de l'entreprise. */
+    otherIncomes: number;
+    otherIncomesCount: number;
     netCashFlow: number;
     /** Trésorerie réelle du mois (toutes entrées − toutes sorties) ; `null` hors mois calendaire unique. */
     treasuryNet: number | null;
@@ -226,7 +229,7 @@ export type AccountingDashboard = {
    */
   cabinetRevenue: {
     yearMonth: string;
-    breakdown: { commission: number; entryFees: number; lateFees: number; saleCommissions: number; expenses: number };
+    breakdown: { commission: number; entryFees: number; lateFees: number; saleCommissions: number; otherIncomes?: number; expenses: number };
     netCabinetIncome: number;
   } | null;
 };
@@ -714,6 +717,7 @@ export type MonthBilan = {
     entryFees: number;
     lateFees: number;
     saleCommissions: number;
+    otherIncomes?: number;
     expenses: number;
     netIncome: number;
   };
@@ -749,4 +753,72 @@ export type MonthBilanResponse = {
 
 export function getMonthBilan(accessToken: string, month: string) {
   return apiFetch<MonthBilanResponse>(`/api/accounting/month-bilan/${encodeURIComponent(month)}`, { accessToken });
+}
+
+// ── Autres entrées d'argent du cabinet ────────────────────────────────────────
+
+export type IncomeCategory = "prestation" | "commission" | "interets" | "remboursement" | "subvention_don" | "autre";
+
+export type OtherIncome = {
+  id: number;
+  category: IncomeCategory;
+  categoryLabel: string;
+  label: string;
+  amount: number;
+  incomeDate: string;
+  paymentMethod: "especes" | "mobile_money" | "virement" | "cheque";
+  paymentMethodLabel: string;
+  payerName: string | null;
+  reference: string | null;
+  notes: string | null;
+  receiptUrl: string | null;
+  recordedBy: Actor | null;
+  createdAt: string;
+};
+
+export function listOtherIncomes(accessToken: string, filters?: { from?: string; to?: string; category?: IncomeCategory; q?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.from) params.set("from", filters.from);
+  if (filters?.to) params.set("to", filters.to);
+  if (filters?.category) params.set("category", filters.category);
+  if (filters?.q) params.set("q", filters.q);
+  const qs = params.toString();
+  return apiFetch<{ incomes: OtherIncome[]; total: number }>(`/api/accounting/incomes${qs ? `?${qs}` : ""}`, { accessToken });
+}
+
+export type CreateOtherIncomeInput = {
+  category: IncomeCategory;
+  label: string;
+  amount: number;
+  incomeDate: string;
+  paymentMethod: OtherIncome["paymentMethod"];
+  payerName?: string;
+  reference?: string;
+  notes?: string;
+  idempotencyKey?: string;
+  receipt?: File | null;
+};
+
+export function createOtherIncome(accessToken: string, input: CreateOtherIncomeInput) {
+  const fd = new FormData();
+  fd.append("category", input.category);
+  fd.append("label", input.label);
+  fd.append("amount", String(input.amount));
+  fd.append("incomeDate", input.incomeDate);
+  fd.append("paymentMethod", input.paymentMethod);
+  if (input.payerName) fd.append("payerName", input.payerName);
+  if (input.reference) fd.append("reference", input.reference);
+  if (input.notes) fd.append("notes", input.notes);
+  if (input.idempotencyKey) fd.append("idempotencyKey", input.idempotencyKey);
+  if (input.receipt) fd.append("receipt", input.receipt);
+  return apiFetch<{ incomeId: number }>("/api/accounting/incomes", { method: "POST", accessToken, body: fd });
+}
+
+export function deleteOtherIncome(accessToken: string, id: number, reason: string) {
+  return apiFetch<{ ok: boolean }>(`/api/accounting/incomes/${id}`, {
+    method: "DELETE",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
 }

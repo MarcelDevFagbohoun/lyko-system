@@ -95,6 +95,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
   const entryFees = await sumCount(db, `SELECT COALESCE(SUM(entry_fee_amount),0) total, COUNT(*) n FROM leases WHERE tenant_id = :tenantId AND entry_fee_received_at IS NOT NULL AND DATE_FORMAT(entry_fee_received_at,'%Y-%m') = :month`, p);
   const lateFees = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM late_fee_payments WHERE tenant_id = :tenantId AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
   const saleCommissions = await sumCount(db, `SELECT COALESCE(SUM(commission_amount),0) total, COUNT(*) n FROM sale_properties WHERE tenant_id = :tenantId AND status = 'vendu' AND deleted_at IS NULL AND DATE_FORMAT(sold_at,'%Y-%m') = :month`, p);
+  const otherIncomes = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM other_incomes WHERE tenant_id = :tenantId AND deleted_at IS NULL AND DATE_FORMAT(income_date,'%Y-%m') = :month`, p);
   const rentDeposits = await sumCount(db, `SELECT COALESCE(SUM(deposit_amount),0) total, COUNT(*) n FROM leases WHERE tenant_id = :tenantId AND deposit_received_at IS NOT NULL AND DATE_FORMAT(deposit_received_at,'%Y-%m') = :month`, p);
   const extraDeposits = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM lease_deposits WHERE tenant_id = :tenantId AND received_at IS NOT NULL AND DATE_FORMAT(received_at,'%Y-%m') = :month`, p);
   // Charges SONEB/SBEE payées par les locataires — l'argent transite (reversé au propriétaire) ; un règlement
@@ -242,6 +243,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
     entryFees: entryFees.total,
     lateFees: lateFees.total,
     saleCommissions: saleCommissions.total,
+    otherIncomes: otherIncomes.total,
     rentDeposits: rentDeposits.total,
     extraDeposits: extraDeposits.total,
     utilityCollected: utilityCollected.total,
@@ -305,7 +307,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
       total: totalIn,
       lines: inLines,
       rent: { ...rent, fromDeposit: rentFromDeposit, cashTotal: rent.total - rentFromDeposit, byMethod: rentByMethod.map((r) => ({ method: r.method, total: n(r.total), count: n(r.n) })) },
-      counts: { openingDebt: openingDebt.count, prorata: prorata.count, entryFees: entryFees.count, lateFees: lateFees.count, saleCommissions: saleCommissions.count, rentDeposits: rentDeposits.count, extraDeposits: extraDeposits.count, utilityCollected: utilityCollected.count },
+      counts: { openingDebt: openingDebt.count, prorata: prorata.count, entryFees: entryFees.count, lateFees: lateFees.count, saleCommissions: saleCommissions.count, otherIncomes: otherIncomes.count, rentDeposits: rentDeposits.count, extraDeposits: extraDeposits.count, utilityCollected: utilityCollected.count },
     },
     outflows: {
       total: totalOut,

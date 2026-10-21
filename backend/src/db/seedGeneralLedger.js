@@ -174,6 +174,7 @@ const ACCOUNTS = [
     note: 'Numéro renommable par le DG (Comptabilité avancée → Réglages) une fois l\'avis de son expert-comptable obtenu — 758 "Produits divers" est une alternative courante.',
   },
   { code: '771', label: 'Intérêts et produits financiers', class: 7, type: 'produit' },
+  { code: '7588', label: 'Autres produits divers de gestion courante', class: 7, type: 'produit' },
   {
     code: '7594',
     label: 'Reprises de charges provisionnées — dépréciation des créances',
@@ -262,6 +263,39 @@ const RULES = [
     lines: [
       { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
       { side: 'credit', account: '706', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'produit_service_encaisse',
+    label: 'Autre entrée — prestation / commission (706)',
+    journal: 'OD',
+    narration_template: 'Autre entrée — {libelle}',
+    note: "Entrée d'argent enregistrée par le cabinet (Comptabilité → Autres entrées) : honoraires, prestations ou commissions hors gérance. 100 % produit du cabinet, jamais reversé.",
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', account: '706', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'produit_financier_encaisse',
+    label: 'Autre entrée — intérêts (771)',
+    journal: 'OD',
+    narration_template: 'Autre entrée — {libelle}',
+    note: "Intérêts / produits financiers encaissés (Comptabilité → Autres entrées).",
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', account: '771', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'produit_divers_encaisse',
+    label: 'Autre entrée — produit divers (7588)',
+    journal: 'OD',
+    narration_template: 'Autre entrée — {libelle}',
+    note: "Remboursements, subventions, dons et autres produits (Comptabilité → Autres entrées). À valider par l'expert-comptable selon la nature réelle de l'entrée.",
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', account: '7588', formula: 'montant_total' },
     ],
   },
   {

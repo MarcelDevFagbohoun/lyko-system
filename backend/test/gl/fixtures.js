@@ -125,6 +125,7 @@ async function teardown(tenantId) {
   await pool.query('DELETE FROM lease_opening_debt_payments WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM lease_balance_snapshots WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM expenses WHERE tenant_id = :tenantId', p);
+  await pool.query('DELETE FROM other_incomes WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM fixed_asset_depreciations WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM fixed_assets WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM suppliers WHERE tenant_id = :tenantId', p);

@@ -13,6 +13,9 @@ const GL_OPERATION_TYPES = [
   'prorata_entree_encaisse',
   'frais_agence_encaisse',
   'vente_bien_commission_encaissee',
+  'produit_service_encaisse',
+  'produit_financier_encaisse',
+  'produit_divers_encaisse',
   'charge_locative_encaissee',
   'charge_locative_reglee_par_caution',
   'caution_recue',
@@ -83,6 +86,16 @@ const EXPENSE_CATEGORY_TO_OPERATION_TYPE = {
   autre: 'depense_autre',
 };
 
+// Catégorie de `other_incomes.category` → type d'opération comptable (compte de produit 706 / 771 / 7588).
+const INCOME_CATEGORY_TO_OPERATION_TYPE = {
+  prestation: 'produit_service_encaisse',
+  commission: 'produit_service_encaisse',
+  interets: 'produit_financier_encaisse',
+  remboursement: 'produit_divers_encaisse',
+  subvention_don: 'produit_divers_encaisse',
+  autre: 'produit_divers_encaisse',
+};
+
 // Types réellement appelés par une route métier existante (leases.js,
 // charges.js, accounting.js via EXPENSE_CATEGORY_TO_OPERATION_TYPE,
 // owners.js, renters.js pour la caution) — désactiver une de ces règles
@@ -96,6 +109,7 @@ const GL_CORE_HOOKED_OPERATION_TYPES = [...GL_OPERATION_TYPES];
 module.exports = {
   GL_OPERATION_TYPES,
   EXPENSE_CATEGORY_TO_OPERATION_TYPE,
+  INCOME_CATEGORY_TO_OPERATION_TYPE,
   FIXED_ASSET_CATEGORY_TO_ACQUISITION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE,
