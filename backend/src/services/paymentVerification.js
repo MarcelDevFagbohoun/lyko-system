@@ -5,6 +5,7 @@ const { pool } = require('../config/db');
 const kkiapay = require('./kkiapay');
 const { recordRentPayment } = require('../routes/leases');
 const { recordUtilityPayment, loadCharge } = require('../routes/charges');
+const { notifyRentPaymentsRecorded, notifyUtilityPaymentRecorded } = require('./payments/notify');
 const { assertPeriodOpen, assertPeriodOpenLocked } = require('./accountingPeriods');
 
 function todayIso() {
@@ -93,6 +94,8 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
     throw new ApiError(409, 'Cette transaction ne correspond pas à ce paiement (référence différente)');
   }
 
+  let rentResult = null;
+  let utilityResult = null;
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -103,7 +106,7 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
     if (kind === 'rent') {
       await conn.query('SELECT id FROM leases WHERE id = :id FOR UPDATE', { id: leaseId });
       const lease = await loadActiveLeaseForPayment(conn, tenant.id, leaseId);
-      await recordRentPayment(conn, {
+      rentResult = await recordRentPayment(conn, {
         tenantId: tenant.id,
         lease,
         coversMonth: null,
@@ -118,7 +121,7 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
       await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id: chargeId });
       const charge = await loadCharge(conn, tenant.id, chargeId);
       if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée');
-      await recordUtilityPayment(conn, {
+      utilityResult = await recordUtilityPayment(conn, {
         tenantId: tenant.id,
         charge,
         amount: verification.amount,
@@ -155,6 +158,9 @@ async function verifyAndRecordKkiapay({ tenant, transactionId, kind, leaseId, ch
     }
 
     await conn.commit();
+    // E-mail automatique au locataire (après commit ; ne bloque ni n'échoue jamais le paiement).
+    if (rentResult) notifyRentPaymentsRecorded(tenant.id, rentResult.payments.map((p) => p.paymentId));
+    if (utilityResult) notifyUtilityPaymentRecorded(tenant.id, utilityResult.paymentId);
     return { alreadyRecorded: false, amount: verification.amount };
   } catch (err) {
     await conn.rollback().catch(() => {});

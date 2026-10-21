@@ -14,6 +14,12 @@ export type TenantSettings = {
   kkiapayPublicKey: string | null;
   /** Les clés privée/secrète ne sont jamais renvoyées — seulement si elles sont déjà enregistrées. */
   kkiapayConfigured: boolean;
+  /** Paiements sortants FedaPay (salaires, reversements, paiements libres). La clé secrète n'est jamais renvoyée. */
+  fedapayEnabled: boolean;
+  fedapaySandbox: boolean;
+  fedapayConfigured: boolean;
+  paymentsPerOrderLimit: number;
+  paymentsDailyLimit: number;
   /** Pré-remplit la convention de paiement du loyer de chaque nouveau bail. */
   defaultRentTiming: RentTiming;
   /** Pré-remplit le choix de prorata d'entrée de chaque nouveau bail (étape 42). */
@@ -41,6 +47,11 @@ export function updateSettings(
     kkiapayPublicKey?: string;
     kkiapayPrivateKey?: string;
     kkiapaySecretKey?: string;
+    fedapayEnabled?: boolean;
+    fedapaySandbox?: boolean;
+    fedapaySecretKey?: string;
+    paymentsPerOrderLimit?: number;
+    paymentsDailyLimit?: number;
     defaultRentTiming?: RentTiming;
     defaultEntryProration?: "aucun" | "prorata";
     depositSbeeEnabled?: boolean;
@@ -62,6 +73,11 @@ export function updateSettings(
   // serveur, mais autant ne pas l'envoyer du tout).
   if (input.kkiapayPrivateKey) fd.append("kkiapayPrivateKey", input.kkiapayPrivateKey);
   if (input.kkiapaySecretKey) fd.append("kkiapaySecretKey", input.kkiapaySecretKey);
+  if (input.fedapayEnabled !== undefined) fd.append("fedapayEnabled", String(input.fedapayEnabled));
+  if (input.fedapaySandbox !== undefined) fd.append("fedapaySandbox", String(input.fedapaySandbox));
+  if (input.fedapaySecretKey) fd.append("fedapaySecretKey", input.fedapaySecretKey);
+  if (input.paymentsPerOrderLimit !== undefined) fd.append("paymentsPerOrderLimit", String(input.paymentsPerOrderLimit));
+  if (input.paymentsDailyLimit !== undefined) fd.append("paymentsDailyLimit", String(input.paymentsDailyLimit));
   if (input.defaultRentTiming !== undefined) fd.append("defaultRentTiming", input.defaultRentTiming);
   if (input.defaultEntryProration !== undefined) fd.append("defaultEntryProration", input.defaultEntryProration);
   if (input.depositSbeeEnabled !== undefined) fd.append("depositSbeeEnabled", String(input.depositSbeeEnabled));

@@ -81,6 +81,11 @@ function ParametresContent() {
   const [kkiapayPublicKey, setKkiapayPublicKey] = React.useState("");
   const [kkiapayPrivateKey, setKkiapayPrivateKey] = React.useState("");
   const [kkiapaySecretKey, setKkiapaySecretKey] = React.useState("");
+  const [fedapayEnabled, setFedapayEnabled] = React.useState(false);
+  const [fedapaySandbox, setFedapaySandbox] = React.useState(true);
+  const [fedapaySecretKey, setFedapaySecretKey] = React.useState("");
+  const [paymentsPerOrderLimit, setPaymentsPerOrderLimit] = React.useState("500000");
+  const [paymentsDailyLimit, setPaymentsDailyLimit] = React.useState("2000000");
   const [defaultRentTiming, setDefaultRentTiming] = React.useState<RentTiming>("avance");
   const [defaultEntryProration, setDefaultEntryProration] = React.useState<"aucun" | "prorata">("aucun");
   const [depositSbeeEnabled, setDepositSbeeEnabled] = React.useState(false);
@@ -102,6 +107,10 @@ function ParametresContent() {
         setKkiapayEnabled(res.settings.kkiapayEnabled);
         setKkiapaySandbox(res.settings.kkiapaySandbox);
         setKkiapayPublicKey(res.settings.kkiapayPublicKey ?? "");
+        setFedapayEnabled(res.settings.fedapayEnabled);
+        setFedapaySandbox(res.settings.fedapaySandbox);
+        setPaymentsPerOrderLimit(String(res.settings.paymentsPerOrderLimit));
+        setPaymentsDailyLimit(String(res.settings.paymentsDailyLimit));
         setDefaultRentTiming(res.settings.defaultRentTiming);
         setDefaultEntryProration(res.settings.defaultEntryProration);
         setDepositSbeeEnabled(res.settings.depositSbeeEnabled);
@@ -148,6 +157,11 @@ function ParametresContent() {
         kkiapayPublicKey,
         kkiapayPrivateKey,
         kkiapaySecretKey,
+        fedapayEnabled,
+        fedapaySandbox,
+        fedapaySecretKey,
+        paymentsPerOrderLimit: Number(paymentsPerOrderLimit) || undefined,
+        paymentsDailyLimit: Number(paymentsDailyLimit) || undefined,
         defaultRentTiming,
         defaultEntryProration,
         depositSbeeEnabled,
@@ -159,6 +173,7 @@ function ParametresContent() {
       setSignatureFile(null);
       setKkiapayPrivateKey("");
       setKkiapaySecretKey("");
+      setFedapaySecretKey("");
       setSaved(true);
       // Le badge (barre latérale), le journal, les documents... lisent le
       // libellé via le contexte d'auth (`tenant.roleTitles`), pas cet écran :
@@ -521,6 +536,91 @@ function ParametresContent() {
                         value={kkiapaySecretKey}
                         onChange={(e) => setKkiapaySecretKey(e.target.value)}
                         placeholder={settings.kkiapayConfigured ? "••••••••" : undefined}
+                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      />
+                    </Field>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <CreditCard size={18} className={CADRES.finances.text} />
+                <CardTitle>Paiements sortants (FedaPay)</CardTitle>
+              </div>
+              <CardDescription>
+                Optionnel : payez les salaires, reversez les loyers aux propriétaires et effectuez d&apos;autres
+                paiements en Mobile Money depuis l&apos;application. Chaque envoi demande votre mot de passe,
+                respecte les plafonds ci-dessous et est tracé. Désactivé, tout continue comme aujourd&apos;hui.{" "}
+                <a
+                  href="https://fedapay.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline"
+                >
+                  Créer un compte FedaPay <ExternalLink size={12} />
+                </a>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={fedapayEnabled}
+                  onChange={(e) => setFedapayEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                />
+                <span className="font-label-md text-ink">Activer les paiements sortants</span>
+              </label>
+
+              {fedapayEnabled && (
+                <>
+                  <label className="flex items-center gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={fedapaySandbox}
+                      onChange={(e) => setFedapaySandbox(e.target.checked)}
+                      className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                    />
+                    <span className="text-body-sm text-ink-soft">
+                      Mode test (sandbox) — aucun vrai argent n&apos;est envoyé tant que c&apos;est coché
+                    </span>
+                  </label>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <Field
+                      label="Clé secrète FedaPay"
+                      htmlFor="fedapaySecretKey"
+                      hint={settings.fedapayConfigured ? "Déjà enregistrée — laissez vide pour la conserver" : "Chiffrée, jamais réaffichée"}
+                    >
+                      <input
+                        id="fedapaySecretKey"
+                        type="password"
+                        autoComplete="new-password"
+                        value={fedapaySecretKey}
+                        onChange={(e) => setFedapaySecretKey(e.target.value)}
+                        placeholder={settings.fedapayConfigured ? "••••••••" : undefined}
+                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      />
+                    </Field>
+                    <Field label="Plafond par paiement (FCFA)" htmlFor="paymentsPerOrderLimit">
+                      <input
+                        id="paymentsPerOrderLimit"
+                        inputMode="numeric"
+                        value={paymentsPerOrderLimit}
+                        onChange={(e) => setPaymentsPerOrderLimit(e.target.value.replace(/\D/g, ""))}
+                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      />
+                    </Field>
+                    <Field label="Plafond par jour (FCFA)" htmlFor="paymentsDailyLimit">
+                      <input
+                        id="paymentsDailyLimit"
+                        inputMode="numeric"
+                        value={paymentsDailyLimit}
+                        onChange={(e) => setPaymentsDailyLimit(e.target.value.replace(/\D/g, ""))}
                         className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                       />
                     </Field>

@@ -56,6 +56,7 @@ const {
 const { assertUploadType, randomFileName, toProtectedFileUrl, stripFileUrlPrefix } = require('../utils/uploads');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
+const { notifyRentPaymentsRecorded } = require('../services/payments/notify');
 
 // Un lien de paiement expire par défaut sous 48h — assez pour laisser le
 // temps au locataire de le recevoir et payer, sans rester valide indéfiniment.
@@ -641,6 +642,7 @@ router.post('/:leaseId/payments', canPayments, async (req, res, next) => {
     });
 
     await conn.commit();
+    notifyRentPaymentsRecorded(req.user.tenantId, created.map((c) => c.paymentId));
 
     logger.info('Paiement(s) de loyer enregistré(s)', {
       tenantId: req.user.tenantId,

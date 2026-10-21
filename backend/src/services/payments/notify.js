@@ -85,4 +85,61 @@ async function notifyInboundPayment({ tenantId, sourceTable, sourceId, payerName
   });
 }
 
-module.exports = { notifyOrderSent, notifyInboundPayment };
+const PORTAL_HINT = 'Votre quittance est téléchargeable à tout moment depuis votre espace locataire.';
+
+/**
+ * Loyer(s) encaissé(s) : UN e-mail pour tout le règlement (un paiement réparti sur plusieurs mois n'envoie pas
+ * plusieurs messages). À appeler APRÈS le commit ; ne lève jamais, ne bloque jamais le paiement.
+ */
+async function notifyRentPaymentsRecorded(tenantId, paymentIds) {
+  try {
+    if (!Array.isArray(paymentIds) || paymentIds.length === 0) return;
+    const [rows] = await pool.query(
+      `SELECT rp.id, rp.amount, rp.paid_at, rp.covers_month, rc.receipt_number, r.first_name, r.last_name, r.email
+       FROM rent_payments rp
+       JOIN leases l ON l.id = rp.lease_id AND l.tenant_id = rp.tenant_id
+       JOIN renters r ON r.id = l.renter_id
+       LEFT JOIN receipts rc ON rc.payment_id = rp.id
+       WHERE rp.tenant_id = :tenantId AND rp.id IN (:ids) ORDER BY rp.id ASC`,
+      { tenantId, ids: paymentIds },
+    );
+    if (rows.length === 0) return;
+    const first = rows[0];
+    const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
+    await notifyInboundPayment({
+      tenantId, sourceTable: 'rent_payments', sourceId: first.id,
+      payerName: `${first.first_name} ${first.last_name}`, payerEmail: first.email, purpose: 'loyer', amount: total,
+      paidAt: first.paid_at, reference: first.receipt_number ?? `LOY-${first.id}`,
+      label: rows.length > 1 ? `${rows.length} mois (${rows.map((r) => r.covers_month).join(', ')})` : `Loyer ${first.covers_month}`,
+      downloadHint: PORTAL_HINT,
+    });
+  } catch (err) {
+    logger.error('Notification de loyer impossible', { tenantId, error: err.message });
+  }
+}
+
+/** Règlement d'une facture SONEB/SBEE (charge) : même principe. */
+async function notifyUtilityPaymentRecorded(tenantId, paymentId) {
+  try {
+    const [[row]] = await pool.query(
+      `SELECT up.id, up.amount, up.paid_at, uc.utility_type, r.first_name, r.last_name, r.email
+       FROM utility_payments up
+       JOIN utility_charges uc ON uc.id = up.charge_id
+       JOIN leases l ON l.id = uc.lease_id
+       JOIN renters r ON r.id = l.renter_id
+       WHERE up.tenant_id = :tenantId AND up.id = :id LIMIT 1`,
+      { tenantId, id: paymentId },
+    );
+    if (!row) return;
+    await notifyInboundPayment({
+      tenantId, sourceTable: 'utility_payments', sourceId: row.id,
+      payerName: `${row.first_name} ${row.last_name}`, payerEmail: row.email, purpose: 'charge', amount: row.amount,
+      paidAt: row.paid_at, reference: `CHG-${row.id}`, label: `Facture ${row.utility_type === 'soneb' ? 'SONEB' : 'SBEE'}`,
+      downloadHint: PORTAL_HINT,
+    });
+  } catch (err) {
+    logger.error('Notification de charge impossible', { tenantId, error: err.message });
+  }
+}
+
+module.exports = { notifyOrderSent, notifyInboundPayment, notifyRentPaymentsRecorded, notifyUtilityPaymentRecorded };

@@ -384,3 +384,44 @@ test('e-mail : échappement HTML et neutralisation de l\'injection d\'en-tête',
   const subject = safeHeader('Paiement\r\nBcc: attaquant@evil.test');
   assert.ok(!/[\r\n]/.test(subject));
 });
+
+async function waitFor(fn, ms = 3000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > end) return null;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+test('loyer encaissé : e-mail automatique au locataire (adresse masquée dans le journal), "ignoré" sans adresse', async () => {
+  await pool.query("UPDATE renters SET email = 'locataire.secret@example.test' WHERE id = :id", { id: A.renterId });
+  const res = await fetch(`${baseUrl}/api/leases/${A.leaseId}/payments`, {
+    method: 'POST', headers: auth(A.dgId2, A.tenantId),
+    body: JSON.stringify({ amount: 50000, paymentMethod: 'especes', paidAt: '2026-03-05' }),
+  });
+  assert.equal(res.status, 201);
+  const { paymentId } = await res.json();
+  const row = await waitFor(async () => (await pool.query(
+    "SELECT recipient_masked, recipient_role, status FROM payment_notifications WHERE tenant_id = :t AND source_table = 'rent_payments' AND source_id = :id",
+    { t: A.tenantId, id: paymentId },
+  ))[0][0]);
+  assert.ok(row, 'une notification doit être journalisée');
+  assert.equal(row.recipient_role, 'payer');
+  assert.ok(!row.recipient_masked.includes('locataire.secret'), 'adresse jamais en clair dans le journal');
+  assert.ok(row.recipient_masked.endsWith('@example.test'));
+
+  await pool.query('UPDATE renters SET email = NULL WHERE id = :id', { id: A.renterId });
+  const res2 = await fetch(`${baseUrl}/api/leases/${A.leaseId}/payments`, {
+    method: 'POST', headers: auth(A.dgId2, A.tenantId),
+    body: JSON.stringify({ amount: 50000, paymentMethod: 'especes', paidAt: '2026-04-05' }),
+  });
+  assert.equal(res2.status, 201);
+  const { paymentId: p2 } = await res2.json();
+  const row2 = await waitFor(async () => (await pool.query(
+    "SELECT status FROM payment_notifications WHERE tenant_id = :t AND source_table = 'rent_payments' AND source_id = :id",
+    { t: A.tenantId, id: p2 },
+  ))[0][0]);
+  assert.equal(row2.status, 'skipped');
+});

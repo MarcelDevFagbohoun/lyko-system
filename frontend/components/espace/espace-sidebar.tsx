@@ -21,6 +21,7 @@ import {
   Lock,
   Tag,
   HandCoins,
+  Send,
   Settings,
   Stamp,
   LogOut,
@@ -119,6 +120,8 @@ export function EspaceSidebar() {
         // permission — la rémunération du personnel reste une donnée sensible (même principe que
         // `/espace/employes`).
         isDg && { href: "/espace/salaires", label: "Salaires", icon: HandCoins },
+        // Paiements sortants FedaPay : lecture DG + comptable, envoi DG uniquement (contrôlé par le serveur).
+        (isDg || user?.role === "comptable") && { href: "/espace/paiements", label: "Paiements", icon: Send },
       ],
     },
     {

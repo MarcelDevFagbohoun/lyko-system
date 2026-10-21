@@ -13,6 +13,7 @@ const { resolvePropertyScope, assertLeaseInScope } = require('../services/scope'
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const logger = require('../utils/logger');
+const { notifyUtilityPaymentRecorded } = require('../services/payments/notify');
 
 const router = Router();
 // Un lien de paiement expire par défaut sous 48h — même valeur que leases.js.
@@ -579,7 +580,7 @@ router.post('/:id/payments', async (req, res, next) => {
       }
     }
 
-    const { newStatus } = await recordUtilityPayment(conn, {
+    const { newStatus, paymentId: newPaymentId } = await recordUtilityPayment(conn, {
       tenantId: req.user.tenantId,
       charge,
       amount: data.amount,
@@ -589,6 +590,7 @@ router.post('/:id/payments', async (req, res, next) => {
       recordedBy: req.user.id,
     });
     await conn.commit();
+    notifyUtilityPaymentRecorded(req.user.tenantId, newPaymentId);
 
     logger.info('Règlement facture SONEB/SBEE enregistré', {
       tenantId: req.user.tenantId,
