@@ -7,7 +7,7 @@ import { getChargeMonthSummary, type ChargeMonthSummary } from "@/lib/api/charge
 import { formatFcfa, monthLabelFr } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { SegmentedBar } from "@/components/ui/segmented-bar";
+import { ChargeLedgerTable } from "@/components/charges/charge-ledger-table";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 
@@ -49,26 +49,14 @@ export function ChargeMonthCard() {
           <p className="text-body-sm text-ink-muted">Aucune facture émise ce mois-ci, rien à recevoir.</p>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <Figure label="Facturé" value={formatFcfa(data.billed)} sub={data.billedCount > 0 ? plural(data.billedCount, "facture", "factures") : "aucune facture"} />
-              <Figure label="Réglé" value={formatFcfa(data.paid)} sub={data.billed > 0 ? `${pct} % du facturé` : undefined} tone="success" />
-              <Figure
-                label="Reste à recevoir"
-                value={formatFcfa(data.remaining)}
-                sub={data.remaining > 0 ? "sur les factures du mois" : data.billed > 0 ? "tout est réglé" : undefined}
-                tone={data.remaining > 0 ? "warning" : "success"}
-              />
-            </div>
-
-            {data.billed > 0 && (
-              <SegmentedBar
-                ariaLabel={`${pct} % réglé : ${formatFcfa(data.paid)} sur ${formatFcfa(data.billed)} facturés`}
-                segments={[
-                  { value: data.paid, className: "bg-success-strong", label: "Réglé" },
-                  { value: data.remaining, className: "bg-warning-strong", label: "Reste à recevoir" },
-                ]}
-              />
-            )}
+            <ChargeLedgerTable
+              caption="Charges du mois"
+              rows={[
+                { label: "Facturé", hint: plural(data.billedCount, "facture", "factures"), amount: data.billed, tone: "default", of: data.billed },
+                { label: "Réglé", hint: data.billed > 0 ? `${pct} % du facturé` : undefined, amount: data.paid, tone: "success", of: data.billed },
+                { label: "Reste à recevoir", hint: data.remaining > 0 ? "sur les factures du mois" : "tout est réglé", amount: data.remaining, tone: data.remaining > 0 ? "warning" : "success", of: data.billed, total: true },
+              ]}
+            />
 
             <div className="flex flex-col gap-1 text-body-sm text-ink-soft">
               <span>
@@ -87,16 +75,5 @@ export function ChargeMonthCard() {
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function Figure({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "success" | "warning" }) {
-  const color = tone === "success" ? "text-success-fg" : tone === "warning" ? "text-warning-fg" : "text-ink";
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="font-label-sm uppercase tracking-wider text-ink-muted">{label}</span>
-      <span className={`tabular font-display text-headline-md ${color}`}>{value}</span>
-      {sub && <span className="text-body-xs text-ink-muted">{sub}</span>}
-    </div>
   );
 }

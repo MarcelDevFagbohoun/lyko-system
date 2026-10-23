@@ -21,7 +21,7 @@ import { useToast } from "@/lib/toast/toast-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { StatCard } from "@/components/ui/stat-card";
+import { ChargeLedgerTable } from "@/components/charges/charge-ledger-table";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const STATUS_BADGE: Record<PointStatus, { label: string; variant: "neutral" | "warning" | "danger" | "success" }> = {
@@ -274,11 +274,14 @@ export function AccountLine({ account }: { account: ChargeAccount }) {
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-primary-border bg-primary-bg p-4">
       <p className="font-label-md text-ink">Compte des charges à reverser (cumul à ce jour)</p>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="Charges encaissées" value={formatFcfa(account.collected, { withSuffix: false })} unit="FCFA" tone="default" />
-        <StatCard label="Déjà reversées" value={formatFcfa(account.remitted, { withSuffix: false })} unit="FCFA" tone="default" />
-        <StatCard label="Reste à reverser" value={formatFcfa(account.balance, { withSuffix: false })} unit="FCFA" tone={account.balance > 0 ? "info" : "success"} />
-      </div>
+      <ChargeLedgerTable
+        caption="Compte des charges à reverser"
+        rows={[
+          { label: "Charges encaissées", hint: "Reçues des locataires", amount: account.collected, tone: "default", of: account.collected },
+          { label: "Déjà reversées", hint: "Au propriétaire", amount: account.remitted, tone: "success", of: account.collected },
+          { label: "Reste à reverser", hint: "Solde dû au propriétaire", amount: account.balance, tone: account.balance > 0 ? "info" : "success", of: account.collected, total: true },
+        ]}
+      />
     </div>
   );
 }
@@ -287,22 +290,15 @@ export function AccountLine({ account }: { account: ChargeAccount }) {
 function PointBody({ totals: t, batches }: { totals: PointTotals; batches: BatchPoint[] }) {
   return (
     <>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Facture mère payée par le propriétaire" value={formatFcfa(t.mainPaidTotal, { withSuffix: false })} unit="FCFA" tone="default" />
-        <StatCard label="Encaissé chez les locataires" value={formatFcfa(t.collectedTotal, { withSuffix: false })} unit="FCFA" tone="info" />
-        <StatCard
-          label="Reste à la charge du propriétaire"
-          value={formatFcfa(t.gapTotal, { withSuffix: false })}
-          unit="FCFA"
-          tone={t.gapTotal > 0 ? "danger" : "success"}
-        />
-        <StatCard
-          label="Impayés des locataires"
-          value={formatFcfa(t.tenantUnpaidTotal, { withSuffix: false })}
-          unit="FCFA"
-          tone={t.tenantUnpaidTotal > 0 ? "warning" : "success"}
-        />
-      </div>
+      <ChargeLedgerTable
+        caption="Point des charges"
+        rows={[
+          { label: "Facture mère payée par le propriétaire", amount: t.mainPaidTotal, tone: "default", of: t.mainPaidTotal },
+          { label: "Encaissé chez les locataires", amount: t.collectedTotal, tone: "info", of: t.mainPaidTotal },
+          { label: "Impayés des locataires", hint: "Encore récupérables", amount: t.tenantUnpaidTotal, tone: t.tenantUnpaidTotal > 0 ? "warning" : "success", of: t.mainPaidTotal },
+          { label: "Reste à la charge du propriétaire", amount: t.gapTotal, tone: t.gapTotal > 0 ? "danger" : "success", of: t.mainPaidTotal, total: true },
+        ]}
+      />
 
       {t.mainPaidTotal > 0 && t.gapTotal !== 0 && (
         <p className="text-body-sm text-ink-soft">

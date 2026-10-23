@@ -9,7 +9,7 @@ import { formatFcfa, monthLabelFr } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { StatCard } from "@/components/ui/stat-card";
+import { ChargeLedgerTable } from "@/components/charges/charge-ledger-table";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const METHOD_LABELS: Record<string, string> = {
@@ -55,12 +55,15 @@ export function OwnerPortalCharges({ token, charges }: { token: string; charges:
           <p className="text-body-sm text-ink-muted">Aucune charge SONEB/SBEE suivie sur cette période pour l&apos;instant.</p>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <StatCard label="Factures payées à la SONEB/SBEE" value={formatFcfa(t.mainPaidTotal, { withSuffix: false })} unit="FCFA" />
-              <StatCard label="Encaissé chez vos locataires" value={formatFcfa(t.collectedTotal, { withSuffix: false })} unit="FCFA" tone="info" />
-              <StatCard label="Reste à votre charge" value={formatFcfa(t.gapTotal, { withSuffix: false })} unit="FCFA" tone={t.gapTotal > 0 ? "danger" : "success"} />
-              {acc && <StatCard label="Reste à vous reverser" value={formatFcfa(acc.balance, { withSuffix: false })} unit="FCFA" tone={acc.balance > 0 ? "warning" : "success"} />}
-            </div>
+            <ChargeLedgerTable
+              caption="Vos charges SONEB/SBEE"
+              rows={[
+                { label: "Factures payées à la SONEB/SBEE", amount: t.mainPaidTotal, tone: "default", of: t.mainPaidTotal },
+                { label: "Encaissé chez vos locataires", amount: t.collectedTotal, tone: "info", of: t.mainPaidTotal },
+                { label: "Reste à votre charge", amount: t.gapTotal, tone: t.gapTotal > 0 ? "danger" : "success", of: t.mainPaidTotal },
+                ...(acc ? [{ label: "Reste à vous reverser", amount: acc.balance, tone: (acc.balance > 0 ? "warning" : "success") as "warning" | "success", of: t.mainPaidTotal, total: true }] : []),
+              ]}
+            />
 
             {t.mainPaidTotal > 0 && t.gapTotal > 0 && (
               <p className="text-body-sm text-ink-soft">
