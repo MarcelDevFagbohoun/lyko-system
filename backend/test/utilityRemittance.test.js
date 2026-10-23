@@ -68,13 +68,13 @@ test('getChargeAccounts — encaissé − reversé ; factures supprimées et rev
   await insertCharge(fx, { unitId: fx.unitId, leaseId: fx.leaseId, amount: 9999, paid: 9999, paidAt: '2026-09-04', periodStart: '2026-07-01', periodEnd: '2026-07-31', deleted: true });
 
   let acc = await getChargeAccount(pool, fx.tenantId, fx.ownerId);
-  assert.deepEqual(acc, { collected: 50000, remitted: 0, balance: 50000 });
-  assert.deepEqual(await getChargeAccount(pool, fx.tenantId, otherOwnerId), { collected: 0, remitted: 0, balance: 0 });
+  assert.deepEqual(acc, { collected: 50000, remitted: 0, balance: 50000, collectedTotal: 50000, keptByCabinet: 0, ownerSharePercent: 100 });
+  assert.deepEqual(await getChargeAccount(pool, fx.tenantId, otherOwnerId), { collected: 0, remitted: 0, balance: 0, collectedTotal: 0, keptByCabinet: 0, ownerSharePercent: 100 });
 
   await insertRemittance(fx, { amount: 20000, paidAt: '2026-09-10' });
   await insertRemittance(fx, { amount: 5000, paidAt: '2026-09-11', deleted: true }); // annulé : ignoré
   acc = await getChargeAccount(pool, fx.tenantId, fx.ownerId);
-  assert.deepEqual(acc, { collected: 50000, remitted: 20000, balance: 30000 });
+  assert.deepEqual(acc, { collected: 50000, remitted: 20000, balance: 30000, collectedTotal: 50000, keptByCabinet: 0, ownerSharePercent: 100 });
 
   const all = await getChargeAccounts(pool, fx.tenantId);
   assert.equal(all.get(fx.ownerId).balance, 30000);
@@ -140,7 +140,7 @@ test('getUtilityEntries / getOwnerCarnet — entrées par période facturée, fa
   const carnet = await getOwnerCarnet(fx.tenantId, fx.ownerId, { fromMonth: '2026-08', toMonth: '2026-10' });
   assert.equal(carnet.batches.length, 1);
   assert.equal(carnet.entries.total, 57000);
-  assert.deepEqual(carnet.account, { collected: 57000, remitted: 50000, balance: 7000 });
+  assert.deepEqual(carnet.account, { collected: 57000, remitted: 50000, balance: 7000, collectedTotal: 57000, keptByCabinet: 0, ownerSharePercent: 100 });
   assert.equal(carnet.remittances.length, 3, 'reversements de la fenêtre (septembre)');
   assert.equal(carnet.remittedInWindow, 50000);
 

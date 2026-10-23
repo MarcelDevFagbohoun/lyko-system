@@ -244,7 +244,16 @@ export type PointTotals = {
 };
 
 /** Charges encaissées chez les locataires d'un propriétaire, et ce qui lui a déjà été reversé (cumul, hors agent restreint). */
-export type ChargeAccount = { collected: number; remitted: number; balance: number };
+export type ChargeAccount = {
+  /** Part due au propriétaire (charges encaissées × % répercuté). */
+  collected: number;
+  remitted: number;
+  balance: number;
+  /** Total réellement encaissé chez les locataires, et part gardée par le cabinet (frais de gestion). */
+  collectedTotal?: number;
+  keptByCabinet?: number;
+  ownerSharePercent?: number;
+};
 
 /** Une entrée du carnet : un règlement de charge reçu d'un locataire. `batchId` nul = facture individuelle hors relevé. */
 export type CarnetEntry = {

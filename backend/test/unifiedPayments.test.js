@@ -247,6 +247,36 @@ test('comptabilité : écriture 411 → 4671 équilibrée à l\'ajout, extourné
   assert.equal(bal?.chargeCredits ?? 0, 0);
 });
 
+test('part répercutée < 100 % : seul le pourcentage dû au propriétaire peut être crédité', async () => {
+  const { getChargeAccount } = require('../src/services/utilityRemittance');
+  const C = await createFixture();
+  try {
+    await pool.query('UPDATE tenants SET gl_utility_passthrough_percent = 60 WHERE id = :t', { t: C.tenantId });
+    const batchId = await insertBatch(C, { periodStart: '2026-08-01', periodEnd: '2026-08-31', mainInvoice: 100000, mainPaid: 100000 });
+    await insertCharge(C, { batchId, unitId: C.unitId, leaseId: C.leaseId, amount: 10000, paid: 10000, paidAt: '2026-09-02', periodStart: '2026-08-01', periodEnd: '2026-08-31' });
+    const acc = await getChargeAccount(pool, C.tenantId, C.ownerId);
+    assert.equal(acc.collectedTotal, 10000);
+    assert.equal(acc.collected, 6000);
+    assert.equal(acc.keptByCabinet, 4000);
+    assert.equal(acc.balance, 6000);
+    const dg = C.dgId;
+    const add = (amount) => fetch(`${baseUrl}/api/owners/${C.ownerId}/charge-remittances`, {
+      method: 'POST', headers: auth(dg, C.tenantId), body: JSON.stringify({ amount, periodLabel: 'Août', paidAt: '2026-10-20', idempotencyKey: key() }),
+    });
+    assert.equal((await add(6001)).status, 400);
+    assert.equal((await add(6000)).status, 201);
+  } finally {
+    await pool.query('DELETE FROM owner_charge_remittances WHERE tenant_id = :t', { t: C.tenantId });
+    await pool.query('DELETE FROM gl_entry_lines WHERE entry_id IN (SELECT id FROM gl_entries WHERE tenant_id = :t)', { t: C.tenantId });
+    await pool.query('DELETE FROM gl_entries WHERE tenant_id = :t', { t: C.tenantId });
+    await pool.query('DELETE FROM utility_payments WHERE tenant_id = :t', { t: C.tenantId });
+    await pool.query('DELETE FROM utility_readings WHERE tenant_id = :t', { t: C.tenantId });
+    await pool.query('DELETE FROM utility_charges WHERE tenant_id = :t', { t: C.tenantId });
+    await pool.query('DELETE FROM utility_reading_batches WHERE tenant_id = :t', { t: C.tenantId });
+    await teardown(C.tenantId);
+  }
+});
+
 test('reçus génériques PDF (dépense manuelle) et isolation entre cabinets', async () => {
   const [e] = await pool.query(
     "INSERT INTO expenses (tenant_id, category, label, amount, expense_date, payment_method, payment_status, paid_at, recorded_by) VALUES (:t, 'fournitures', 'Papier', 7500, '2026-10-10', 'especes', 'paid', '2026-10-10', :by)",

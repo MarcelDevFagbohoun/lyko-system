@@ -271,15 +271,20 @@ function CarnetBlock({ carnet }: { carnet: OwnerCarnet }) {
 
 /** Encaissé / reversé / à reverser — cumul à ce jour, jamais borné à la fenêtre affichée. */
 export function AccountLine({ account }: { account: ChargeAccount }) {
+  const kept = account.keptByCabinet ?? 0;
+  const total = account.collectedTotal ?? account.collected;
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-primary-border bg-primary-bg p-4">
-      <p className="font-label-md text-ink">Compte des charges à reverser (cumul à ce jour)</p>
+      <p className="font-label-md text-ink">Compte des charges (cumul à ce jour)</p>
       <ChargeLedgerTable
-        caption="Compte des charges à reverser"
+        caption="Compte des charges"
         rows={[
-          { label: "Charges encaissées", hint: "Reçues des locataires", amount: account.collected, tone: "default", of: account.collected },
-          { label: "Déjà reversées", hint: "Au propriétaire", amount: account.remitted, tone: "success", of: account.collected },
-          { label: "Reste à reverser", hint: "Solde dû au propriétaire", amount: account.balance, tone: account.balance > 0 ? "info" : "success", of: account.collected, total: true },
+          { label: "Charges encaissées", hint: "Reçues des locataires", amount: total, tone: "default", of: total },
+          ...(kept > 0
+            ? [{ label: "Gardé par le cabinet", hint: `Frais de gestion (${100 - (account.ownerSharePercent ?? 100)} %)`, amount: kept, tone: "warning" as const, of: total }]
+            : []),
+          { label: "Déjà créditées", hint: "Au solde du propriétaire", amount: account.remitted, tone: "success", of: total },
+          { label: "Reste à créditer", hint: "Part du propriétaire", amount: account.balance, tone: account.balance > 0 ? "info" : "success", of: total, total: true },
         ]}
       />
     </div>

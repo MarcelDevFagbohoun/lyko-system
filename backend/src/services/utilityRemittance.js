@@ -46,12 +46,22 @@ async function getChargeAccounts(db, tenantId, { ownerId = null } = {}) {
     params,
   );
 
+  // Part réellement due au propriétaire : le reste des charges encaissées est gardé par le cabinet comme frais de gestion
+  // (réglage « % répercuté », 100 % par défaut). Arrondi vers le bas : jamais plus que ce que l'écriture comptable crédite.
+  const [[tenantRow]] = await db.query('SELECT gl_utility_passthrough_percent AS pct FROM tenants WHERE id = :tenantId LIMIT 1', { tenantId });
+  const sharePercent = Number(tenantRow?.pct ?? 100);
+
   const accounts = new Map();
   const ensure = (id) => {
-    if (!accounts.has(id)) accounts.set(id, { collected: 0, remitted: 0, balance: 0 });
+    if (!accounts.has(id)) accounts.set(id, { collected: 0, remitted: 0, balance: 0, collectedTotal: 0, keptByCabinet: 0, ownerSharePercent: sharePercent });
     return accounts.get(id);
   };
-  for (const r of collectedRows) ensure(r.owner_id).collected = Number(r.total);
+  for (const r of collectedRows) {
+    const a = ensure(r.owner_id);
+    a.collectedTotal = Number(r.total);
+    a.collected = Math.floor((Number(r.total) * sharePercent) / 100);
+    a.keptByCabinet = a.collectedTotal - a.collected;
+  }
   for (const r of remittedRows) ensure(r.owner_id).remitted = Number(r.total);
   for (const a of accounts.values()) a.balance = a.collected - a.remitted;
   return accounts;
@@ -59,7 +69,7 @@ async function getChargeAccounts(db, tenantId, { ownerId = null } = {}) {
 
 async function getChargeAccount(db, tenantId, ownerId) {
   const accounts = await getChargeAccounts(db, tenantId, { ownerId });
-  return accounts.get(ownerId) ?? { collected: 0, remitted: 0, balance: 0 };
+  return accounts.get(ownerId) ?? { collected: 0, remitted: 0, balance: 0, collectedTotal: 0, keptByCabinet: 0, ownerSharePercent: 100 };
 }
 
 /**
