@@ -10,8 +10,8 @@
  * applicatives sont déjà gérées, pas dans un intercepteur réseau générique.
  */
 const VERSION = "v0.1.0";
-const SHELL_CACHE = `lyko-shell-${VERSION}`;
-const ASSET_CACHE = `lyko-assets-${VERSION}`;
+const SHELL_CACHE = `aim-shell-${VERSION}`;
+const ASSET_CACHE = `aim-assets-${VERSION}`;
 
 const SHELL_ASSETS = [
   "/offline.html",

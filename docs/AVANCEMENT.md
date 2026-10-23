@@ -1,4 +1,4 @@
-# Suivi d'avancement — Lyko System
+# Suivi d'avancement — Africa Immo Management
 
 Règle : chaque étape est **codée → testée → validée** avant la suivante.
 On ne fusionne jamais deux étapes.
@@ -47,7 +47,7 @@ charte graphique (composants réutilisables, thème Tailwind), configuration JWT
   Les routes d'authentification arrivent à l'étape 2.
 - **Runner de migrations** SQL sans dépendance (`npm run db:migrate` / `:status`) + `bootstrap-db.sql`.
 - **Frontend Next.js 14** : thème Tailwind = charte complète, polices Geist + Inter,
-  composants `ui/` (Button, Card, Badge, Input/Field, Table, StatCard), logo Lyko par défaut,
+  composants `ui/` (Button, Card, Badge, Input/Field, Table, StatCard), logo Africa Immo Management par défaut,
   indicateur de connexion permanent (en ligne / hors-ligne), page-socle de diagnostic.
 - **PWA de base** : `manifest.webmanifest`, `sw.js` (precache du shell + offline.html,
   network-first navigations, SWR assets), enregistrement en production.
@@ -80,7 +80,7 @@ Authentification, multi-tenant, modules métier, notifications WhatsApp, file de
 
 ## Étape 1 — Page de présentation (landing page)
 
-**Objectif** : landing page publique complète (section 4.1) — objectif de Lyko System,
+**Objectif** : landing page publique complète (section 4.1) — objectif de Africa Immo Management,
 fonctionnalités principales, boutons « Créer mon compte » / « Se connecter ».
 
 **Critère de validation** : page accessible sans connexion, responsive, boutons fonctionnels
@@ -105,7 +105,7 @@ vers inscription/connexion.
 - [x] `npm run lint` → aucune erreur
 - [x] `npm run build` → 4 routes prérendues (`/`, `/inscription`, `/connexion`, `/diagnostics`)
 - [x] `next start` (prod) : `GET /`, `/inscription`, `/connexion`, `/diagnostics` → 200
-- [x] Titres de page corrects par route (`<title>… · Lyko System</title>`)
+- [x] Titres de page corrects par route (`<title>… · Africa Immo Management</title>`)
 - [x] Liens CTA vérifiés dans le HTML rendu : 5× `/inscription`, 4× `/connexion`
   (en-tête desktop, en-tête mobile, hero, bandeau CTA, pied de page) — aucun lien mort
 - [x] Classes responsives présentes (`sm:grid-cols-2`, `lg:grid-cols-3`, `md:flex` / `hidden` pour le menu mobile)
@@ -160,7 +160,7 @@ et retrouve son espace avec son logo.
   (RCCM/IFU/téléphone au blur, indicateur de force du mot de passe, correspondance de la
   confirmation en direct), upload de logo avec aperçu.
 - `app/connexion` : formulaire numéro + mot de passe.
-- `app/espace` : espace protégé — logo de l'entreprise (ou logo Lyko par défaut), nom de l'entreprise,
+- `app/espace` : espace protégé — logo de l'entreprise (ou logo Africa Immo Management par défaut), nom de l'entreprise,
   rôle, déconnexion, état vide avec guide de démarrage (« Ajouter mon premier employé »
   étape 3, « Ajouter mon premier bien/locataire » étape 4 — non fonctionnels, correctement
   étiquetés comme à venir).
@@ -3130,7 +3130,7 @@ relevé propriétaire, PV de sortie, attestation de loyer).
 - **`backend/src/services/pdf.js`** : refonte de la charte partagée par les 5 documents.
   - Palette alignée sur celle de l'écran (`frontend/tailwind.config.ts` — mêmes valeurs
     hexadécimales que `primary`/`ink`/`border`/`success`/`danger`/`warning`), pour qu'un PDF
-    ressemble à un écran de Lyko System plutôt qu'à un document à part.
+    ressemble à un écran de Africa Immo Management plutôt qu'à un document à part.
   - `FONT_MONO`/`FONT_MONO_BOLD` (`Courier`/`Courier-Bold`, l'équivalent Courier New des 14
     polices standard PDF — aucune police à embarquer) appliqués à tout ce qui est un chiffre :
     montants FCFA, dates, numéros de quittance, RCCM/IFU/téléphone, décomptes.
@@ -3198,7 +3198,7 @@ chacun des 5 gabarits, ajout au seul élément déjà commun aux 5 : le pied de 
 affiché sur chaque page depuis le complément ci-dessus). Nouveau `formatDateSlash(isoDate)`
 (format JJ/MM/AAAA — délibérément différent de `formatDateFr`, en lettres, utilisé partout
 ailleurs pour les dates métier) ; `drawFooter` affiche désormais « Document téléchargé le
-**14/09/2026** · Lyko System. » (date en Courier-Bold) sur chaque page de chaque document,
+**14/09/2026** · Africa Immo Management. » (date en Courier-Bold) sur chaque page de chaque document,
 calculée une seule fois par génération (`new Date()` au moment de la requête, ces PDF n'étant
 jamais stockés mais toujours générés à la demande).
 
@@ -3220,7 +3220,7 @@ description ? → l'utilisateur a choisi **avec photos et description**.
 
 **Décision d'architecture non posée en question** (déductible du reste de l'application) :
 une page publique **par cabinet** (comme les portails locataire/propriétaire), jamais un
-marketplace unique fusionnant tous les cabinets Lyko System entre eux — cohérent avec le
+marketplace unique fusionnant tous les cabinets Africa Immo Management entre eux — cohérent avec le
 principe déjà établi (chaque portail public existant est scopé à un seul cabinet). Contrai-
 rement aux portails locataire/propriétaire, **pas de lien secret** : une annonce est faite
 pour être vue et partagée largement, l'URL utilise simplement l'id du cabinet
@@ -3305,7 +3305,7 @@ publication » est monté dans le composant parent, et le formulaire s'affiche c
 ### Revirement (2026-09-14/15) : la page publique déménage hors de cette plateforme
 
 L'utilisateur est revenu sur la présence du marketplace « au menu » : la vitrine PUBLIQUE
-(`frontend/app/marketplace/[tenantId]/`) ne doit pas vivre dans Lyko System — elle devient un
+(`frontend/app/marketplace/[tenantId]/`) ne doit pas vivre dans Africa Immo Management — elle devient un
 site externe séparé, « Quick Immo » (voir Étape 21), relié à cette plateforme par l'API déjà
 construite ci-dessus. Retiré de cette plateforme : le lien de navigation « Marketplace » et la
 page publique elle-même. Conservé (le back-office reste ici, décision explicite de
@@ -3324,20 +3324,20 @@ Demande directe de l'utilisateur : « marketplace ne doit être là, nous allons
 page complète extérieure qui ne sera pas dans cette plateforme mais un autre site qui va
 permettre de vendre les biens mais il sera lié à cette plateforme ». Nom de marque donné par
 l'utilisateur : **Quick Immo**, avec la consigne explicite « même couleurs, même charte
-graphique » que Lyko System.
+graphique » que Africa Immo Management.
 
 Plusieurs séries de questions posées avant de coder, la portée s'étant élargie à chaque
 réponse :
 1. Page publique partageable vs outil interne → **publique**.
 2. Infos de base seulement vs + photos + description → **+ photos + description**.
-3. La gestion (publier une annonce) reste-t-elle sur Lyko System, ou le nouveau site a-t-il sa
-   propre gestion ? → **reste sur Lyko System** (aucune duplication de la gestion des
+3. La gestion (publier une annonce) reste-t-elle sur Africa Immo Management, ou le nouveau site a-t-il sa
+   propre gestion ? → **reste sur Africa Immo Management** (aucune duplication de la gestion des
    employés/permissions) — Quick Immo n'affiche que ce qui est publié via l'API existante.
 4. Menu voulu par l'utilisateur : Marketplace | Confier un bien | À propos | Contacter, plus
    Inscription/Connexion — ce dernier point a révélé un besoin de comptes pour le grand
    public (chercheurs de logement ET propriétaires), et un flux « confier un bien » qui
    couvre en fait DEUX intentions (louer OU **vendre** — la vente n'existait nulle part dans
-   le modèle de données de Lyko System, construit entièrement autour de baux/loyers).
+   le modèle de données de Africa Immo Management, construit entièrement autour de baux/loyers).
 5. Proposition d'ensemble soumise à validation avant de coder quoi que ce soit
    (voir structure ci-dessous) → **validée telle que proposée**.
 
@@ -3345,16 +3345,16 @@ réponse :
 
 - **Un site Next.js séparé** (`quick-immo/`, nouveau dossier à la racine du dépôt, pas dans
   `frontend/`) — son propre `package.json`, tourne sur le port 3100 en dev. Même charte
-  graphique que Lyko System : `tailwind.config.ts` et `app/globals.css` copiés à l'identique
+  graphique que Africa Immo Management : `tailwind.config.ts` et `app/globals.css` copiés à l'identique
   (mêmes tokens de couleur/typographie), composants `ui/` (Button/Card/Badge/Input/Toast)
   copiés tels quels — ils ne dépendaient que du helper `cn()`, aucune adaptation nécessaire.
 - **Scopé à UN cabinet pour l'instant** (`NEXT_PUBLIC_TENANT_ID` = 8 = KIko Store en
   production) — jamais un agrégateur multi-cabinets ; la même API accepterait déjà plusieurs
   cabinets si un jour nécessaire, mais rien dans l'UI ne le permet aujourd'hui.
-- **La gestion (publier/retirer une annonce) reste entièrement sur Lyko System**, décision
+- **La gestion (publier/retirer une annonce) reste entièrement sur Africa Immo Management**, décision
   explicite de l'utilisateur — Quick Immo ne fait qu'appeler
   `GET /api/marketplace/public/:tenantId` (déjà construit, Étape 20), en lecture seule.
-- **« Confier un bien » = une simple DEMANDE, jamais une création automatique.** Lyko System
+- **« Confier un bien » = une simple DEMANDE, jamais une création automatique.** Africa Immo Management
   n'a aucune notion de « Bien à vendre » (tout son modèle est bâti autour de baux/loyers) —
   créer un Bien reste un acte humain, réservé à l'employé qui accepte la demande.
 - **Comptes Quick Immo = un realm totalement séparé** des employés (`users`) et des
@@ -3422,7 +3422,7 @@ soit son payload.
 
 La page d'accueil affichait « Impossible de charger les annonces » en navigateur alors que
 la même requête réussissait en `curl`/Node directement — `CORS_ORIGIN` (backend `.env`)
-n'autorisait que `http://localhost:3000` (Lyko System), pas `http://localhost:3100` (Quick
+n'autorisait que `http://localhost:3000` (Africa Immo Management), pas `http://localhost:3100` (Quick
 Immo) : `fetch` depuis Node ne connaît pas les CORS (ce n'est qu'une politique de
 navigateur), donc mes premiers tests API en ligne de commande ne pouvaient pas révéler ce
 problème — seul un test EN NAVIGATEUR l'a montré. Corrigé en ajoutant `:3100` à
@@ -3442,7 +3442,7 @@ problème — seul un test EN NAVIGATEUR l'a montré. Corrigé en ajoutant `:310
   d'accueil avec les vraies annonces publiées, inscription `chercheur` → mise en favori
   visible sur `/mon-compte`, déconnexion, inscription `proprietaire` → soumission « vendre »
   → confirmation → statut « EN ATTENTE » visible sur `/mon-compte`.
-- [x] Firefox headless côté Lyko System : le DG voit la demande dans « Demandes reçues »
+- [x] Firefox headless côté Africa Immo Management : le DG voit la demande dans « Demandes reçues »
   avec le nom/téléphone du propriétaire, clique « Accepter » → statut « ACCEPTÉE » avec
   l'auteur du traitement affiché, toast de confirmation.
 - [x] `tsc --noEmit`/`next lint` propres sur les deux projets frontend (`frontend/` et
@@ -3469,7 +3469,7 @@ grille d'annonces (pas de vraie présentation du site) — restructuré :
   - **Comment ça marche** : deux colonnes (chercheur de logement / propriétaire), 3 étapes
     numérotées chacune avec une icône — explique concrètement les deux usages du site.
   - **Pourquoi Quick Immo** : 3 cartes de réassurance (biens vérifiés, accompagnement complet,
-    gestion sérieuse via Lyko System) — réutilise la structure déjà éprouvée de `/a-propos`.
+    gestion sérieuse via Africa Immo Management) — réutilise la structure déjà éprouvée de `/a-propos`.
   - **Annonces à la une** : aperçu de 3 vraies annonces publiées (mêmes cartes/photos que
     `/marketplace`, `ListingCard` extrait dans `components/listing-card.tsx` pour être partagé
     par les deux pages sans dupliquer le code) — jamais des images de remplissage/stock ;
@@ -3572,7 +3572,7 @@ Testé : Firefox headless (les trois couleurs d'accent bien rendues, icônes et 
 
 ## Étape 22 — Journal des dépenses regroupé par jour (Comptabilité)
 
-Retour sur Lyko System : demande de l'utilisateur de transformer le Journal des dépenses en
+Retour sur Africa Immo Management : demande de l'utilisateur de transformer le Journal des dépenses en
 un journal d'activité daté, à l'exemple donné (« Mardi 23/01/2026 / Vidange des véhicules
 12h14 / Lundi 23/01/2026 / achat des matériels 09:45 / transport 09:12 ») — regrouper les
 écritures par jour avec un en-tête « nom du jour + date », afficher l'heure de chaque
@@ -4505,7 +4505,7 @@ sont faits.
   fenêtre de 12 mois (8 passés, le mois en cours, 3 à venir), calculé mois par mois — jamais déduit
   de la seule prochaine échéance, donc un mois payé après un trou ou seulement entamé reste lisible.
   États : payé, partiel (avec `late` si l'échéance est passée), en retard, à payer, à venir, avant le
-  suivi (le bail existait avant Lyko System : rien n'est réclamé), hors bail. Suit la convention du
+  suivi (le bail existait avant Africa Immo Management : rien n'est réclamé), hors bail. Suit la convention du
   bail (avance / à terme échu) et le même point de départ de suivi que `computeArrears` (helper
   commun `baselineMonthOf`). Un test vérifie la cohérence avec `computeArrears` (même prochaine
   échéance, même verdict de retard, dans les deux conventions).
@@ -4689,7 +4689,7 @@ partagée. Source unique : `lib/module-theme.ts` (`CADRES`, `cadreForPath`), lue
 
 | Cadre (rubrique du menu) | Couleur | Ce qu'elle exprime |
 |---|---|---|
-| Vue d'ensemble | bleu | l'identité Lyko, le regard d'ensemble |
+| Vue d'ensemble | bleu | l'identité Africa Immo Management, le regard d'ensemble |
 | Patrimoine (Biens, Propriétaires, Locataires) | violet | ce que l'on gère |
 | Opérations (Plaintes, Relances, Tâches) | orange | l'action au quotidien |
 | Finances (Comptabilité, Comptabilité avancée, Charges) | cyan | l'argent qui circule (et l'eau/l'électricité) |

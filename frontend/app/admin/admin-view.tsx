@@ -1,10 +1,12 @@
 "use client";
 
 import * as React from "react";
+import QRCode from "qrcode";
 import { ApiError } from "@/lib/api/client";
 import {
   adminLogin, adminMe, adminTenants, adminRefunds, adminApprove, adminReject, adminPay, adminRefresh, adminGrant, adminSetInternal,
-  getAdminToken, setAdminToken, type AdminTenant,
+  admin2faSetup, admin2faEnable, admin2faDisable, adminAudit,
+  getAdminToken, setAdminToken, type AdminTenant, type AuditEntry,
 } from "@/lib/api/admin";
 import type { PlanKey, Refund } from "@/lib/api/billing";
 import { offerLabel } from "@/lib/api/billing";
@@ -38,6 +40,8 @@ export function AdminView() {
 function Login({ onDone }: { onDone: (t: string) => void }) {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [code, setCode] = React.useState("");
+  const [needCode, setNeedCode] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -46,9 +50,14 @@ function Login({ onDone }: { onDone: (t: string) => void }) {
     setBusy(true);
     setError(null);
     try {
-      onDone((await adminLogin(email, password)).token);
+      onDone((await adminLogin(email, password, code)).token);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Connexion impossible.");
+      if (err instanceof ApiError && err.message === "Code de vérification requis") {
+        setNeedCode(true);
+        setError(null);
+      } else {
+        setError(err instanceof ApiError ? err.message : "Connexion impossible.");
+      }
     } finally {
       setBusy(false);
     }
@@ -62,8 +71,13 @@ function Login({ onDone }: { onDone: (t: string) => void }) {
           <form onSubmit={submit} className="flex flex-col gap-4">
             <Field label="E-mail" htmlFor="ae"><Input id="ae" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
             <Field label="Mot de passe" htmlFor="ap"><Input id="ap" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></Field>
+            {needCode && (
+              <Field label="Code de votre application d'authentification" htmlFor="ac" hint="6 chiffres, renouvelés toutes les 30 secondes">
+                <Input id="ac" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} required autoFocus />
+              </Field>
+            )}
             {error && <p className="text-body-sm text-danger-fg">{error}</p>}
-            <Button type="submit" disabled={busy}>{busy ? "Connexion…" : "Se connecter"}</Button>
+            <Button type="submit" disabled={busy}>{busy ? "Connexion…" : needCode ? "Valider le code" : "Se connecter"}</Button>
           </form>
         </CardContent>
       </Card>
@@ -82,7 +96,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "succes
 };
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
-  const [tab, setTab] = React.useState<"refunds" | "tenants" | "catalog">("refunds");
+  const [tab, setTab] = React.useState<"refunds" | "tenants" | "catalog" | "security" | "audit">("refunds");
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [tenants, setTenants] = React.useState<AdminTenant[]>([]);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -90,6 +104,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [notes, setNotes] = React.useState<Record<number, string>>({});
   const [busy, setBusy] = React.useState<number | null>(null);
   const [search, setSearch] = React.useState("");
+  const [dialog, setDialog] = React.useState<{ kind: "grant" | "internal"; tenant: AdminTenant } | null>(null);
 
   const load = React.useCallback(() => {
     Promise.all([adminRefunds(token), adminTenants(token)])
@@ -113,6 +128,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             <Button variant={tab === "refunds" ? "primary" : "secondary"} onClick={() => setTab("refunds")}>Remboursements</Button>
             <Button variant={tab === "tenants" ? "primary" : "secondary"} onClick={() => setTab("tenants")}>Entreprises</Button>
             <Button variant={tab === "catalog" ? "primary" : "secondary"} onClick={() => setTab("catalog")}>Offres et prix</Button>
+            <Button variant={tab === "audit" ? "primary" : "secondary"} onClick={() => setTab("audit")}>Journal</Button>
+            <Button variant={tab === "security" ? "primary" : "secondary"} onClick={() => setTab("security")}>Sécurité</Button>
             <Button variant="ghost" onClick={onLogout}>Déconnexion</Button>
           </div>
         </div>
@@ -164,6 +181,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
         )}
 
         {tab === "catalog" && <CatalogEditor token={token} />}
+        {tab === "audit" && <AuditPanel token={token} />}
+        {tab === "security" && <SecurityPanel token={token} />}
 
         {tab === "tenants" && (
           <Card>
@@ -183,23 +202,18 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                 <TableBody>
                   {tenants.filter((t) => t.companyName.toLowerCase().includes(search.trim().toLowerCase())).map((t) => (
                     <TableRow key={t.id}>
-                      <TableCell>{t.companyName}{t.founderPrice ? " ★" : ""}</TableCell>
+                      <TableCell>
+                        {t.companyName}{t.founderPrice ? " ★" : ""}
+                        {t.overLimits?.length > 0 && <div className="text-body-xs text-warning-fg">Dépasse son offre : {t.overLimits.join(", ")}</div>}
+                      </TableCell>
                       <TableCell>{t.planKey === "interne" ? "interne (accès complet)" : t.planKey ?? "—"}</TableCell>
                       <TableCell>{t.status}</TableCell>
                       <TableCell>{t.currentPeriodEnd ? formatDateLabel(t.currentPeriodEnd.slice(0, 10)) : "—"}</TableCell>
                       <TableCell>{formatFcfa(t.totalPaid)}</TableCell>
                       <TableCell className="whitespace-nowrap">
-                        <Button variant="ghost" size="sm" onClick={() => {
-                          const plan = window.prompt("Offre à attribuer (demarrage / pro / entreprise) :", "pro") as PlanKey | null;
-                          const months = Number(window.prompt("Durée en mois (1, 2, 4 ou 12 selon l'offre) :", "4"));
-                          const note = window.prompt("Motif de l'attribution :", "Geste commercial");
-                          if (plan && months && note) run(t.id, () => adminGrant(token, t.id, plan, months, note), `Offre attribuée à ${t.companyName} (${offerLabel(months)}).`);
-                        }}>Attribuer une offre</Button>
+                        <Button variant="ghost" size="sm" onClick={() => setDialog({ kind: "grant", tenant: t })}>Attribuer une offre</Button>
                         {t.planKey !== "interne" && (
-                          <Button variant="ghost" size="sm" onClick={() => {
-                            const note = window.prompt("Passer cette entreprise en accès complet sans échéance. Motif :", "Compte de démonstration");
-                            if (note) run(t.id, () => adminSetInternal(token, t.id, note), `${t.companyName} est maintenant en offre interne.`);
-                          }}>Passer en interne</Button>
+                          <Button variant="ghost" size="sm" onClick={() => setDialog({ kind: "internal", tenant: t })}>Passer en interne</Button>
                         )}
                       </TableCell>
                     </TableRow>
@@ -210,6 +224,159 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
           </Card>
         )}
       </div>
+      {dialog && (
+        <TenantDialog
+          dialog={dialog}
+          onClose={() => setDialog(null)}
+          onSubmit={(fn, ok) => {
+            const id = dialog.tenant.id;
+            setDialog(null);
+            run(id, fn, ok);
+          }}
+          token={token}
+        />
+      )}
     </div>
+  );
+}
+
+const GRANT_MONTHS: Record<PlanKey, number[]> = { demarrage: [1, 2], pro: [4, 12], entreprise: [12], interne: [] } as Record<PlanKey, number[]>;
+
+function TenantDialog({ dialog, onClose, onSubmit, token }: {
+  dialog: { kind: "grant" | "internal"; tenant: AdminTenant };
+  onClose: () => void;
+  onSubmit: (fn: () => Promise<unknown>, ok: string) => void;
+  token: string;
+}) {
+  const [plan, setPlan] = React.useState<PlanKey>("pro");
+  const [months, setMonths] = React.useState(4);
+  const [note, setNote] = React.useState(dialog.kind === "grant" ? "Geste commercial" : "Compte de démonstration");
+  const t = dialog.tenant;
+  const valid = note.trim().length >= 3;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" role="dialog" aria-modal="true">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>{dialog.kind === "grant" ? `Attribuer une offre — ${t.companyName}` : `Passer en interne — ${t.companyName}`}</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {dialog.kind === "grant" ? (
+            <>
+              <Field label="Offre" htmlFor="gp">
+                <select id="gp" className="h-10 rounded border border-border bg-surface px-3 text-body-md" value={plan} onChange={(e) => { const p = e.target.value as PlanKey; setPlan(p); setMonths(GRANT_MONTHS[p][0] ?? 1); }}>
+                  <option value="demarrage">Démarrage</option>
+                  <option value="pro">Pro</option>
+                  <option value="entreprise">Entreprise</option>
+                </select>
+              </Field>
+              <Field label="Durée" htmlFor="gm" hint="Doit correspondre à une durée proposée pour cette offre">
+                <select id="gm" className="h-10 rounded border border-border bg-surface px-3 text-body-md" value={months} onChange={(e) => setMonths(Number(e.target.value))}>
+                  {[1, 2, 4, 12].map((m) => <option key={m} value={m}>{offerLabel(m)}</option>)}
+                </select>
+              </Field>
+            </>
+          ) : (
+            <p className="text-body-sm text-ink-soft">Cette entreprise aura un accès complet, sans limite ni échéance.</p>
+          )}
+          <Field label="Motif (conservé dans le journal)" htmlFor="gn">
+            <Input id="gn" value={note} onChange={(e) => setNote(e.target.value)} />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>Annuler</Button>
+            <Button
+              disabled={!valid}
+              onClick={() =>
+                dialog.kind === "grant"
+                  ? onSubmit(() => adminGrant(token, t.id, plan, months, note.trim()), `Offre attribuée à ${t.companyName} (${offerLabel(months)}).`)
+                  : onSubmit(() => adminSetInternal(token, t.id, note.trim()), `${t.companyName} est maintenant en offre interne.`)
+              }
+            >
+              Confirmer
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  login: "Connexion", login_failed: "Connexion refusée", login_2fa_failed: "Code 2FA refusé", "2fa_enabled": "2FA activée", "2fa_disabled": "2FA désactivée",
+  refund_approve: "Remboursement accepté", refund_reject: "Remboursement refusé", refund_pay: "Virement de remboursement",
+  tenant_grant: "Offre attribuée", tenant_set_internal: "Passage en interne", catalog_save: "Offres modifiées", catalog_reset: "Offres réinitialisées",
+};
+
+function AuditPanel({ token }: { token: string }) {
+  const [entries, setEntries] = React.useState<AuditEntry[] | null>(null);
+  React.useEffect(() => { adminAudit(token).then((r) => setEntries(r.entries)).catch(() => setEntries([])); }, [token]);
+  if (!entries) return null;
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <Table>
+          <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Administrateur</TableHead><TableHead>Action</TableHead><TableHead>Cible</TableHead><TableHead>IP</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {entries.map((e) => (
+              <TableRow key={e.id}>
+                <TableCell className="whitespace-nowrap">{new Date(e.createdAt).toLocaleString("fr-FR")}</TableCell>
+                <TableCell>{e.adminEmail ?? "—"}</TableCell>
+                <TableCell>{ACTION_LABELS[e.action] ?? e.action}</TableCell>
+                <TableCell>{e.target ?? "—"}</TableCell>
+                <TableCell>{e.ip ?? "—"}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {entries.length === 0 && <p className="mt-3 text-body-sm text-ink-muted">Aucune action enregistrée.</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SecurityPanel({ token }: { token: string }) {
+  const [enabled, setEnabled] = React.useState<boolean | null>(null);
+  const [setup, setSetup] = React.useState<{ secret: string; uri: string; qr: string } | null>(null);
+  const [code, setCode] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [msg, setMsg] = React.useState<string | null>(null);
+
+  React.useEffect(() => { adminMe(token).then((m) => setEnabled(m.twoFactor)).catch(() => setEnabled(false)); }, [token]);
+  const fail = (e: unknown) => setMsg(e instanceof ApiError ? e.message : "Action impossible.");
+
+  if (enabled === null) return null;
+  return (
+    <Card>
+      <CardHeader><CardTitle>Double authentification</CardTitle></CardHeader>
+      <CardContent className="flex max-w-md flex-col gap-4">
+        {msg && <p className="text-body-sm text-ink">{msg}</p>}
+        {!enabled && !setup && (
+          <>
+            <p className="text-body-sm text-ink-soft">
+              Protège le back-office même si votre mot de passe est volé : à chaque connexion, un code à 6 chiffres de votre téléphone est demandé.
+            </p>
+            <Button className="self-start" onClick={() => admin2faSetup(token).then(async (r) => setSetup({ ...r, qr: await QRCode.toDataURL(r.uri, { width: 200, margin: 1 }) })).catch(fail)}>Activer</Button>
+          </>
+        )}
+        {!enabled && setup && (
+          <>
+            <p className="text-body-sm text-ink-soft">Scannez ce code avec Google Authenticator, Authy ou Microsoft Authenticator, puis saisissez le code affiché.</p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={setup.qr} alt="QR code à scanner" width={200} height={200} />
+            <p className="break-all text-body-xs text-ink-muted">Saisie manuelle : {setup.secret}</p>
+            <Field label="Code à 6 chiffres" htmlFor="tc"><Input id="tc" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} /></Field>
+            <Button className="self-start" onClick={() => admin2faEnable(token, code).then(() => { setEnabled(true); setSetup(null); setCode(""); setMsg("Double authentification activée."); }).catch(fail)}>Confirmer</Button>
+          </>
+        )}
+        {enabled && (
+          <>
+            <p className="text-body-sm text-success-fg">La double authentification est active.</p>
+            <Field label="Mot de passe" htmlFor="dp"><Input id="dp" type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+            <Field label="Code actuel" htmlFor="dc"><Input id="dc" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} /></Field>
+            <Button variant="danger" className="self-start" onClick={() => admin2faDisable(token, password, code).then(() => { setEnabled(false); setPassword(""); setCode(""); setMsg("Double authentification désactivée."); }).catch(fail)}>Désactiver</Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

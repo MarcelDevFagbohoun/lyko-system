@@ -1,4 +1,4 @@
-# Lyko System
+# Africa Immo Management
 
 Plateforme web multi-tenant de gestion d'entreprises immobilières / juridiques :
 locataires, propriétaires, contrats, paiements, réclamations, comptabilité, charges.
@@ -72,7 +72,7 @@ npm run dev
 ## Structure
 
 ```
-lyko-system/
+africa-immo-management/
 ├── backend/          API Express + MySQL
 │   ├── src/
 │   │   ├── config/       env, pool MySQL
@@ -88,7 +88,7 @@ lyko-system/
 │   ├── app/          pages (App Router) — chaque route protégée = page.tsx (metadata) + *-view.tsx (client)
 │   ├── components/
 │   │   ├── ui/         button, card, badge, input, table, stat-card (charte)
-│   │   ├── brand/      logo Lyko par défaut
+│   │   ├── brand/      logo Africa Immo Management par défaut
 │   │   ├── system/     indicateur de connexion, service worker
 │   │   ├── marketing/  en-tête/pied public, sections de la landing
 │   │   ├── auth/       formulaires inscription/connexion/changement de mot de passe, garde de route

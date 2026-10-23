@@ -68,6 +68,13 @@ export function SubscriptionGate({ children }: { children: React.ReactNode }) {
           <Link href="/espace/abonnement" className="font-label-md underline">Renouveler</Link>
         </div>
       )}
+      {sub?.enforced && sub.active && sub.overLimits && sub.overLimits.length > 0 && !onBillingPage && (
+        <div className="flex flex-wrap items-center justify-center gap-2 border-b border-warning-border bg-warning-bg px-4 py-2 text-body-sm text-warning-fg">
+          <Clock size={14} />
+          Votre offre a changé : vous dépassez sa limite ({sub.overLimits.map((o) => `${o.count} ${o.label} sur ${o.max}`).join(", ")}). Vous ne pouvez plus en ajouter.
+          <Link href="/espace/abonnement" className="font-label-md underline">Changer d&apos;offre</Link>
+        </div>
+      )}
       {children}
     </>
   );

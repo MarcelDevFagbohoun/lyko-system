@@ -1,4 +1,4 @@
-# Déploiement — Lyko System (VPS + Docker Compose)
+# Déploiement — Africa Immo Management (VPS + Docker Compose)
 
 Pile : **Caddy** (HTTPS auto) → **web** (Next.js 15, standalone) + **api** (Express) → **db** (MySQL 8).
 Seul Caddy est exposé (80/443). `db` et `api` ne sont joignables que sur les réseaux Docker internes.

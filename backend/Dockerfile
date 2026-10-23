@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# ── API Lyko System (Express + MySQL) ────────────────────────────────────────
+# ── API Africa Immo Management (Express + MySQL) ────────────────────────────────────────
 # Image de production : dépendances de prod uniquement, exécution non-root,
 # migrations SQL jouées au démarrage (voir docker-entrypoint.sh).
 

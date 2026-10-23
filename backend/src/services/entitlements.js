@@ -111,6 +111,18 @@ function enforceActiveSubscription(req, _res, next) {
   }, next);
 }
 
+/** Dimensions qui dépassent la limite de l'offre (ex. après une baisse de limite) : [{ kind, label, count, max }]. */
+async function listOverLimits(tenantId, limits) {
+  const out = [];
+  for (const kind of Object.keys(COUNTERS)) {
+    const max = limits?.[kind];
+    if (max === null || max === undefined) continue;
+    const [[row]] = await pool.query(COUNTERS[kind], { tenantId });
+    if (Number(row.n) > max) out.push({ kind, label: LABELS[kind], count: Number(row.n), max });
+  }
+  return out;
+}
+
 /** Ids des entreprises dont l'abonnement est actif (toutes si les abonnements ne sont pas appliqués). */
 async function listActiveTenantIds() {
   if (!config.features.subscriptionsEnforced) {
@@ -133,4 +145,4 @@ async function createInitialSubscription(conn, tenantId) {
   }
 }
 
-module.exports = { listActiveTenantIds, enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };
+module.exports = { listOverLimits, listActiveTenantIds, enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };

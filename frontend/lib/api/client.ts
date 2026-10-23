@@ -71,7 +71,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   if (!res.ok) {
     // Abonnement expiré : l'espace affiche un écran de renouvellement (voir SubscriptionGate).
     if (res.status === 402 && (body?.details as { code?: string } | undefined)?.code === "SUBSCRIPTION_INACTIVE" && typeof window !== "undefined") {
-      window.dispatchEvent(new Event("lyko:subscription-inactive"));
+      window.dispatchEvent(new Event("aim:subscription-inactive"));
     }
     throw new ApiError(res.status, body?.error || `Erreur ${res.status}`, body?.details);
   }

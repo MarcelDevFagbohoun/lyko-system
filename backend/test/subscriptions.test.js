@@ -194,3 +194,14 @@ test('vitrine publique et tâches planifiées : ignorées pour une entreprise ex
   assert.equal((await fetch(`${base}/api/marketplace/public/${fx.tenantId}`)).status, 404);
   await setSub('pro');
 });
+
+test('dépassement de limites (baisse d’offre) : détecté et affiché dans la description de l’abonnement', async () => {
+  const { listOverLimits } = require('../src/services/entitlements');
+  const over = await listOverLimits(fx.tenantId, { units: 100, owners: 0, users: null });
+  assert.equal(over.length, 1);
+  assert.equal(over[0].kind, 'owners');
+  assert.deepEqual(await listOverLimits(fx.tenantId, { units: 100, owners: 100, users: null }), []);
+  await setSub('pro');
+  const d = await call('GET', '/api/billing/subscription');
+  assert.ok(Array.isArray(d.body.overLimits));
+});

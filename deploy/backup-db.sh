@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# ── Sauvegarde de la base Lyko System ───────────────────────────────────────
+# ── Sauvegarde de la base Africa Immo Management ───────────────────────────────────────
 # Dump compressé + horodaté du conteneur `db`, rotation à 14 jours.
 # À planifier sur l'hôte (cron), ex. tous les jours à 2h30 :
 #
-#   30 2 * * *  cd /opt/lyko-system && ./deploy/backup-db.sh >> /var/log/lyko-backup.log 2>&1
+#   30 2 * * *  cd /opt/africa-immo && ./deploy/backup-db.sh >> /var/log/africa-immo-backup.log 2>&1
 #
 # Restauration :
 #   gunzip -c backups/lyko_system-AAAA-MM-JJ_HHMMSS.sql.gz \

@@ -321,7 +321,7 @@ function MonthRentersModal({
 
 // ── Explication (point 6) : ouverte à la toute première visite, repliée ensuite ─────────────────
 
-const GUIDE_SEEN_KEY = "lyko.cloture.guideSeen";
+const GUIDE_SEEN_KEY = "aim.cloture.guideSeen";
 
 function HowMonthsWorkCard() {
   const [open, setOpen] = React.useState(false);

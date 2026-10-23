@@ -1,8 +1,8 @@
 {
-  "name": "lyko-system-backend",
+  "name": "africa-immo-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "API Lyko System — gestion de cabinets immobiliers / juridiques (multi-tenant)",
+  "description": "API Africa Immo Management — gestion de cabinets immobiliers / juridiques (multi-tenant)",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {

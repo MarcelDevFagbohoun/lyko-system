@@ -1,4 +1,4 @@
-# Audit comptable — Lyko System (comptabilité simple & comptabilité avancée SYSCOHADA)
+# Audit comptable — Africa Immo Management (comptabilité simple & comptabilité avancée SYSCOHADA)
 
 **Date :** 2026-09-23
 **Auditeur :** Claude (assistant IA), aucune validation par un expert-comptable humain

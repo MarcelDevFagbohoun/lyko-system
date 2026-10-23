@@ -155,8 +155,8 @@ function drawBanner(doc, tenant, { title, subtitle = null, meta = [] } = {}) {
       doc.font(F.BOLD).fontSize(9.5).fillColor(C.WHITE).text(String(value ?? '—'), cardX + 14, y + 9, { width: cardW - 28, lineBreak: false });
     });
   }
-  doc._lykoTitle = title;
-  doc._lykoContext = meta[0] ? String(meta[0][1] ?? '') : '';
+  doc._aimTitle = title;
+  doc._aimContext = meta[0] ? String(meta[0][1] ?? '') : '';
   doc.y = CONTENT_TOP;
   return CONTENT_TOP;
 }
@@ -344,7 +344,7 @@ function finishDocument(doc, { verificationCode = null, frontendHost = null, dow
   const today = downloadDate ?? new Date().toISOString().slice(0, 10).split('-').reverse().join('/');
   for (let i = range.start; i < range.start + range.count; i += 1) {
     doc.switchToPage(i);
-    if (i > range.start) drawContinuationBand(doc, doc._lykoTitle ?? '', doc._lykoContext ?? '');
+    if (i > range.start) drawContinuationBand(doc, doc._aimTitle ?? '', doc._aimContext ?? '');
     doc.page.margins.bottom = 0;
     doc.moveTo(LEFT, 772).lineTo(LEFT + WIDTH, 772).lineWidth(0.75).strokeColor(C.TINT_BORDER).stroke();
     doc.font(F.SANS).fontSize(7.5).fillColor(C.MUTED).text(`Document téléchargé le ${today} · Africa Immo Management`, LEFT, 780, { width: 330, lineBreak: false });

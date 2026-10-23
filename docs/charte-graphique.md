@@ -1,4 +1,4 @@
-# Charte graphique — Lyko System
+# Charte graphique — Africa Immo Management
 
 Source : maquette **stitch « Cabinet M Conseils »** (`docs/maquette/`).
 Implémentée dans `frontend/tailwind.config.ts` sous forme de tokens sémantiques.

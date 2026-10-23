@@ -66,7 +66,7 @@ before(async () => {
   fx = await createBareFixture();
   await pool.query("INSERT INTO tenant_subscriptions (tenant_id, plan_key, status) VALUES (:t, NULL, 'pending_payment') ON DUPLICATE KEY UPDATE plan_key = NULL, status = 'pending_payment'", { t: fx.tenantId });
   await pool.query('UPDATE users SET email = :e, first_name = :n WHERE id = :id', { e: 'dg-refund@example.com', n: 'Awa', id: fx.dgId });
-  const [a] = await pool.query("INSERT INTO platform_admins (email, name, password_hash) VALUES (:e, 'Admin Test', :h)", { e: `admin-${Date.now()}@lyko.test`, h: await hashPassword('motdepasse-solide-1') });
+  const [a] = await pool.query("INSERT INTO platform_admins (email, name, password_hash) VALUES (:e, 'Admin Test', :h)", { e: `admin-${Date.now()}@aim.test`, h: await hashPassword('motdepasse-solide-1') });
   adminId = a.insertId;
   adminToken = signAdminToken({ sub: adminId });
   server = createApp().listen(0);

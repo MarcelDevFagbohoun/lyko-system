@@ -1,4 +1,4 @@
-# ── Reverse-proxy Lyko System (Caddy 2) ──────────────────────────────────────
+# ── Reverse-proxy Africa Immo Management (Caddy 2) ──────────────────────────────────────
 # HTTPS automatique (Let's Encrypt). Deux sous-domaines :
 #   {$APP_DOMAIN}  → conteneur web (Next.js, :3000)
 #   {$API_DOMAIN}  → conteneur api (Express, :4000)

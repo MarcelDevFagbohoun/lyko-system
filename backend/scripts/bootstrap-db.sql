@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────
--- Provisionnement de la base Lyko System.
+-- Provisionnement de la base Africa Immo Management.
 -- À exécuter UNE FOIS avec un compte MySQL administrateur :
 --
 --   sudo mysql < backend/scripts/bootstrap-db.sql

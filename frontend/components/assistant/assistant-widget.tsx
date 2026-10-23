@@ -32,7 +32,7 @@ const SUGGESTIONS = [
 
 // Fonctions proposées d'un clic lors de la prise de connaissance (en plus du titre du poste du compte).
 const TITLE_CHOICES = ["Directeur / Directrice", "Gestionnaire", "Comptable", "Agent immobilier"];
-const ONBOARDING_SKIP_KEY = "lyko-assistant-onboarding-skipped";
+const ONBOARDING_SKIP_KEY = "aim-assistant-onboarding-skipped";
 
 let messageCounter = 0;
 const nextId = () => `m${++messageCounter}`;

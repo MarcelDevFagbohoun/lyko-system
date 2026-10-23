@@ -1,7 +1,7 @@
 import { apiFetch } from "./client";
 import type { Refund, PlanKey } from "./billing";
 
-const KEY = "lyko_admin_token";
+const KEY = "aim_admin_token";
 const json = { "Content-Type": "application/json" };
 
 export function getAdminToken(): string | null {
@@ -11,11 +11,18 @@ export function setAdminToken(token: string | null) {
   try { if (token) sessionStorage.setItem(KEY, token); else sessionStorage.removeItem(KEY); } catch { /* stockage indisponible : session limitée à la page */ }
 }
 
-export type AdminTenant = { id: number; companyName: string; createdAt: string; planKey: string | null; status: string; currentPeriodEnd: string | null; founderPrice: boolean; totalPaid: number };
+export type AdminTenant = { id: number; companyName: string; createdAt: string; planKey: string | null; status: string; currentPeriodEnd: string | null; founderPrice: boolean; totalPaid: number; overLimits: string[] };
 
-export const adminLogin = (email: string, password: string) =>
-  apiFetch<{ token: string; name: string }>("/api/admin/login", { method: "POST", headers: json, body: JSON.stringify({ email, password }) });
-export const adminMe = (t: string) => apiFetch<{ id: number; name: string }>("/api/admin/me", { accessToken: t });
+export const adminLogin = (email: string, password: string, code?: string) =>
+  apiFetch<{ token: string; name: string }>("/api/admin/login", { method: "POST", headers: json, body: JSON.stringify({ email, password, code: code || undefined }) });
+export const adminMe = (t: string) => apiFetch<{ id: number; name: string; twoFactor: boolean }>("/api/admin/me", { accessToken: t });
+export const admin2faSetup = (t: string) => apiFetch<{ secret: string; uri: string }>("/api/admin/2fa/setup", { accessToken: t, method: "POST" });
+export const admin2faEnable = (t: string, code: string) =>
+  apiFetch<{ ok: true }>("/api/admin/2fa/enable", { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ code }) });
+export const admin2faDisable = (t: string, password: string, code: string) =>
+  apiFetch<{ ok: true }>("/api/admin/2fa/disable", { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ password, code }) });
+export type AuditEntry = { id: number; adminEmail: string | null; action: string; target: string | null; details: string | null; ip: string | null; createdAt: string };
+export const adminAudit = (t: string) => apiFetch<{ entries: AuditEntry[] }>("/api/admin/audit", { accessToken: t });
 export const adminTenants = (t: string) => apiFetch<{ tenants: AdminTenant[] }>("/api/admin/tenants", { accessToken: t });
 export const adminRefunds = (t: string, status?: string) =>
   apiFetch<{ refunds: Refund[] }>(`/api/admin/refunds${status ? `?status=${status}` : ""}`, { accessToken: t });

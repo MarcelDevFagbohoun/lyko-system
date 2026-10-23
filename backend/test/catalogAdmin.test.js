@@ -23,7 +23,7 @@ before(async () => {
   await pool.query('DELETE FROM catalog_settings WHERE id = 1');
   planCatalog.invalidate();
   fx = await createBareFixture();
-  const [a] = await pool.query("INSERT INTO platform_admins (email, name, password_hash) VALUES (:e, 'Admin Cat', :h)", { e: `cat-${Date.now()}@lyko.test`, h: await hashPassword('motdepasse-solide-1') });
+  const [a] = await pool.query("INSERT INTO platform_admins (email, name, password_hash) VALUES (:e, 'Admin Cat', :h)", { e: `cat-${Date.now()}@aim.test`, h: await hashPassword('motdepasse-solide-1') });
   adminId = a.insertId;
   adminToken = signAdminToken({ sub: adminId });
   server = createApp().listen(0);

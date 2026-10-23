@@ -22,6 +22,7 @@ export type Subscription = {
   refundOpen: boolean;
   refundEligibleUntil: string | null;
   founderPrice: boolean;
+  overLimits?: { kind: string; label: string; count: number; max: number }[];
 };
 
 export type SubscriptionPayment = {
@@ -91,7 +92,7 @@ export const fetchRefundLink = (token: string) => apiFetch<{ companyName: string
 export const submitRefundLink = (token: string, input: { name: string; phone: string; operator: "mtn" | "moov" }) =>
   apiFetch<{ ok: true }>(`/api/billing/refund-link/${token}`, { method: "POST", headers: json, body: JSON.stringify(input) });
 
-export const INACTIVE_EVENT = "lyko:subscription-inactive";
+export const INACTIVE_EVENT = "aim:subscription-inactive";
 
 export function limitLabel(v: number | null) {
   return v === null ? "illimité" : String(v);

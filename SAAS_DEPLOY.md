@@ -1,7 +1,7 @@
 # Mise en service du SaaS — liste de contrôle
 
 ## 1. Déploiement (aucun changement de comportement tant que les verrous sont éteints)
-1. Déployer la branche, appliquer les migrations **105 à 109** (`npm run db:migrate`).
+1. Déployer la branche, appliquer les migrations **105 à 110** (`npm run db:migrate`).
    Les entreprises existantes passent en offre « interne » (accès complet, sans limite ni échéance).
 2. Variables d'environnement (backend) :
    | Variable | Rôle |
@@ -65,3 +65,10 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - **Production** : `/diagnostics` est introuvable et `/api/health/db` ne renvoie plus de détail technique.
 - **Tests** : `npm test` (dans `backend`) utilise la base `<DB_NAME>_test` créée automatiquement ; il refuse de tourner sur la base de développement.
 - **Identifiant technique** : la valeur `kkiapay` stockée pour un paiement en ligne est un identifiant historique conservé (affiché « Paiement en ligne ») ; tout passe désormais par FedaPay.
+
+## Lot 3 — back-office
+
+- **Migration 110** : double authentification (TOTP) des administrateurs et journal d'audit (`platform_admin_audit`).
+- **Activer la 2FA** : back-office > onglet « Sécurité » > scanner le QR code avec Google Authenticator/Authy. Ensuite chaque connexion demande le code. Le journal (onglet « Journal ») garde connexions, refus, remboursements, attributions et modifications d'offres.
+- **Dépassement de limites** : si une offre est abaissée sous l'usage d'une entreprise, celle-ci voit un bandeau et le back-office l'indique dans « Entreprises ».
+- **Identifiants conservés volontairement** (les changer casserait des données ou des sessions en cours) : nom de base `lyko_system` et utilisateur `lyko`, `JWT_ISSUER`, cookie `lyko_refresh`, métadonnée FedaPay `lyko_reference`, base hors-ligne `lyko-offline`. Aucun n'est visible par un utilisateur.

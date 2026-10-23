@@ -1,4 +1,4 @@
-# Test d'intrusion — Lyko System (étape 12, audit sécurité)
+# Test d'intrusion — Africa Immo Management (étape 12, audit sécurité)
 
 **Date** : 2026-09-10 · **Cible** : API locale `http://localhost:4000` (`NODE_ENV=development`)
 **Méthode** : boîte grise (code lu au préalable), harnais automatisé `backend/scripts/pentest.js`

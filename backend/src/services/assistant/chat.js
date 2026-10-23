@@ -41,7 +41,7 @@ const MSG_EMPTY = "Je n'ai pas pu formuler de réponse. Pouvez-vous reformuler v
 
 /** Identifiant opaque transmis à l'API pour la détection d'abus : ni nom, ni téléphone, ni e-mail. */
 function opaqueUserId(tenantId, userId) {
-  return crypto.createHash('sha256').update(`lyko:${tenantId}:${userId}`).digest('hex').slice(0, 32);
+  return crypto.createHash('sha256').update(`aim:${tenantId}:${userId}`).digest('hex').slice(0, 32);
 }
 
 /** Traduit une erreur du SDK en erreur présentable — jamais le message brut de l'API (peut révéler des détails). */

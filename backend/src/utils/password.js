@@ -19,7 +19,7 @@ async function verifyPassword(plain, hash) {
 // nettement plus vite qu'un mauvais mot de passe, ce qui permet de deviner
 // quels numéros/identifiants existent malgré un message d'erreur identique
 // (audit sécurité).
-const DUMMY_PASSWORD_HASH = bcrypt.hashSync('lyko-dummy-timing-guard', config.bcryptRounds);
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('aim-dummy-timing-guard', config.bcryptRounds);
 
 // Caractères sans ambiguïté visuelle (pas de 0/O, 1/l/I) : plus sûr à
 // communiquer oralement ou par WhatsApp à un employé.

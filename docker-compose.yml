@@ -7,7 +7,7 @@
 services:
   db:
     image: mysql:8.0
-    container_name: lyko-mysql
+    container_name: africa-immo-mysql
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: lyko_system
