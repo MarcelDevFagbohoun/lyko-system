@@ -43,7 +43,7 @@ const ROLES = [
     points: [
       "Un lien personnel, sans mot de passe, pour consulter leur portail",
       "Recette du mois, commission, part propriétaire et versements",
-      "Relevé mensuel PDF et carnet des charges SONEB/SBEE",
+      "Relevé mensuel PDF clair et détaillé",
       "L'historique complet de leurs versements",
     ],
   },
@@ -54,7 +54,7 @@ const ROLES = [
     points: [
       "Leur frise des 12 mois de loyer : payé, partiel, en retard",
       "Contrat de bail téléchargeable",
-      "Leurs factures d'eau et d'électricité restant à régler",
+      "Leurs charges d'eau et d'électricité à régler",
       "Paiement en ligne si l'entreprise l'a activé",
     ],
   },
@@ -67,7 +67,7 @@ export function Roles() {
         <SectionHeading
           eyebrow="Pour toute l'équipe"
           title="Chacun trouve exactement ce dont il a besoin"
-          description="Une seule plateforme, mais un espace adapté à chaque métier — et à chaque personne que vous servez."
+          description="Une seule plateforme, mais un espace adapté à chaque métier et à chaque personne que vous servez."
         />
         <div className="mt-10 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
           {ROLES.map(({ icon: Icon, title, tagline, points }) => (

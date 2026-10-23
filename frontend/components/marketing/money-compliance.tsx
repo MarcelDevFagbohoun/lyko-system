@@ -31,7 +31,7 @@ const ITEMS = [
   {
     icon: Lock,
     title: "Clôture mensuelle",
-    description: "Une fois le mois clos, plus rien ne peut y être ajouté, modifié ou supprimé — même par erreur.",
+    description: "Une fois le mois clos, plus rien ne peut être modifié, même par erreur.",
   },
   {
     icon: BookOpenCheck,
@@ -52,7 +52,7 @@ export function MoneyCompliance() {
         <SectionHeading
           eyebrow="L'argent de l'entreprise"
           title="Des comptes justes, du premier paiement à la clôture"
-          description="Chaque franc encaissé est rattaché à un locataire, un Bien, un propriétaire — et reste traçable."
+          description="Chaque franc encaissé est rattaché à un locataire, un bien et un propriétaire, et reste traçable."
         />
         <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
           {ITEMS.map(({ icon: Icon, title, description }) => (

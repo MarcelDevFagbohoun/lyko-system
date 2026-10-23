@@ -17,7 +17,7 @@ const STEPS = [
     number: "03",
     title: "Pilotez au quotidien",
     description:
-      "Encaissements, relances, plaintes, charges et rapports mensuels — pendant que vos propriétaires et vos locataires se servent seuls sur leur portail.",
+      "Encaissements, relances, plaintes, charges et rapports mensuels, pendant que vos propriétaires et vos locataires se servent seuls sur leur portail.",
   },
 ] as const;
 

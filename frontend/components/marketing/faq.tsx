@@ -6,12 +6,12 @@ export const FAQ_ITEMS = [
   {
     question: "Est-ce que ça fonctionne sans internet ?",
     answer:
-      "En partie. Les pages que vous avez déjà ouvertes restent consultables sans réseau, et vous pouvez enregistrer un paiement de loyer ou signaler une plainte hors connexion : ils sont envoyés automatiquement au retour du réseau. La création d'un bien, d'un locataire ou d'un employé demande une connexion.",
+      "Oui pour l'essentiel : les pages déjà ouvertes restent consultables, et vous pouvez enregistrer un paiement de loyer hors connexion. Il est envoyé automatiquement au retour du réseau.",
   },
   {
     question: "Puis-je limiter ce que voient mes employés ?",
     answer:
-      "Oui. Vous choisissez les modules accessibles à chaque employé (locataires, propriétaires, plaintes, comptabilité, charges…) et vous pouvez limiter un agent aux Biens qui lui sont attribués.",
+      "Oui, totalement. Vous choisissez les modules accessibles à chaque employé (locataires, propriétaires, plaintes, comptabilité, charges…) et vous pouvez limiter un agent aux Biens qui lui sont attribués.",
   },
   {
     question: "Comment mes locataires paient-ils ?",
@@ -21,12 +21,7 @@ export const FAQ_ITEMS = [
   {
     question: "Mes propriétaires ont-ils accès aux informations ?",
     answer:
-      "Ils consultent un portail personnel, sans mot de passe, accessible par un lien que vous leur donnez : recette du mois, commission, versements, relevé PDF et carnet des charges. Le portail est en lecture seule.",
-  },
-  {
-    question: "Africa Immo Management règle-t-il les factures SONEB et SBEE ?",
-    answer:
-      "Non : il les suit. Le propriétaire paie la facture mère ; Africa Immo Management calcule les factures de chaque locataire, suit leurs paiements, fait le point avec la facture mère et prépare le reversement des charges encaissées.",
+      "Ils consultent un portail personnel, sans mot de passe, accessible par un lien que vous leur donnez : recette du mois, commission, versements et relevé PDF. Le portail est en lecture seule.",
   },
   {
     question: "La comptabilité SYSCOHADA est-elle obligatoire ?",
@@ -36,7 +31,7 @@ export const FAQ_ITEMS = [
   {
     question: "Et si un employé se trompe dans une saisie ?",
     answer:
-      "Un paiement mal saisi peut être annulé, et l'annulation reste tracée. Un paiement envoyé deux fois par erreur ne s'enregistre qu'une seule fois. Une fois un mois clôturé, plus rien ne peut y être modifié.",
+      "Rien de grave : un paiement mal saisi s'annule, et tout reste tracé. Un paiement envoyé deux fois par erreur ne s'enregistre qu'une seule fois. Une fois un mois clôturé, plus rien ne peut y être modifié.",
   },
   {
     question: "Peut-on l'utiliser sur téléphone ?",
@@ -46,7 +41,7 @@ export const FAQ_ITEMS = [
   {
     question: "Comment démarrer ?",
     answer:
-      "Créez le compte de votre entreprise en quelques minutes, ajoutez vos employés puis vos biens et vos locataires. Votre compte est créé avec le rôle Admin et tous les droits.",
+      "Créez le compte de votre entreprise en quelques minutes, choisissez votre offre, puis ajoutez vos employés, vos biens et vos locataires. Vous êtes satisfait ou remboursé pendant 15 jours.",
   },
 ] as const;
 

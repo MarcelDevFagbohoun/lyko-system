@@ -6,8 +6,8 @@ import { SectionHeading } from "@/components/marketing/section-heading";
  * rien ici ne promet ce qui n'existe pas.
  */
 const ITEMS = [
-  { icon: Banknote, title: "Tout en FCFA", text: "Montants entiers, jamais de décimales parasites, numéros de téléphone béninois contrôlés." },
-  { icon: Droplets, title: "SONEB & SBEE", text: "Relevés de compteurs, facture mère, décompteurs par logement et point avec le propriétaire." },
+  { icon: Banknote, title: "Tout en FCFA", text: "Montants entiers et numéros de téléphone béninois contrôlés : pas d'erreur de saisie." },
+  { icon: Droplets, title: "Eau & électricité", text: "Relevés de compteurs et suivi des charges d'eau et d'électricité, logement par logement." },
   { icon: Smartphone, title: "Mobile Money & carte", text: "Paiement en ligne optionnel via FedaPay, activé par chaque entreprise avec son propre compte." },
   { icon: MessageCircle, title: "WhatsApp au quotidien", text: "Relances de loyer et de charges, quittances : un message prêt à envoyer, en un clic." },
   { icon: Scale, title: "Plan SYSCOHADA", text: "Comptabilité générale sur le plan SYSCOHADA, en option, à côté de la comptabilité simple." },
@@ -21,7 +21,7 @@ export function MadeForBenin() {
           inverse
           eyebrow="Conçu pour le Bénin"
           title="Pensé pour la façon dont vous travaillez ici"
-          description="Pas un logiciel étranger adapté à la hâte : les réalités locales sont au cœur du produit."
+          description="Les réalités locales sont au cœur du produit : FCFA, Mobile Money, WhatsApp, SYSCOHADA."
         />
         <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {ITEMS.map(({ icon: Icon, title, text }) => (

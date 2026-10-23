@@ -8,140 +8,65 @@ import { formatFcfa, cn } from "@/lib/utils";
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden">
-      {/* Photo de fond (fournie par l'utilisateur, public/img/bg1.jpeg) — un
-          simple <img>, jamais next/image : l'optimiseur est désactivé pour
-          cette appli et son endpoint /_next/image fermé côté reverse-proxy
-          (voir deploy/Caddyfile). Retour utilisateur : un flou ajouté ici en
-          plus de celui, déjà présent, du sur-échantillonnage (source
-          736×763 étirée sur toute la largeur) rendait le fond trop flou —
-          retiré ; l'agrandissement du navigateur reste net à taille d'écran
-          raisonnable. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/img/bg1.jpeg"
-        alt=""
-        aria-hidden="true"
-        fetchPriority="high"
-        className="absolute inset-0 h-full w-full object-cover object-center"
-      />
-      {/* Sous `lg`, la mise en page passe sur une seule colonne (le texte
-          couvre alors toute la largeur) — un dégradé gauche→droite laisserait
-          la partie droite du texte sur un fond trop clair. Voile uni sur
-          mobile/tablette, dégradé directionnel seulement à partir de `lg`
-          (là où le texte reste cantonné à la moitié gauche). `bg-[#F8FAFCED]`
-          plutôt que `bg-canvas/93` : Tailwind ne génère pas le modificateur
-          d'opacité sur cette couleur pour l'utilitaire `background-color` de
-          base (constaté : la classe était absente du CSS généré), alors
-          qu'il le fait pour les arrêts de dégradé juste après — valeur
-          arbitraire directe, qui contourne le problème quelle qu'en soit la cause. */}
-      <div className="absolute inset-0 bg-[#F8FAFCED] lg:bg-gradient-to-r lg:from-canvas lg:via-canvas/92 lg:to-canvas/45" />
+    <section className="relative overflow-hidden bg-gradient-to-b from-primary-bg via-canvas to-canvas">
+      <span aria-hidden className="animate-float-slow pointer-events-none absolute -right-24 top-10 hidden h-80 w-80 rounded-full bg-primary/15 blur-3xl lg:block" />
+      <span aria-hidden className="animate-float-slow pointer-events-none absolute -left-16 bottom-0 hidden h-56 w-56 rounded-full bg-info/15 blur-3xl lg:block [animation-delay:-4s]" />
 
-      {/* Lueurs décoratives (même esprit que l'accueil employé) — purement
-          visuelles, masquées aux lecteurs d'écran, jamais sous `lg` où le
-          texte occupe toute la largeur et les recouvrirait. */}
-      <span
-        aria-hidden
-        className="animate-float-slow pointer-events-none absolute -right-24 top-10 hidden h-72 w-72 rounded-full bg-primary/15 blur-3xl lg:block"
-      />
-      <span
-        aria-hidden
-        className="animate-float-slow pointer-events-none absolute -right-10 bottom-0 hidden h-56 w-56 rounded-full bg-info/15 blur-3xl lg:block [animation-delay:-4s]"
-      />
-
-      <div className="content-shell relative grid grid-cols-1 items-center gap-10 py-14 sm:py-20 lg:grid-cols-2 lg:gap-16">
+      <div className="content-shell relative grid grid-cols-1 items-center gap-12 py-14 sm:py-20 lg:grid-cols-2 lg:gap-16">
         <div className="flex flex-col gap-6">
           <Badge variant="primary" className="animate-fade-up w-fit">
             Gestion locative · Bénin
           </Badge>
-          <h1 className="animate-fade-up font-display text-headline-2xl text-ink [animation-delay:60ms] sm:text-[2.75rem] sm:leading-[1.1]">
-            Encaissez à temps. Rendez des comptes justes à vos propriétaires.
+          <h1 className="animate-fade-up font-display text-headline-2xl text-ink [animation-delay:60ms] sm:text-[2.9rem] sm:leading-[1.08]">
+            Encaissez vos loyers à temps. <span className="text-primary">Rendez des comptes justes</span> à vos propriétaires.
           </h1>
           <p className="animate-fade-up max-w-xl text-body-lg text-ink-soft [animation-delay:120ms]">
-            Africa Immo Management est le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE, relances
-            WhatsApp, quittances, relevés propriétaires et comptabilité SYSCOHADA, dans un seul espace sécurisé pour toute
-            votre équipe.
+            Un seul espace pour toute votre équipe : loyers, relances WhatsApp, quittances, relevés propriétaires et comptabilité.
+            Vous gagnez du temps chaque jour et vos propriétaires vous font confiance.
           </p>
           <div className="animate-fade-up flex flex-col gap-3 [animation-delay:180ms] sm:flex-row">
             <Link href="/inscription" className={cn(buttonVariants({ variant: "primary", size: "lg" }), "transition-transform hover:-translate-y-0.5")}>
               Créer mon compte
             </Link>
-            <Link href="/connexion" className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "transition-transform hover:-translate-y-0.5")}>
-              Se connecter
-            </Link>
+            <a href="#tarifs" className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "transition-transform hover:-translate-y-0.5")}>
+              Voir les tarifs
+            </a>
           </div>
-          <div className="animate-fade-up flex flex-col gap-2 pt-2 text-body-sm text-ink-muted [animation-delay:240ms] sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
-            <span className="inline-flex items-center gap-1.5">
-              <BadgeCheck size={16} className="text-primary" />
-              Quittances et contrats vérifiables en ligne
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <WifiOff size={16} className="text-primary" />
-              Consultable même sans réseau
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Smartphone size={16} className="text-primary" />
-              Sur ordinateur, tablette et téléphone
-            </span>
-          </div>
+          <ul className="animate-fade-up flex flex-col gap-2 pt-2 text-body-sm text-ink-muted [animation-delay:240ms] sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
+            <li className="inline-flex items-center gap-1.5"><BadgeCheck size={16} className="text-primary" />Satisfait ou remboursé 15 jours</li>
+            <li className="inline-flex items-center gap-1.5"><WifiOff size={16} className="text-primary" />Consultable même sans réseau</li>
+            <li className="inline-flex items-center gap-1.5"><Smartphone size={16} className="text-primary" />Ordinateur, tablette et téléphone</li>
+          </ul>
         </div>
-        {/* Aperçu produit — composants réels de la charte, pas une capture fictive */}
-        <Card className="animate-fade-up p-4 shadow-lg transition-all duration-300 [animation-delay:180ms] hover:-translate-y-1 hover:shadow-xl sm:p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <p className="font-label-sm uppercase tracking-wider text-ink-muted">Tableau de bord de la direction</p>
-              <p className="font-display text-headline-sm text-ink">Vue du jour · données fictives</p>
-            </div>
-            <Badge variant="neutral">Exemple</Badge>
-          </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <StatCard
-              label="Loyers recouvrés"
-              value={formatFcfa(18_450_000, { withSuffix: false })}
-              unit="FCFA"
-              trend={{ value: "+8,5 %", direction: "up" }}
-            />
-            <StatCard
-              label="Impayés"
-              tone="danger"
-              value={formatFcfa(2_350_000, { withSuffix: false })}
-              unit="FCFA"
-              trend={{ value: "12 dossiers", direction: "down" }}
+        {/* Photo + aperçu du tableau de bord (composants réels de la charte). `<img>` simple : l'optimiseur Next est désactivé. */}
+        <div className="animate-fade-up relative mx-auto w-full max-w-lg [animation-delay:160ms] lg:max-w-none">
+          <div className="overflow-hidden rounded-2xl shadow-xl ring-1 ring-border">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/img/hero.webp"
+              srcSet="/img/hero-480.webp 480w, /img/hero.webp 736w"
+              sizes="(min-width: 1024px) 560px, 90vw"
+              width={736}
+              height={763}
+              alt="Résidence moderne gérée avec Africa Immo Management"
+              fetchPriority="high"
+              className="aspect-[4/4.2] w-full object-cover sm:aspect-[4/3.4]"
             />
           </div>
-
-          <div className="mt-3 flex flex-col divide-y divide-border rounded-lg border border-border">
-            <div className="flex items-center justify-between px-3 py-2.5">
-              <div>
-                <p className="font-label-md text-ink">Mme Viviane AGBOTON</p>
-                <p className="text-body-xs text-ink-muted">Appt 3B, Palmiers</p>
-              </div>
-              <Badge variant="success" dot>
-                Payé
-              </Badge>
+          <Card className="absolute -bottom-8 left-3 right-3 p-4 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl sm:left-[-1.5rem] sm:right-auto sm:w-[27rem]">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="font-label-sm uppercase tracking-wider text-ink-muted">Vue du jour</p>
+              <Badge variant="neutral">Aperçu</Badge>
             </div>
-            <div className="flex items-center justify-between px-3 py-2.5">
-              <div>
-                <p className="font-label-md text-ink">Pascal HOUNKPONOU</p>
-                <p className="text-body-xs text-ink-muted">Lot 4, Rés. Palmiers</p>
-              </div>
-              <Badge variant="danger" dot>
-                Retard 18 j
-              </Badge>
+            <div className="grid grid-cols-2 gap-3">
+              <StatCard label="Loyers recouvrés" value={formatFcfa(18_450_000, { withSuffix: false })} unit="FCFA" trend={{ value: "+8,5 %", direction: "up" }} />
+              <StatCard label="Impayés" tone="danger" value={formatFcfa(2_350_000, { withSuffix: false })} unit="FCFA" trend={{ value: "12 dossiers", direction: "down" }} />
             </div>
-            <div className="flex items-center justify-between px-3 py-2.5">
-              <div>
-                <p className="font-label-md text-ink">Facture SBEE, Haie Vive</p>
-                <p className="text-body-xs text-ink-muted">Échéance demain</p>
-              </div>
-              <Badge variant="warning" dot>
-                En attente
-              </Badge>
-            </div>
-          </div>
-        </Card>
+          </Card>
+        </div>
       </div>
+      <div className="h-8 lg:h-4" />
     </section>
   );
 }

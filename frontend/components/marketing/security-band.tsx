@@ -36,7 +36,7 @@ const POINTS = [
     icon: WifiOff,
     title: "Utilisable malgré les coupures",
     description:
-      "Les pages déjà ouvertes restent consultables sans réseau, et un paiement de loyer ou une plainte saisis hors connexion sont synchronisés au retour.",
+      "Les pages déjà ouvertes restent consultables sans réseau, et un paiement saisi hors connexion est synchronisé au retour.",
   },
 ] as const;
 
@@ -46,7 +46,7 @@ export function SecurityBand() {
       <SectionHeading
         eyebrow="Confiance"
         title="Sécurité, traçabilité et fiabilité"
-        description="Chaque paiement, chaque document et chaque action sont protégés, tracés et vérifiables — pour que vous puissiez faire confiance à vos chiffres."
+        description="Chaque paiement, chaque document et chaque action sont protégés, tracés et vérifiables : vous pouvez faire confiance à vos chiffres."
       />
       <div className="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
         {POINTS.map(({ icon: Icon, title, description }) => (

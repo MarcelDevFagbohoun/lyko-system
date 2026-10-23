@@ -11,16 +11,16 @@ const ROWS = [
     after: "Une quittance PDF numérotée à chaque paiement, avec un lien prêt à envoyer par WhatsApp.",
   },
   {
-    before: "Eau et électricité : impossible de dire qui a payé quoi, ni ce qui reste à la charge du propriétaire.",
-    after: "Le point des charges : facture mère payée, encaissé, impayés, reste à charge — et un carnet par propriétaire.",
+    before: "Eau et électricité : difficile de dire qui a réglé sa part et qui doit encore payer.",
+    after: "Les charges de chaque logement suivies au même endroit : réglé, en attente, impayé.",
   },
   {
     before: "Les relevés des propriétaires se calculent à la main, en fin de mois.",
     after: "Un relevé mensuel PDF avec commission, dépenses et versements, et un solde séquestre toujours à jour.",
   },
   {
-    before: "Un paiement saisi deux fois, une erreur d'un mois sur l'autre, personne ne sait qui a fait quoi.",
-    after: "Un paiement en double ne s'enregistre pas deux fois ; chaque action est datée et attribuée dans le journal.",
+    before: "Un paiement saisi deux fois, et personne ne sait qui a fait quoi.",
+    after: "Un paiement en double ne s'enregistre qu'une fois, et chaque action est datée et attribuée.",
   },
   {
     before: "La comptabilité se refait en fin d'année, à partir de papiers.",
@@ -32,9 +32,9 @@ export function ProblemSolution() {
   return (
     <section className="content-shell py-14 sm:py-20">
       <SectionHeading
-        eyebrow="Du cahier à la plateforme"
+        eyebrow="Du cahier au logiciel"
         title="Ce qui change dès la première semaine"
-        description="Les mêmes tâches, sans les oublis, les doubles saisies et les calculs à la main."
+        description="Les mêmes tâches, sans oublis ni calculs à la main."
       />
       <div className="mt-10 grid grid-cols-1 gap-3 sm:gap-4">
         <div className="hidden grid-cols-2 gap-4 px-1 sm:grid">

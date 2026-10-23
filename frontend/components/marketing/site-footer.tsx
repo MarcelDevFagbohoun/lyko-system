@@ -9,7 +9,7 @@ export function SiteFooter() {
         <div className="flex max-w-sm flex-col gap-3">
           <BrandLogo />
           <p className="text-body-sm text-ink-muted">
-            Le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE,
+            Le logiciel de gestion locative pensé pour le Bénin : loyers, charges,
             propriétaires, plaintes et comptabilité, pour toute votre équipe.
           </p>
         </div>

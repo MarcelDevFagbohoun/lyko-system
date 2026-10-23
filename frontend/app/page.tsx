@@ -1,6 +1,8 @@
 import { SiteHeader } from "@/components/marketing/site-header";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { Hero } from "@/components/marketing/hero";
+import { Pricing } from "@/components/marketing/pricing";
+import { TeamPhoto } from "@/components/marketing/team-photo";
 import { MadeForBenin } from "@/components/marketing/made-for-benin";
 import { ProblemSolution } from "@/components/marketing/problem-solution";
 import { Roles } from "@/components/marketing/roles";
@@ -12,13 +14,12 @@ import { CtaBanner } from "@/components/marketing/cta-banner";
 import { Reveal } from "@/components/marketing/reveal";
 
 /**
- * Landing page publique — accessible sans connexion. Parcours : promesse (héros) → ancrage local →
- * avant/après → un espace par métier → argent et comptabilité → confiance → démarrage → questions →
- * appel à l'action. Aucun tarif, aucun témoignage, aucun chiffre de performance inventé : chaque
- * affirmation correspond à une fonction réellement construite.
+ * Landing page publique — accessible sans connexion. Parcours : promesse (héros) → tarifs → ancrage local →
+ * avant/après → un espace par métier → photo d'équipe (si présente) → argent et comptabilité → confiance →
+ * démarrage → questions → appel à l'action. Aucun témoignage ni chiffre de performance inventé.
  */
 
-// Données structurées (référencement) : uniquement des faits vérifiables — pas de prix, pas de note.
+// Données structurées (référencement) : uniquement des faits vérifiables, pas de note.
 const JSON_LD = {
   "@context": "https://schema.org",
   "@graph": [
@@ -29,7 +30,7 @@ const JSON_LD = {
       operatingSystem: "Web",
       inLanguage: "fr",
       description:
-        "Logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE, propriétaires, quittances et comptabilité SYSCOHADA.",
+        "Logiciel de gestion locative pensé pour le Bénin : loyers, relances WhatsApp, propriétaires, quittances et comptabilité SYSCOHADA.",
     },
     {
       "@type": "FAQPage",
@@ -49,9 +50,11 @@ export default function LandingPage() {
       <SiteHeader />
       <main className="flex-1">
         <Hero />
+        <Pricing />
         <Reveal><MadeForBenin /></Reveal>
         <Reveal><ProblemSolution /></Reveal>
         <Reveal><Roles /></Reveal>
+        <Reveal><TeamPhoto /></Reveal>
         <Reveal><MoneyCompliance /></Reveal>
         <Reveal><SecurityBand /></Reveal>
         <Reveal><HowItWorks /></Reveal>

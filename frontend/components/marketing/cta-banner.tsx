@@ -8,9 +8,9 @@ export function CtaBanner() {
   return (
     <section className="content-shell py-14 sm:py-20">
       <div className="flex flex-col items-center gap-5 rounded-xl bg-primary px-6 py-12 text-center sm:px-12">
-        <h2 className="font-display text-headline-xl text-white">Reprenez la main sur vos loyers, vos charges et vos comptes.</h2>
+        <h2 className="font-display text-headline-xl text-white">Reprenez la main sur vos loyers et vos comptes.</h2>
         <p className="max-w-xl text-body-lg text-white/85">
-          Créez l&apos;espace de votre entreprise en quelques minutes et invitez vos employés dès aujourd&apos;hui.
+          Créez votre espace en quelques minutes. Satisfait ou remboursé pendant 15 jours.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row">
           <Link
