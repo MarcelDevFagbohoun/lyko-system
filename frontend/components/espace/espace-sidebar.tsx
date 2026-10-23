@@ -27,6 +27,8 @@ import {
   LogOut,
   Menu,
   X,
+  Home,
+  ChevronDown,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { API_URL } from "@/lib/api/client";
@@ -65,6 +67,23 @@ export function EspaceSidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  // Rubriques repliées par l'utilisateur (mémorisé sur cet appareil). La rubrique de la page courante reste toujours ouverte.
+  const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem("aim_nav_collapsed");
+      if (raw) setCollapsed(JSON.parse(raw));
+    } catch {}
+  }, []);
+  function toggleGroup(key: string) {
+    setCollapsed((c) => {
+      const next = { ...c, [key]: !c[key] };
+      try {
+        localStorage.setItem("aim_nav_collapsed", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
 
   React.useEffect(() => setMobileOpen(false), [pathname]);
 
@@ -89,7 +108,10 @@ export function EspaceSidebar() {
   const rawGroups: { cadre: Cadre; items: (NavItem | false)[] }[] = [
     {
       cadre: "apercu",
-      items: [isDg && { href: "/espace/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard }],
+      items: [
+        { href: "/espace", label: "Accueil", icon: Home },
+        isDg && { href: "/espace/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard },
+      ],
     },
     {
       cadre: "patrimoine",
@@ -138,6 +160,7 @@ export function EspaceSidebar() {
     .filter((g) => g.items.length > 0);
 
   function isActive(href: string) {
+    if (href === "/espace") return pathname === "/espace";
     return pathname === href || pathname.startsWith(`${href}/`);
   }
 
@@ -174,37 +197,57 @@ export function EspaceSidebar() {
         // Chaque rubrique porte la couleur de son cadre (voir `lib/module-theme.ts`) : pastille + titre,
         // icônes, entrée active — la même que le fond des pages de la rubrique.
         const cadre = CADRES[group.cadre];
+        const hasActive = group.items.some((i) => isActive(i.href));
+        const open = hasActive || !collapsed[group.cadre];
         return (
-          <div key={group.cadre} className="mb-5 last:mb-0">
-            <p title={cadre.meaning} className="mb-1.5 px-2.5 font-label-sm uppercase tracking-wider text-ink-faint">
-              {cadre.label}
-            </p>
-            <div className="flex flex-col gap-0.5">
-              {group.items.map((item) => {
-                const active = isActive(item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    title={item.hint}
-                    className={cn(
-                      "group relative flex items-center gap-3 rounded-lg px-2.5 py-2.5 font-label-md transition-all duration-150 ease-out",
-                      active
-                        ? cn(cadre.soft, "text-ink")
-                        : "text-ink-soft hover:translate-x-0.5 hover:bg-surface-muted hover:text-ink",
-                    )}
-                  >
-                    {active && (
-                      <span
-                        className={cn("absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full", cadre.solid)}
-                        aria-hidden
-                      />
-                    )}
-                    <item.icon size={18} className={cn("shrink-0 transition-colors", cadre.text, !active && "opacity-70 group-hover:opacity-100")} />
-                    <span className="truncate">{item.label}</span>
-                  </Link>
-                );
-              })}
+          <div key={group.cadre} className="mb-3 last:mb-0">
+            <button
+              type="button"
+              onClick={() => toggleGroup(group.cadre)}
+              aria-expanded={open}
+              title={cadre.meaning}
+              className="group/head mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-surface-muted"
+            >
+              <span aria-hidden className={cn("h-2 w-2 shrink-0 rounded-full", cadre.solid)} />
+              <span className="flex-1 font-label-sm uppercase tracking-wider text-ink-faint transition-colors group-hover/head:text-ink-soft">
+                {cadre.label}
+              </span>
+              <ChevronDown size={14} className={cn("text-ink-faint transition-transform duration-300", !open && "-rotate-90")} />
+            </button>
+            <div className={cn("grid transition-all duration-300 ease-out", open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+              <div className="overflow-hidden">
+                <div className="flex flex-col gap-0.5 pb-1">
+                  {group.items.map((item) => {
+                    const active = isActive(item.href);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        title={item.hint}
+                        tabIndex={open ? 0 : -1}
+                        className={cn(
+                          "group relative flex items-center gap-3 rounded-lg px-2.5 py-2.5 font-label-md transition-all duration-200 ease-out",
+                          active
+                            ? cn(cadre.soft, "text-ink shadow-sm")
+                            : "text-ink-soft hover:translate-x-1 hover:bg-surface-muted hover:text-ink",
+                        )}
+                      >
+                        {active && (
+                          <span
+                            className={cn("absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 animate-fade-in rounded-full", cadre.solid)}
+                            aria-hidden
+                          />
+                        )}
+                        <item.icon
+                          size={18}
+                          className={cn("shrink-0 transition-all duration-200", cadre.text, active ? "scale-110" : "opacity-70 group-hover:scale-110 group-hover:opacity-100")}
+                        />
+                        <span className="truncate">{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
         );

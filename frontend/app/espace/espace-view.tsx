@@ -7,6 +7,7 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { MyTasksCard } from "@/components/espace/my-tasks-card";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
 import { PriorityPanel } from "@/components/espace/priority-panel";
+import { EmployeeHome } from "@/components/espace/employee-home";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CADRES } from "@/lib/module-theme";
@@ -27,6 +28,7 @@ export function EspaceView() {
 function EspaceContent() {
   const { user, tenant } = useAuth();
   const isDg = user?.role === "dg";
+  if (user && !isDg) return <EmployeeHome />;
   const canLocataires = isDg || (user?.permissions.includes("locataires") ?? false);
   const canPayments = canLocataires || (user?.permissions.includes("comptabilite") ?? false);
   const canCharges = isDg || (user?.permissions.includes("charges") ?? false);
