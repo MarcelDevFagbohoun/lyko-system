@@ -124,3 +124,13 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - Identifiant employé généré sur 12 caractères (`XXXX-XXXX-XXXX`) ; les anciens identifiants restent valables. Mot de passe temporaire : changement obligatoire à la première connexion (déjà en place).
 - Poste obligatoire à la création : choix dans les suggestions ou nouveau poste (mémorisé pour l'entreprise), affiché à l'employé (barre latérale) et dans le message d'identifiants (WhatsApp/e-mail).
 - « Mot de passe oublié ? » sur la connexion admin : code à 8 chiffres envoyé à l'e-mail vérifié (15 min, 5 essais), nouveau mot de passe, toutes les sessions fermées. Les employés demandent un nouveau mot de passe à leur admin.
+
+## Lot 12 — annulation d'abonnement, e-mails au logo, écran de paiement isolé
+
+- Migration `119_subscription_cancellation.sql` **à appliquer** (type de demande, jours restants, coordonnées complètes du bénéficiaire, paiement manuel).
+- Le DG demande l'annulation depuis la page Abonnement (motif obligatoire). Tant que l'admin AIM n'a pas répondu, le bouton affiche « Examen en cours ». Refus : e-mail avec la réponse, bouton de nouveau disponible. Acceptation : **accès coupé aussitôt** et e-mail avec un lien (7 jours, usage unique) vers le formulaire nom, prénom, type de compte (MTN, Moov, Celtiis, banque, autre), numéro et intitulé.
+- Montant remboursé : prorata des jours restants à partir du jour de la demande. Dans les 15 jours de garantie, le premier paiement est remboursé en entier. Frais retenus : 3 % par défaut, modifiables par l'admin à l'acceptation.
+- Versement : FedaPay (MTN et Moov uniquement) ou « Marquer comme payé » avec une référence pour les autres comptes (route `POST /api/admin/refunds/:id/mark-paid`).
+- Pendant un abonnement actif, seul le renouvellement de la même offre est possible (409 sinon) ; il démarre à l'échéance en cours, sans coupure.
+- E-mails : logo servi depuis `FRONTEND_URL/brand/logo-mark.png` (le site doit être en ligne et public), mise en page type facture, textes réécrits sans tirets longs. Reçu PDF refait dans le même style, avec logo et code de vérification.
+- Une entreprise qui n'a jamais acheté d'abonnement n'a plus accès qu'à l'écran de choix et de paiement (sans menu, avec déconnexion).

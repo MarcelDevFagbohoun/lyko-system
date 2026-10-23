@@ -1,6 +1,8 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import * as React from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { EspaceSidebar } from "@/components/espace/espace-sidebar";
 import { CardToneProvider } from "@/components/ui/card";
@@ -8,6 +10,9 @@ import { SubscriptionGate } from "@/components/billing/subscription-gate";
 import { ASSISTANT_ENABLED } from "@/lib/features";
 import { AssistantWidget } from "@/components/assistant/assistant-widget";
 import { CADRES, cadreForPath } from "@/lib/module-theme";
+import { BrandLogo } from "@/components/brand/logo";
+import { Button } from "@/components/ui/button";
+import { fetchSubscription } from "@/lib/api/billing";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,8 +36,45 @@ import { cn } from "@/lib/utils";
  */
 export default function EspaceLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { status } = useAuth();
+  const router = useRouter();
+  const { status, user, accessToken, logout } = useAuth();
   const cadre = CADRES[cadreForPath(pathname)];
+  // Tant que l'entreprise n'a jamais acheté d'abonnement, aucune partie de l'espace n'est accessible :
+  // seul l'écran de choix et de paiement de l'offre s'affiche, sans menu.
+  const [firstPlanPending, setFirstPlanPending] = React.useState<boolean | null>(null);
+  React.useEffect(() => {
+    if (status !== "authenticated" || !accessToken) return;
+    fetchSubscription(accessToken)
+      .then((s) => setFirstPlanPending(s.enforced && (s.status === "pending_payment" || s.status === "none")))
+      .catch(() => setFirstPlanPending(false));
+  }, [status, accessToken, pathname]);
+
+  if (status === "authenticated" && firstPlanPending === null) return <div className="min-h-screen bg-canvas" />;
+  if (status === "authenticated" && firstPlanPending) {
+    const isDg = user?.role === "dg";
+    return (
+      <div className="min-h-screen bg-canvas">
+        <header className="flex items-center justify-between border-b border-border bg-surface px-4 py-3 sm:px-8">
+          <BrandLogo className="h-9" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => { await logout(); router.replace("/connexion"); }}
+          >
+            <LogOut size={14} /> Se déconnecter
+          </Button>
+        </header>
+        {isDg ? (
+          <CardToneProvider tone={cadre.tone}><SubscriptionGate>{children}</SubscriptionGate></CardToneProvider>
+        ) : (
+          <div className="mx-auto flex max-w-md flex-col items-center gap-2 px-4 py-24 text-center">
+            <p className="font-label-md text-ink">Votre espace n&apos;est pas encore ouvert</p>
+            <p className="text-body-sm text-ink-muted">La direction de votre entreprise doit d&apos;abord choisir et régler une offre. Vous pourrez ensuite vous connecter.</p>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-canvas">

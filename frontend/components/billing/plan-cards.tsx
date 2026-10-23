@@ -1,14 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { Check } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 import { FEATURE_LABELS, limitLabel, offerLabel, type Catalog, type PlanKey, type PublicPlan } from "@/lib/api/billing";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn, formatFcfa } from "@/lib/utils";
 
-const ORDER_FEATURES = ["core", "tenant_collect", "payroll", "payouts", "owner_portal", "sale_properties", "advanced_accounting", "audit_full", "ai_assistant"];
+const ORDER_FEATURES = ["core", "tenant_collect", "payroll", "payouts", "owner_portal", "sale_properties", "advanced_accounting", "audit_full"];
 
 /**
  * Grille des offres. `onChoose(plan, months)` : affiche un bouton par durée (espace connecté) ; sans lui, un seul bouton
@@ -72,6 +72,10 @@ export function PlanCards({
                   {FEATURE_LABELS[k]}
                 </li>
               ))}
+              <li className="flex gap-2 text-ink-faint">
+                <Minus size={14} className="mt-1 shrink-0" />
+                <span>{FEATURE_LABELS.ai_assistant} <Badge variant="neutral">Bientôt disponible</Badge></span>
+              </li>
             </ul>
             <div className="mt-auto flex flex-col gap-2 pt-2">
               {onChoose &&

@@ -4,11 +4,11 @@ import * as React from "react";
 import QRCode from "qrcode";
 import { ApiError } from "@/lib/api/client";
 import {
-  adminLogin, adminMe, adminTenants, adminRefunds, adminApprove, adminReject, adminPay, adminRefresh, adminGrant, adminSetInternal,
+  adminLogin, adminMe, adminTenants, adminRefunds, adminApprove, adminReject, adminPay, adminMarkPaid, adminRefresh, adminGrant, adminSetInternal,
   admin2faSetup, admin2faEnable, admin2faDisable, adminAudit,
   getAdminToken, setAdminToken, type AdminTenant, type AuditEntry,
 } from "@/lib/api/admin";
-import type { PlanKey, Refund } from "@/lib/api/billing";
+import { ACCOUNT_TYPE_LABELS, type PlanKey, type Refund } from "@/lib/api/billing";
 import { offerLabel } from "@/lib/api/billing";
 import { CatalogEditor } from "./catalog-editor";
 import { Badge } from "@/components/ui/badge";
@@ -87,7 +87,7 @@ function Login({ onDone }: { onDone: (t: string) => void }) {
 
 const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "success" | "warning" | "danger" | "info" }> = {
   requested: { label: "À examiner", variant: "warning" },
-  approved: { label: "Acceptée — attente coordonnées", variant: "info" },
+  approved: { label: "Acceptée, attente coordonnées", variant: "info" },
   details_received: { label: "Prête à payer", variant: "info" },
   processing: { label: "Virement en cours", variant: "warning" },
   paid: { label: "Remboursée", variant: "success" },
@@ -98,6 +98,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "succes
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = React.useState<"refunds" | "tenants" | "catalog" | "security" | "audit">("refunds");
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
+  const [refs, setRefs] = React.useState<Record<number, string>>({});
   const [tenants, setTenants] = React.useState<AdminTenant[]>([]);
   const [message, setMessage] = React.useState<string | null>(null);
   const [fees, setFees] = React.useState<Record<number, string>>({});
@@ -151,8 +152,19 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                   </CardHeader>
                   <CardContent className="flex flex-col gap-3">
                     <p className="text-body-sm text-ink-soft"><span className="font-label-md text-ink">Raison :</span> {r.reason}</p>
+                    {r.kind === "cancellation" && r.daysRemaining !== null && (
+                      <p className="text-body-sm text-ink-soft">Annulation : {r.daysRemaining} jour(s) restant(s), prorata calculé sur {formatFcfa(r.amountOriginal ?? 0)} → base de remboursement <strong>{formatFcfa(r.amountPaid)}</strong></p>
+                    )}
+                    {r.kind === "guarantee" && <p className="text-body-sm text-ink-soft">Remboursement intégral du premier paiement (garantie).</p>}
                     {r.refundAmount !== null && <p className="text-body-sm text-ink-soft">Frais retenus {formatFcfa(r.feeAmount ?? 0)} → à rembourser <strong>{formatFcfa(r.refundAmount)}</strong></p>}
-                    {r.payeeName && <p className="text-body-sm text-ink-soft">Bénéficiaire : {r.payeeName} · {r.payeeOperator?.toUpperCase()} {r.payeePhone}</p>}
+                    {r.payeeName && (
+                      <p className="text-body-sm text-ink-soft">
+                        Bénéficiaire : {r.payeeFirstName} {r.payeeName} · {r.payeeAccountType ? ACCOUNT_TYPE_LABELS[r.payeeAccountType] : r.payeeOperator?.toUpperCase()}
+                        {r.payeeOtherDetail ? ` (${r.payeeOtherDetail})` : ""} · {r.payeeAccountNumber ?? r.payeePhone}
+                        {r.payeeAccountLabel ? ` · Intitulé : ${r.payeeAccountLabel}` : ""}
+                      </p>
+                    )}
+                    {r.paidManually && <p className="text-body-sm text-ink-soft">Payé manuellement.</p>}
                     {r.status === "requested" && (
                       <div className="flex flex-wrap items-end gap-3">
                         <Field label="Frais FedaPay retenus (FCFA)" htmlFor={`f${r.id}`} hint="Vide = estimation automatique">
@@ -165,7 +177,15 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                         <Button variant="danger" disabled={busy === r.id} onClick={() => run(r.id, () => adminReject(token, r.id, notes[r.id] ?? ""), "Demande refusée, le client est prévenu.")}>Refuser</Button>
                       </div>
                     )}
-                    {(r.status === "details_received" || r.status === "failed") && (
+                    {r.status === "details_received" && (
+                      <div className="flex flex-wrap items-end gap-3">
+                        <Field label="Référence du virement (paiement manuel)" htmlFor={`ref${r.id}`}>
+                          <Input id={`ref${r.id}`} value={refs[r.id] ?? ""} onChange={(e) => setRefs({ ...refs, [r.id]: e.target.value })} />
+                        </Field>
+                        <Button variant="secondary" disabled={busy === r.id || (refs[r.id] ?? "").trim().length < 3} onClick={() => run(r.id, () => adminMarkPaid(token, r.id, refs[r.id].trim()), "Remboursement marqué comme payé, le client est prévenu.")}>Marquer comme payé</Button>
+                      </div>
+                    )}
+                    {((r.status === "details_received" && (r.payeeAccountType === "mtn" || r.payeeAccountType === "moov" || !r.payeeAccountType)) || r.status === "failed") && (
                       <Button className="self-start" disabled={busy === r.id} onClick={() => run(r.id, async () => { const x = await adminPay(token, r.id); setMessage(`Virement : ${x.status}`); }, "Virement lancé.")}>
                         Envoyer {r.refundAmount !== null ? formatFcfa(r.refundAmount) : "le virement"}
                       </Button>

@@ -31,6 +31,8 @@ export const adminApprove = (t: string, id: number, feeAmount?: number, note?: s
 export const adminReject = (t: string, id: number, note: string) =>
   apiFetch<{ ok: true }>(`/api/admin/refunds/${id}/reject`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ note }) });
 export const adminPay = (t: string, id: number) => apiFetch<{ status: string }>(`/api/admin/refunds/${id}/pay`, { accessToken: t, method: "POST" });
+export const adminMarkPaid = (t: string, id: number, reference: string) =>
+  apiFetch<{ status: string }>(`/api/admin/refunds/${id}/mark-paid`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ reference }) });
 export const adminRefresh = (t: string, id: number) => apiFetch<{ status: string }>(`/api/admin/refunds/${id}/refresh`, { accessToken: t, method: "POST" });
 export const adminSetInternal = (t: string, tenantId: number, note: string) =>
   apiFetch<{ ok: true }>(`/api/admin/tenants/${tenantId}/internal`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ note }) });

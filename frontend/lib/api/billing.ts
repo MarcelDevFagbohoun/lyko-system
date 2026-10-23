@@ -41,8 +41,19 @@ export type SubscriptionPayment = {
 export type Quote = { planKey: PlanKey; months: number; price: number; normalPrice: number; founder: boolean; isFirstPurchase: boolean };
 
 export type RefundStatus = "requested" | "approved" | "rejected" | "details_received" | "processing" | "paid" | "failed";
+export type AccountType = "mtn" | "moov" | "celtiis" | "banque" | "autre";
+export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = { mtn: "MTN Mobile Money", moov: "Moov Money", celtiis: "Celtiis Cash", banque: "Compte bancaire", autre: "Autre" };
 export type Refund = {
   id: number;
+  kind: "guarantee" | "cancellation";
+  daysRemaining: number | null;
+  amountOriginal: number | null;
+  payeeFirstName: string | null;
+  payeeAccountType: AccountType | null;
+  payeeAccountNumber: string | null;
+  payeeAccountLabel: string | null;
+  payeeOtherDetail: string | null;
+  paidManually: boolean;
   tenantId: number;
   companyName: string;
   status: RefundStatus;
@@ -72,7 +83,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   audit_full: "Journal d'audit complet et support prioritaire",
   // Label ajouté (demande utilisateur, 2026-10-23) — `ai_assistant` reste absent de `features` sur
   // demarrage/pro/entreprise (backend constants/plans.js) : aucune offre ne la coche pour l'instant.
-  ai_assistant: "Assistance IA",
+  ai_assistant: "Assistant IA",
 };
 
 export const fetchCatalog = () => apiFetch<Catalog>("/api/billing/plans");
@@ -92,7 +103,8 @@ export const requestRefund = (accessToken: string, reason: string) =>
   apiFetch<{ id: number }>("/api/billing/refund-requests", { accessToken, method: "POST", headers: json, body: JSON.stringify({ reason }) });
 export const listMyRefunds = (accessToken: string) => apiFetch<{ refunds: Refund[] }>("/api/billing/refund-requests", { accessToken });
 export const fetchRefundLink = (token: string) => apiFetch<{ companyName: string; refundAmount: number }>(`/api/billing/refund-link/${token}`);
-export const submitRefundLink = (token: string, input: { name: string; phone: string; operator: "mtn" | "moov" }) =>
+export type RefundDetailsInput = { lastName: string; firstName: string; accountType: AccountType; accountNumber: string; accountLabel: string; otherDetail?: string };
+export const submitRefundLink = (token: string, input: RefundDetailsInput) =>
   apiFetch<{ ok: true }>(`/api/billing/refund-link/${token}`, { method: "POST", headers: json, body: JSON.stringify(input) });
 
 export const INACTIVE_EVENT = "aim:subscription-inactive";

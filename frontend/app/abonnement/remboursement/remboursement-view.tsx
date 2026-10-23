@@ -4,7 +4,7 @@ import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
-import { fetchRefundLink, submitRefundLink } from "@/lib/api/billing";
+import { ACCOUNT_TYPE_LABELS, fetchRefundLink, submitRefundLink, type AccountType } from "@/lib/api/billing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
@@ -17,9 +17,12 @@ export function RemboursementView() {
   const [error, setError] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [name, setName] = React.useState("");
-  const [phone, setPhone] = React.useState("");
-  const [operator, setOperator] = React.useState<"mtn" | "moov">("mtn");
+  const [lastName, setLastName] = React.useState("");
+  const [firstName, setFirstName] = React.useState("");
+  const [accountType, setAccountType] = React.useState<AccountType>("mtn");
+  const [accountNumber, setAccountNumber] = React.useState("");
+  const [accountLabel, setAccountLabel] = React.useState("");
+  const [otherDetail, setOtherDetail] = React.useState("");
 
   React.useEffect(() => {
     fetchRefundLink(token).then(setInfo).catch((e) => setError(e instanceof ApiError ? e.message : "Lien invalide ou expiré."));
@@ -30,7 +33,7 @@ export function RemboursementView() {
     setBusy(true);
     setError(null);
     try {
-      await submitRefundLink(token, { name, phone, operator });
+      await submitRefundLink(token, { lastName, firstName, accountType, accountNumber, accountLabel, otherDetail: accountType === "autre" ? otherDetail : undefined });
       setDone(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Envoi impossible. Réessayez.");
@@ -44,28 +47,42 @@ export function RemboursementView() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Recevoir mon remboursement</CardTitle>
-          {info && <CardDescription>{info.companyName} — montant à recevoir : {formatFcfa(info.refundAmount)}</CardDescription>}
+          {info && <CardDescription>{info.companyName}, montant à recevoir : {formatFcfa(info.refundAmount)}</CardDescription>}
         </CardHeader>
         <CardContent>
           {done ? (
             <div className="flex flex-col items-center gap-2 py-4 text-center">
               <CheckCircle2 size={32} className="text-success-fg" />
               <p className="font-label-md text-success-fg">Coordonnées enregistrées</p>
-              <p className="text-body-sm text-ink-muted">Le virement sera effectué prochainement. Vous recevrez un e-mail de confirmation.</p>
+              <p className="text-body-sm text-ink-muted">Nous allons effectuer le remboursement. Vous recevrez un e-mail de confirmation.</p>
             </div>
           ) : info ? (
             <form onSubmit={submit} className="flex flex-col gap-4">
-              <Field label="Nom du titulaire du compte Mobile Money" htmlFor="rn" required>
-                <Input id="rn" value={name} onChange={(e) => setName(e.target.value)} required minLength={3} />
-              </Field>
-              <Field label="Numéro Mobile Money" htmlFor="rp" required hint="Ex. 0197000000">
-                <Input id="rp" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required />
-              </Field>
-              <Field label="Opérateur" htmlFor="ro" required>
-                <select id="ro" value={operator} onChange={(e) => setOperator(e.target.value as "mtn" | "moov")} className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink">
-                  <option value="mtn">MTN</option>
-                  <option value="moov">Moov</option>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Nom" htmlFor="rln" required>
+                  <Input id="rln" value={lastName} onChange={(e) => setLastName(e.target.value)} required minLength={2} />
+                </Field>
+                <Field label="Prénom" htmlFor="rfn" required>
+                  <Input id="rfn" value={firstName} onChange={(e) => setFirstName(e.target.value)} required minLength={2} />
+                </Field>
+              </div>
+              <Field label="Type de compte" htmlFor="rt" required>
+                <select id="rt" value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType)} className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink">
+                  {(Object.keys(ACCOUNT_TYPE_LABELS) as AccountType[]).map((k) => (
+                    <option key={k} value={k}>{ACCOUNT_TYPE_LABELS[k]}</option>
+                  ))}
                 </select>
+              </Field>
+              {accountType === "autre" && (
+                <Field label="Précisez le type de compte" htmlFor="rod" required>
+                  <Input id="rod" value={otherDetail} onChange={(e) => setOtherDetail(e.target.value)} required minLength={2} />
+                </Field>
+              )}
+              <Field label={accountType === "banque" ? "Numéro de compte (ou IBAN)" : "Numéro du compte"} htmlFor="ran" required hint={accountType === "banque" || accountType === "autre" ? undefined : "Ex. 0197000000"}>
+                <Input id="ran" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} required />
+              </Field>
+              <Field label="Intitulé du compte" htmlFor="ral" required hint="Le nom sous lequel le compte est enregistré">
+                <Input id="ral" value={accountLabel} onChange={(e) => setAccountLabel(e.target.value)} required minLength={3} />
               </Field>
               {error && <p className="text-body-sm text-danger-fg">{error}</p>}
               <Button type="submit" disabled={busy}>{busy ? "Envoi…" : "Envoyer mes coordonnées"}</Button>
