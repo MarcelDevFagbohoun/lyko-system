@@ -27,7 +27,7 @@ export function SiteHeader() {
           <BrandLogo className="h-10" />
         </Link>
 
-        <nav className="hidden items-center gap-6 md:flex" aria-label="Navigation principale">
+        <nav className="hidden items-center gap-6 lg:flex" aria-label="Navigation principale">
           {NAV_LINKS.map((link) => (
             <a
               key={link.href}
@@ -39,7 +39,7 @@ export function SiteHeader() {
           ))}
         </nav>
 
-        <div className="hidden items-center gap-3 md:flex">
+        <div className="hidden items-center gap-3 lg:flex">
           <Link href="/connexion" className={buttonVariants({ variant: "ghost", size: "sm" })}>
             Se connecter
           </Link>
@@ -50,7 +50,7 @@ export function SiteHeader() {
 
         <button
           type="button"
-          className="inline-flex h-9 w-9 items-center justify-center rounded text-ink-soft hover:bg-surface-muted md:hidden"
+          className="inline-flex h-9 w-9 items-center justify-center rounded text-ink-soft hover:bg-surface-muted lg:hidden"
           aria-label={open ? "Fermer le menu" : "Ouvrir le menu"}
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
@@ -62,7 +62,7 @@ export function SiteHeader() {
       {/* Panneau mobile */}
       <div
         className={cn(
-          "flex-col gap-1 border-t border-border bg-surface px-4 py-3 md:hidden",
+          "flex-col gap-1 border-t border-border bg-surface px-4 py-3 lg:hidden",
           open ? "flex" : "hidden",
         )}
       >

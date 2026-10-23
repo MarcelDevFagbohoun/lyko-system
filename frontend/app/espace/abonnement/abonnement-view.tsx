@@ -201,6 +201,21 @@ function AbonnementContent() {
           <Card>
             <CardHeader><CardTitle>Historique des paiements</CardTitle></CardHeader>
             <CardContent>
+              <ul className="flex flex-col divide-y divide-border sm:hidden">
+                {payments.map((p) => (
+                  <li key={p.id} className="flex flex-col gap-2 py-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="font-label-md text-ink">{formatFcfa(p.amount)}</span>
+                      <span className="text-body-sm text-ink-muted">{p.paidAt ? formatDateLabel(p.paidAt.slice(0, 10)) : "-"}</span>
+                    </div>
+                    <p className="text-body-sm text-ink-soft">{p.planLabel} · {offerLabel(p.months)}{p.status === "refunded" ? " (remboursé)" : ""} · {p.invoiceNumber ?? "-"}</p>
+                    <Button variant="secondary" size="sm" className="self-start" onClick={() => accessToken && openAuthenticatedPdf(invoicePdfPath(p.id), accessToken)}>
+                      <FileDown size={14} /> Reçu PDF
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <div className="hidden sm:block">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -227,6 +242,7 @@ function AbonnementContent() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         )}
