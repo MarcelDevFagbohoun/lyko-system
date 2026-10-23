@@ -9,6 +9,7 @@ const { hashPassword, generateTemporaryPassword } = require('../utils/password')
 const { generateIdentifier } = require('../utils/identifier');
 const { getPermissionsBulk } = require('../services/permissions');
 const { PERMISSIONS, DEFAULT_PERMISSIONS_BY_ROLE } = require('../constants/permissions');
+const { DEFAULT_JOB_TITLES } = require('../constants/jobTitles');
 const logger = require('../utils/logger');
 
 const { assertWithinLimit } = require('../services/entitlements');
@@ -26,6 +27,7 @@ function toPublicEmployee(row, permissions) {
     identifier: row.identifier,
     email: row.email,
     role: row.role,
+    jobTitle: row.job_title ?? null,
     status: row.status,
     mustChangePassword: !!row.must_change_password,
     permissions,
@@ -53,6 +55,26 @@ async function generateUniqueIdentifier(conn) {
 // GET /api/employees/permissions — catalogue pour construire le formulaire.
 router.get('/permissions', (_req, res) => {
   res.json({ permissions: PERMISSIONS, defaultsByRole: DEFAULT_PERMISSIONS_BY_ROLE });
+});
+
+/** Mémorise un poste nouveau (insensible à la casse) pour qu'il soit proposé ensuite ; renvoie l'intitulé canonique. */
+async function rememberJobTitle(conn, tenantId, userId, label) {
+  const known = DEFAULT_JOB_TITLES.find((t) => t.toLowerCase() === label.toLowerCase());
+  if (known) return known;
+  const [existing] = await conn.query('SELECT label FROM tenant_job_titles WHERE tenant_id = :tenantId AND label = :label LIMIT 1', { tenantId, label });
+  if (existing[0]) return existing[0].label; // collation insensible à la casse : renvoie la forme déjà enregistrée
+  await conn.query('INSERT INTO tenant_job_titles (tenant_id, label, created_by) VALUES (:tenantId, :label, :userId)', { tenantId, label, userId });
+  return label;
+}
+
+// GET /api/employees/job-titles — suggestions de postes : liste par défaut + postes ajoutés par l'entreprise.
+router.get('/job-titles', async (req, res, next) => {
+  try {
+    const [rows] = await pool.query('SELECT label FROM tenant_job_titles WHERE tenant_id = :tenantId ORDER BY label', { tenantId: req.user.tenantId });
+    res.json({ defaults: DEFAULT_JOB_TITLES, custom: rows.map((r) => r.label) });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // GET /api/employees — liste des comptes comptable/agent de l'entreprise (isolation par tenant).
@@ -244,11 +266,13 @@ router.post('/', async (req, res, next) => {
 
     await conn.beginTransaction();
     await assertWithinLimit(req.user.tenantId, 'users', conn);
+    const jobTitle = await rememberJobTitle(conn, req.user.tenantId, req.user.id, data.jobTitle);
 
     const [result] = await conn.query(
-      `INSERT INTO users (tenant_id, first_name, last_name, phone, identifier, email, password_hash, role, must_change_password)
-       VALUES (:tenantId, :firstName, :lastName, :phone, :identifier, :email, :passwordHash, :role, 1)`,
+      `INSERT INTO users (tenant_id, first_name, last_name, phone, identifier, email, password_hash, role, job_title, must_change_password)
+       VALUES (:tenantId, :firstName, :lastName, :phone, :identifier, :email, :passwordHash, :role, :jobTitle, 1)`,
       {
+        jobTitle,
         tenantId: req.user.tenantId,
         firstName: data.firstName,
         lastName: data.lastName,
@@ -282,6 +306,7 @@ router.post('/', async (req, res, next) => {
           identifier,
           email: data.email,
           role: data.role,
+          job_title: jobTitle,
           status: 'active',
           must_change_password: 1,
           created_at: new Date(),
@@ -345,6 +370,10 @@ router.patch('/:id', async (req, res, next) => {
     if (data.email !== undefined) {
       fields.push('email = :email');
       params.email = data.email;
+    }
+    if (data.jobTitle !== undefined) {
+      fields.push('job_title = :jobTitle');
+      params.jobTitle = await rememberJobTitle(conn, req.user.tenantId, req.user.id, data.jobTitle);
     }
     if (data.role !== undefined) {
       fields.push('role = :role');

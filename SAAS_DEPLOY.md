@@ -117,3 +117,10 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - Après chaque paiement d'abonnement : e-mail avec le **reçu PDF en pièce jointe**, son numéro (AIM-AAAA-NNNNNN) et un **code de vérification** (XXXX-XXXX-XXXX) contrôlable publiquement sur `/verifier`. Même reçu téléchargeable depuis la page Abonnement.
 - Renseigner `PLATFORM_LEGAL_ADDRESS`, `PLATFORM_LEGAL_RCCM` et `PLATFORM_LEGAL_IFU` pour qu'ils figurent dans le pied des e-mails et sur le reçu.
 - Prérequis d'envoi : domaine vérifié dans Resend (SPF, DKIM) et `EMAIL_FROM_ADDRESS` sur ce domaine.
+
+## Lot 11 — comptes employés renforcés, mot de passe oublié de l'admin
+
+- Migration `118_employee_job_title_password_reset.sql` **à appliquer** (poste de l'employé, postes ajoutés par l'entreprise, champs de réinitialisation).
+- Identifiant employé généré sur 12 caractères (`XXXX-XXXX-XXXX`) ; les anciens identifiants restent valables. Mot de passe temporaire : changement obligatoire à la première connexion (déjà en place).
+- Poste obligatoire à la création : choix dans les suggestions ou nouveau poste (mémorisé pour l'entreprise), affiché à l'employé (barre latérale) et dans le message d'identifiants (WhatsApp/e-mail).
+- « Mot de passe oublié ? » sur la connexion admin : code à 8 chiffres envoyé à l'e-mail vérifié (15 min, 5 essais), nouveau mot de passe, toutes les sessions fermées. Les employés demandent un nouveau mot de passe à leur admin.

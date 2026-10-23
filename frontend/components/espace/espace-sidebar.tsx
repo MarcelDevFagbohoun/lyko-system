@@ -229,7 +229,7 @@ export function EspaceSidebar() {
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate font-label-md text-ink">{user.firstName} {user.lastName}</p>
-          <Badge variant="primary" className="mt-0.5">{tenant?.roleTitles?.[user.role] ?? ROLE_LABELS[user.role] ?? user.role}</Badge>
+          <Badge variant="primary" className="mt-0.5">{user.jobTitle || (tenant?.roleTitles?.[user.role] ?? ROLE_LABELS[user.role] ?? user.role)}</Badge>
         </div>
         <ConnectionIndicator />
       </div>

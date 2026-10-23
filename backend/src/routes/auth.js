@@ -16,6 +16,8 @@ const {
   changePasswordSchema,
   verifyEmailSchema,
   resendVerificationCodeSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
 } = require('../validators/auth');
 const { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH } = require('../utils/password');
 const {
@@ -30,7 +32,7 @@ const { REFRESH_COOKIE_NAME, refreshCookieOptions } = require('../utils/cookies'
 const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { assertNotLocked, recordFailure, recordSuccess } = require('../middleware/loginThrottle');
 const { resolveRoleLabels } = require('../constants/roles');
-const { sendVerificationCodeEmail } = require('../services/email/sendEmail');
+const { sendVerificationCodeEmail, sendPasswordResetCodeEmail } = require('../services/email/sendEmail');
 const logger = require('../utils/logger');
 
 // Code à 8 chiffres (demande utilisateur, 2026-10-18) : expire 15 min après l'envoi, 5 essais
@@ -135,6 +137,7 @@ function toPublicUser(user, { permissions = [], mustChangePassword } = {}) {
     email: user.email,
     role: user.role,
     mustChangePassword: !!(mustChangePassword ?? user.must_change_password),
+    jobTitle: user.job_title ?? null,
     permissions,
     // Cachet/signature personnels (apposés sur les quittances des paiements
     // qu'il encaisse lui-même) — jamais ceux de l'entreprise, gérés à part
@@ -398,6 +401,82 @@ router.post('/resend-verification-code', resendCodeLimiter, async (req, res, nex
       logger.info('Code de vérification renvoyé', { userId: row.id });
     }
     res.json({ message: 'Si un compte en attente existe pour cet email, un nouveau code a été envoyé.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de demandes, réessayez plus tard.' },
+});
+
+/**
+ * Mot de passe oublié — ADMIN (DG) uniquement : code à 8 chiffres envoyé à son e-mail vérifié (15 min, 5 essais).
+ * Réponse toujours identique, que l'e-mail existe ou non. Les employés demandent un nouveau mot de passe temporaire à leur admin.
+ */
+router.post('/forgot-password', forgotPasswordLimiter, async (req, res, next) => {
+  const parsed = forgotPasswordSchema.safeParse(req.body);
+  if (!parsed.success) return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  const { email } = parsed.data;
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, first_name, status FROM users WHERE email = :email AND role = 'dg' AND email_verified_at IS NOT NULL LIMIT 1",
+      { email },
+    );
+    const row = rows[0];
+    if (row && row.status === 'active') {
+      const code = generateEmailVerificationCode();
+      const codeHash = await hashVerificationCode(code);
+      await pool.query(
+        `UPDATE users SET password_reset_code_hash = :codeHash, password_reset_expires_at = DATE_ADD(NOW(), INTERVAL :ttl MINUTE), password_reset_attempts = 0 WHERE id = :id`,
+        { id: row.id, codeHash, ttl: EMAIL_VERIFICATION_TTL_MINUTES },
+      );
+      await sendPasswordResetCodeEmail({ to: email, dgName: row.first_name, code });
+      logger.info('Code de réinitialisation de mot de passe envoyé', { userId: row.id });
+    }
+    res.json({ message: 'Si un compte administrateur existe pour cet e-mail, un code vient d’y être envoyé.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/reset-password', verifyEmailLimiter, async (req, res, next) => {
+  const parsed = resetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  const { email, code, newPassword } = parsed.data;
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, password_reset_code_hash, password_reset_attempts,
+              (password_reset_expires_at IS NULL OR password_reset_expires_at < NOW()) AS is_expired
+       FROM users WHERE email = :email AND role = 'dg' AND email_verified_at IS NOT NULL LIMIT 1`,
+      { email },
+    );
+    const row = rows[0];
+    // La comparaison s'exécute toujours (temporisation constante), même sans demande en cours.
+    const codeOk = await verifyVerificationCode(code, row?.password_reset_code_hash || DUMMY_CODE_HASH);
+    const generic = 'Code invalide ou expiré — demandez-en un nouveau.';
+    if (!row || !row.password_reset_code_hash) throw new ApiError(400, generic);
+    if (row.password_reset_attempts >= EMAIL_VERIFICATION_MAX_ATTEMPTS) throw new ApiError(429, 'Trop de tentatives — demandez un nouveau code.');
+    if (row.is_expired) throw new ApiError(400, generic);
+    if (!codeOk) {
+      await pool.query('UPDATE users SET password_reset_attempts = password_reset_attempts + 1 WHERE id = :id', { id: row.id });
+      throw new ApiError(400, 'Code incorrect.');
+    }
+    const hash = await hashPassword(newPassword);
+    await pool.query(
+      `UPDATE users SET password_hash = :hash, must_change_password = 0,
+         password_reset_code_hash = NULL, password_reset_expires_at = NULL, password_reset_attempts = 0
+       WHERE id = :id`,
+      { hash, id: row.id },
+    );
+    // Toutes les sessions ouvertes sont fermées : un appareil qui connaissait l'ancien mot de passe est déconnecté.
+    await pool.query('UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = :id AND revoked_at IS NULL', { id: row.id });
+    logger.info('Mot de passe admin réinitialisé', { userId: row.id });
+    res.json({ message: 'Mot de passe modifié. Vous pouvez vous connecter.' });
   } catch (err) {
     next(err);
   }

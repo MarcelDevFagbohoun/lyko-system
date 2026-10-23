@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import {
   createEmployee,
+  fetchJobTitles,
   fetchPermissionCatalog,
   type PermissionCatalogEntry,
   type PermissionKey,
@@ -36,6 +37,7 @@ type FormState = {
   phone: string;
   email: string;
   role: EmployeeRole;
+  jobTitle: string;
 };
 
 const INITIAL_FORM: FormState = {
@@ -44,6 +46,7 @@ const INITIAL_FORM: FormState = {
   phone: "",
   email: "",
   role: "agent",
+  jobTitle: "",
 };
 
 const ROLE_LABELS: Record<EmployeeRole, string> = { agent: "Agent", comptable: "Comptable" };
@@ -53,6 +56,7 @@ type CreatedEmployee = {
   identifier: string;
   temporaryPassword: string;
   role: EmployeeRole;
+  jobTitle: string;
   phone: string;
   email: string | null;
 };
@@ -68,6 +72,7 @@ function NouvelEmployeContent() {
   const [submitting, setSubmitting] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<CreatedEmployee | null>(null);
+  const [jobTitles, setJobTitles] = React.useState<string[]>([]);
 
   React.useEffect(() => {
     if (!accessToken) return;
@@ -76,6 +81,13 @@ function NouvelEmployeContent() {
       setDefaults(res.defaultsByRole);
       setPermissions(res.defaultsByRole.agent ?? []);
     });
+  }, [accessToken]);
+
+  React.useEffect(() => {
+    if (!accessToken) return;
+    fetchJobTitles(accessToken)
+      .then((r) => setJobTitles([...r.defaults, ...r.custom]))
+      .catch(() => {});
   }, [accessToken]);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -93,6 +105,7 @@ function NouvelEmployeContent() {
     if (!form.lastName.trim()) e.lastName = "Nom requis";
     if (!form.phone) e.phone = "Numéro requis";
     else if (!normalizeBeninPhone(form.phone)) e.phone = "Numéro béninois invalide (ex. 0161234567)";
+    if (form.jobTitle.trim().length < 2) e.jobTitle = "Poste requis (choisissez dans la liste ou saisissez-en un nouveau)";
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = "Email invalide";
     return e;
   }, [form]);
@@ -101,7 +114,7 @@ function NouvelEmployeContent() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setTouched({ firstName: true, lastName: true, phone: true, email: true });
+    setTouched({ firstName: true, lastName: true, phone: true, email: true, jobTitle: true });
     if (!isValid || !accessToken) return;
 
     setSubmitting(true);
@@ -113,6 +126,7 @@ function NouvelEmployeContent() {
         phone: form.phone.trim(),
         email: form.email.trim() || undefined,
         role: form.role,
+        jobTitle: form.jobTitle.trim(),
         permissions,
       });
       setResult({
@@ -120,6 +134,7 @@ function NouvelEmployeContent() {
         identifier: res.employee.identifier,
         temporaryPassword: res.temporaryPassword,
         role: res.employee.role,
+        jobTitle: res.employee.jobTitle ?? form.jobTitle.trim(),
         phone: res.employee.phone,
         email: res.employee.email,
       });
@@ -149,7 +164,7 @@ function NouvelEmployeContent() {
               <CardTitle>Nouvel employé</CardTitle>
               <CardDescription>
                 Un identifiant de connexion et un mot de passe temporaire sont générés
-                automatiquement. L&apos;employé devra le changer dès sa première connexion.
+                automatiquement. L&apos;employé devra obligatoirement le changer dès sa première connexion.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -221,7 +236,31 @@ function NouvelEmployeContent() {
                   </Field>
                 </div>
 
-                <Field label="Poste" htmlFor="role" required>
+                <Field
+                  label="Poste de l'employé"
+                  htmlFor="jobTitle"
+                  required
+                  hint="Choisissez dans la liste, ou tapez un nouveau poste : il sera proposé la prochaine fois et transmis à l'employé."
+                  error={touched.jobTitle ? errors.jobTitle : undefined}
+                >
+                  <Input
+                    id="jobTitle"
+                    list="job-title-suggestions"
+                    value={form.jobTitle}
+                    maxLength={60}
+                    autoComplete="off"
+                    placeholder="Ex. Secrétaire, Caissier(ère)…"
+                    onChange={(e) => set("jobTitle", e.target.value)}
+                    onBlur={() => setTouched((t) => ({ ...t, jobTitle: true }))}
+                  />
+                  <datalist id="job-title-suggestions">
+                    {jobTitles.map((t) => (
+                      <option key={t} value={t} />
+                    ))}
+                  </datalist>
+                </Field>
+
+                <Field label="Profil d'accès" htmlFor="role" required hint="Détermine les écrans de départ ; ajustez ensuite les accès ci-dessous.">
                   <div className="flex gap-2">
                     {(["agent", "comptable"] as const).map((r) => (
                       <button
@@ -257,19 +296,18 @@ function NouvelEmployeContent() {
   );
 }
 
-function buildCredentialsMessage(employee: CreatedEmployee, roleLabel: string) {
+function buildCredentialsMessage(employee: CreatedEmployee) {
   return [
     `Bonjour ${employee.name},`,
     `Voici vos identifiants Africa Immo Management :`,
     `Identifiant : ${employee.identifier}`,
     `Mot de passe temporaire : ${employee.temporaryPassword}`,
-    `Poste : ${roleLabel}`,
-    `Connectez-vous sur l'onglet « Employé » puis changez votre mot de passe dès la première connexion.`,
+    `Poste : ${employee.jobTitle}`,
+    `Connectez-vous avec le profil « ${employee.role === "agent" ? "Agent" : "Comptable"} » (menu Poste de la page de connexion) puis choisissez immédiatement un nouveau mot de passe : le mot de passe temporaire ne fonctionne que pour la première connexion.`,
   ].join("\n");
 }
 
 function SuccessPanel({ employee }: { employee: CreatedEmployee }) {
-  const { tenant } = useAuth();
   const [copied, setCopied] = React.useState(false);
 
   async function copy() {
@@ -283,7 +321,7 @@ function SuccessPanel({ employee }: { employee: CreatedEmployee }) {
     }
   }
 
-  const message = buildCredentialsMessage(employee, tenant?.roleTitles?.[employee.role] ?? ROLE_LABELS[employee.role]);
+  const message = buildCredentialsMessage(employee);
   const whatsappHref = `https://wa.me/${toE164Benin(employee.phone).replace("+", "")}?text=${encodeURIComponent(message)}`;
   const mailHref = employee.email
     ? `mailto:${employee.email}?subject=${encodeURIComponent("Vos identifiants Africa Immo Management")}&body=${encodeURIComponent(message)}`
@@ -304,6 +342,10 @@ function SuccessPanel({ employee }: { employee: CreatedEmployee }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-border bg-surface-muted px-4 py-3 sm:col-span-2">
+            <p className="font-label-sm uppercase tracking-wider text-ink-muted">Poste</p>
+            <span className="font-label-md text-ink">{employee.jobTitle}</span>
+          </div>
           <div className="rounded-lg border border-border bg-surface-muted px-4 py-3">
             <p className="font-label-sm uppercase tracking-wider text-ink-muted">Identifiant</p>
             <code className="font-currency-table text-headline-sm tracking-wide text-ink">

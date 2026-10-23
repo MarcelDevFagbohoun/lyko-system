@@ -149,6 +149,21 @@ const resendVerificationCodeSchema = z.object({
   email: registrationEmailSchema,
 });
 
+// Mot de passe oublié (admin) : demande d'un code par e-mail, puis nouveau mot de passe avec ce code.
+const forgotPasswordSchema = z.object({ email: registrationEmailSchema });
+
+const resetPasswordSchema = z
+  .object({
+    email: registrationEmailSchema,
+    code: z.string().trim().regex(/^\d{8}$/, 'Code invalide (8 chiffres)'),
+    newPassword: passwordSchema,
+    confirmNewPassword: z.string(),
+  })
+  .refine((d) => d.newPassword === d.confirmNewPassword, {
+    message: 'Les mots de passe ne correspondent pas',
+    path: ['confirmNewPassword'],
+  });
+
 // Connexion « porte employé » : identifiant généré à la création + poste
 // (doit correspondre au rôle réel du compte) + mot de passe.
 const employeeLoginSchema = z.object({
@@ -181,6 +196,8 @@ module.exports = {
   changePasswordSchema,
   verifyEmailSchema,
   resendVerificationCodeSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
   normalizeBeninPhone,
   normalizeRegistrationPhone,
   RCCM_RE,

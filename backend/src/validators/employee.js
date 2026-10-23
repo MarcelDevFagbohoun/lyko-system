@@ -28,7 +28,17 @@ const employeeRoleSchema = z.enum(['comptable', 'agent'], {
   errorMap: () => ({ message: "Rôle invalide (comptable ou agent)" }),
 });
 
+// Poste obligatoire à la création (ex. « Secrétaire ») : choisi dans les suggestions ou saisi librement.
+const jobTitleSchema = z
+  .string({ required_error: 'Le poste est obligatoire' })
+  .trim()
+  .min(2, 'Le poste est obligatoire (2 caractères minimum)')
+  .max(60, 'Poste trop long (60 caractères maximum)')
+  .regex(/^[^\u0000-\u001f<>]+$/, 'Caractères non autorisés dans le poste')
+  .transform((v) => v.replace(/\s+/g, ' '));
+
 const createEmployeeSchema = z.object({
+  jobTitle: jobTitleSchema,
   firstName: nameSchema,
   lastName: nameSchema,
   // Numéro de contact (WhatsApp) : sert à transmettre les identifiants, plus à se connecter.
@@ -43,6 +53,7 @@ const createEmployeeSchema = z.object({
 // l'email) ou une adresse (la remplacer). Même logique pour `permissions`
 // (undefined = ne pas toucher, [] envoyé explicitement = tout retirer).
 const updateEmployeeSchema = z.object({
+  jobTitle: jobTitleSchema.optional(),
   firstName: nameSchema.optional(),
   lastName: nameSchema.optional(),
   email: emailSchema.optional(),

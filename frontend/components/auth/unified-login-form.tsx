@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
 import { apiFetch, ApiError } from "@/lib/api/client";
@@ -118,7 +119,7 @@ export function UnifiedLoginForm() {
           label="Identifiant"
           htmlFor="identifier"
           required
-          hint="Transmis par votre direction générale, ex. 7F3K-9QXM"
+          hint="Transmis par votre direction générale, ex. 7F3K-9QXM-2PTD"
         >
           <Input
             id="identifier"
@@ -143,6 +144,15 @@ export function UnifiedLoginForm() {
       <Button type="submit" size="lg" disabled={submitting}>
         {submitting ? "Connexion…" : "Se connecter"}
       </Button>
+      {role === "dg" ? (
+        <Link href="/mot-de-passe-oublie" className="text-center text-body-sm font-label-md text-primary hover:underline">
+          Mot de passe oublié ?
+        </Link>
+      ) : (
+        <p className="text-center text-body-sm text-ink-muted">
+          Mot de passe oublié ? Demandez à votre administrateur de vous en attribuer un nouveau.
+        </p>
+      )}
     </form>
   );
 }

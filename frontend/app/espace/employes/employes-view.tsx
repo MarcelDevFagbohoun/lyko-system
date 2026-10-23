@@ -114,7 +114,7 @@ function EmployesContent() {
                     <code className="tabular font-currency-table text-ink">{emp.identifier}</code>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="neutral">{tenant?.roleTitles?.[emp.role] ?? ROLE_LABELS[emp.role] ?? emp.role}</Badge>
+                    <Badge variant="neutral">{emp.jobTitle || (tenant?.roleTitles?.[emp.role] ?? ROLE_LABELS[emp.role] ?? emp.role)}</Badge>
                     {emp.role === "agent" && (
                       <div className="mt-1 text-body-xs text-ink-muted">
                         {emp.managedPropertiesCount > 0

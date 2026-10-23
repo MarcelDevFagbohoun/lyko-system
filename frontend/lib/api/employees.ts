@@ -22,6 +22,7 @@ export type Employee = {
   identifier: string;
   email: string | null;
   role: EmployeeRole;
+  jobTitle: string | null;
   status: "active" | "disabled";
   mustChangePassword: boolean;
   permissions: PermissionKey[];
@@ -82,8 +83,15 @@ export type CreateEmployeeInput = {
   phone: string;
   email?: string;
   role: EmployeeRole;
+  jobTitle: string;
   permissions: PermissionKey[];
 };
+
+export type JobTitleSuggestions = { defaults: string[]; custom: string[] };
+
+export function fetchJobTitles(accessToken: string) {
+  return apiFetch<JobTitleSuggestions>("/api/employees/job-titles", { accessToken });
+}
 
 export function createEmployee(accessToken: string, input: CreateEmployeeInput) {
   // Identifiant et mot de passe temporaire toujours générés par le serveur.
@@ -100,6 +108,7 @@ export type UpdateEmployeeInput = Partial<{
   lastName: string;
   email: string | null;
   role: EmployeeRole;
+  jobTitle: string;
   status: "active" | "disabled";
   permissions: PermissionKey[];
 }>;

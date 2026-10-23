@@ -48,6 +48,7 @@ function EditerEmployeContent() {
   const [loadError, setLoadError] = React.useState<string | null>(null);
 
   const [firstName, setFirstName] = React.useState("");
+  const [jobTitle, setJobTitle] = React.useState("");
   const [lastName, setLastName] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [role, setRole] = React.useState<EmployeeRole>("agent");
@@ -67,6 +68,7 @@ function EditerEmployeContent() {
         const emp = empRes.employee;
         setEmployee(emp);
         setFirstName(emp.firstName);
+        setJobTitle(emp.jobTitle ?? "");
         setLastName(emp.lastName);
         setEmail(emp.email ?? "");
         setRole(emp.role);
@@ -90,6 +92,7 @@ function EditerEmployeContent() {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         email: email.trim() ? email.trim() : null,
+        ...(jobTitle.trim().length >= 2 ? { jobTitle: jobTitle.trim() } : {}),
         role,
         status,
         permissions,
@@ -175,6 +178,10 @@ function EditerEmployeContent() {
                   <Input id="lastName" value={lastName} onChange={(e) => setLastName(e.target.value)} />
                 </Field>
               </div>
+
+              <Field label="Poste" htmlFor="jobTitle" hint="Intitulé affiché à l'employé (ex. Secrétaire).">
+                <Input id="jobTitle" value={jobTitle} maxLength={60} onChange={(e) => setJobTitle(e.target.value)} />
+              </Field>
 
               <Field label="Email (optionnel)" htmlFor="email">
                 <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />

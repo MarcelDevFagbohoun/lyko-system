@@ -122,6 +122,18 @@ async function sendVerificationCodeEmail({ to, dgName, companyName, code }) {
   return sendViaResend({ to, subject: `${code} — Code de vérification Africa Immo Management`, html });
 }
 
+async function sendPasswordResetCodeEmail({ to, dgName, code }) {
+  const html = wrapHtml(`
+    <h1 style="margin:0 0 8px;font-size:24px;line-height:1.3;">Réinitialisation de votre mot de passe</h1>
+    <p style="margin:0 0 24px;color:${MUTED};">Bonjour ${escapeHtml(dgName)}, voici le code à saisir pour choisir un nouveau mot de passe.</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;"><tr><td style="background:#F1F5F9;border-radius:8px;padding:18px;text-align:center;">
+      <span style="font-family:'Courier New',monospace;font-size:34px;font-weight:700;letter-spacing:0.15em;color:${PRIMARY};">${code}</span>
+    </td></tr></table>
+    <p style="margin:0;font-size:13px;color:${MUTED};">Ce code expire dans 15 minutes. Si vous n'êtes pas à l'origine de cette demande, ignorez ce message : votre mot de passe actuel reste inchangé.</p>
+  `, { preheader: `Votre code de réinitialisation : ${code}` });
+  return sendViaResend({ to, subject: `${code} — Réinitialisation de votre mot de passe`, html });
+}
+
 function platformExplanationHtml() {
   return `
     <ul style="margin:0 0 20px;padding-left:18px;font-size:14px;color:${INK};line-height:1.7;">
@@ -258,4 +270,4 @@ async function sendBillingEmail({ to, subject, heading, paragraphs, linkUrl = nu
   return sendViaResend({ to, subject: safeHeader(subject), html });
 }
 
-module.exports = { sendBillingEmail, sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendSubscriptionActivatedEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };
+module.exports = { sendBillingEmail, sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendPasswordResetCodeEmail, sendSubscriptionActivatedEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };

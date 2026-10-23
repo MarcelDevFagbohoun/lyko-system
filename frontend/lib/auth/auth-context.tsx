@@ -12,6 +12,8 @@ export type AuthUser = {
   email: string | null;
   role: "dg" | "comptable" | "agent";
   mustChangePassword: boolean;
+  // Intitulé de poste choisi par l'admin à la création du compte (ex. « Secrétaire »).
+  jobTitle?: string | null;
   permissions: string[];
   // Cachet/signature personnels (apposés sur les quittances des paiements
   // que cet employé encaisse lui-même) — voir /espace/mon-compte.
