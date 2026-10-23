@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AlertTriangle, Clock } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { fetchSubscription, INACTIVE_EVENT, type Subscription } from "@/lib/api/billing";
@@ -17,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/card";
 export function SubscriptionGate({ children }: { children: React.ReactNode }) {
   const { user, accessToken, status } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
   const [sub, setSub] = React.useState<Subscription | null>(null);
   const [blockedByServer, setBlockedByServer] = React.useState(false);
   const isDg = user?.role === "dg";
@@ -33,6 +34,12 @@ export function SubscriptionGate({ children }: { children: React.ReactNode }) {
   }, []);
 
   const onBillingPage = pathname.startsWith("/espace/abonnement");
+  // Nouvelle entreprise qui n'a encore jamais payé : on l'amène directement au choix de l'offre.
+  const needsFirstPlan = !!isDg && sub?.enforced === true && sub.status === "pending_payment";
+  React.useEffect(() => {
+    if (needsFirstPlan && !onBillingPage) router.replace("/espace/abonnement");
+  }, [needsFirstPlan, onBillingPage, router]);
+  if (needsFirstPlan && !onBillingPage) return null;
   const inactive = (sub?.enforced && !sub.active) || blockedByServer;
 
   if (status === "authenticated" && inactive && !onBillingPage) {

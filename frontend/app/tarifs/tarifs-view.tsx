@@ -1,14 +1,29 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth/auth-context";
+import { PENDING_OFFER_KEY } from "@/lib/api/billing";
 import { fetchCatalog, type Catalog } from "@/lib/api/billing";
 import { PlanCards } from "@/components/billing/plan-cards";
-import { buttonVariants } from "@/components/ui/button";
 
 export function TarifsView() {
   const [catalog, setCatalog] = React.useState<Catalog | null>(null);
   const [error, setError] = React.useState(false);
+  const router = useRouter();
+  const { status } = useAuth();
+
+  // Un visiteur choisit son offre ici, crée son compte, puis la retrouve pré-sélectionnée après sa connexion.
+  function choose(plan: string, months: number) {
+    if (status === "authenticated") {
+      router.push("/espace/abonnement");
+      return;
+    }
+    try {
+      localStorage.setItem(PENDING_OFFER_KEY, JSON.stringify({ plan, months }));
+    } catch {}
+    router.push("/inscription");
+  }
 
   React.useEffect(() => {
     fetchCatalog().then(setCatalog).catch(() => setError(true));
@@ -27,15 +42,11 @@ export function TarifsView() {
         <>
           <PlanCards
             catalog={catalog}
-            footer={() => (
-              <Link href="/inscription" className={buttonVariants({ variant: "primary" })}>
-                Créer mon compte
-              </Link>
-            )}
+            onChoose={(plan, months) => choose(plan, months)}
           />
           <p className="text-center text-body-sm text-ink-muted">
             Satisfait ou remboursé : demandez le remboursement de votre premier abonnement dans les {catalog.refundWindowDays} jours.
-            Les frais du prestataire de paiement sont déduits du montant remboursé. Vous choisissez et payez votre offre juste après avoir créé votre compte.
+            Les frais du prestataire de paiement sont déduits du montant remboursé. Vous créez votre compte, confirmez votre e-mail, puis payez l&apos;offre choisie.
           </p>
         </>
       )}

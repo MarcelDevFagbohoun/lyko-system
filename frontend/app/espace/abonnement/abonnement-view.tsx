@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
   fetchCatalog, fetchSubscription, fetchQuote, startCheckout, listSubscriptionPayments, invoicePdfPath,
-  requestRefund, listMyRefunds, offerLabel,
+  requestRefund, listMyRefunds, offerLabel, PENDING_OFFER_KEY,
   type Catalog, type PlanKey, type Quote, type Refund, type Subscription, type SubscriptionPayment,
 } from "@/lib/api/billing";
 import { RequireAuth } from "@/components/auth/require-auth";
@@ -68,6 +68,19 @@ function AbonnementContent() {
     }
   }
 
+  // Offre pré-choisie sur la page Tarifs : on ouvre directement le récapitulatif de paiement (une seule fois).
+  const preselected = React.useRef(false);
+  React.useEffect(() => {
+    if (preselected.current || !sub || sub.status !== "pending_payment") return;
+    preselected.current = true;
+    try {
+      const raw = localStorage.getItem(PENDING_OFFER_KEY);
+      localStorage.removeItem(PENDING_OFFER_KEY);
+      const o = raw ? (JSON.parse(raw) as { plan: PlanKey; months: number }) : null;
+      if (o && typeof o.months === "number") void choose(o.plan, o.months);
+    } catch {}
+  }, [sub]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function pay() {
     if (!accessToken || !quote) return;
     setBusy("pay");
@@ -102,8 +115,14 @@ function AbonnementContent() {
     <div className="min-h-screen bg-canvas">
       <div className="content-shell flex flex-col gap-6 py-10">
         <div>
-          <h1 className="font-display text-headline-lg text-ink">Abonnement</h1>
-          <p className="text-body-md text-ink-soft">Votre offre, vos factures et la garantie de remboursement.</p>
+          <h1 className="font-display text-headline-lg text-ink">
+            {sub?.status === "pending_payment" ? "Bienvenue ! Choisissez votre offre" : "Abonnement"}
+          </h1>
+          <p className="text-body-md text-ink-soft">
+            {sub?.status === "pending_payment"
+              ? "Votre e-mail est confirmé. Choisissez une offre et réglez-la pour ouvrir votre espace ; un e-mail de confirmation vous sera envoyé."
+              : "Votre offre, vos factures et la garantie de remboursement."}
+          </p>
         </div>
 
         {sub && (

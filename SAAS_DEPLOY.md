@@ -103,3 +103,9 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 
 - Migration `116_remove_kkiapay.sql` **à appliquer au déploiement** : les anciens paiements « kkiapay » deviennent « mobile_money », la colonne `kkiapay_transaction_id` devient `online_transaction_id`, les clés KKiaPay des entreprises sont supprimées.
 - Paramètres généraux (accessibles sans comptabilité avancée) : % de charges SONEB/SBEE répercuté, moment de comptabilisation de la commission, seuil d'alerte de dépense. Ces réglages sont pris en compte en comptabilité simple. La retenue IRF et la proratisation de l'amortissement restent en Comptabilité avancée.
+
+## Lot 9 — parcours d'abonnement d'un nouvel inscrit
+
+- Inscription → code e-mail → connexion : tant que l'entreprise n'a jamais payé, le directeur est redirigé vers la page « Choisissez votre offre » (aucun accès à l'espace avant le premier paiement).
+- Menu Tarifs : le bouton d'une offre mémorise le choix, mène à l'inscription, et après connexion l'offre est ouverte directement sur le récapitulatif de paiement.
+- Après paiement confirmé (renvoi FedaPay ou webhook), e-mail au directeur : offre, durée, montant, date d'échéance, avantages et limites. Aucune migration.

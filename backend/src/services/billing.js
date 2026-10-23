@@ -154,6 +154,7 @@ async function activatePayment(paymentId) {
     );
     await logEvent(conn, p.tenant_id, extend ? 'renewed' : 'activated', 'fedapay', { plan: p.plan_key, months: p.months, amount: p.amount, founder: !!p.founder_price, invoice });
     await conn.commit();
+    notifyActivation(p, after.current_period_end, extend).catch((e) => logger.warn('Abonnement : email de confirmation non envoyé', { id: p.id, message: e.message }));
     return true;
   } catch (err) {
     await conn.rollback().catch(() => {});
@@ -161,6 +162,27 @@ async function activatePayment(paymentId) {
   } finally {
     conn.release();
   }
+}
+
+/** Email de confirmation d'abonnement au DG qui a payé. Un échec d'envoi n'annule jamais l'activation. */
+async function notifyActivation(p, endDate, renewal) {
+  const [[u]] = await pool.query(
+    `SELECT u.first_name, u.email, t.company_name FROM tenants t
+     LEFT JOIN users u ON u.id = :uid AND u.tenant_id = t.id WHERE t.id = :t`,
+    { uid: p.created_by, t: p.tenant_id },
+  );
+  if (!u?.email) return;
+  const plan = await getPlanAsync(p.plan_key);
+  await require('./email/sendEmail').sendSubscriptionActivatedEmail({
+    to: u.email,
+    dgName: u.first_name,
+    companyName: u.company_name,
+    plan,
+    months: p.months,
+    amount: p.amount,
+    endDate: new Date(endDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }),
+    renewal,
+  });
 }
 
 async function confirmRow(payment) {

@@ -109,6 +109,48 @@ async function sendWelcomeEmail({ to, dgName, companyName }) {
   return sendViaResend({ to, subject: 'Bienvenue sur Africa Immo Management', html });
 }
 
+const FEATURE_LABELS = {
+  core: 'Biens, propriétaires, locataires, baux, loyers, quittances, charges, comptabilité simple',
+  tenant_collect: 'Paiement des loyers par les locataires (FedaPay)',
+  payroll: 'Fiches de paie et salaires',
+  payouts: 'Paiements sortants (salaires, reversements)',
+  owner_portal: 'Portail et relevés propriétaires',
+  sale_properties: 'Biens à vendre',
+  advanced_accounting: 'Comptabilité avancée SYSCOHADA',
+  audit_full: "Journal d'audit complet et support prioritaire",
+};
+
+/**
+ * Confirmation d'abonnement (premier achat ou renouvellement) : offre, durée, échéance, avantages et limites.
+ * `plan` vient du catalogue serveur (jamais du client) ; tout texte variable est échappé.
+ */
+async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, months, amount, endDate, renewal }) {
+  const limit = (v) => (v == null ? 'illimité' : String(v));
+  const features = Object.keys(FEATURE_LABELS).filter((k) => plan.features.includes(k));
+  const html = wrapHtml(`
+    <h1 style="margin:0 0 12px;font-size:20px;">${renewal ? 'Abonnement renouvelé' : 'Votre abonnement est actif'}</h1>
+    <p style="margin:0 0 16px;font-size:14px;color:${MUTED};">
+      Bonjour ${escapeHtml(dgName)}, merci pour votre confiance. L'offre <strong>${escapeHtml(plan.label)}</strong> de « ${escapeHtml(companyName)} » est ${renewal ? 'prolongée' : 'activée'}.
+    </p>
+    <table role="presentation" width="100%" style="margin:0 0 16px;font-size:14px;border-collapse:collapse;">
+      <tr><td style="padding:6px 0;color:${MUTED};">Offre</td><td style="padding:6px 0;text-align:right;">${escapeHtml(plan.label)} — ${Number(months)} mois</td></tr>
+      <tr><td style="padding:6px 0;color:${MUTED};">Montant payé</td><td style="padding:6px 0;text-align:right;font-weight:bold;">${escapeHtml(formatAmount(amount))}</td></tr>
+      <tr><td style="padding:6px 0;color:${MUTED};">Valable jusqu'au</td><td style="padding:6px 0;text-align:right;">${escapeHtml(endDate)}</td></tr>
+    </table>
+    <p style="margin:0 0 8px;font-size:14px;font-weight:bold;">Ce que votre offre inclut</p>
+    <ul style="margin:0 0 16px;padding-left:18px;font-size:14px;color:${INK};line-height:1.7;">
+      <li><strong>${escapeHtml(limit(plan.limits.units))}</strong> unités · <strong>${escapeHtml(limit(plan.limits.owners))}</strong> propriétaires · <strong>${escapeHtml(limit(plan.limits.users))}</strong> utilisateurs</li>
+      ${features.map((k) => `<li>${escapeHtml(FEATURE_LABELS[k])}</li>`).join('')}
+    </ul>
+    <p style="margin:0 0 16px;font-size:13px;color:${MUTED};">Votre facture est disponible dans la page Abonnement de votre espace. Aucun prélèvement automatique : vous renouvelez quand vous le décidez.</p>
+    <p style="margin:0 0 20px;font-size:14px;">Nous vous souhaitons un très bon usage d'Africa Immo Management !</p>
+    <a href="${config.frontendUrl}/espace" style="display:inline-block;padding:10px 20px;background:${PRIMARY};color:#FFFFFF;text-decoration:none;border-radius:6px;font-size:14px;">
+      Ouvrir mon espace
+    </a>
+  `);
+  return sendViaResend({ to, subject: renewal ? 'Votre abonnement a été renouvelé' : 'Votre abonnement Africa Immo Management est actif', html });
+}
+
 const PURPOSE_LABELS = {
   salaire: 'Salaire',
   reversement_proprietaire: 'Reversement de loyers',
@@ -168,4 +210,4 @@ async function sendBillingEmail({ to, subject, heading, paragraphs, linkUrl = nu
   return sendViaResend({ to, subject: safeHeader(subject), html });
 }
 
-module.exports = { sendBillingEmail, sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };
+module.exports = { sendBillingEmail, sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendSubscriptionActivatedEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };

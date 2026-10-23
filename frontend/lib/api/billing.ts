@@ -100,3 +100,6 @@ export function limitLabel(v: number | null) {
 export function offerLabel(months: number) {
   return months === 12 ? "1 an" : `${months} mois`;
 }
+
+/** Offre choisie sur la page Tarifs avant inscription (conservée jusqu'au premier paiement). */
+export const PENDING_OFFER_KEY = "aim_pending_offer";
