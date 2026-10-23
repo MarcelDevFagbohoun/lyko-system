@@ -44,6 +44,8 @@ const phoneSchema = z.string().transform((val, ctx) => {
  * mauvais numéro (message générique, aucune fuite d'information).
  */
 const loginPhoneSchema = z.string().transform((val) => {
+  // Connexion par e-mail ou par numéro : une saisie contenant « @ » est un e-mail (mis en minuscules).
+  if (typeof val === 'string' && val.includes('@')) return val.trim().toLowerCase();
   const beninLocal = normalizeBeninPhone(val);
   if (beninLocal) return beninLocal;
   return typeof val === 'string' ? val.replace(/[\s.-]/g, '') : val;

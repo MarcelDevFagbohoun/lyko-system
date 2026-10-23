@@ -104,13 +104,12 @@ export function UnifiedLoginForm() {
       </Field>
 
       {role === "dg" ? (
-        <Field label="Numéro de téléphone" htmlFor="phone" required>
+        <Field label="Téléphone ou e-mail" htmlFor="phone" required hint="Au choix : le numéro ou l’adresse e-mail de l’inscription">
           <Input
             id="phone"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            inputMode="tel"
-            autoComplete="tel"
+            autoComplete="username"
             autoFocus
           />
         </Field>

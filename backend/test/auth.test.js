@@ -265,6 +265,21 @@ test('POST /verify-email — code incorrect refusé, compteur incrémenté ; cod
     body: JSON.stringify({ phone: phoneRow.phone, password: 'Abcdef12!@' }),
   });
   assert.equal(login.status, 200);
+
+  // Connexion par e-mail (casse ignorée), mot de passe faux refusé.
+  const byEmail = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: ` ${email.toUpperCase()} `, password: 'Abcdef12!@' }),
+  });
+  assert.equal(byEmail.status, 200);
+  assert.equal((await byEmail.json()).user.email, email);
+  const badPwd = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: email, password: 'Mauvais12!@' }),
+  });
+  assert.equal(badPwd.status, 401);
 });
 
 test('POST /verify-email — refuse un code expiré, et bloque après 5 tentatives', async () => {

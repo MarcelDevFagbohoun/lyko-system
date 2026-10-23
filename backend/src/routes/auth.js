@@ -488,7 +488,8 @@ router.post('/login', loginLimiter, async (req, res, next) => {
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
-  const { phone, password } = parsed.data;
+  const { phone, password } = parsed.data; // `phone` peut être un numéro OU un e-mail
+  const byEmail = phone.includes('@');
   const throttleKey = `phone:${phone}`;
 
   try {
@@ -499,7 +500,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
               t.dg_title, t.comptable_title, t.agent_title, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
               t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
-       WHERE u.phone = :phone LIMIT 1`,
+       WHERE ${byEmail ? "u.email = :phone AND u.role = 'dg'" : 'u.phone = :phone'} LIMIT 1`,
       { phone },
     );
     const row = rows[0];
@@ -510,7 +511,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     const passwordOk = await verifyPassword(password, row ? row.password_hash : DUMMY_PASSWORD_HASH);
     if (!row || !passwordOk) {
       recordFailure(throttleKey);
-      throw new ApiError(401, 'Numéro ou mot de passe incorrect');
+      throw new ApiError(401, 'Identifiants incorrects (numéro, e-mail ou mot de passe).');
     }
     if (row.role !== 'dg') {
       throw new ApiError(401, 'Ce compte se connecte depuis « Connexion employé ».');
@@ -618,8 +619,8 @@ router.get('/role-titles', roleTitlesLimiter, async (req, res, next) => {
       const [rows] = await pool.query(
         `SELECT t.dg_title, t.comptable_title, t.agent_title
          FROM users u JOIN tenants t ON t.id = u.tenant_id
-         WHERE u.phone = :phone LIMIT 1`,
-        { phone },
+         WHERE ${phone.includes('@') ? "u.email = :phone AND u.role = 'dg'" : 'u.phone = :phone'} LIMIT 1`,
+        { phone: phone.includes('@') ? phone.toLowerCase() : phone },
       );
       tenant = rows[0] || null;
     }
