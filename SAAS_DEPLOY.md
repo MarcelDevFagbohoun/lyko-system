@@ -77,3 +77,9 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 
 - Migrations à appliquer : `111_owner_deposit_transfers.sql` (reversement des cautions), `112_entity_notes.sql` (notes datées ; reprend les anciennes notes locataire/propriétaire comme première bulle).
 - Comptabilité avancée : nouveau compte 4673 et deux règles (`caution_reversee_proprietaire`, `caution_recuperee_proprietaire`) créés automatiquement au premier reversement.
+
+## Lot 5 — états des lieux : point de sortie complet, signatures à la main
+
+- Migration `113_move_out_statement.sql` (lignes libres, loyers dus bruts, solde négatif et sa résolution).
+- Les états des lieux d'entrée et de sortie n'ont plus de signature numérique : le PDF comporte deux cadres vides (locataire / cabinet) à signer après impression. Les anciens PV déjà signés gardent leurs signatures. Le contrat de bail reste signé numériquement.
+- Sortie : loyers impayés repris automatiquement ; si les dettes dépassent la caution, le locataire doit régler la différence ou effectuer les réparations avant la finalisation (le règlement encaissé reste à régulariser manuellement en comptabilité, comme les retenues).

@@ -67,7 +67,16 @@ const updateInspectionDraftSchema = z.object({
 
 // Sortie : mêmes champs que l'entrée + les retenues libres (arriérés,
 // factures...), distinctes de la grille de dégradations par élément.
+// Lignes libres du point de sortie : main-d'œuvre, pénalité, autre retenue, ou réparation effectuée par le
+// locataire lui-même (`realisee_locataire` : tracée sur le PV mais sans coût retenu).
+const extraLineSchema = z.object({
+  kind: z.enum(['main_oeuvre', 'penalite', 'autre', 'realisee_locataire']),
+  label: z.string().trim().min(2, 'Libellé requis').max(120),
+  amount: amountSchema,
+});
+
 const updateMoveOutDraftSchema = updateInspectionDraftSchema.extend({
+  extraLines: z.array(extraLineSchema).max(40).optional(),
   otherDeductionsAmount: amountSchema.default(0),
   otherDeductionsNote: optionalText(255),
   // Caution peinture (étape 43) — même principe que les autres retenues ci-dessus, mais plafonnée

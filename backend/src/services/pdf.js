@@ -805,7 +805,6 @@ const ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS = {
 };
 
 const CONDITION_BG = { BE: '#ECFDF5', ME: '#FEF2F2', SR: '#FFFBEB' };
-const ZEBRA = '#F8FAFC';
 const CONTENT_LEFT = 50;
 const CONTENT_WIDTH = 495;
 
@@ -890,15 +889,16 @@ function drawInspectionZones(doc, zones, y, { moveInConditionByKey = null, showB
       .fillColor(INK_SOFT)
       .text(`${zone.items.length} élément${zone.items.length > 1 ? 's' : ''} · ${good} en bon état`, CONTENT_LEFT + 300, yy + 8.5, { width: 185, align: 'right', lineBreak: false });
     yy += 24;
+    // En-tête de colonnes : bandeau bleu plein, texte blanc (même design que le tableau des impayés).
+    doc.rect(CONTENT_LEFT, yy, CONTENT_WIDTH, 20).fill(PRIMARY);
     for (const c of cols) {
       doc
         .font(FONT_SANS_BOLD)
-        .fontSize(7)
-        .fillColor(MUTED)
-        .text(c.title.toUpperCase(), c.x + PAD, yy + 7, { width: c.w - PAD * 2, align: c.key === 'amount' ? 'right' : 'left', characterSpacing: 0.4, lineBreak: false });
+        .fontSize(8.5)
+        .fillColor('#FFFFFF')
+        .text(c.title, c.x + PAD, yy + 6, { width: c.w - PAD * 2, align: c.key === 'amount' ? 'right' : 'left', lineBreak: false });
     }
     yy += 20;
-    doc.moveTo(CONTENT_LEFT, yy).lineTo(CONTENT_LEFT + CONTENT_WIDTH, yy).strokeColor(BORDER_STRONG).lineWidth(0.75).stroke();
     return yy;
   }
 
@@ -929,7 +929,6 @@ function drawInspectionZones(doc, zones, y, { moveInConditionByKey = null, showB
         y = drawZoneHeader(zone, doc.page.margins.top, true);
       }
 
-      if (idx % 2 === 1) doc.rect(CONTENT_LEFT, y, CONTENT_WIDTH, rowH).fill(ZEBRA);
       const top = y + PAD;
       doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(item.label, col.label.x + PAD, top, { width: col.label.w - PAD * 2 });
 
@@ -977,8 +976,10 @@ function drawInspectionZones(doc, zones, y, { moveInConditionByKey = null, showB
           .text(item.deduction > 0 ? `-${formatAmountPlain(item.deduction)}` : '—', col.amount.x, top, { width: col.amount.w - PAD, align: 'right', lineBreak: false });
       }
 
+      // Lignes blanches encadrées de fins filets, séparateurs verticaux entre colonnes.
+      doc.rect(CONTENT_LEFT, y, CONTENT_WIDTH, rowH).lineWidth(0.5).strokeColor(BORDER_STRONG).stroke();
+      for (const c of cols.slice(1)) doc.moveTo(c.x, y).lineTo(c.x, y + rowH).lineWidth(0.5).strokeColor(BORDER_STRONG).stroke();
       y += rowH;
-      doc.moveTo(CONTENT_LEFT, y).lineTo(CONTENT_LEFT + CONTENT_WIDTH, y).strokeColor(BORDER).lineWidth(0.5).stroke();
     });
     y += 16;
   }
@@ -1012,6 +1013,87 @@ function drawTenantReserves(doc, reserves, y) {
   doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(WARNING_FG).text('RÉSERVES DU LOCATAIRE', 65, y + 12);
   doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(text, 65, y + 26, { width: 465 });
   return y + boxHeight + 15;
+}
+
+/**
+ * Tableau « façon relevé » : en-tête plein bleu à texte blanc, lignes blanches séparées par de fins
+ * filets, montants alignés à droite. `columns` : [{ title, w, align }], `rows` : tableaux de textes ;
+ * `row.style` ('danger' | 'success' | 'muted') colore le montant. Une ligne n'est jamais coupée.
+ */
+function drawStyledTable(doc, y, columns, rows, { totalRow = null } = {}) {
+  const PADX = 7;
+  const xs = [];
+  columns.reduce((x, c) => { xs.push(x); return x + c.w; }, CONTENT_LEFT);
+  const drawHead = (yy) => {
+    doc.rect(CONTENT_LEFT, yy, CONTENT_WIDTH, 20).fill(PRIMARY);
+    columns.forEach((c, i) => {
+      doc.font(FONT_SANS_BOLD).fontSize(8.5).fillColor('#FFFFFF').text(c.title, xs[i] + PADX, yy + 6, { width: c.w - PADX * 2, align: c.align ?? 'left', lineBreak: false });
+    });
+    return yy + 20;
+  };
+  y = ensureSpace(doc, y, 60);
+  y = drawHead(y);
+  const drawRow = (cells, style, bold) => {
+    doc.font(bold ? FONT_SANS_BOLD : FONT_SANS).fontSize(9);
+    const h = Math.max(...cells.map((t, i) => doc.heightOfString(String(t ?? ''), { width: columns[i].w - PADX * 2 }))) + 12;
+    if (y + h > doc.page.height - doc.page.margins.bottom) { doc.addPage(); y = drawHead(doc.page.margins.top); }
+    columns.forEach((c, i) => {
+      const last = c.align === 'right';
+      const color = last && style === 'danger' ? DANGER_FG : last && style === 'success' ? SUCCESS_FG : last && style === 'muted' ? MUTED : INK;
+      doc.font(bold || last ? FONT_SANS_BOLD : FONT_SANS).fontSize(9).fillColor(color).text(String(cells[i] ?? ''), xs[i] + PADX, y + 6, { width: c.w - PADX * 2, align: c.align ?? 'left' });
+    });
+    doc.rect(CONTENT_LEFT, y, CONTENT_WIDTH, h).lineWidth(0.5).strokeColor(BORDER_STRONG).stroke();
+    columns.slice(1).forEach((c, i) => doc.moveTo(xs[i + 1], y).lineTo(xs[i + 1], y + h).lineWidth(0.5).strokeColor(BORDER_STRONG).stroke());
+    y += h;
+  };
+  for (const r of rows) drawRow(r.cells, r.style, false);
+  if (totalRow) drawRow(totalRow.cells, totalRow.style, true);
+  return y + 14;
+}
+
+/** « Point de sortie » : décompte complet de la caution, de la caution versée au solde final. */
+function drawExitStatement(doc, report, y) {
+  const num = (v) => Number(v) || 0;
+  const itemsTotal = report.zones.reduce((s, z) => s + z.items.reduce((t, it) => t + (it.deduction || 0), 0), 0);
+  const extra = (report.extraLines ?? []).filter((l) => l.kind !== 'realisee_locataire');
+  const doneByTenant = (report.extraLines ?? []).filter((l) => l.kind === 'realisee_locataire');
+  const KIND = { main_oeuvre: "Main-d'œuvre", penalite: 'Pénalité', autre: 'Autre retenue' };
+  const rentOwed = num(report.rentOwedAmount) || num(report.rentArrearsAmount);
+  const knownExtra = extra.reduce((s, l) => s + l.amount, 0);
+  const peintureOverflow = Math.max(0, num(report.totalDeductions) - itemsTotal - num(report.otherDeductionsAmount) - num(report.rentArrearsAmount));
+  const legacyOther = extra.length === 0 ? num(report.otherDeductionsAmount) : 0;
+  const gross = itemsTotal + knownExtra + legacyOther + peintureOverflow + rentOwed;
+  const solde = num(report.depositAmount) - gross;
+
+  y = ensureSpace(doc, y, 120);
+  y = D.drawSection(doc, y, 'Point de sortie — décompte de la caution');
+  const rows = [{ cells: ['Caution de loyer versée à l’entrée', 'Montant détenu', formatFcfa(report.depositAmount)], style: 'success' }];
+  if (itemsTotal > 0) rows.push({ cells: ['Dégradations constatées', 'Voir le détail pièce par pièce ci-dessus', `- ${formatFcfa(itemsTotal)}`], style: 'danger' });
+  for (const l of extra) rows.push({ cells: [KIND[l.kind] ?? 'Retenue', l.label, `- ${formatFcfa(l.amount)}`], style: 'danger' });
+  if (legacyOther > 0) rows.push({ cells: ['Autres retenues', report.otherDeductionsNote ?? '', `- ${formatFcfa(legacyOther)}`], style: 'danger' });
+  if (rentOwed > 0) rows.push({ cells: ['Loyers impayés', 'Déduits automatiquement de la caution', `- ${formatFcfa(rentOwed)}`], style: 'danger' });
+  if (peintureOverflow > 0) rows.push({ cells: ['Dépassement caution peinture', 'Reporté sur la caution de loyer', `- ${formatFcfa(peintureOverflow)}`], style: 'danger' });
+  for (const l of doneByTenant) rows.push({ cells: ['Réparation effectuée par le locataire', l.label, '0'], style: 'muted' });
+  rows.push({ cells: ['Total des retenues', '', `- ${formatFcfa(gross)}`], style: 'danger' });
+  y = drawStyledTable(doc, y, [
+    { title: 'Désignation', w: 170 },
+    { title: 'Détail', w: 225 },
+    { title: 'Montant (FCFA)', w: 100, align: 'right' },
+  ], rows, {
+    totalRow: solde >= 0
+      ? { cells: ['Solde à restituer au locataire', report.refundPaymentMethod ? `Réglé par ${ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS[report.refundPaymentMethod] ?? report.refundPaymentMethod}` : '', formatFcfa(solde)], style: 'success' }
+      : { cells: ['Reste dû par le locataire', 'Les retenues dépassent la caution', formatFcfa(-solde)], style: 'danger' },
+  });
+  if (solde < 0) {
+    const res = report.balanceResolution === 'paid'
+      ? `Le locataire règle la différence de ${formatFcfa(-solde)}${report.balancePaymentMethod ? ` (${ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS[report.balancePaymentMethod] ?? report.balancePaymentMethod})` : ''}.`
+      : report.balanceResolution === 'repairs_by_tenant'
+        ? `Le locataire s’engage à effectuer lui-même les réparations correspondantes (équivalent de ${formatFcfa(-solde)}).`
+        : `Le locataire doit compléter ${formatFcfa(-solde)} ou effectuer les réparations avant la remise des clés.`;
+    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(DANGER_FG).text(res + (report.balanceNote ? ` ${report.balanceNote}` : ''), CONTENT_LEFT, y - 6, { width: CONTENT_WIDTH });
+    y = doc.y + 12;
+  }
+  return y;
 }
 
 function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveInZones = [], additionalDeposits = [], verificationCode }) {
@@ -1054,76 +1136,7 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
   y = drawInspectionSummary(doc, report.zones, y);
   y = drawInspectionZones(doc, report.zones, y, { moveInConditionByKey, showBilling: true });
 
-  if (report.rentArrearsAmount > 0) {
-    // Arriérés de loyer réglés par la caution (demande utilisateur, 2026-10-18) — même
-    // présentation que « Autres retenues » ci-dessous, dans son propre encadré dédié : le
-    // locataire doit voir CLAIREMENT pourquoi sa caution est amputée, pas juste un total global.
-    y = ensureSpace(doc, y, 60);
-    doc.font(FONT_SANS_BOLD).fontSize(7).fillColor(MUTED).text('ARRIÉRÉS DE LOYER RÉGLÉS PAR LA CAUTION', CONTENT_LEFT, y, { characterSpacing: 0.4 });
-    y += 13;
-    const arrearsLine = "Loyer en retard, réglé par prélèvement sur la caution";
-    const arrearsH = doc.font(FONT_SANS).fontSize(9).heightOfString(arrearsLine, { width: 360 }) + 16;
-    doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, arrearsH, 4).lineWidth(0.75).strokeColor(BORDER).stroke();
-    doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(arrearsLine, CONTENT_LEFT + 12, y + 8, { width: 360 });
-    doc
-      .font(FONT_MONO_BOLD)
-      .fontSize(9.5)
-      .fillColor(DANGER_FG)
-      .text(`- ${formatFcfa(report.rentArrearsAmount)}`, CONTENT_LEFT + 330, y + 8, { width: CONTENT_WIDTH - 342, align: 'right', lineBreak: false });
-    y += arrearsH + 16;
-  }
-
-  if (report.otherDeductionsAmount > 0) {
-    // Retenues hors grille (arriérés, factures…) : même présentation qu'une ligne de tableau, dans
-    // son propre encadré — jamais un texte isolé entre la grille et le décompte.
-    const line = report.otherDeductionsNote || 'Autres retenues';
-    y = ensureSpace(doc, y, 60);
-    doc.font(FONT_SANS_BOLD).fontSize(7).fillColor(MUTED).text('AUTRES RETENUES', CONTENT_LEFT, y, { characterSpacing: 0.4 });
-    y += 13;
-    const h = doc.font(FONT_SANS).fontSize(9).heightOfString(line, { width: 360 }) + 16;
-    doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, h, 4).lineWidth(0.75).strokeColor(BORDER).stroke();
-    doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(line, CONTENT_LEFT + 12, y + 8, { width: 360 });
-    doc
-      .font(FONT_MONO_BOLD)
-      .fontSize(9.5)
-      .fillColor(DANGER_FG)
-      .text(`- ${formatFcfa(report.otherDeductionsAmount)}`, CONTENT_LEFT + 330, y + 8, { width: CONTENT_WIDTH - 342, align: 'right', lineBreak: false });
-    y += h + 16;
-  }
-
-  y += 10;
-  if (y > doc.page.height - doc.page.margins.bottom - 90) {
-    doc.addPage();
-    y = doc.page.margins.top;
-  }
-  // Bug corrigé (audit étape 48) : le mode de règlement était saisi et exigé
-  // à la finalisation, mais n'apparaissait jusqu'ici NULLE PART — ni à
-  // l'écran, ni sur ce PV signé par les deux parties.
-  const refundMethodLabel = report.refundPaymentMethod
-    ? ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS[report.refundPaymentMethod] ?? report.refundPaymentMethod
-    : null;
-  y = ensureSpace(doc, y, 190);
-  y = D.drawSection(doc, y, 'Décompte de la caution');
-  const panelH = refundMethodLabel ? 96 : 74;
-  doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, panelH + 54, 8).lineWidth(0.75).fillAndStroke(D.C.TINT, D.C.TINT_BORDER);
-  const rowsDef = [
-    ['Caution initiale versée', formatFcfa(report.depositAmount), D.C.INK],
-    ['Total des retenues', `- ${formatFcfa(report.totalDeductions)}`, D.C.DANGER],
-  ];
-  if (refundMethodLabel) rowsDef.push(['Réglé par', refundMethodLabel, D.C.INK]);
-  rowsDef.forEach(([label, value, color], k) => {
-    const ry = y + 14 + k * 22;
-    doc.font(D.F.SANS).fontSize(9.5).fillColor(D.C.INK_SOFT).text(label, CONTENT_LEFT + 16, ry, { width: 300, lineBreak: false });
-    doc.font(D.F.BOLD).fontSize(9.5).fillColor(color).text(value, CONTENT_LEFT + 300, ry, { width: CONTENT_WIDTH - 316, align: 'right', lineBreak: false });
-    if (k === 1) doc.moveTo(CONTENT_LEFT + 16, ry + 18).lineTo(CONTENT_LEFT + CONTENT_WIDTH - 16, ry + 18).lineWidth(0.75).strokeColor(D.C.ACCENT).stroke();
-  });
-  const barY = y + panelH - 4;
-  doc.roundedRect(CONTENT_LEFT + 10, barY + 4, CONTENT_WIDTH - 20, 40, 6).fill(D.C.NAVY);
-  doc.font(D.F.BOLD).fontSize(10).fillColor(D.C.WHITE).text('SOLDE À RESTITUER AU LOCATAIRE', CONTENT_LEFT + 26, barY + 19, { width: 250, characterSpacing: 0.4, lineBreak: false });
-  doc.font(D.F.BOLD).fontSize(15).fillColor(D.C.WHITE).text(formatFcfa(report.netRefund), CONTENT_LEFT + 230, barY + 16, { width: CONTENT_WIDTH - 256, align: 'right', lineBreak: false });
-  y += panelH + 54 + 8;
-  doc.font(D.F.ITALIC).fontSize(8.5).fillColor(D.C.MUTED).text(D.sentenceAmount(report.netRefund, 'Arrêté le présent décompte à la somme de'), CONTENT_LEFT, y, { width: CONTENT_WIDTH });
-  y = doc.y + 18;
+  y = drawExitStatement(doc, report, y);
 
   // Cautions supplémentaires (étape 43, SBEE/SONEB/peinture) — chacune distincte de la caution de
   // loyer ci-dessus (compte 165 unique, mais des lignes SÉPARÉES sur ce PV pour rester claires, comme
@@ -1172,7 +1185,7 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
   y = drawGeneralNotes(doc, report.generalNotes, y);
   y = drawTenantReserves(doc, report.tenantReserves, y);
   y = drawReopenedNotice(doc, report, y);
-  drawSignatureBlock(doc, report, y, { tenantName, agentName });
+  drawSignatureBlock(doc, report, y, { tenantName, agentName, companyName: tenant.company_name });
 
   drawFooter(doc, { verificationCode });
   doc.end();
@@ -1209,7 +1222,36 @@ function drawReopenedNotice(doc, report, y) {
  * l'étape 56 : deux cartes côte à côte, mention « Lu et approuvé », signature centrée sur une ligne
  * d'appui, nom du signataire et date de signature. Jamais coupé par un saut de page.
  */
-function drawSignatureBlock(doc, report, y, { tenantName = null, agentName = null } = {}) {
+/** Deux cadres vides (locataire / cabinet) à signer à la main après impression, jamais coupés entre deux pages. */
+function drawPrintSignatureBoxes(doc, y, { tenantName, agentName, companyName }) {
+  const H = 130;
+  y = ensureSpace(doc, y + 6, H + 40);
+  y = D.drawSection(doc, y, 'Signatures des parties');
+  doc.font(FONT_SANS).fontSize(8.5).fillColor(MUTED).text('Document à imprimer, puis à dater et signer à la main par chacune des parties, précédé de « Lu et approuvé ».', CONTENT_LEFT, y, { width: CONTENT_WIDTH });
+  y = doc.y + 8;
+  const W = (CONTENT_WIDTH - 16) / 2;
+  const boxes = [
+    { title: 'Le locataire', name: tenantName },
+    { title: 'Le bailleur / mandataire', name: agentName ? `${agentName}${companyName ? ` — ${companyName}` : ''}` : companyName },
+  ];
+  boxes.forEach((b, i) => {
+    const x = CONTENT_LEFT + i * (W + 16);
+    doc.roundedRect(x, y, W, H, 6).lineWidth(0.9).strokeColor(BORDER_STRONG).stroke();
+    doc.rect(x, y, W, 22).fill(PRIMARY);
+    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor('#FFFFFF').text(b.title.toUpperCase(), x + 10, y + 7, { width: W - 20, lineBreak: false, characterSpacing: 0.4 });
+    doc.font(FONT_SANS).fontSize(8.5).fillColor(INK).text(`Nom : ${b.name ?? '………………………………'}`, x + 10, y + 30, { width: W - 20, lineBreak: false });
+    doc.fillColor(INK).text('Date : ____ / ____ / ________', x + 10, y + 46, { width: W - 20, lineBreak: false });
+    doc.text('Lieu : ……………………………………', x + 10, y + 62, { width: W - 20, lineBreak: false });
+    doc.font(FONT_SANS).fontSize(7.5).fillColor(FAINT).text('Signature', x + 10, y + H - 16, { width: W - 20, lineBreak: false });
+  });
+  return y + H + 12;
+}
+
+function drawSignatureBlock(doc, report, y, { tenantName = null, agentName = null, companyName = null } = {}) {
+  // Rapports déjà signés électroniquement avant ce changement : on garde leurs signatures. Sinon, cadres vides.
+  if (!report.tenantSignatureUrl && !report.agentSignatureUrl) {
+    return drawPrintSignatureBoxes(doc, y, { tenantName, agentName, companyName });
+  }
   const signedOn = report.finalizedAt ? formatDateFr(report.finalizedAt.slice(0, 10)) : null;
   const end = D.drawSignatureCards(doc, y, [
     { title: 'Le locataire', name: tenantName, date: signedOn, signatureFile: uploadedFile(report.tenantSignatureUrl), hint: 'Signature précédée de « Lu et approuvé »' },
@@ -1259,7 +1301,7 @@ function streamMoveInPdf(res, { tenant, renter, property, lease, report, verific
   y = drawGeneralNotes(doc, report.generalNotes, y);
   y = drawTenantReserves(doc, report.tenantReserves, y);
   y = drawReopenedNotice(doc, report, y);
-  drawSignatureBlock(doc, report, y, { tenantName, agentName });
+  drawSignatureBlock(doc, report, y, { tenantName, agentName, companyName: tenant.company_name });
 
   drawFooter(doc, { verificationCode });
   doc.end();

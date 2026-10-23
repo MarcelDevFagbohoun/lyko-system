@@ -33,6 +33,7 @@ const { getOrCreateIssuance, ensureShareToken } = require('../services/documentI
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { extourneEcriture } = require('../services/gl/glReversalService');
 const { getEscrowBalances } = require('../services/commission');
+const { computeMoveOutStatement } = require('../services/moveOutStatement');
 const { resolveOwnerFromLease } = require('../services/gl/glAccountResolver');
 const {
   listLeaseDeposits,
@@ -1310,11 +1311,9 @@ router.post(
     const leaseId = Number(req.params.leaseId);
     if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
 
+    // Signatures numériques facultatives : l'état des lieux se signe à la main après impression.
     const tenantSignatureFile = req.files?.tenantSignature?.[0];
     const agentSignatureFile = req.files?.agentSignature?.[0];
-    if (!tenantSignatureFile || !agentSignatureFile) {
-      return next(new ApiError(400, 'Signature du locataire et de l’agent requises'));
-    }
 
     try {
       const scopeAgentId = await resolvePropertyScope(req.user);
@@ -1328,8 +1327,8 @@ router.post(
         throw new ApiError(400, `État manquant pour : ${missing.join(', ')}`);
       }
 
-      const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
-      const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
+      const tenantSignaturePath = tenantSignatureFile ? await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature') : null;
+      const agentSignaturePath = agentSignatureFile ? await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature') : null;
       // Réserves du locataire (étape 48) — notées par l'agent à l'oral au
       // moment de la signature, si le locataire n'est pas d'accord sur un
       // point précis ; jamais un accès en écriture du locataire lui-même.
@@ -1493,7 +1492,10 @@ router.get('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next)
     }
 
     const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId);
-    res.json({ report: toPublicMoveOutReport(row), arrears, additionalDeposits });
+    const statement = row && row.status === 'draft'
+      ? await computeMoveOutStatement(pool, { tenantId: req.user.tenantId, lease, report: row, deposits: additionalDeposits })
+      : null;
+    res.json({ report: toPublicMoveOutReport(row), arrears, additionalDeposits, statement });
   } catch (err) {
     next(err);
   }
@@ -1585,13 +1587,23 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
     // quel par le client (voir `computeItemDeduction`).
     recomputeItemDeductions(data.zones);
     const itemsDeductions = sumDeductions(data.zones);
-    const totalDeductions = itemsDeductions + data.otherDeductionsAmount;
+    // Lignes libres (main-d'œuvre, pénalités…) : leur total alimente `other_deductions_amount`, déjà lu par
+    // tout le reste (finalisation, PDF, comptabilité) — une réparation faite par le locataire ne coûte rien.
+    const extraLines = data.extraLines;
+    const otherAmount = extraLines
+      ? extraLines.reduce((sum, l) => sum + (l.kind === 'realisee_locataire' ? 0 : l.amount), 0)
+      : data.otherDeductionsAmount;
+    const otherNote = extraLines
+      ? (extraLines.filter((l) => l.kind !== 'realisee_locataire').map((l) => l.label).join(' ; ').slice(0, 255) || null)
+      : data.otherDeductionsNote;
+    const totalDeductions = itemsDeductions + otherAmount;
     const netRefund = Math.max(0, Number(report.deposit_amount) - totalDeductions);
 
     await pool.query(
       `UPDATE move_out_reports
        SET items = :items, general_notes = :notes,
            other_deductions_amount = :otherAmount, other_deductions_note = :otherNote,
+           extra_lines = COALESCE(:extraLines, extra_lines),
            peinture_deduction_amount = :peintureAmount, peinture_deduction_note = :peintureNote,
            total_deductions = :totalDeductions, net_refund = :netRefund
            ${data.conductedAt ? ', conducted_at = :conductedAt' : ''}
@@ -1599,8 +1611,9 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
       {
         items: JSON.stringify({ zones: data.zones }),
         notes: data.generalNotes,
-        otherAmount: data.otherDeductionsAmount,
-        otherNote: data.otherDeductionsNote,
+        otherAmount,
+        otherNote,
+        extraLines: extraLines ? JSON.stringify(extraLines) : null,
         peintureAmount: data.peintureDeductionAmount,
         peintureNote: data.peintureDeductionNote,
         totalDeductions,
@@ -1612,7 +1625,9 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
 
     const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
     const additionalDeposits = await listLeaseDeposits(req.user.tenantId, leaseId);
-    res.json({ report: toPublicMoveOutReport(row), additionalDeposits });
+    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
+    const statement = await computeMoveOutStatement(pool, { tenantId: req.user.tenantId, lease, report: row, deposits: additionalDeposits });
+    res.json({ report: toPublicMoveOutReport(row), additionalDeposits, statement });
   } catch (err) {
     next(err);
   }
@@ -1705,9 +1720,6 @@ router.post(
 
     const tenantSignatureFile = req.files?.tenantSignature?.[0];
     const agentSignatureFile = req.files?.agentSignature?.[0];
-    if (!tenantSignatureFile || !agentSignatureFile) {
-      return next(new ApiError(400, 'Signature du locataire et de l’agent requises'));
-    }
 
     const conn = await pool.getConnection();
     try {
@@ -1771,6 +1783,7 @@ router.post(
       // les arriérés ne consomment que ce qu'il reste de la caution après elles, plafonnés comme
       // tout le reste à son montant — jamais de découvert tracé au-delà.
       let rentArrearsAmount;
+      let rentOwedGross = Number(report.rent_owed_amount) || 0;
       let rentArrearsAllocationBasis = null; // { arrears, rhythm, isCalendaire } — réutilisé plus bas pour générer les lignes rent_payments.
       if (isCorrection) {
         rentArrearsAmount = Number(report.rent_arrears_amount);
@@ -1798,6 +1811,7 @@ router.post(
           0,
           Number(report.deposit_amount) - itemsDeductions - Number(report.other_deductions_amount) - peintureOverflow,
         );
+        rentOwedGross = rentOwed;
         rentArrearsAmount = Math.min(rentOwed, remainingDepositAfterDamages);
         rentArrearsAllocationBasis = { arrears, rhythm: rhythmForArrears, isCalendaire: isCalendaireForArrears };
       }
@@ -1805,6 +1819,31 @@ router.post(
       const totalDeductions = itemsDeductions + Number(report.other_deductions_amount) + peintureOverflow + rentArrearsAmount;
       const depositAmount = Number(report.deposit_amount);
       const netRefund = Math.max(0, depositAmount - totalDeductions);
+
+      // Solde négatif : ce que le locataire doit encore quand ses dettes (dégradations, loyers, pénalités…)
+      // dépassent la caution. Il doit alors soit régler la différence, soit effectuer lui-même les
+      // réparations — choix exigé AVANT de finaliser. Sur correction, valeur déjà figée à la 1re finalisation.
+      const shortfall = isCorrection
+        ? Number(report.balance_due_amount)
+        : Math.max(0, itemsDeductions + Number(report.other_deductions_amount) + peintureOverflow + rentOwedGross - depositAmount);
+      let balanceResolution = null;
+      let balancePaymentMethod = null;
+      const balanceNote = typeof req.body?.balanceNote === 'string' && req.body.balanceNote.trim() ? req.body.balanceNote.trim().slice(0, 255) : null;
+      if (shortfall > 0) {
+        if (isCorrection) {
+          balanceResolution = report.balance_resolution;
+          balancePaymentMethod = report.balance_payment_method;
+        } else {
+          balanceResolution = ['paid', 'repairs_by_tenant'].includes(req.body?.balanceResolution) ? req.body.balanceResolution : null;
+          if (!balanceResolution) {
+            throw new ApiError(400, `Le locataire doit encore ${shortfall} FCFA : indiquez s'il règle la différence ou s'il effectue les réparations.`);
+          }
+          if (balanceResolution === 'paid') {
+            balancePaymentMethod = REFUND_METHODS.includes(req.body?.balancePaymentMethod) ? req.body.balancePaymentMethod : null;
+            if (!balancePaymentMethod) throw new ApiError(400, 'Indiquez comment le locataire règle la différence.');
+          }
+        }
+      }
 
       // Module comptabilité SYSCOHADA (nouveau) : mode de règlement requis
       // seulement s'il reste réellement quelque chose à reverser (une
@@ -1816,8 +1855,8 @@ router.post(
         throw new ApiError(400, 'Mode de règlement requis pour la restitution de la caution');
       }
 
-      const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
-      const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
+      const tenantSignaturePath = tenantSignatureFile ? await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature') : null;
+      const agentSignaturePath = agentSignatureFile ? await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature') : null;
       const tenantReserves =
         typeof req.body?.tenantReserves === 'string' && req.body.tenantReserves.trim()
           ? req.body.tenantReserves.trim().slice(0, 2000)
@@ -1851,6 +1890,8 @@ router.post(
              tenant_reserves = :tenantReserves,
              total_deductions = :totalDeductions, net_refund = :netRefund, refund_payment_method = :refundMethod,
              peinture_overflow_amount = :peintureOverflow, rent_arrears_amount = :rentArrearsAmount,
+             rent_owed_amount = :rentOwedGross, balance_due_amount = :shortfall, balance_resolution = :balanceResolution,
+             balance_payment_method = :balancePaymentMethod, balance_note = :balanceNote,
              gl_regularized_at = NULL, gl_regularized_by = NULL,
              correction_changes = :correctionChanges, pre_reopen_snapshot = NULL
          WHERE lease_id = :leaseId`,
@@ -1864,6 +1905,11 @@ router.post(
           refundMethod: netRefund > 0 ? refundPaymentMethod : null,
           peintureOverflow,
           rentArrearsAmount,
+          rentOwedGross,
+          shortfall,
+          balanceResolution,
+          balancePaymentMethod,
+          balanceNote,
           leaseId,
           correctionChanges: correctionChanges ? JSON.stringify(correctionChanges) : null,
         },

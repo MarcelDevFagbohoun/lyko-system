@@ -284,7 +284,8 @@ function DraftEditor({
     }
   }
 
-  async function handleFinalize(tenantSignature: Blob, agentSignature: Blob) {
+  async function handleFinalize(tenantSignature: Blob | null, agentSignature: Blob | null) {
+    if (!tenantSignature || !agentSignature) return;
     if (!accessToken) return;
     setFinalizing(true);
     setFinalizeError(null);

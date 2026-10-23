@@ -22,6 +22,9 @@ import {
   type PaymentMethod,
   type AdditionalDepositType,
   type AdditionalDeposit,
+  type ExitExtraLine,
+  type MoveOutStatement,
+  getMoveOutReport,
 } from "@/lib/api/renters";
 import { listCatalogItems, type CatalogItem } from "@/lib/api/inspectionCatalog";
 import { compareInspectionReports, type ItemComparison } from "@/lib/inspection-comparison";
@@ -32,6 +35,7 @@ import { InspectionForm } from "@/components/inspections/inspection-form";
 import { InspectionReadOnly } from "@/components/inspections/inspection-readonly";
 import { FinalizeSection } from "@/components/inspections/finalize-section";
 import { SignatureBlock } from "@/components/inspections/signature-block";
+import { BalanceDueSection, ExitLinesEditor, ExitStatementTable, type BalanceChoice } from "@/components/inspections/exit-statement";
 import { ReopenReportButton } from "@/components/inspections/reopen-button";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -204,8 +208,16 @@ function DraftEditor({
 }) {
   const [zones, setZones] = React.useState<InspectionZone[]>(report.zones);
   const [generalNotes, setGeneralNotes] = React.useState(report.generalNotes ?? "");
-  const [otherAmount, setOtherAmount] = React.useState(report.otherDeductionsAmount ? String(report.otherDeductionsAmount) : "");
-  const [otherNote, setOtherNote] = React.useState(report.otherDeductionsNote ?? "");
+  // Lignes libres (main-d'œuvre, pénalités…) ; une ancienne retenue unique devient une ligne « autre ».
+  const [extraLines, setExtraLines] = React.useState<ExitExtraLine[]>(
+    report.extraLines.length > 0
+      ? report.extraLines
+      : report.otherDeductionsAmount > 0
+        ? [{ kind: "autre", label: report.otherDeductionsNote ?? "Autre retenue", amount: report.otherDeductionsAmount }]
+        : [],
+  );
+  const [statement, setStatement] = React.useState<MoveOutStatement | null>(null);
+  const [balance, setBalance] = React.useState<BalanceChoice>({ resolution: "", paymentMethod: "", note: "" });
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [finalizing, setFinalizing] = React.useState(false);
@@ -239,6 +251,13 @@ function DraftEditor({
 
   React.useEffect(() => {
     if (!accessToken) return;
+    getMoveOutReport(accessToken, leaseId).then((res) => setStatement(res.statement)).catch(() => {
+      // Le point de sortie reste calculé à l'enregistrement du brouillon.
+    });
+  }, [accessToken, leaseId]);
+
+  React.useEffect(() => {
+    if (!accessToken) return;
     listCatalogItems(accessToken).then((res) => setCatalog(res.items)).catch(() => {
       // Le catalogue est un confort (prix suggérés) — son indisponibilité ne
       // doit jamais bloquer la saisie de l'état des lieux.
@@ -267,24 +286,27 @@ function DraftEditor({
   }, [lease.moveInReport, report, zones]);
 
   const itemsTotal = zones.reduce((sum, z) => sum + z.items.reduce((s, it) => s + it.deduction, 0), 0);
-  const otherTotal = Number(otherAmount) || 0;
+  const validExtraLines = extraLines.filter((l) => l.label.trim().length >= 2);
+  const otherTotal = validExtraLines.reduce((s, l) => s + (l.kind === "realisee_locataire" ? 0 : l.amount), 0);
+  const rentOwed = statement?.rent.owed ?? 0;
   // Le dépassement de la retenue peinture (au-delà de SA propre caution) s'ajoute aux retenues de la
   // caution de LOYER — décision explicite de l'utilisateur, même calcul que la route de finalisation.
-  const totalDeductions = itemsTotal + otherTotal + peintureOverflow;
-  const netRefund = Math.max(0, report.depositAmount - totalDeductions);
+  const grossDue = itemsTotal + otherTotal + peintureOverflow + rentOwed;
+  const netRefund = Math.max(0, report.depositAmount - grossDue);
+  const shortfall = Math.max(0, grossDue - report.depositAmount);
 
   async function persist() {
     if (!accessToken) throw new Error("no token");
     const res = await updateMoveOutReport(accessToken, leaseId, {
       zones,
       generalNotes: generalNotes.trim() || undefined,
-      otherDeductionsAmount: otherTotal || undefined,
-      otherDeductionsNote: otherNote.trim() || undefined,
+      extraLines: validExtraLines,
       peintureDeductionAmount: Number(peintureAmount) || undefined,
       peintureDeductionNote: peintureNote.trim() || undefined,
     });
     onReportChange(res.report);
     setZones(res.report.zones);
+    setStatement(res.statement);
     return res.report;
   }
 
@@ -326,7 +348,7 @@ function DraftEditor({
     }
   }
 
-  async function handleFinalize(tenantSignature: Blob, agentSignature: Blob, tenantReserves: string) {
+  async function handleFinalize(tenantSignature: Blob | null, agentSignature: Blob | null, tenantReserves: string) {
     if (!accessToken) return;
     if (netRefund > 0 && !refundPaymentMethod) {
       setFinalizeError("Indiquez comment la caution sera restituée avant de finaliser.");
@@ -337,6 +359,16 @@ function DraftEditor({
     if (peintureReturned > 0 && !additionalDepositRefundMethods.peinture) {
       setFinalizeError("Indiquez comment la caution peinture sera restituée avant de finaliser.");
       return;
+    }
+    if (shortfall > 0) {
+      if (!balance.resolution) {
+        setFinalizeError("Le locataire doit encore une somme : indiquez s'il règle la différence ou effectue les réparations.");
+        return;
+      }
+      if (balance.resolution === "paid" && !balance.paymentMethod) {
+        setFinalizeError("Indiquez comment le locataire règle la différence.");
+        return;
+      }
     }
     setFinalizing(true);
     setFinalizeError(null);
@@ -352,6 +384,9 @@ function DraftEditor({
         netRefund > 0 ? (refundPaymentMethod as Exclude<PaymentMethod, "kkiapay">) : undefined,
         additionalDepositRefundMethods as Partial<Record<AdditionalDepositType, Exclude<PaymentMethod, "kkiapay">>>,
         tenantReserves || undefined,
+        shortfall > 0 && balance.resolution
+          ? { resolution: balance.resolution, paymentMethod: balance.paymentMethod || undefined, note: balance.note.trim() || undefined }
+          : undefined,
       );
       onReportChange(res.report);
       toast.success("Sortie finalisée — bail terminé, unité libérée.");
@@ -406,17 +441,7 @@ function DraftEditor({
 
         <BillingReportSection zones={zones} />
 
-        <div className="flex flex-col gap-3 border-t border-border pt-4">
-          <span className="font-label-sm uppercase tracking-wider text-ink-muted">Autres retenues (optionnel)</span>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Motif" htmlFor="otherNote" hint="Ex. arriérés de loyer, facture SONEB/SBEE">
-              <Input id="otherNote" value={otherNote} onChange={(e) => setOtherNote(e.target.value)} />
-            </Field>
-            <Field label="Montant (FCFA)" htmlFor="otherAmount">
-              <Input id="otherAmount" inputMode="numeric" value={otherAmount} onChange={(e) => setOtherAmount(e.target.value.replace(/\D/g, ""))} />
-            </Field>
-          </div>
-        </div>
+        <ExitLinesEditor lines={extraLines} onChange={setExtraLines} />
 
         {heldAdditionalDeposits.length > 0 && (
           <div className="flex flex-col gap-4 border-t border-border pt-4">
@@ -511,14 +536,27 @@ function DraftEditor({
           />
         </div>
 
-        <div className="flex flex-col gap-1 rounded-lg border border-border bg-surface-muted p-4">
-          <SummaryRow label="Caution initiale" value={formatFcfa(report.depositAmount)} />
-          <SummaryRow label="Total des retenues" value={`- ${formatFcfa(totalDeductions)}`} danger={totalDeductions > 0} />
-          <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
-            <span className="font-label-md text-ink">Net à restituer au locataire</span>
-            <span className="tabular font-currency-table text-headline-sm text-primary">{formatFcfa(netRefund)}</span>
-          </div>
+        <div className="flex flex-col gap-2">
+          <span className="font-label-sm uppercase tracking-wider text-ink-muted">Point de sortie — décompte de la caution</span>
+          <ExitStatementTable
+            data={{
+              depositAmount: report.depositAmount,
+              itemsDeductions: itemsTotal,
+              extraLines: validExtraLines,
+              rentOwed,
+              rentMonths: statement?.rent.months ?? [],
+              peintureOverflow,
+            }}
+          />
+          {statement?.utilities.some((u) => u.excess > 0) && (
+            <p className="text-body-xs text-warning-fg">
+              Charges {statement.utilities.filter((u) => u.excess > 0).map((u) => `${u.type === "sbee" ? "SBEE" : "SONEB"} (${formatFcfa(u.excess)} au-delà de la caution dédiée)`).join(", ")} :
+              à faire régler directement par le locataire.
+            </p>
+          )}
         </div>
+
+        {shortfall > 0 && <BalanceDueSection shortfall={shortfall} value={balance} onChange={setBalance} />}
 
         {netRefund > 0 && (
           <Field label="Caution restituée par" htmlFor="refundPaymentMethod" required hint="Comment ce montant sera remis au locataire">
@@ -546,7 +584,7 @@ function DraftEditor({
           </Button>
         </div>
 
-        <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
+        <FinalizeSection printedSignatures onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
       </CardContent>
     </Card>
   );
@@ -607,18 +645,16 @@ function FinalizedView({
 
         <BillingReportSection zones={report.zones} />
 
-        {report.rentArrearsAmount > 0 && (
-          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
-            <span className="text-body-sm text-ink">Arriérés de loyer réglés par la caution</span>
-            <span className="tabular text-body-sm text-danger-fg">- {formatFcfa(report.rentArrearsAmount)}</span>
-          </div>
-        )}
-
-        {report.otherDeductionsAmount > 0 && (
-          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
-            <span className="text-body-sm text-ink">{report.otherDeductionsNote || "Autres retenues"}</span>
-            <span className="tabular text-body-sm text-danger-fg">- {formatFcfa(report.otherDeductionsAmount)}</span>
-          </div>
+        <ExitStatementTable data={finalStatementData(report)} />
+        {report.balanceDueAmount > 0 && (
+          <p className="text-body-sm font-label-md text-danger-fg">
+            {report.balanceResolution === "paid"
+              ? `Le locataire a réglé la différence de ${formatFcfa(report.balanceDueAmount)}.`
+              : report.balanceResolution === "repairs_by_tenant"
+                ? `Le locataire effectue lui-même les réparations (équivalent de ${formatFcfa(report.balanceDueAmount)}).`
+                : `Le locataire doit encore ${formatFcfa(report.balanceDueAmount)}.`}
+            {report.balanceNote ? ` ${report.balanceNote}` : ""}
+          </p>
         )}
 
         {lease.additionalDeposits.length > 0 && (
@@ -643,21 +679,6 @@ function FinalizedView({
             <p className="text-body-sm text-ink">{report.tenantReserves}</p>
           </div>
         )}
-
-        <div className="flex flex-col gap-1 rounded-lg border border-border bg-surface-muted p-4">
-          <SummaryRow label="Caution initiale" value={formatFcfa(report.depositAmount)} />
-          <SummaryRow label="Total des retenues" value={`- ${formatFcfa(report.totalDeductions)}`} danger />
-          <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
-            <span className="font-label-md text-ink">Net à restituer</span>
-            <span className="tabular font-currency-table text-headline-sm text-primary">{formatFcfa(report.netRefund)}</span>
-          </div>
-          {report.refundPaymentMethod && (
-            <SummaryRow
-              label="Réglé par"
-              value={REFUND_PAYMENT_METHODS.find((m) => m.value === report.refundPaymentMethod)?.label ?? report.refundPaymentMethod}
-            />
-          )}
-        </div>
 
         {report.totalDeductions > 0 && (
           <div
@@ -706,10 +727,16 @@ function FinalizedView({
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} accessToken={accessToken} />
-          <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} accessToken={accessToken} />
-        </div>
+        {report.tenantSignatureUrl || report.agentSignatureUrl ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} accessToken={accessToken} />
+            <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} accessToken={accessToken} />
+          </div>
+        ) : (
+          <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm text-ink-muted">
+            Imprimez le PV : le locataire et le cabinet le datent et le signent à la main dans les cadres prévus.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -871,11 +898,22 @@ function AdditionalDepositSummaryRow({ deposit }: { deposit: AdditionalDeposit }
   );
 }
 
-function SummaryRow({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-body-sm text-ink-soft">{label}</span>
-      <span className={cn("tabular text-body-sm", danger ? "text-danger-fg" : "text-ink")}>{value}</span>
-    </div>
-  );
+/** Données du tableau « point de sortie » d'une fiche finalisée (montants figés à la finalisation). */
+function finalStatementData(report: MoveOutReport) {
+  const itemsDeductions = report.zones.reduce((sum, z) => sum + z.items.reduce((t, it) => t + it.deduction, 0), 0);
+  const rentOwed = report.rentOwedAmount || report.rentArrearsAmount;
+  const billable = report.extraLines.filter((l) => l.kind !== "realisee_locataire").reduce((sum, l) => sum + l.amount, 0);
+  const legacy = report.extraLines.length === 0 ? report.otherDeductionsAmount : 0;
+  const peintureOverflow = Math.max(0, report.totalDeductions - itemsDeductions - report.otherDeductionsAmount - report.rentArrearsAmount);
+  void billable;
+  return {
+    depositAmount: report.depositAmount,
+    itemsDeductions,
+    extraLines: legacy > 0 ? [{ kind: "autre" as const, label: report.otherDeductionsNote ?? "Autres retenues", amount: legacy }] : report.extraLines,
+    rentOwed,
+    rentMonths: [] as string[],
+    peintureOverflow,
+    refundMethodLabel: report.refundPaymentMethod ? REFUND_PAYMENT_METHODS.find((m) => m.value === report.refundPaymentMethod)?.label ?? null : null,
+  };
 }
+

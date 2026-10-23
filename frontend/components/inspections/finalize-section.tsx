@@ -17,12 +17,15 @@ export function FinalizeSection({
   submitting,
   error,
   tenantName,
+  printedSignatures = false,
 }: {
-  onFinalize: (tenantSignature: Blob, agentSignature: Blob, tenantReserves: string) => void | Promise<void>;
+  onFinalize: (tenantSignature: Blob | null, agentSignature: Blob | null, tenantReserves: string) => void | Promise<void>;
   submitting: boolean;
   error: string | null;
   /** Nom du locataire, affiché sous sa zone de signature (étape 56). */
   tenantName?: string;
+  /** États des lieux : pas de signature numérique, le PV imprimé est signé à la main par les deux parties. */
+  printedSignatures?: boolean;
 }) {
   const { user } = useAuth();
   const agentName = user ? `${user.firstName} ${user.lastName}` : undefined;
@@ -32,6 +35,11 @@ export function FinalizeSection({
   const [tenantReserves, setTenantReserves] = React.useState("");
 
   async function handleFinalize() {
+    if (printedSignatures) {
+      setLocalError(null);
+      await onFinalize(null, null, tenantReserves.trim());
+      return;
+    }
     const tenantPad = tenantPadRef.current;
     const agentPad = agentPadRef.current;
     if (!tenantPad || !agentPad || tenantPad.isEmpty() || agentPad.isEmpty()) {
@@ -52,7 +60,7 @@ export function FinalizeSection({
       <div>
         <h3 className="font-label-lg text-ink">Finaliser la fiche</h3>
         <p className="text-body-sm text-ink-muted">
-          Une fois signée par les deux parties, la fiche est verrouillée et ne peut plus être modifiée.
+          Une fois finalisée, la fiche est verrouillée et ne peut plus être modifiée.
         </p>
       </div>
 
@@ -71,10 +79,17 @@ export function FinalizeSection({
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <SignaturePad ref={tenantPadRef} label="Signature du locataire" signerName={tenantName} />
-        <SignaturePad ref={agentPadRef} label="Signature de l'agent" signerName={agentName} />
-      </div>
+      {printedSignatures ? (
+        <p className="text-body-sm text-ink-muted">
+          Après finalisation, imprimez le procès-verbal (PDF) : le locataire{tenantName ? ` (${tenantName})` : ""} et le cabinet le datent
+          et le signent à la main dans les cadres prévus.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SignaturePad ref={tenantPadRef} label="Signature du locataire" signerName={tenantName} />
+          <SignaturePad ref={agentPadRef} label="Signature de l'agent" signerName={agentName} />
+        </div>
+      )}
 
       <Button type="button" size="lg" onClick={handleFinalize} disabled={submitting} className="self-start">
         <Lock size={16} />

@@ -155,7 +155,7 @@ test('finalize sortie — caution insuffisante pour tout couvrir : les dégradat
   const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
     method: 'POST',
     headers: bearer(fx.dgId, fx.tenantId),
-    body: fakeSignatureForm({}), // netRefund = 0 → aucun mode de règlement requis
+    body: fakeSignatureForm({ balanceResolution: 'repairs_by_tenant' }), // netRefund = 0, reste dû → choix exigé
   });
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -181,7 +181,7 @@ test('finalize sortie — comptabilité avancée active : aucune écriture GL au
     const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
       method: 'POST',
       headers: bearer(glFx.dgId, glFx.tenantId),
-      body: fakeSignatureForm({ refundPaymentMethod: 'especes' }),
+      body: fakeSignatureForm({ refundPaymentMethod: 'especes', balanceResolution: 'repairs_by_tenant' }),
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -206,7 +206,7 @@ test('finalize sortie — une correction (réouverture) ne rejoue jamais le règ
   const first = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
     method: 'POST',
     headers: bearer(fx.dgId, fx.tenantId),
-    body: fakeSignatureForm({ refundPaymentMethod: 'especes' }),
+    body: fakeSignatureForm({ refundPaymentMethod: 'especes', balanceResolution: 'repairs_by_tenant' }),
   });
   assert.equal(first.status, 200);
 

@@ -287,6 +287,13 @@ function toPublicMoveOutReport(row) {
     ...base,
     otherDeductionsAmount: Number(row.other_deductions_amount),
     otherDeductionsNote: row.other_deductions_note,
+    extraLines: row.extra_lines ? (typeof row.extra_lines === 'string' ? JSON.parse(row.extra_lines) : row.extra_lines) : [],
+    rentOwedAmount: Number(row.rent_owed_amount ?? 0),
+    // Solde négatif : ce que le locataire doit encore après épuisement de la caution, et comment il le règle.
+    balanceDueAmount: Number(row.balance_due_amount ?? 0),
+    balanceResolution: row.balance_resolution ?? null,
+    balancePaymentMethod: row.balance_payment_method ?? null,
+    balanceNote: row.balance_note ?? null,
     // Caution peinture (étape 43) — distincte de la caution de loyer ci-dessus, voir
     // services/leaseDeposits.js. Le dépassement éventuel est déjà inclus dans `totalDeductions`/
     // `netRefund` ci-dessous (calculé par la route au moment de la finalisation).

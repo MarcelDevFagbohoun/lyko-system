@@ -142,7 +142,34 @@ export type InspectionReport = {
 export type MoveInReport = InspectionReport;
 
 /** État des lieux de sortie : même fiche que l'entrée + décompte de caution. */
+export type ExitExtraLineKind = "main_oeuvre" | "penalite" | "autre" | "realisee_locataire";
+export type ExitExtraLine = { kind: ExitExtraLineKind; label: string; amount: number };
+export type BalanceResolution = "paid" | "repairs_by_tenant";
+
+/** « Point de sortie » calculé par le serveur (même calcul que la finalisation). */
+export type MoveOutStatement = {
+  asOf: string;
+  depositAmount: number;
+  rent: { owed: number; months: string[]; monthsCount: number };
+  itemsDeductions: number;
+  extraLines: ExitExtraLine[];
+  extraTotal: number;
+  peintureOverflow: number;
+  utilities: { type: "sbee" | "soneb"; unpaid: number; deposit: number; excess: number }[];
+  grossDue: number;
+  totalDeductions: number;
+  netRefund: number;
+  /** Reste dû par le locataire quand ses dettes dépassent la caution. */
+  shortfall: number;
+};
+
 export type MoveOutReport = InspectionReport & {
+  extraLines: ExitExtraLine[];
+  rentOwedAmount: number;
+  balanceDueAmount: number;
+  balanceResolution: BalanceResolution | null;
+  balancePaymentMethod: string | null;
+  balanceNote: string | null;
   otherDeductionsAmount: number;
   otherDeductionsNote: string | null;
   /** Retenue sur la caution peinture (étape 43) — distincte de la caution de loyer ci-dessus. */
@@ -719,13 +746,13 @@ export function updateMoveInReport(accessToken: string, leaseId: number, input: 
 export function finalizeMoveInReport(
   accessToken: string,
   leaseId: number,
-  tenantSignature: Blob,
-  agentSignature: Blob,
+  tenantSignature: Blob | null,
+  agentSignature: Blob | null,
   tenantReserves?: string,
 ) {
   const fd = new FormData();
-  fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
-  fd.append("agentSignature", agentSignature, "signature-agent.png");
+  if (tenantSignature) fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
+  if (agentSignature) fd.append("agentSignature", agentSignature, "signature-agent.png");
   if (tenantReserves) fd.append("tenantReserves", tenantReserves);
   return apiFetch<{ report: MoveInReport }>(`${inspectionReportPath("move-in", leaseId)}/finalize`, {
     method: "POST",
@@ -753,7 +780,7 @@ export function moveInReportPdfPath(leaseId: number) {
 }
 
 export function getMoveOutReport(accessToken: string, leaseId: number) {
-  return apiFetch<{ report: MoveOutReport | null; arrears: Arrears | null; additionalDeposits: AdditionalDeposit[] }>(
+  return apiFetch<{ report: MoveOutReport | null; arrears: Arrears | null; additionalDeposits: AdditionalDeposit[]; statement: MoveOutStatement | null }>(
     inspectionReportPath("move-out", leaseId),
     { accessToken },
   );
@@ -770,6 +797,7 @@ export function startMoveOutReport(accessToken: string, leaseId: number, conduct
 }
 
 export type UpdateMoveOutDraftInput = UpdateInspectionDraftInput & {
+  extraLines?: ExitExtraLine[];
   otherDeductionsAmount?: number;
   otherDeductionsNote?: string;
   /** Retenue sur la caution peinture (étape 43) — plafonnée à SA PROPRE caution, jamais mêlée à `otherDeductionsAmount`. */
@@ -778,7 +806,7 @@ export type UpdateMoveOutDraftInput = UpdateInspectionDraftInput & {
 };
 
 export function updateMoveOutReport(accessToken: string, leaseId: number, input: UpdateMoveOutDraftInput) {
-  return apiFetch<{ report: MoveOutReport; additionalDeposits: AdditionalDeposit[] }>(
+  return apiFetch<{ report: MoveOutReport; additionalDeposits: AdditionalDeposit[]; statement: MoveOutStatement }>(
     inspectionReportPath("move-out", leaseId),
     {
       method: "PATCH",
@@ -799,15 +827,21 @@ export function updateMoveOutReport(accessToken: string, leaseId: number, input:
 export function finalizeMoveOutReport(
   accessToken: string,
   leaseId: number,
-  tenantSignature: Blob,
-  agentSignature: Blob,
+  tenantSignature: Blob | null,
+  agentSignature: Blob | null,
   refundPaymentMethod?: Exclude<PaymentMethod, "kkiapay">,
   additionalDepositRefundMethods?: Partial<Record<AdditionalDepositType, Exclude<PaymentMethod, "kkiapay">>>,
   tenantReserves?: string,
+  balance?: { resolution: BalanceResolution; paymentMethod?: string; note?: string },
 ) {
   const fd = new FormData();
-  fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
-  fd.append("agentSignature", agentSignature, "signature-agent.png");
+  if (tenantSignature) fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
+  if (agentSignature) fd.append("agentSignature", agentSignature, "signature-agent.png");
+  if (balance) {
+    fd.append("balanceResolution", balance.resolution);
+    if (balance.paymentMethod) fd.append("balancePaymentMethod", balance.paymentMethod);
+    if (balance.note) fd.append("balanceNote", balance.note);
+  }
   if (refundPaymentMethod) fd.append("refundPaymentMethod", refundPaymentMethod);
   if (additionalDepositRefundMethods?.sbee) fd.append("refundMethodSbee", additionalDepositRefundMethods.sbee);
   if (additionalDepositRefundMethods?.soneb) fd.append("refundMethodSoneb", additionalDepositRefundMethods.soneb);

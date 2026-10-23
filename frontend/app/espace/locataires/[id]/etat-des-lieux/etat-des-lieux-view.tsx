@@ -222,7 +222,7 @@ function DraftEditor({
     }
   }
 
-  async function handleFinalize(tenantSignature: Blob, agentSignature: Blob, tenantReserves: string) {
+  async function handleFinalize(tenantSignature: Blob | null, agentSignature: Blob | null, tenantReserves: string) {
     if (!accessToken) return;
     // La finalisation exige les données déjà enregistrées côté serveur — on
     // sauvegarde silencieusement le brouillon courant juste avant, pour ne
@@ -278,7 +278,7 @@ function DraftEditor({
           </Button>
         </div>
 
-        <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
+        <FinalizeSection printedSignatures onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
       </CardContent>
     </Card>
   );
@@ -331,10 +331,16 @@ function FinalizedView({
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} accessToken={accessToken} />
-          <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} accessToken={accessToken} />
-        </div>
+        {report.tenantSignatureUrl || report.agentSignatureUrl ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} accessToken={accessToken} />
+            <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} accessToken={accessToken} />
+          </div>
+        ) : (
+          <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm text-ink-muted">
+            Imprimez le PV : le locataire et le cabinet le datent et le signent à la main dans les cadres prévus.
+          </p>
+        )}
         {report.finalizedAt && (
           <p className="text-body-xs text-ink-muted">
             Finalisée le {new Date(report.finalizedAt).toLocaleDateString("fr-FR")}
