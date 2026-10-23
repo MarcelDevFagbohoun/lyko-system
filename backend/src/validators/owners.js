@@ -87,6 +87,18 @@ const createChargeRemittanceSchema = z.object({
   idempotencyKey: idempotencyKeySchema,
 });
 
+// Reversement d'une caution au propriétaire (ou récupération auprès de lui).
+const createDepositTransferSchema = z.object({
+  leaseId: z.coerce.number().int().positive(),
+  depositType: z.enum(['loyer', 'sbee', 'soneb', 'peinture']),
+  direction: z.enum(['to_owner', 'from_owner']).default('to_owner'),
+  amount: z.coerce.number().int('Montant entier requis').positive('Le montant doit être supérieur à 0').max(1_000_000_000, 'Montant hors limite'),
+  paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide'),
+  paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque'], { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
+  motive: z.string().trim().min(5, 'Motif requis (5 caractères minimum)').max(255, 'Trop long'),
+  requestedByOwner: z.coerce.boolean().default(true),
+});
+
 // Annulation = suppression logique avec justification obligatoire.
 const cancelChargeRemittanceSchema = z.object({
   reason: z.string().trim().min(5, 'Justification requise (5 caractères minimum)').max(255, 'Trop long'),
@@ -115,6 +127,7 @@ const endMandateSchema = z.object({
 });
 
 module.exports = {
+  createDepositTransferSchema,
   createOwnerSchema,
   updateOwnerSchema,
   createPayoutSchema,

@@ -410,8 +410,16 @@ async function getDepositsHeldByOwner(tenantId, ownerId, db = pool) {
 
   const breakdown = { depositLoyer: Number(depositRows[0].total), sbee: 0, soneb: 0, peinture: 0 };
   for (const r of additionalRows) breakdown[r.type] = Number(r.total);
+  // Part déjà reversée au propriétaire : n'est plus détenue par le cabinet (voir services/depositTransfers.js).
+  const { getDepositPositions } = require('./depositTransfers');
+  const { items, withOwnerTotal } = await getDepositPositions(tenantId, ownerId, db);
+  for (const it of items) {
+    if (it.withOwner <= 0) continue;
+    const k = it.type === 'loyer' ? 'depositLoyer' : it.type;
+    breakdown[k] = Math.max(0, breakdown[k] - it.withOwner);
+  }
   const total = breakdown.depositLoyer + breakdown.sbee + breakdown.soneb + breakdown.peinture;
-  return { total, breakdown };
+  return { total, breakdown, withOwner: withOwnerTotal };
 }
 
 /**

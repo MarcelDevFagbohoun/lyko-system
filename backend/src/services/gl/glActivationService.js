@@ -392,6 +392,26 @@ async function backfillHistoricalEntries(pool, tenantId, { fromDate, createdBy }
     });
   }
 
+  const [depositTransfers] = await pool.query(
+    `SELECT t.id, t.owner_id, t.direction, t.deposit_type, t.amount, t.payment_method, t.paid_at, t.recorded_by, o.name
+     FROM owner_deposit_transfers t JOIN owners o ON o.id = t.owner_id
+     WHERE t.tenant_id = :tenantId AND t.paid_at >= :fromDate`,
+    { tenantId, fromDate },
+  );
+  for (const t of depositTransfers) {
+    operations.push({
+      sourceTable: 'owner_deposit_transfers',
+      sourceId: t.id,
+      operationType: t.direction === 'to_owner' ? 'caution_reversee_proprietaire' : 'caution_recuperee_proprietaire',
+      entryDate: isoDate(t.paid_at),
+      amount: Number(t.amount),
+      paymentMethod: t.payment_method,
+      narrationVars: { proprietaire: t.name, type: t.deposit_type },
+      createdBy: t.recorded_by ?? createdBy,
+      context: { ownerId: t.owner_id },
+    });
+  }
+
   const [lateFees] = await pool.query(
     `SELECT lf.id, lf.lease_id, lf.amount, lf.applied_at, lf.applied_by, r.first_name, r.last_name
      FROM late_fees lf JOIN leases l ON l.id = lf.lease_id JOIN renters r ON r.id = l.renter_id

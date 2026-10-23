@@ -96,6 +96,13 @@ const ACCOUNTS = [
     control: true,
     note: 'Numéro renommable par le DG (Comptabilité avancée → Réglages) une fois l\'avis de son expert-comptable obtenu — SYSCOHADA ne prévoit pas de compte officiel dédié au mandat de gestion locative (certains cabinets utilisent 4671, d\'autres un compte 46 "Associés").',
   },
+  {
+    code: '4673',
+    label: 'Propriétaires — cautions détenues pour le compte des locataires',
+    class: 4,
+    type: 'actif',
+    note: "Créance sur le propriétaire : caution reçue d'un locataire (dette inscrite au 165) dont une partie a été remise au propriétaire. Elle se solde quand le propriétaire la rend, ou à la sortie du locataire. À VALIDER par l'expert-comptable.",
+  },
   { code: '481', label: "Fournisseurs d'investissements", class: 4, type: 'passif', control: true },
   {
     code: '491',
@@ -390,6 +397,29 @@ const RULES = [
     lines: [
       { side: 'debit', account: '165', role: 'tiers_locataire_caution', formula: 'montant_total' },
       { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'caution_reversee_proprietaire',
+    label: 'Reverser une caution au propriétaire',
+    journal: 'OD',
+    narration_template: '{type} reversée au propriétaire — {proprietaire}',
+    note:
+      "Le cabinet remet au propriétaire une partie d'une caution reçue d'un locataire. La dette envers le locataire (165) reste inchangée : elle est compensée par une créance sur le propriétaire (4673) jusqu'à sa récupération. Aucun effet sur le compte courant du propriétaire (4671), ni commission, ni IRF. À VALIDER par l'expert-comptable.",
+    lines: [
+      { side: 'debit', account: '4673', formula: 'montant_total' },
+      { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'caution_recuperee_proprietaire',
+    label: 'Récupérer une caution auprès du propriétaire',
+    journal: 'OD',
+    narration_template: '{type} rendue par le propriétaire — {proprietaire}',
+    note: 'Symétrique de `caution_reversee_proprietaire` : le propriétaire rend tout ou partie de la caution reçue.',
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', account: '4673', formula: 'montant_total' },
     ],
   },
   {

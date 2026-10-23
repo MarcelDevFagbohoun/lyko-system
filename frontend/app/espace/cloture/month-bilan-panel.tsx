@@ -25,6 +25,7 @@ const INFLOW_LABELS: Record<string, string> = {
   otherIncomes: "Autres entrées (honoraires, intérêts, remboursements…)",
   rentDeposits: "Cautions de loyer reçues",
   extraDeposits: "Cautions supplémentaires reçues",
+  depositsRecoveredFromOwners: "Cautions récupérées auprès des propriétaires",
   utilityCollected: "Charges SONEB/SBEE payées par les locataires",
 };
 const OUTFLOW_LABELS: Record<string, string> = {
@@ -35,6 +36,7 @@ const OUTFLOW_LABELS: Record<string, string> = {
   fixedAssets: "Achats d'immobilisations",
   rentDepositsReturned: "Cautions de loyer restituées",
   extraDepositsReturned: "Cautions supplémentaires restituées",
+  depositsTransferredToOwners: "Cautions remises aux propriétaires",
 };
 const METHOD_LABELS: Record<string, string> = {
   especes: "Espèces",
@@ -207,6 +209,28 @@ function SyntheseTab({ b }: { b: MonthBilan }) {
         <LinesTable title="Entrées d'argent" lines={b.inflows.lines} labels={INFLOW_LABELS} total={b.inflows.total} />
         <LinesTable title="Sorties d'argent" lines={b.outflows.lines} labels={OUTFLOW_LABELS} total={b.outflows.total} />
       </div>
+
+      {b.depositTransfers && (b.depositTransfers.lines.length > 0 || b.depositTransfers.stillWithOwners.total > 0) && (
+        <div className="flex flex-col gap-2 rounded-lg border border-warning-border bg-warning-bg px-4 py-3 text-body-sm text-warning-fg">
+          <p className="font-label-sm uppercase tracking-wider">Cautions chez les propriétaires</p>
+          {b.depositTransfers.lines.length > 0 && (
+            <ul className="flex flex-col gap-1">
+              {b.depositTransfers.lines.map((t) => (
+                <li key={t.id}>
+                  {t.direction === "to_owner" ? "Remis à" : "Récupéré auprès de"} {t.ownerName} : {formatFcfa(t.amount)} ({t.renterName}
+                  {t.requestedByOwner ? ", à sa demande" : ""}) — {t.motive}
+                </li>
+              ))}
+            </ul>
+          )}
+          {b.depositTransfers.stillWithOwners.total > 0 && (
+            <p>
+              Encore détenu par les propriétaires, à restituer aux locataires : <strong>{formatFcfa(b.depositTransfers.stillWithOwners.total)}</strong>
+              {" "}({b.depositTransfers.stillWithOwners.owners.map((o) => `${o.ownerName} ${formatFcfa(o.amount)}`).join(" · ")})
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <p className="font-label-sm uppercase tracking-wider text-ink-muted">

@@ -112,7 +112,56 @@ export type EscrowBalance = {
 export type DepositsHeld = {
   total: number;
   breakdown: { depositLoyer: number; sbee: number; soneb: number; peinture: number };
+  /** Part déjà remise au propriétaire (due aux locataires, détenue par lui). */
+  withOwner?: number;
 };
+
+export type DepositType = "loyer" | "sbee" | "soneb" | "peinture";
+/** Une caution encore détenue : montant total, part restée au cabinet et part remise au propriétaire. */
+export type DepositPosition = {
+  leaseId: number;
+  type: DepositType;
+  typeLabel: string;
+  amount: number;
+  renterName: string;
+  unitCode: string;
+  propertyCode: string;
+  withOwner: number;
+  atCabinet: number;
+};
+export type DepositTransfer = {
+  id: number;
+  leaseId: number;
+  renterName: string;
+  unitCode: string;
+  depositType: DepositType;
+  typeLabel: string;
+  direction: "to_owner" | "from_owner";
+  amount: number;
+  paidAt: string;
+  paymentMethod: string;
+  motive: string;
+  requestedByOwner: boolean;
+  recordedByName: string | null;
+};
+export type CreateDepositTransferInput = {
+  leaseId: number;
+  depositType: DepositType;
+  direction: "to_owner" | "from_owner";
+  amount: number;
+  paidAt: string;
+  paymentMethod: "especes" | "mobile_money" | "virement" | "cheque";
+  motive: string;
+  requestedByOwner: boolean;
+};
+export function createDepositTransfer(accessToken: string, ownerId: number, input: CreateDepositTransferInput) {
+  return apiFetch<{ transferId: number }>(`/api/owners/${ownerId}/deposit-transfers`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
 
 export function getOwner(accessToken: string, id: number) {
   return apiFetch<{
@@ -120,6 +169,8 @@ export function getOwner(accessToken: string, id: number) {
     properties: OwnerProperty[];
     escrowBalance: EscrowBalance;
     depositsHeld: DepositsHeld;
+    depositPositions: { items: DepositPosition[]; withOwnerTotal: number };
+    depositTransfers: DepositTransfer[];
     /** Impayés des locataires à l'entrée, non réglés (montant brut, jamais mélangé à `escrowBalance`). */
     openingDebtUnpaid: number;
     payouts: OwnerPayout[];

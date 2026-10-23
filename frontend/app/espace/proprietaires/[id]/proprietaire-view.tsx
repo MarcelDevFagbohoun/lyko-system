@@ -24,11 +24,14 @@ import {
   type EscrowBalance,
   type DepositsHeld,
   type OwnerChargeRemittance,
+  type DepositPosition,
+  type DepositTransfer,
 } from "@/lib/api/owners";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa, formatDateLabel, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { DocumentDownloadStatus } from "@/components/documents/document-download-status";
+import { DepositTransferCard } from "./deposit-transfer-card";
 import { Badge } from "@/components/ui/badge";
 import { UtilityPointPanel } from "@/components/charges/utility-point-panel";
 import { ChargeRemittanceCard } from "@/components/charges/charge-remittance-card";
@@ -88,6 +91,8 @@ function ProprietaireContent() {
   const [payouts, setPayouts] = React.useState<OwnerPayout[] | null>(null);
   const [escrowBalance, setEscrowBalance] = React.useState<EscrowBalance | null>(null);
   const [depositsHeld, setDepositsHeld] = React.useState<DepositsHeld | null>(null);
+  const [depositPositions, setDepositPositions] = React.useState<{ items: DepositPosition[]; withOwnerTotal: number }>({ items: [], withOwnerTotal: 0 });
+  const [depositTransfers, setDepositTransfers] = React.useState<DepositTransfer[]>([]);
   const [openingDebtUnpaid, setOpeningDebtUnpaid] = React.useState(0);
   const [chargesAccount, setChargesAccount] = React.useState<ChargeAccount | null>(null);
   const [chargeRemittances, setChargeRemittances] = React.useState<OwnerChargeRemittance[]>([]);
@@ -105,6 +110,8 @@ function ProprietaireContent() {
         setPayouts(res.payouts);
         setEscrowBalance(res.escrowBalance);
         setDepositsHeld(res.depositsHeld);
+        setDepositPositions(res.depositPositions);
+        setDepositTransfers(res.depositTransfers);
         setOpeningDebtUnpaid(res.openingDebtUnpaid);
         setChargesAccount(res.chargesAccount);
         setChargeRemittances(res.chargeRemittances);
@@ -311,6 +318,17 @@ function ProprietaireContent() {
         )}
 
         <EscrowBalanceCard escrow={escrowBalance} depositsHeld={depositsHeld} openingDebtUnpaid={openingDebtUnpaid} />
+
+        <DepositTransferCard
+          ownerId={owner.id}
+          ownerName={owner.name}
+          positions={depositPositions.items}
+          withOwnerTotal={depositPositions.withOwnerTotal}
+          transfers={depositTransfers}
+          accessToken={accessToken}
+          canRecord={canPayout && !archived}
+          onChanged={load}
+        />
 
         {chargesAccount && (
           <ChargeRemittanceCard

@@ -693,6 +693,15 @@ export type MonthBilan = {
     counts: Record<string, number>;
   };
   outflows: { total: number; lines: MonthBilanLines; counts: Record<string, number> };
+  /** Cautions remises aux propriétaires (ou récupérées) : suivi mensuel, à restituer aux locataires. */
+  depositTransfers?: {
+    month: { toOwners: number; fromOwners: number };
+    lines: {
+      id: number; ownerId: number; ownerName: string; direction: "to_owner" | "from_owner";
+      depositType: string; amount: number; paidAt: string; motive: string; requestedByOwner: boolean; renterName: string;
+    }[];
+    stillWithOwners: { total: number; owners: { ownerId: number; ownerName: string; amount: number }[] };
+  };
   treasury: { in: number; out: number; net: number };
   cabinet: {
     commission: number;

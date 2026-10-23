@@ -45,6 +45,8 @@ async function assertOwnerPhoneAvailable(tenantId, phone, excludeOwnerId) {
 }
 
 const { assertWithinLimit, requireFeature } = require('../services/entitlements');
+const depositTransfers = require('../services/depositTransfers');
+const { createDepositTransferSchema } = require('../validators/owners');
 const router = Router();
 router.use(requireAuth);
 
@@ -320,6 +322,9 @@ router.get('/:id', canRead, async (req, res, next) => {
       // Cautions actuellement détenues (demande utilisateur, 2026-10-17) — à part de la recette nette
       // cumulée ci-dessus : ce n'est pas un revenu, voir `getDepositsHeldByOwner`.
       depositsHeld,
+      // Cautions : ce que le cabinet détient encore, ce qui a été remis au propriétaire, et l'historique.
+      depositPositions: await depositTransfers.getDepositPositions(req.user.tenantId, id),
+      depositTransfers: await depositTransfers.listTransfers(req.user.tenantId, id, { limit: 50 }),
       // Dette initiale des locataires non encore réglée — volontairement à
       // part du solde séquestre ci-dessus (voir `getUnpaidOpeningDebtByOwner`).
       openingDebtUnpaid: unpaidOpeningDebtByOwner.get(id) ?? 0,
@@ -513,6 +518,58 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
       by: req.user.id,
     });
     res.status(201).json({ payoutId });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// GET /api/owners/:id/deposit-transfers — cautions détenues (par bail et par type) et historique des reversements.
+router.get('/:id/deposit-transfers', canRead, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    res.json({
+      positions: await depositTransfers.getDepositPositions(req.user.tenantId, id),
+      transfers: await depositTransfers.listTransfers(req.user.tenantId, id, { limit: 200 }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/owners/:id/deposit-transfers — reverser une caution au propriétaire (ou la récupérer auprès de lui).
+// Ce n'est pas une recette du propriétaire : ni solde séquestre, ni commission. Motif obligatoire.
+router.post('/:id/deposit-transfers', canPayout, async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+  const parsed = createDepositTransferSchema.safeParse(req.body);
+  if (!parsed.success) return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  const data = parsed.data;
+
+  const conn = await pool.getConnection();
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    assertMandateActive(owner);
+    await assertPeriodOpen(req.user.tenantId, data.paidAt);
+    // Entreprise qui a activé la comptabilité avancée avant l'existence de cette opération : ajoute le compte et les règles.
+    if (await isModuleActive(pool, req.user.tenantId)) {
+      const seed = require('../db/seedGeneralLedger');
+      await seed.syncMissingAccounts(req.user.tenantId);
+      await seed.syncMissingPostingRules(req.user.tenantId);
+    }
+    await conn.beginTransaction();
+    const transferId = await depositTransfers.createTransfer(conn, {
+      tenantId: req.user.tenantId, ownerId: id, owner, data, recordedBy: req.user.id,
+    });
+    await conn.commit();
+    logger.info('Caution reversée au propriétaire', { tenantId: req.user.tenantId, ownerId: id, transferId, direction: data.direction, by: req.user.id });
+    res.status(201).json({ transferId });
   } catch (err) {
     await conn.rollback().catch(() => {});
     next(err);
@@ -794,6 +851,11 @@ router.get('/:id/statement.pdf', canReadDocs, requireFeature('owner_portal'), as
         monthlyRent: Number(u.monthly_rent),
         currentRenter: u.renter_first_name ? `${u.renter_first_name} ${u.renter_last_name}` : null,
       })),
+      depositTransfers: await (async () => {
+        const dep = require('../services/depositTransfers');
+        const [pos, rows] = await Promise.all([dep.getDepositPositions(req.user.tenantId, id), dep.listTransfers(req.user.tenantId, id, { limit: 24 })]);
+        return { withOwner: pos.withOwnerTotal, rows };
+      })(),
       payouts: payoutRows.map((p) => ({
         amount: Number(p.amount),
         periodLabel: p.period_label,

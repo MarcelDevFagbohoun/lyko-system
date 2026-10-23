@@ -108,6 +108,25 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
     p,
   );
 
+  // Cautions reversées au propriétaire / récupérées auprès de lui (mouvements d'argent, sans effet sur sa recette).
+  const depTransOut = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM owner_deposit_transfers WHERE tenant_id = :tenantId AND direction = 'to_owner' AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
+  const depTransIn = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM owner_deposit_transfers WHERE tenant_id = :tenantId AND direction = 'from_owner' AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
+  // Position à la fin du mois : cautions encore chez les propriétaires (reversé − récupéré, jusqu'à cette date).
+  const [withOwnersRows] = await db.query(
+    `SELECT t.owner_id, o.name, SUM(CASE WHEN t.direction = 'to_owner' THEN t.amount ELSE -t.amount END) AS net
+     FROM owner_deposit_transfers t JOIN owners o ON o.id = t.owner_id
+     WHERE t.tenant_id = :tenantId AND t.paid_at <= :last
+     GROUP BY t.owner_id, o.name HAVING net > 0 ORDER BY net DESC`,
+    p,
+  );
+  const [depTransList] = await db.query(
+    `SELECT t.id, t.owner_id, o.name AS owner_name, t.direction, t.deposit_type, t.amount, t.motive, t.requested_by_owner,
+            DATE_FORMAT(t.paid_at,'%Y-%m-%d') AS paid_at, r.first_name, r.last_name
+     FROM owner_deposit_transfers t JOIN owners o ON o.id = t.owner_id JOIN leases l ON l.id = t.lease_id JOIN renters r ON r.id = l.renter_id
+     WHERE t.tenant_id = :tenantId AND DATE_FORMAT(t.paid_at,'%Y-%m') = :month ORDER BY t.paid_at, t.id`,
+    p,
+  );
+
   // ── SORTIES ────────────────────────────────────────────────────────────────────────────────
   const ownerPayouts = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM owner_payouts WHERE tenant_id = :tenantId AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
   const chargeRemittances = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM owner_charge_remittances WHERE tenant_id = :tenantId AND deleted_at IS NULL AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
@@ -247,6 +266,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
     rentDeposits: rentDeposits.total,
     extraDeposits: extraDeposits.total,
     utilityCollected: utilityCollected.total,
+    depositsRecoveredFromOwners: depTransIn.total,
   };
   const outLines = {
     ownerPayouts: ownerPayouts.total,
@@ -256,6 +276,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
     fixedAssets: fixedAssets.total,
     rentDepositsReturned: rentDepositsReturned.total,
     extraDepositsReturned: extraDepositsReturned.total,
+    depositsTransferredToOwners: depTransOut.total,
   };
   const sumOf = (o) => Object.values(o).reduce((s, v) => s + v, 0);
   const totalIn = sumOf(inLines);
@@ -327,6 +348,19 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
       engagedUnpaid: unpaidExpenses,
     },
     charges: { billed, collected: utilityCollected, remitted: chargeRemittances, unpaidAtEndOfMonth: unpaidAtEnd },
+    // Point mensuel des cautions remises aux propriétaires : mouvements du mois + ce qui reste chez eux à la fin du mois.
+    depositTransfers: {
+      month: { toOwners: depTransOut, fromOwners: depTransIn },
+      lines: depTransList.map((t) => ({
+        id: t.id, ownerId: t.owner_id, ownerName: t.owner_name, direction: t.direction, depositType: t.deposit_type,
+        amount: n(t.amount), paidAt: t.paid_at, motive: t.motive, requestedByOwner: !!t.requested_by_owner,
+        renterName: `${t.first_name} ${t.last_name}`,
+      })),
+      stillWithOwners: {
+        total: withOwnersRows.reduce((sum, r) => sum + n(r.net), 0),
+        owners: withOwnersRows.map((r) => ({ ownerId: r.owner_id, ownerName: r.name, amount: n(r.net) })),
+      },
+    },
     controls,
     allControlsOk: controls.every((c) => c.ok),
   };

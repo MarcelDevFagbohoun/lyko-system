@@ -232,6 +232,11 @@ router.get('/:token/statement.pdf', async (req, res, next) => {
         monthlyRent: Number(u.monthly_rent),
         currentRenter: u.renter_first_name ? `${u.renter_first_name} ${u.renter_last_name}` : null,
       })),
+      depositTransfers: await (async () => {
+        const dep = require('../services/depositTransfers');
+        const [pos, rows] = await Promise.all([dep.getDepositPositions(tenantId, ownerId), dep.listTransfers(tenantId, ownerId, { limit: 24 })]);
+        return { withOwner: pos.withOwnerTotal, rows };
+      })(),
       payouts: payoutRows.map((p) => ({
         amount: Number(p.amount),
         periodLabel: p.period_label,

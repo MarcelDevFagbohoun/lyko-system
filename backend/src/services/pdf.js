@@ -1607,7 +1607,7 @@ function drawChargesStatementSection(doc, charges, y) {
  * données en libellés à droite, bloc d'identité, tableaux avec ligne
  * totale mise en évidence, plutôt que des paragraphes/listes libres.
  */
-function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, charges = null, verificationCode }) {
+function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, charges = null, depositTransfers = null, verificationCode }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="releve-${owner.name.replace(/\s+/g, '-')}.pdf"`);
@@ -1745,6 +1745,42 @@ function streamOwnerStatementPdf(res, { tenant, owner, units, payouts, charges =
         .text(formatFcfa(p.amount), colAmount.x, y, { width: colAmount.width, align: 'right' });
       y += 18;
     }
+  }
+
+  // Cautions remises au propriétaire : historique + ce qu'il détient encore (à restituer aux locataires).
+  if (depositTransfers && (depositTransfers.rows.length > 0 || depositTransfers.withOwner > 0)) {
+    y = Math.max(y, doc.y) + 24;
+    if (y > 640) {
+      doc.addPage();
+      y = 50;
+    }
+    doc.font(FONT_SANS_BOLD).fontSize(12).fillColor(INK).text('Cautions remises au propriétaire', 50, y);
+    y = doc.y + 6;
+    doc
+      .font(FONT_SANS)
+      .fontSize(9)
+      .fillColor(MUTED)
+      .text(
+        'Ces sommes appartiennent aux locataires : elles restent à restituer à la sortie du bail. Elles ne sont pas des loyers et ne figurent pas dans les versements ci-dessus.',
+        50, y, { width: 495 },
+      );
+    y = doc.y + 10;
+    for (const t of depositTransfers.rows) {
+      if (y > 720) {
+        doc.addPage();
+        y = 50;
+      }
+      const sign = t.direction === 'to_owner' ? 'Remis' : 'Rendu';
+      doc.font(FONT_MONO).fontSize(9).fillColor(INK).text(formatDateSlash(isoDateOnly(t.paidAt)), 50, y, { width: 80 });
+      doc.font(FONT_SANS).fontSize(9).fillColor(INK).text(`${sign} — ${t.typeLabel} · ${t.renterName}`, 135, y, { width: 320 });
+      doc.font(FONT_MONO_BOLD).fontSize(9).fillColor(INK).text(formatFcfa(t.amount), 460, y, { width: 85, align: 'right' });
+      y = Math.max(doc.y, y + 14) + 4;
+    }
+    drawPanel(doc, 275, y + 4, 270, 34, { fill: PRIMARY_BG, stroke: PRIMARY_BORDER });
+    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text('Cautions détenues par le propriétaire', 290, y + 15, { width: 160 });
+    doc.font(FONT_MONO_BOLD).fontSize(12).fillColor(PRIMARY).text(formatFcfa(depositTransfers.withOwner), 275, y + 13, { width: 255, align: 'right' });
+    y += 50;
+    doc.y = y;
   }
 
   // Charges SONEB/SBEE (étape 31) : le point + ce qu'il reste à reverser au propriétaire.
