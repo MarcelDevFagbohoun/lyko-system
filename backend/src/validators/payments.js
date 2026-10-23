@@ -32,12 +32,26 @@ const salaryOrder = z
     deductionAmount: nonNegative('Retenue').optional().default(0),
     deductionLabel: optionalText(150),
     ...common,
+    // Le n° Mobile Money peut être omis : celui mémorisé sur la fiche de l'employé est alors utilisé.
+    phone: common.phone.optional(),
+    operator: common.operator.optional(),
+    saveNumber: z.boolean().optional().default(false),
   })
   .strict();
 
 const ownerOrder = z
   .object({
     purpose: z.literal('reversement_proprietaire'),
+    ownerId: z.coerce.number().int().positive('Propriétaire invalide'),
+    amount: amount('Montant'),
+    periodLabel: text(1, 50, 'Période'),
+    ...common,
+  })
+  .strict();
+
+const chargesOrder = z
+  .object({
+    purpose: z.literal('reversement_charges'),
     ownerId: z.coerce.number().int().positive('Propriétaire invalide'),
     amount: amount('Montant'),
     periodLabel: text(1, 50, 'Période'),
@@ -55,15 +69,21 @@ const otherOrder = z
   })
   .strict();
 
-const createOrderSchema = z.discriminatedUnion('purpose', [salaryOrder, ownerOrder, otherOrder]);
+const createOrderSchema = z.discriminatedUnion('purpose', [salaryOrder, ownerOrder, chargesOrder, otherOrder]);
 
 const listOrdersQuery = z.object({
   status: z.enum(['created', 'processing', 'sent', 'failed']).optional(),
-  purpose: z.enum(['salaire', 'reversement_proprietaire', 'autre']).optional(),
+  purpose: z.enum(['salaire', 'reversement_proprietaire', 'reversement_charges', 'autre']).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   offset: z.coerce.number().int().min(0).max(100000).optional().default(0),
 });
 
-module.exports = { createOrderSchema, listOrdersQuery };
+const listHistoryQuery = z.object({
+  kind: z.enum(['salaire', 'reversement_proprietaire', 'reversement_charges', 'depense', 'restitution_caution']).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+module.exports = { createOrderSchema, listOrdersQuery, listHistoryQuery };

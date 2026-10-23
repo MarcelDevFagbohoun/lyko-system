@@ -21,7 +21,6 @@ import {
   Clock,
   Lock,
   Tag,
-  HandCoins,
   Send,
   Settings,
   Stamp,
@@ -120,9 +119,8 @@ export function EspaceSidebar() {
         // Salaires (demande utilisateur, 2026-10-18) : réservé au DG, jamais délégable via une
         // permission — la rémunération du personnel reste une donnée sensible (même principe que
         // `/espace/employes`).
-        isDg && { href: "/espace/salaires", label: "Paie du personnel", icon: HandCoins, hint: "Salaires et charges de personnel (réservé à la direction)." },
         // Paiements sortants FedaPay : lecture DG + comptable, envoi DG uniquement (contrôlé par le serveur).
-        (isDg || user?.role === "comptable") && { href: "/espace/paiements", label: "Versements", icon: Send, hint: "Reversements aux propriétaires (compte 4671 — mandants) et paiements sortants." },
+        (isDg || user?.role === "comptable") && { href: "/espace/paiements", label: "Paiements", icon: Send, hint: "Salaires, reversements aux propriétaires, dépenses et restitutions de caution, avec reçus." },
       ],
     },
     {

@@ -23,6 +23,8 @@ const { resolveRoleLabels } = require('../constants/roles');
 const { toActor } = require('../utils/actor');
 const { streamPayslipPdf } = require('../services/pdf');
 const logger = require('../utils/logger');
+const { maskPhone, normalizeBeninPhone } = require('../services/payments/phone');
+const { assertManualPaymentAllowed } = require('../services/payments/manualGuard');
 
 const { requireFeature } = require('../services/entitlements');
 const router = Router();
@@ -41,6 +43,8 @@ function toPublicStaff(row, roleLabels) {
     role: row.role,
     roleLabel: roleLabels[row.role] ?? row.role,
     baseSalary: row.base_salary != null ? Number(row.base_salary) : null,
+    momoPhoneMasked: row.momo_phone ? maskPhone(row.momo_phone) : null,
+    momoOperator: row.momo_operator ?? null,
     lastPayslip:
       row.last_period != null
         ? { period: row.last_period, netAmount: Number(row.last_net_amount), paidAt: row.last_paid_at }
@@ -141,6 +145,30 @@ router.patch('/staff/:userId/base-salary', async (req, res, next) => {
       id: userId,
     });
     logger.info('Salaire de base mis à jour', { tenantId: req.user.tenantId, userId, baseSalary: parsed.data.baseSalary, by: req.user.id });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/payslips/staff/:userId/momo — mémorise (ou efface) le n° Mobile Money de l'employé.
+router.patch('/staff/:userId/momo', async (req, res, next) => {
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isInteger(userId)) throw new ApiError(400, 'Identifiant invalide');
+    const { phone, operator } = req.body ?? {};
+    let momoPhone = null;
+    let momoOperator = null;
+    if (phone) {
+      momoPhone = normalizeBeninPhone(String(phone));
+      if (!momoPhone) throw new ApiError(422, 'Numéro Mobile Money invalide (format béninois attendu).');
+      if (!['mtn', 'moov'].includes(operator)) throw new ApiError(422, 'Opérateur invalide');
+      momoOperator = operator;
+    }
+    const [r] = await pool.query('UPDATE users SET momo_phone = :momoPhone, momo_operator = :momoOperator WHERE id = :id AND tenant_id = :tenantId', {
+      momoPhone, momoOperator, id: userId, tenantId: req.user.tenantId,
+    });
+    if (!r.affectedRows) throw new ApiError(404, 'Employé introuvable');
     res.status(204).send();
   } catch (err) {
     next(err);
@@ -258,6 +286,7 @@ router.post('/', async (req, res, next) => {
 
   const conn = await pool.getConnection();
   try {
+    await assertManualPaymentAllowed(req.user.tenantId, 'le paiement des salaires');
     const [userRows] = await pool.query('SELECT * FROM users WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
       id: data.userId,
       tenantId: req.user.tenantId,

@@ -15,6 +15,9 @@ export type StaffMember = {
   role: StaffRole;
   roleLabel: string;
   baseSalary: number | null;
+  /** N° Mobile Money mémorisé (toujours masqué par le serveur). */
+  momoPhoneMasked: string | null;
+  momoOperator: "mtn" | "moov" | null;
   lastPayslip: { period: string; netAmount: number; paidAt: string } | null;
 };
 
@@ -54,6 +57,15 @@ export function updateBaseSalary(accessToken: string, userId: number, baseSalary
     accessToken,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ baseSalary }),
+  });
+}
+
+export function updateStaffMomo(accessToken: string, userId: number, input: { phone?: string; operator?: "mtn" | "moov" }) {
+  return apiFetch<void>(`/api/payslips/staff/${userId}/momo`, {
+    method: "PATCH",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
   });
 }
 

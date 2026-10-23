@@ -83,3 +83,10 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - Migration `113_move_out_statement.sql` (lignes libres, loyers dus bruts, solde négatif et sa résolution).
 - Les états des lieux d'entrée et de sortie n'ont plus de signature numérique : le PDF comporte deux cadres vides (locataire / cabinet) à signer après impression. Les anciens PV déjà signés gardent leurs signatures. Le contrat de bail reste signé numériquement.
 - Sortie : loyers impayés repris automatiquement ; si les dettes dépassent la caution, le locataire doit régler la différence ou effectuer les réparations avant la finalisation (le règlement encaissé reste à régulariser manuellement en comptabilité, comme les retenues).
+
+## Lot 6 — menu « Paiements » unique, FedaPay obligatoire quand il est activé
+
+- Migration `114_unified_payments.sql` : nouvel objet de paiement `reversement_charges` (reversement des charges SONEB/SBEE par FedaPay) et n° Mobile Money + opérateur mémorisés sur la fiche de l'employé (toujours affichés masqués).
+- Le menu « Salaires » disparaît (l'ancienne adresse redirige vers « Paiements »). Page unique : historique de toutes les opérations avec reçu (salaires, reversements propriétaires, reversements de charges, dépenses payées, restitutions de caution) + onglet « Personnel & salaires ».
+- **FedaPay activé** : la saisie manuelle d'un salaire, d'un reversement propriétaire ou d'un reversement de charges est refusée par le serveur (409) ; tout passe par FedaPay avec mot de passe, plafonds et journal d'audit. **FedaPay désactivé** : saisie du paiement effectué, avec récapitulatif de confirmation (mode de règlement, date, effet comptable).
+- Reçus : fiche de paie (salaire manuel), avis de paiement (tout ordre FedaPay), reçu PDF généré pour les autres opérations manuelles. Les salaires restent visibles du seul directeur général.

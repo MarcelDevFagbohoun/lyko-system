@@ -43,6 +43,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
+import { FedapayNotice, useFedapayEnabled } from "@/components/payments/fedapay-notice";
 
 const UNIT_STATUS_BADGE = {
   libre: { variant: "success" as const, label: "Libre" },
@@ -71,6 +72,7 @@ function ProprietaireContent() {
   const { accessToken, user } = useAuth();
   // Enregistrer un versement est une action financière : ouverte au
   // comptable aussi (même logique que le registre des paiements locataires).
+  const fedapayOn = useFedapayEnabled();
   const canPayout = user?.role === "dg" || (user?.permissions.includes("proprietaires") ?? false) || (user?.permissions.includes("comptabilite") ?? false);
   // Modifier la fiche : même périmètre que la création (propriétaires, ou
   // locataires qui gère aussi les Biens/propriétaires à la volée).
@@ -379,9 +381,11 @@ function ProprietaireContent() {
             <CardDescription>Historique des loyers nets reversés à ce propriétaire.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            {canPayout && !archived && (
+            {canPayout && !archived && (fedapayOn ? (
+              <FedapayNotice what="le versement des loyers à ce propriétaire" />
+            ) : (
               <PayoutForm ownerId={owner.id} ownerName={owner.name} accessToken={accessToken} onRecorded={load} />
-            )}
+            ))}
 
             {payouts.length === 0 ? (
               <p className="text-body-sm text-ink-muted">Aucun versement enregistré pour ce propriétaire.</p>

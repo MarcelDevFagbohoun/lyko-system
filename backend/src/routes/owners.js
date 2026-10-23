@@ -25,6 +25,7 @@ const { genererEcriture, isModuleActive } = require('../services/gl/glPostingSer
 const { resolvePropertyScope } = require('../services/scope');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
+const { assertManualPaymentAllowed } = require('../services/payments/manualGuard');
 
 /**
  * Un même numéro de téléphone ne doit jamais être utilisé par deux
@@ -500,6 +501,7 @@ router.post('/:id/payouts', canPayout, async (req, res, next) => {
 
   const conn = await pool.getConnection();
   try {
+    await assertManualPaymentAllowed(req.user.tenantId, 'le reversement au propriétaire');
     const scopeAgentId = await resolvePropertyScope(req.user);
     const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
     assertMandateActive(owner);
@@ -595,6 +597,7 @@ router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
 
   const conn = await pool.getConnection();
   try {
+    await assertManualPaymentAllowed(req.user.tenantId, 'le reversement de charges');
     const scopeAgentId = await resolvePropertyScope(req.user);
     const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
     assertMandateActive(owner);

@@ -445,7 +445,7 @@ function isoDay(value) {
  * aucune clé ni identifiant technique n'y figure.
  */
 function streamPaymentAdvicePdf(res, { tenant, order }) {
-  const purposeLabels = { salaire: 'Salaire', reversement_proprietaire: 'Reversement propriétaire', autre: 'Paiement' };
+  const purposeLabels = { salaire: 'Salaire', reversement_proprietaire: 'Reversement propriétaire', reversement_charges: 'Reversement de charges', autre: 'Paiement' };
   const sentOn = formatDateFr(isoDay(order.sent_at));
   renderReceiptDocument(res, {
     tenant,
@@ -471,6 +471,39 @@ function streamPaymentAdvicePdf(res, { tenant, order }) {
     total: { label: 'Montant versé', amount: D.fcfa(order.amount), raw: order.amount },
     wordsPrefix: 'Arrêté le présent avis à la somme de',
     note: "Document généré automatiquement. Il atteste de l'envoi des fonds par le prestataire de paiement à la date indiquée.",
+    signatureTitle: tenant.company_name,
+    issuer: null,
+  });
+}
+
+/**
+ * Reçu de sortie d'argent saisie manuellement (reversement, dépense, restitution de caution) : atteste du montant,
+ * du bénéficiaire, du mode de règlement et de la date. Pas de numéro de compte.
+ */
+function streamOperationReceiptPdf(res, { tenant, op }) {
+  const methodLabels = { especes: 'Espèces', mobile_money: 'Mobile Money', virement: 'Virement', cheque: 'Chèque' };
+  const dateFr = formatDateFr(op.date);
+  renderReceiptDocument(res, {
+    tenant,
+    filename: `recu-${op.kind}-${op.id}.pdf`,
+    title: 'REÇU DE PAIEMENT',
+    subtitle: op.kindLabel,
+    meta: [['N°', `${op.kind.toUpperCase().slice(0, 3)}-${String(op.id).padStart(6, '0')}`], ['Date', dateFr]],
+    intro: { prefix: 'Règlement effectué le ', bold: dateFr },
+    partiesLabel: 'Parties',
+    parties: [
+      ['Bénéficiaire', op.beneficiary || '—'],
+      ['Mode de règlement', methodLabels[op.method] ?? op.method ?? '—'],
+      ['Émetteur', tenant.company_name],
+    ],
+    detailLabel: 'Détail',
+    lines: {
+      columns: [{ label: 'Motif', width: 335 }, { label: 'Montant', width: 160, align: 'right', bold: true }],
+      rows: [[op.label, D.fcfa(op.amount)]],
+    },
+    total: { label: 'Montant réglé', amount: D.fcfa(op.amount), raw: op.amount },
+    wordsPrefix: 'Arrêté le présent reçu à la somme de',
+    note: op.note ?? 'Document généré automatiquement.',
     signatureTitle: tenant.company_name,
     issuer: null,
   });
@@ -2099,6 +2132,7 @@ module.exports = {
   streamEntryReceiptPdf,
   streamPayslipPdf,
   streamPaymentAdvicePdf,
+  streamOperationReceiptPdf,
   streamSubscriptionInvoicePdf,
   streamChargeReceiptPdf,
   streamLeaseContractPdf,

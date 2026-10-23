@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { FedapayNotice, useFedapayEnabled } from "@/components/payments/fedapay-notice";
 import { AccountLine } from "@/components/charges/utility-point-panel";
 
 const METHODS: { value: MainPaymentMethod; label: string }[] = [
@@ -52,6 +53,7 @@ export function ChargeRemittanceCard({
   onChanged: () => void;
 }) {
   const toast = useToast();
+  const fedapayOn = useFedapayEnabled();
   const [open, setOpen] = React.useState(false);
   const [step, setStep] = React.useState<"form" | "confirm">("form");
   const [amount, setAmount] = React.useState("");
@@ -133,7 +135,8 @@ export function ChargeRemittanceCard({
       <CardContent className="flex flex-col gap-4">
         <AccountLine account={account} />
 
-        {canRecord && (
+        {canRecord && fedapayOn && account.balance > 0 && <FedapayNotice what="le reversement des charges" />}
+        {canRecord && !fedapayOn && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <span className="font-label-sm uppercase tracking-wider text-ink-muted">Nouveau reversement</span>

@@ -1,8 +1,6 @@
-import type { Metadata } from "next";
-import { SalairesView } from "./salaires-view";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "Salaires" };
-
+/** Le menu « Salaires » a été fusionné dans « Paiements » (un seul endroit pour payer et retrouver les reçus). */
 export default function SalairesPage() {
-  return <SalairesView />;
+  redirect("/espace/paiements");
 }

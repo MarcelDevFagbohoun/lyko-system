@@ -11,7 +11,8 @@ const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { createOrderSchema, listOrdersQuery } = require('../validators/payments');
+const { z } = require('zod');
+const { createOrderSchema, listOrdersQuery, listHistoryQuery } = require('../validators/payments');
 const { createOrder, refreshOrder, applyOrder, loadOrder, toPublicOrder } = require('../services/payments/orders');
 const { verifyAuditChain } = require('../services/payments/audit');
 const { maskPhone } = require('../services/payments/phone');
@@ -152,6 +153,39 @@ router.get('/orders/:id/advice.pdf', requireRole('dg', 'comptable'), async (req,
     if (order.status !== 'sent') throw new ApiError(409, "L'avis n'est disponible qu'après confirmation de l'envoi.");
     const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id', { id: req.user.tenantId });
     streamPaymentAdvicePdf(res, { tenant, order: { ...order, beneficiary_phone_masked: maskPhone(order.beneficiary_phone) } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const { listPaymentHistory, KIND_LABELS } = require('../services/paymentHistory');
+const { streamOperationReceiptPdf } = require('../services/pdf');
+
+// Historique unifié (salaires visibles du seul DG : confidentiel).
+router.get('/history', requireRole('dg', 'comptable'), async (req, res, next) => {
+  try {
+    const q = listHistoryQuery.parse(req.query);
+    const kinds = q.kind ? [q.kind] : null;
+    const data = await listPaymentHistory(req.user.tenantId, {
+      from: q.from ?? null, to: q.to ?? null, kinds, includeSalaries: req.user.role === 'dg',
+    });
+    res.json(data);
+  } catch (err) {
+    next(err instanceof z.ZodError ? new ApiError(400, 'Filtres invalides', err.flatten().fieldErrors) : err);
+  }
+});
+
+// Reçu d'une opération saisie manuellement (reversement, reversement de charges, dépense, restitution de caution).
+router.get('/receipts/:kind/:id.pdf', requireRole('dg', 'comptable'), async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    const kind = req.params.kind;
+    if (!['reversement_proprietaire', 'reversement_charges', 'depense', 'restitution_caution'].includes(kind)) throw new ApiError(404, 'Reçu introuvable');
+    const { items } = await listPaymentHistory(req.user.tenantId, { kinds: [kind], includeSalaries: false });
+    const found = items.find((i) => i.id === id && i.status === 'paid');
+    if (!found) throw new ApiError(404, 'Opération introuvable');
+    const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id', { id: req.user.tenantId });
+    streamOperationReceiptPdf(res, { tenant, op: { ...found, kindLabel: KIND_LABELS[kind] } });
   } catch (err) {
     next(err);
   }

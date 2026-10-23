@@ -1,12 +1,13 @@
 import { apiFetch } from "./client";
 
-export type PaymentPurpose = "salaire" | "reversement_proprietaire" | "autre";
+export type PaymentPurpose = "salaire" | "reversement_proprietaire" | "reversement_charges" | "autre";
 export type PaymentStatus = "created" | "processing" | "sent" | "failed";
 export type PaymentOperator = "mtn" | "moov";
 
 export const PAYMENT_PURPOSE_LABELS: Record<PaymentPurpose, string> = {
   salaire: "Salaire",
   reversement_proprietaire: "Reversement propriétaire",
+  reversement_charges: "Reversement de charges",
   autre: "Autre paiement",
 };
 
@@ -49,7 +50,7 @@ export type PaymentSummary = {
 
 export type PaymentTimelineEvent = { id: number; event: string; at: string; byUserId: number | null };
 
-type Common = { phone: string; operator: PaymentOperator; password: string; idempotencyKey: string; beneficiaryEmail?: string };
+type Common = { phone?: string; operator?: PaymentOperator; password: string; idempotencyKey: string; beneficiaryEmail?: string };
 
 export type CreatePaymentInput =
   | (Common & {
@@ -61,8 +62,11 @@ export type CreatePaymentInput =
       bonusLabel?: string;
       deductionAmount?: number;
       deductionLabel?: string;
+      /** Mémorise le numéro sur la fiche de l'employé pour les prochains salaires. */
+      saveNumber?: boolean;
     })
   | (Common & { purpose: "reversement_proprietaire"; ownerId: number; amount: number; periodLabel: string })
+  | (Common & { purpose: "reversement_charges"; ownerId: number; amount: number; periodLabel: string })
   | (Common & { purpose: "autre"; beneficiaryName: string; amount: number; label: string });
 
 export function getPaymentSummary(accessToken: string) {
@@ -106,4 +110,38 @@ export function verifyPaymentAudit(accessToken: string) {
 
 export function paymentAdvicePdfPath(id: number) {
   return `/api/payments/orders/${id}/advice.pdf`;
+}
+
+export type HistoryKind = "salaire" | "reversement_proprietaire" | "reversement_charges" | "depense" | "restitution_caution";
+
+export const HISTORY_KIND_LABELS: Record<HistoryKind, string> = {
+  salaire: "Salaire",
+  reversement_proprietaire: "Reversement propriétaire",
+  reversement_charges: "Reversement de charges",
+  depense: "Dépense",
+  restitution_caution: "Restitution de caution",
+};
+
+export type HistoryItem = {
+  kind: HistoryKind;
+  id: number;
+  date: string;
+  amount: number;
+  beneficiary: string | null;
+  label: string;
+  method: "especes" | "mobile_money" | "virement" | "cheque";
+  channel: "fedapay" | "manuel" | "manuel_mobile_money";
+  reference: string | null;
+  status: "paid" | "processing" | "failed" | "to_regularize";
+  failureReason?: string | null;
+  orderId: number | null;
+  receiptUrl: string | null;
+};
+
+export type PaymentHistory = { items: HistoryItem[]; total: number; byKind: Partial<Record<HistoryKind, number>> };
+
+export function getPaymentHistory(accessToken: string, filters: { kind?: HistoryKind; from?: string; to?: string } = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) if (v) qs.set(k, String(v));
+  return apiFetch<PaymentHistory>(`/api/payments/history${qs.toString() ? `?${qs}` : ""}`, { accessToken });
 }
