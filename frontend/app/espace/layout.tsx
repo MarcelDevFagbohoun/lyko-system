@@ -49,9 +49,16 @@ export default function EspaceLayout({ children }: { children: React.ReactNode }
       .catch(() => setFirstPlanPending(false));
   }, [status, accessToken, pathname]);
 
+  const onBillingPage = pathname.startsWith("/espace/abonnement");
+  React.useEffect(() => {
+    if (firstPlanPending && !onBillingPage) router.replace("/espace/abonnement");
+  }, [firstPlanPending, onBillingPage, router]);
+
   if (status === "authenticated" && firstPlanPending === null) return <div className="min-h-screen bg-canvas" />;
   if (status === "authenticated" && firstPlanPending) {
     const isDg = user?.role === "dg";
+    // Aucune page de l'espace n'est montée (donc aucun appel serveur) tant que l'offre n'est pas payée.
+    if (isDg && !onBillingPage) return <div className="min-h-screen bg-canvas" />;
     return (
       <div className="min-h-screen bg-canvas">
         <header className="flex items-center justify-between border-b border-border bg-surface px-4 py-3 sm:px-8">
