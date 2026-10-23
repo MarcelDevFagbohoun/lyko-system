@@ -621,7 +621,7 @@ router.get('/:id', canRead, async (req, res, next) => {
 
       const [payments] = await pool.query(
         `SELECT rp.*, pu.first_name AS recorder_first_name, pu.last_name AS recorder_last_name, pu.role AS recorder_role
-         FROM rent_payments rp JOIN users pu ON pu.id = rp.recorded_by
+         FROM rent_payments rp LEFT JOIN users pu ON pu.id = rp.recorded_by
          WHERE rp.lease_id IN (${placeholders}) AND rp.deleted_at IS NULL ORDER BY rp.paid_at DESC, rp.id DESC`,
         leaseIds,
       );
@@ -650,7 +650,10 @@ router.get('/:id', canRead, async (req, res, next) => {
           paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
           paidAt: isoDate(p.paid_at),
           notes: p.notes,
-          recordedBy: toActor(p.recorder_first_name, p.recorder_last_name, p.recorder_role),
+          // Paiement en ligne (FedaPay) : aucun employé ne l'a saisi (recorded_by NULL) — attribué au paiement en ligne.
+          recordedBy: p.recorded_by == null
+            ? { name: 'Paiement en ligne', role: 'en_ligne', roleLabel: 'FedaPay' }
+            : toActor(p.recorder_first_name, p.recorder_last_name, p.recorder_role),
           receipt: receipt ? { id: receipt.id, number: receipt.receipt_number, issuedAt: receipt.issued_at } : null,
         });
       }

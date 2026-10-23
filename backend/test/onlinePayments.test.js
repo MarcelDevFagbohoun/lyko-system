@@ -290,3 +290,35 @@ test('activer le paiement en ligne sans clé enregistrée est refusé', async ()
   assert.equal(res.status, 400);
   await teardown(C.tenantId);
 });
+
+test('paiement en ligne confirmé : visible sur le portail du locataire, avec quittance téléchargeable', async () => {
+  const token = await portalToken(A);
+  const { body } = await checkoutRent(token, 50000);
+  txs.get(await txOf(body.reference)).status = 'approved';
+  assert.deepEqual(await confirm(body.reference), { state: 'paid' });
+  const dash = await (await fetch(`${baseUrl}/api/portal/${token}`)).json();
+  const txId = await txOf(body.reference);
+  const [[row]] = await pool.query('SELECT id FROM rent_payments WHERE kkiapay_transaction_id = :k', { k: `fedapay:${txId}` });
+  const p = dash.payments.find((x) => x.id === row.id);
+  assert.ok(p, 'le paiement figure dans la liste du locataire');
+  assert.ok(p.receipt, 'une quittance existe');
+  const pdf = await fetch(`${baseUrl}/api/portal/${token}/payments/${row.id}/receipt.pdf`);
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+});
+
+test('paiement en ligne : visible aussi sur la fiche du locataire côté entreprise, avec sa quittance', async () => {
+  const token = await portalToken(A);
+  const { body } = await checkoutRent(token, 50000);
+  txs.get(await txOf(body.reference)).status = 'approved';
+  assert.deepEqual(await confirm(body.reference), { state: 'paid' });
+  const txId = await txOf(body.reference);
+  const [[row]] = await pool.query('SELECT id FROM rent_payments WHERE kkiapay_transaction_id = :k', { k: `fedapay:${txId}` });
+  const res = await fetch(`${baseUrl}/api/renters/${A.renterId}`, { headers: bearer(A.dgId, A.tenantId) });
+  assert.equal(res.status, 200);
+  const text = JSON.stringify(await res.json());
+  const detail = JSON.parse(text);
+  const all = JSON.stringify(detail);
+  assert.ok(all.includes(`"id":${row.id},`), 'le paiement en ligne figure sur la fiche');
+  assert.ok(all.includes('Paiement en ligne'));
+});
