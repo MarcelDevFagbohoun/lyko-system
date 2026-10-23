@@ -304,7 +304,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
     },
     {
       key: 'commission_cabinet',
-      label: 'Commission du revenu cabinet = commission des fiches de Bien',
+      label: "Commission du revenu de l'entreprise = commission des fiches de Bien",
       ok: !commissionAtCollection || cabinetRev.breakdown.commission === cellsCommission,
       expected: cellsCommission,
       actual: cabinetRev.breakdown.commission,

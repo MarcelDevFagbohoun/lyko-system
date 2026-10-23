@@ -13,6 +13,7 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { assertPeriodOpenLocked } = require('./accountingPeriods');
+const { claimIdempotencyKey } = require('./paymentGuards');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { ADDITIONAL_DEPOSIT_LABELS } = require('../constants/leaseDeposits');
 
@@ -82,6 +83,9 @@ async function getDepositPositions(tenantId, ownerId, db = pool) {
 const createTransfer = async (conn, { tenantId, ownerId, owner, data, recordedBy }) => {
   await assertPeriodOpenLocked(conn, tenantId, data.paidAt);
   await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', { id: ownerId, tenantId });
+  // Clé d'idempotence (audit du 2026-10-23, manquait contrairement à la route sœur
+  // `/charge-remittances`) : un envoi en double n'enregistre rien de plus.
+  if (data.idempotencyKey) await claimIdempotencyKey(conn, tenantId, 'deposit_transfer', data.idempotencyKey);
   const { items } = await getDepositPositions(tenantId, ownerId, conn);
   const net = await loadNetTransfers(tenantId, ownerId, conn);
   const netKey = key(data.leaseId, data.depositType);

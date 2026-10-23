@@ -54,7 +54,7 @@ async function rent({ tenantId, from, to }) {
   return {
     title: 'Loyers encaissés', total, rows: data,
     columns: [col('date', 'Date payé', 'date'), col('who', 'Locataire'), col('where', 'Bien · Unité'), col('covers', 'Mois couvert'), col('timing', 'Imputation'), col('method', 'Mode'), col('by', 'Enregistré par'), col('amount', 'Montant', 'money')],
-    formula, notes: ['Somme des paiements de loyer datés dans la période (date de règlement), hors paiements supprimés.', 'La part commission / propriétaire se calcule dans « Résultat du cabinet » (clôture) et sur la fiche de chaque bien.'],
+    formula, notes: ['Somme des paiements de loyer datés dans la période (date de règlement), hors paiements supprimés.', 'La part commission / propriétaire se calcule dans « Résultat de l\'entreprise » (clôture) et sur la fiche de chaque bien.'],
   };
 }
 
@@ -68,7 +68,7 @@ async function entryFees({ tenantId, from, to }) {
   );
   const data = rows.map((r) => ({ date: iso(r.d), who: `${r.first_name} ${r.last_name}`, where: `${r.property_code} · ${r.unit_code}`, method: METHOD[r.m] ?? r.m ?? '—', amount: n(r.amount) }));
   const total = sum(data);
-  return { title: "Frais d'agence à l'entrée", total, rows: data, columns: [col('date', 'Date reçu', 'date'), col('who', 'Locataire'), col('where', 'Bien · Unité'), col('method', 'Mode'), col('amount', 'Montant', 'money')], formula: [{ label: "Frais d'agence reçus", amount: total, op: 'total' }], notes: ['100 % produit du cabinet : jamais reversé au propriétaire.'] };
+  return { title: "Frais d'agence à l'entrée", total, rows: data, columns: [col('date', 'Date reçu', 'date'), col('who', 'Locataire'), col('where', 'Bien · Unité'), col('method', 'Mode'), col('amount', 'Montant', 'money')], formula: [{ label: "Frais d'agence reçus", amount: total, op: 'total' }], notes: ['100 % produit de l\'entreprise : jamais reversé au propriétaire.'] };
 }
 
 async function saleCommissions({ tenantId, from, to }) {
@@ -79,7 +79,7 @@ async function saleCommissions({ tenantId, from, to }) {
   );
   const data = rows.map((r) => ({ date: iso(r.d), title: r.title, price: n(r.price), amount: n(r.amount) }));
   const total = sum(data);
-  return { title: 'Commission sur ventes de biens', total, rows: data, columns: [col('date', 'Date de vente', 'date'), col('title', 'Bien vendu'), col('price', 'Prix de vente', 'money'), col('amount', 'Commission', 'money')], formula: [{ label: 'Commissions de vente', amount: total, op: 'total' }], notes: ['100 % produit du cabinet.'] };
+  return { title: 'Commission sur ventes de biens', total, rows: data, columns: [col('date', 'Date de vente', 'date'), col('title', 'Bien vendu'), col('price', 'Prix de vente', 'money'), col('amount', 'Commission', 'money')], formula: [{ label: 'Commissions de vente', amount: total, op: 'total' }], notes: ['100 % produit de l\'entreprise.'] };
 }
 
 async function otherIncomes({ tenantId, from, to }) {
@@ -90,7 +90,7 @@ async function otherIncomes({ tenantId, from, to }) {
   );
   const data = rows.map((r) => ({ date: iso(r.d), category: INCOME_CATEGORY[r.category] ?? r.category, label: r.label, who: r.payer_name ?? '—', method: METHOD[r.m] ?? r.m, amount: n(r.amount), _c: r.category }));
   const total = sum(data);
-  return { title: 'Autres entrées', total, rows: data, columns: [col('date', 'Date', 'date'), col('category', 'Nature'), col('label', 'Libellé'), col('who', 'Payeur'), col('method', 'Mode'), col('amount', 'Montant', 'money')], formula: [{ label: 'Autres entrées', amount: total, op: 'total' }, ...groupBy(data, (r) => r.category).map(([k, a]) => ({ label: k, amount: a, op: 'info' }))], notes: ['100 % produit du cabinet.'] };
+  return { title: 'Autres entrées', total, rows: data, columns: [col('date', 'Date', 'date'), col('category', 'Nature'), col('label', 'Libellé'), col('who', 'Payeur'), col('method', 'Mode'), col('amount', 'Montant', 'money')], formula: [{ label: 'Autres entrées', amount: total, op: 'total' }, ...groupBy(data, (r) => r.category).map(([k, a]) => ({ label: k, amount: a, op: 'info' }))], notes: ['100 % produit de l\'entreprise.'] };
 }
 
 async function ownerPayouts({ tenantId, from, to }) {
@@ -101,7 +101,7 @@ async function ownerPayouts({ tenantId, from, to }) {
   );
   const data = rows.map((r) => ({ date: iso(r.d), who: r.name, label: r.period_label ?? '—', method: METHOD[r.m] ?? r.m, amount: n(r.amount), _o: r.name }));
   const total = sum(data);
-  return { title: 'Versé aux propriétaires', total, rows: data, columns: [col('date', 'Date', 'date'), col('who', 'Propriétaire'), col('label', 'Période'), col('method', 'Mode'), col('amount', 'Montant', 'money')], formula: [{ label: 'Total versé', amount: total, op: 'total' }, ...groupBy(data, (r) => r._o).map(([k, a]) => ({ label: k, amount: a, op: 'info' }))], notes: ['Argent des propriétaires reversé : ce n\'est pas une charge du cabinet.'] };
+  return { title: 'Versé aux propriétaires', total, rows: data, columns: [col('date', 'Date', 'date'), col('who', 'Propriétaire'), col('label', 'Période'), col('method', 'Mode'), col('amount', 'Montant', 'money')], formula: [{ label: 'Total versé', amount: total, op: 'total' }, ...groupBy(data, (r) => r._o).map(([k, a]) => ({ label: k, amount: a, op: 'info' }))], notes: ['Argent des propriétaires reversé : ce n\'est pas une charge de l\'entreprise.'] };
 }
 
 async function expenseCard({ tenantId, from, to }, forProperty) {
@@ -118,7 +118,7 @@ async function expenseCard({ tenantId, from, to }, forProperty) {
     title: forProperty ? 'Travaux facturés aux biens' : "Dépenses de l'entreprise", total, rows: data,
     columns: [col('date', 'Date payé', 'date'), col('category', 'Catégorie'), col('label', 'Libellé'), ...(forProperty ? [col('where', 'Bien')] : [col('who', 'Fournisseur')]), col('method', 'Mode'), col('amount', 'Montant', 'money')],
     formula: [{ label: forProperty ? 'Travaux payés' : 'Dépenses payées', amount: total, op: 'total' }, ...groupBy(data, (r) => r.category).map(([k, a]) => ({ label: k, amount: a, op: 'info' }))],
-    notes: [forProperty ? 'À la charge des propriétaires (déduits de leur recette) : jamais une charge du cabinet.' : 'Comptées à la date de paiement réelle ; une dépense à crédit non payée n\'y figure pas.'],
+    notes: [forProperty ? 'À la charge des propriétaires (déduits de leur recette) : jamais une charge de l\'entreprise.' : 'Comptées à la date de paiement réelle ; une dépense à crédit non payée n\'y figure pas.'],
   };
 }
 
@@ -178,7 +178,7 @@ async function treasury(ctx) {
     title: 'Trésorerie réelle', total: n(b.treasury.net), noRows: true, rows: [], columns: [],
     treasuryLines: { inflows: ins, outflows: outs },
     formula: [line('Entrées d\'argent du mois', b.treasury.in, 'plus'), line('Sorties d\'argent du mois', b.treasury.out, 'minus'), line('Trésorerie nette du mois', b.treasury.net, 'total')],
-    notes: ['Tout l\'argent réellement entré et sorti : argent des propriétaires, cautions et charges en transit inclus. Le résultat du cabinet est à part (voir Clôture).'],
+    notes: ['Tout l\'argent réellement entré et sorti : argent des propriétaires, cautions et charges en transit inclus. Le résultat de l\'entreprise est à part (voir Clôture).'],
   };
 }
 

@@ -23,6 +23,7 @@ const { getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint
 const { assertPeriodOpen, assertPeriodOpenLocked } = require('../services/accountingPeriods');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { resolvePropertyScope } = require('../services/scope');
+const { hasAnyPermission } = require('../services/permissions');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
 const { extourneEcriture } = require('../services/gl/glReversalService');
@@ -268,72 +269,87 @@ router.get('/:id', canRead, async (req, res, next) => {
       }
     }
 
-    const [payoutRows] = await pool.query(
-      `SELECT op.*, u.first_name AS recorded_by_first_name, u.last_name AS recorded_by_last_name, u.role AS recorded_by_role
-       FROM owner_payouts op
-       JOIN users u ON u.id = op.recorded_by
-       WHERE op.owner_id = :id
-       ORDER BY op.paid_at DESC, op.id DESC`,
-      { id },
-    );
+    // Détail FINANCIER (versements, taux de commission, séquestre, cautions, charges à reverser) :
+    // contrairement à l'annuaire ci-dessus (nom/téléphone/patrimoine, voir `canRead`), réservé à qui
+    // gère réellement la relation propriétaire ou la comptabilité — un agent sans aucune de ces
+    // permissions (ex. seulement `plaintes`) ne doit voir ni ces requêtes ni ces champs. Faille trouvée
+    // à l'audit du 2026-10-23 : toute la fiche était jusqu'ici servie à n'importe quel employé connecté.
+    const canSeeFinancials = await hasAnyPermission(req.user, 'proprietaires', 'comptabilite', 'locataires');
 
-    const [rateRows] = await pool.query(
-      `SELECT cr.*, u.first_name AS set_by_first_name, u.last_name AS set_by_last_name, u.role AS set_by_role
-       FROM owner_commission_rates cr
-       JOIN users u ON u.id = cr.set_by
-       WHERE cr.owner_id = :id
-       ORDER BY cr.starts_on DESC`,
-      { id },
-    );
-    const commissionRates = rateRows.map((r) => ({
-      id: r.id,
-      rate: Number(r.rate),
-      startsOn: isoDate(r.starts_on),
-      endsOn: isoDate(r.ends_on),
-      setBy: toActor(r.set_by_first_name, r.set_by_last_name, r.set_by_role),
-      createdAt: r.created_at,
-    }));
-    const todayIso = isoDate(new Date());
+    let commissionRates = [];
+    let activeCommissionRate = null;
+    let escrowBalance = { totalCollected: 0, totalPayouts: 0, balance: 0, chargeCredits: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } };
+    let depositsHeld = null;
+    let depositPositions = null;
+    let depositTransfersList = null;
+    let openingDebtUnpaidForOwner = 0;
+    let chargesAccount = null;
+    let chargeRemittances = [];
+    let payouts = [];
 
-    // Solde séquestre (comptes séquestres par mandat) : combien le cabinet
-    // détient actuellement pour ce propriétaire, tous ses Biens confondus —
-    // jamais scopé par agent (voir le commentaire de `getEscrowBalances`),
-    // comme les versements/taux de commission ci-dessous sur cette même page.
-    const escrowBalances = await getEscrowBalances(req.user.tenantId);
-    const escrow = escrowBalances.get(id) ?? { totalCollected: 0, totalPayouts: 0, balance: 0, chargeCredits: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } };
-    // Cautions détenues (demande utilisateur, 2026-10-17) — affichées à côté de la recette nette
-    // cumulée ci-dessus, jamais fondues dedans (voir le commentaire de `getDepositsHeldByOwner`).
-    const depositsHeld = await getDepositsHeldByOwner(req.user.tenantId, id);
-    const unpaidOpeningDebtByOwner = await getUnpaidOpeningDebtByOwner(req.user.tenantId);
-    // Charges SONEB/SBEE encaissées à reverser (étape 31) — solde de bout en
-    // bout du propriétaire, jamais scopé par agent (comme le séquestre ci-dessus).
-    const chargesAccount = await getChargeAccount(pool, req.user.tenantId, id);
-    const chargeRemittances = await listRemittances(pool, req.user.tenantId, id, { limit: 100 });
+    if (canSeeFinancials) {
+      const [payoutRows] = await pool.query(
+        `SELECT op.*, u.first_name AS recorded_by_first_name, u.last_name AS recorded_by_last_name, u.role AS recorded_by_role
+         FROM owner_payouts op
+         JOIN users u ON u.id = op.recorded_by
+         WHERE op.owner_id = :id
+         ORDER BY op.paid_at DESC, op.id DESC`,
+        { id },
+      );
+      payouts = payoutRows.map((p) => ({
+        id: p.id,
+        amount: Number(p.amount),
+        periodLabel: p.period_label,
+        paidAt: isoDate(p.paid_at),
+        paymentMethod: p.payment_method,
+        paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
+        notes: p.notes,
+        recordedBy: toActor(p.recorded_by_first_name, p.recorded_by_last_name, p.recorded_by_role),
+      }));
 
-    res.json({
-      owner: toPublicOwner(owner),
-      properties: [...propertiesById.values()],
-      escrowBalance: {
+      const [rateRows] = await pool.query(
+        `SELECT cr.*, u.first_name AS set_by_first_name, u.last_name AS set_by_last_name, u.role AS set_by_role
+         FROM owner_commission_rates cr
+         JOIN users u ON u.id = cr.set_by
+         WHERE cr.owner_id = :id
+         ORDER BY cr.starts_on DESC`,
+        { id },
+      );
+      commissionRates = rateRows.map((r) => ({
+        id: r.id,
+        rate: Number(r.rate),
+        startsOn: isoDate(r.starts_on),
+        endsOn: isoDate(r.ends_on),
+        setBy: toActor(r.set_by_first_name, r.set_by_last_name, r.set_by_role),
+        createdAt: r.created_at,
+      }));
+      // Taux de commission actif AUJOURD'HUI — voir `pickRateValidAt`
+      // (services/commission.js) pour le vrai bug que ça corrige (23/09/2026).
+      activeCommissionRate = pickRateValidAt(commissionRates, isoDate(new Date()));
+
+      // Solde séquestre (comptes séquestres par mandat) : combien le cabinet
+      // détient actuellement pour ce propriétaire, tous ses Biens confondus —
+      // jamais scopé par agent (voir le commentaire de `getEscrowBalances`),
+      // comme les versements/taux de commission ci-dessus sur cette même page.
+      const escrowBalances = await getEscrowBalances(req.user.tenantId);
+      const escrow = escrowBalances.get(id) ?? escrowBalance;
+      escrowBalance = {
         totalCollected: escrow.totalCollected,
         totalPayouts: escrow.totalPayouts,
         balance: escrow.balance,
-        // Charges SONEB/SBEE déjà ajoutées au solde (comprises dans totalCollected).
         chargeCredits: escrow.chargeCredits ?? 0,
-        // Détail de ce qui compose le solde (étape 42, demande explicite de l'utilisateur) : loyers,
-        // dette initiale réglée, prorata d'entrée — avant commission et dépenses, pour rester lisible.
         breakdown: escrow.breakdown,
-      },
-      // Cautions actuellement détenues (demande utilisateur, 2026-10-17) — à part de la recette nette
-      // cumulée ci-dessus : ce n'est pas un revenu, voir `getDepositsHeldByOwner`.
-      depositsHeld,
-      // Cautions : ce que le cabinet détient encore, ce qui a été remis au propriétaire, et l'historique.
-      depositPositions: await depositTransfers.getDepositPositions(req.user.tenantId, id),
-      depositTransfers: await depositTransfers.listTransfers(req.user.tenantId, id, { limit: 50 }),
-      // Dette initiale des locataires non encore réglée — volontairement à
-      // part du solde séquestre ci-dessus (voir `getUnpaidOpeningDebtByOwner`).
-      openingDebtUnpaid: unpaidOpeningDebtByOwner.get(id) ?? 0,
-      chargesAccount,
-      chargeRemittances: chargeRemittances.map((r) => ({
+      };
+      // Cautions détenues (demande utilisateur, 2026-10-17) — affichées à côté de la recette nette
+      // cumulée ci-dessus, jamais fondues dedans (voir le commentaire de `getDepositsHeldByOwner`).
+      depositsHeld = await getDepositsHeldByOwner(req.user.tenantId, id);
+      const unpaidOpeningDebtByOwner = await getUnpaidOpeningDebtByOwner(req.user.tenantId);
+      openingDebtUnpaidForOwner = unpaidOpeningDebtByOwner.get(id) ?? 0;
+      // Charges SONEB/SBEE encaissées à reverser (étape 31) — solde de bout en
+      // bout du propriétaire, jamais scopé par agent (comme le séquestre ci-dessus).
+      chargesAccount = await getChargeAccount(pool, req.user.tenantId, id);
+      const remittanceRows = await listRemittances(pool, req.user.tenantId, id, { limit: 100 });
+      chargeRemittances = remittanceRows.map((r) => ({
         id: r.id,
         amount: r.amount,
         periodLabel: r.periodLabel,
@@ -344,20 +360,29 @@ router.get('/:id', canRead, async (req, res, next) => {
         notes: r.notes,
         recordedBy: toActor(r.byFirstName, r.byLastName, r.byRole),
         createdAt: r.createdAt,
-      })),
-      payouts: payoutRows.map((p) => ({
-        id: p.id,
-        amount: Number(p.amount),
-        periodLabel: p.period_label,
-        paidAt: isoDate(p.paid_at),
-        paymentMethod: p.payment_method,
-        paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
-        notes: p.notes,
-        recordedBy: toActor(p.recorded_by_first_name, p.recorded_by_last_name, p.recorded_by_role),
-      })),
-      // Taux de commission actif AUJOURD'HUI — voir `pickRateValidAt`
-      // (services/commission.js) pour le vrai bug que ça corrige (23/09/2026).
-      activeCommissionRate: pickRateValidAt(commissionRates, todayIso),
+      }));
+      depositPositions = await depositTransfers.getDepositPositions(req.user.tenantId, id);
+      depositTransfersList = await depositTransfers.listTransfers(req.user.tenantId, id, { limit: 50 });
+    }
+
+    res.json({
+      owner: toPublicOwner(owner),
+      properties: [...propertiesById.values()],
+      canSeeFinancials,
+      escrowBalance,
+      // Cautions actuellement détenues (demande utilisateur, 2026-10-17) — à part de la recette nette
+      // cumulée ci-dessus : ce n'est pas un revenu, voir `getDepositsHeldByOwner`.
+      depositsHeld,
+      // Cautions : ce que le cabinet détient encore, ce qui a été remis au propriétaire, et l'historique.
+      depositPositions,
+      depositTransfers: depositTransfersList,
+      // Dette initiale des locataires non encore réglée — volontairement à
+      // part du solde séquestre ci-dessus (voir `getUnpaidOpeningDebtByOwner`).
+      openingDebtUnpaid: openingDebtUnpaidForOwner,
+      chargesAccount,
+      chargeRemittances,
+      payouts,
+      activeCommissionRate,
       commissionRates,
     });
   } catch (err) {

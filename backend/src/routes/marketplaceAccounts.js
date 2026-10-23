@@ -62,7 +62,7 @@ router.post('/register', registerLimiter, async (req, res, next) => {
 
   try {
     const [tenantRows] = await pool.query('SELECT id FROM tenants WHERE id = :id LIMIT 1', { id: data.tenantId });
-    if (!tenantRows[0]) throw new ApiError(404, 'Cabinet introuvable');
+    if (!tenantRows[0]) throw new ApiError(404, 'Entreprise introuvable');
 
     const [existing] = await pool.query(
       'SELECT id FROM marketplace_accounts WHERE tenant_id = :tenantId AND phone = :phone LIMIT 1',

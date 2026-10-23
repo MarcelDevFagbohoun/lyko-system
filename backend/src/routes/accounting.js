@@ -1624,6 +1624,14 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
     }
     rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
+    // Charte graphique alignée sur les PDF (`services/pdf.js` : bandeau marine PRIMARY,
+    // tableaux zébrés SURFACE_MUTED) — même identité visuelle sur l'export Excel.
+    const NAVY = 'FF0B2A5B';
+    const ZEBRA = 'FFF1F5F9';
+    const GRID = 'FFCBD5E1';
+    const thin = { style: 'thin', color: { argb: GRID } };
+    const cellBorder = { top: thin, left: thin, bottom: thin, right: thin };
+
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Africa Immo Management';
     workbook.created = new Date();
@@ -1635,8 +1643,8 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
       { header: 'Tiers', width: 24 },
       { header: 'Bien / Unité', width: 18 },
       { header: 'Catégorie', width: 26 },
-      { header: 'Débit (FCFA)', width: 16 },
-      { header: 'Crédit (FCFA)', width: 16 },
+      { header: 'Débit (FCFA)', width: 16, align: 'right' },
+      { header: 'Crédit (FCFA)', width: 16, align: 'right' },
       { header: 'Mode de règlement', width: 18 },
       { header: 'Enregistré par', width: 20 },
     ];
@@ -1644,13 +1652,19 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
 
     sheet.mergeCells(1, 1, 1, columns.length);
     sheet.getCell(1, 1).value = `Registre comptable — ${tenantRows[0].company_name} — du ${from} au ${to}`;
-    sheet.getCell(1, 1).font = { bold: true, size: 13 };
+    sheet.getCell(1, 1).font = { bold: true, size: 13, color: { argb: NAVY } };
 
     const headerRowIndex = 3;
     const headerRow = sheet.getRow(headerRowIndex);
     headerRow.values = columns.map((c) => c.header);
-    headerRow.font = { bold: true };
-    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+    headerRow.height = 20;
+    columns.forEach((c, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } };
+      cell.alignment = { vertical: 'middle', horizontal: c.align ?? 'left' };
+      cell.border = cellBorder;
+    });
     sheet.views = [{ state: 'frozen', ySplit: headerRowIndex }];
 
     rows.forEach((r, i) => {
@@ -1669,6 +1683,13 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
       excelRow.getCell(1).numFmt = 'dd/mm/yyyy';
       excelRow.getCell(6).numFmt = '#,##0';
       excelRow.getCell(7).numFmt = '#,##0';
+      const zebra = i % 2 === 1;
+      for (let col = 1; col <= columns.length; col++) {
+        const cell = excelRow.getCell(col);
+        cell.border = cellBorder;
+        if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+        if (col === 6 || col === 7) cell.alignment = { horizontal: 'right' };
+      }
     });
 
     const totalDebit = rows.reduce((s, r) => s + (r.debit || 0), 0);
@@ -1680,12 +1701,24 @@ router.get('/export.xlsx', canAccounting, async (req, res, next) => {
     totalRow.font = { bold: true };
     totalRow.getCell(6).numFmt = '#,##0';
     totalRow.getCell(7).numFmt = '#,##0';
+    for (let col = 1; col <= columns.length; col++) {
+      const cell = totalRow.getCell(col);
+      cell.border = cellBorder;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+      if (col === 6 || col === 7) cell.alignment = { horizontal: 'right' };
+    }
 
     const soldeRow = sheet.getRow(headerRowIndex + rows.length + 3);
     soldeRow.getCell(5).value = 'Solde net (crédit − débit)';
     soldeRow.getCell(7).value = totalCredit - totalDebit;
     soldeRow.font = { bold: true };
     soldeRow.getCell(7).numFmt = '#,##0';
+    for (let col = 1; col <= columns.length; col++) {
+      const cell = soldeRow.getCell(col);
+      cell.border = cellBorder;
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
+      if (col === 6 || col === 7) cell.alignment = { horizontal: 'right' };
+    }
 
     logger.info('Export comptable Excel généré', { tenantId, from, to, rows: rows.length, by: req.user.id });
 

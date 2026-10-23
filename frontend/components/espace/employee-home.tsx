@@ -11,6 +11,7 @@ import { API_URL } from "@/lib/api/client";
 import { ROLE_LABELS } from "@/lib/constants/roles";
 import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MyTasksCard } from "@/components/espace/my-tasks-card";
 import { PriorityPanel } from "@/components/espace/priority-panel";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
@@ -43,12 +44,20 @@ export function EmployeeHome() {
   const dateLabel = now?.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   const actions: Action[] = [
-    { href: "/espace/locataires", label: "Locataires", description: "Fiches, paiements et quittances", icon: Users, cadre: "patrimoine", show: has("locataires") },
+    // Locataires/Propriétaires : annuaire (nom/téléphone/patrimoine) ouvert à tout employé connecté,
+    // même sans permission dédiée — seul le détail financier de la fiche reste restreint côté serveur
+    // (voir `routes/renters.js`/`routes/owners.js` `canRead`). Toujours visibles, comme dans le menu
+    // latéral (`espace-sidebar.tsx`) — avant ce correctif (audit du 2026-10-23), ces deux tuiles étaient
+    // gatées par permission alors que la page elle-même était déjà ouverte à tous : un employé pouvait
+    // y arriver par le menu mais pas depuis l'accueil, incohérence sans raison de sécurité réelle.
+    { href: "/espace/locataires", label: "Locataires", description: "Fiches, paiements et quittances", icon: Users, cadre: "patrimoine", show: true },
     { href: "/espace/biens", label: "Nos biens", description: "Immeubles, unités et occupation", icon: Building2, cadre: "patrimoine", show: has("locataires") || has("proprietaires") },
-    { href: "/espace/proprietaires", label: "Propriétaires", description: "Comptes et reversements", icon: Landmark, cadre: "patrimoine", show: has("proprietaires") },
+    { href: "/espace/proprietaires", label: "Propriétaires", description: "Comptes et reversements", icon: Landmark, cadre: "patrimoine", show: true },
     { href: "/espace/biens-a-vendre", label: "Biens à vendre", description: "Catalogue des biens en vente", icon: Tag, cadre: "patrimoine", show: has("biens_a_vendre") },
     { href: "/espace/plaintes", label: "Plaintes", description: "Suivre et traiter les réclamations", icon: MessageSquareWarning, cadre: "operations", show: has("plaintes") },
-    { href: "/espace/relances", label: "Relances", description: "Loyers en retard à relancer", icon: BellRing, cadre: "operations", show: has("locataires") || has("comptabilite") },
+    // `charges` manquait ici (audit du 2026-10-23) : un employé charges-only pouvait ouvrir
+    // /espace/relances par URL (la page l'autorise) mais n'avait aucun lien pour la trouver.
+    { href: "/espace/relances", label: "Relances", description: "Loyers en retard à relancer", icon: BellRing, cadre: "operations", show: has("locataires") || has("comptabilite") || has("charges") },
     { href: "/espace/taches", label: "Mes tâches", description: "Ce qui vous est confié", icon: ListTodo, cadre: "operations", show: true },
     { href: "/espace/comptabilite", label: "Trésorerie & recettes", description: "Encaissements et solde de caisse", icon: Wallet, cadre: "finances", show: has("comptabilite") },
     { href: "/espace/charges", label: "Charges locatives", description: "Factures SONEB / SBEE", icon: Receipt, cadre: "finances", show: has("charges") },
@@ -137,6 +146,27 @@ export function EmployeeHome() {
           <MyTasksCard />
         </div>
         {has("charges") && <UtilityAlertsCard hideWhenEmpty />}
+
+        {/* Restauré après l'audit du 2026-10-23 (disparu silencieusement lors de l'ajout de cet
+            accueil) : les modules accordés à cet employé par le DG, pour qu'il sache lui-même ce
+            à quoi il a droit sans avoir à demander. */}
+        {user.permissions.length > 0 && (
+          <div className="animate-fade-up [animation-delay:340ms]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Vos accès</CardTitle>
+                <CardDescription>Modules auxquels votre direction générale vous a donné accès.</CardDescription>
+              </CardHeader>
+              <div className="flex flex-wrap gap-2 px-4 pb-4 sm:px-5 sm:pb-5">
+                {user.permissions.map((key) => (
+                  <Badge key={key} variant="info">
+                    {key.replace(/_/g, " ")}
+                  </Badge>
+                ))}
+              </div>
+            </Card>
+          </div>
+        )}
       </div>
     </div>
   );

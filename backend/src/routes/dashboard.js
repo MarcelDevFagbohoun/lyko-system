@@ -138,11 +138,17 @@ router.get('/overview', async (req, res, next) => {
   }
 });
 
-// GET /api/dashboard/activity?limit= — journal d'activité unifié (DG uniquement).
+// GET /api/dashboard/activity?limit=&date=&month=&type= — journal d'activité
+// unifié (DG uniquement). `date` ('AAAA-MM-DD') et `month` ('AAAA-MM') sont
+// mutuellement exclusifs (date prioritaire) ; `type` cible une seule nature
+// d'action (voir les clés `type` produites par `listRecentActivity`).
 router.get('/activity', async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit) || 60, 1), 200);
-    const entries = await listRecentActivity(req.user.tenantId, limit);
+    const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : null;
+    const month = !date && typeof req.query.month === 'string' && /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : null;
+    const type = typeof req.query.type === 'string' && req.query.type ? req.query.type : null;
+    const entries = await listRecentActivity(req.user.tenantId, limit, null, { date, month, type });
     res.json({ entries });
   } catch (err) {
     next(err);

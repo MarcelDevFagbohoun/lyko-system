@@ -9,6 +9,7 @@ import { SecurityBand } from "@/components/marketing/security-band";
 import { HowItWorks } from "@/components/marketing/how-it-works";
 import { Faq, FAQ_ITEMS } from "@/components/marketing/faq";
 import { CtaBanner } from "@/components/marketing/cta-banner";
+import { Reveal } from "@/components/marketing/reveal";
 
 /**
  * Landing page publique — accessible sans connexion. Parcours : promesse (héros) → ancrage local →
@@ -48,14 +49,14 @@ export default function LandingPage() {
       <SiteHeader />
       <main className="flex-1">
         <Hero />
-        <MadeForBenin />
-        <ProblemSolution />
-        <Roles />
-        <MoneyCompliance />
-        <SecurityBand />
-        <HowItWorks />
-        <Faq />
-        <CtaBanner />
+        <Reveal><MadeForBenin /></Reveal>
+        <Reveal><ProblemSolution /></Reveal>
+        <Reveal><Roles /></Reveal>
+        <Reveal><MoneyCompliance /></Reveal>
+        <Reveal><SecurityBand /></Reveal>
+        <Reveal><HowItWorks /></Reveal>
+        <Reveal><Faq /></Reveal>
+        <Reveal><CtaBanner /></Reveal>
       </main>
       <SiteFooter />
     </div>

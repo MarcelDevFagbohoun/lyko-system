@@ -98,7 +98,10 @@
   from { opacity: 0; transform: translateY(14px); }
   to { opacity: 1; transform: translateY(0); }
 }
-@keyframes sheen {
+/* Nommé différemment du `sheen` de tailwind.config.ts (balayage une fois au montage des StatCard) :
+   même nom de @keyframes = collision globale en CSS, celui-ci écrasait silencieusement l'autre et
+   changeait l'animation de TOUTES les StatCard de l'app (trouvé à l'audit du 2026-10-23). */
+@keyframes tile-sheen {
   from { transform: translateX(-120%) skewX(-18deg); }
   to { transform: translateX(260%) skewX(-18deg); }
 }
@@ -118,4 +121,4 @@
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
   transform: translateX(-120%) skewX(-18deg); pointer-events: none;
 }
-.sheen:hover::after { animation: sheen 0.9s ease-out; }
+.sheen:hover::after { animation: tile-sheen 0.9s ease-out; }

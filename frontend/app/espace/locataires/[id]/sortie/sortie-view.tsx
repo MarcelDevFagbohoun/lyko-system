@@ -734,7 +734,7 @@ function FinalizedView({
           </div>
         ) : (
           <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm text-ink-muted">
-            Imprimez le PV : le locataire et le cabinet le datent et le signent à la main dans les cadres prévus.
+            Imprimez le PV : le locataire et l&apos;entreprise le datent et le signent à la main dans les cadres prévus.
           </p>
         )}
       </CardContent>

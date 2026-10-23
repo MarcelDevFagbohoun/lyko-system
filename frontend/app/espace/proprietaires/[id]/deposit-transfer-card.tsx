@@ -7,6 +7,7 @@ import { createDepositTransfer, type DepositPosition, type DepositTransfer } fro
 import { formatDateLabel, formatFcfa } from "@/lib/utils";
 import { useToast } from "@/lib/toast/toast-context";
 import { Term } from "@/components/ui/term";
+import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,6 +58,9 @@ export function DepositTransferCard({
   const [byOwner, setByOwner] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Clé d'idempotence (audit du 2026-10-23) : un double-clic ou une relance après timeout
+  // n'enregistre plus deux fois le même reversement/la même récupération de caution.
+  const idem = useIdempotencyKey();
 
   if (positions.length === 0 && transfers.length === 0) return null;
 
@@ -86,7 +90,9 @@ export function DepositTransferCard({
         paymentMethod: method,
         motive: motive.trim(),
         requestedByOwner: draft.direction === "to_owner" ? byOwner : false,
+        idempotencyKey: idem.key,
       });
+      idem.renew();
       toast.success(draft.direction === "to_owner" ? `${formatFcfa(n)} de caution remis à ${ownerName}.` : `${formatFcfa(n)} récupéré auprès de ${ownerName}.`);
       setDraft(null);
       onChanged();
@@ -121,7 +127,7 @@ export function DepositTransferCard({
                 <TableHead>Locataire</TableHead>
                 <TableHead>Caution</TableHead>
                 <TableHead className="text-right">Montant</TableHead>
-                <TableHead className="text-right">Chez le cabinet</TableHead>
+                <TableHead className="text-right">Chez l&apos;entreprise</TableHead>
                 <TableHead className="text-right">Chez le propriétaire</TableHead>
                 <TableHead />
               </TableRow>

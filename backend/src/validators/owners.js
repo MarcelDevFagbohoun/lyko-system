@@ -96,6 +96,10 @@ const createDepositTransferSchema = z.object({
   paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque'], { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
   motive: z.string().trim().min(5, 'Motif requis (5 caractères minimum)').max(255, 'Trop long'),
   requestedByOwner: z.coerce.boolean().default(true),
+  // Manquante jusqu'à l'audit du 2026-10-23 (contrairement à `createChargeRemittanceSchema`,
+  // la route sœur juste à côté) : un double-clic ou une relance après timeout pouvait créer deux
+  // transferts identiques réels, chacun passant la vérification de solde indépendamment.
+  idempotencyKey: idempotencyKeySchema,
 });
 
 // Annulation = suppression logique avec justification obligatoire.

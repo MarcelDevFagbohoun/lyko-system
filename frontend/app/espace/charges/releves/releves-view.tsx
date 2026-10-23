@@ -39,7 +39,10 @@ function submeteredTypes(p: PropertyListItem): UtilityType[] {
 }
 
 function RelevesContent() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  // /espace/biens exige `locataires` ou `proprietaires` — un employé charges-only (cette page
+  // n'exige que `charges`) n'y a pas accès : lien mort sinon (audit du 2026-10-23).
+  const canManageBiens = user?.role === "dg" || (user?.permissions.includes("locataires") ?? false) || (user?.permissions.includes("proprietaires") ?? false);
   const router = useRouter();
   const toast = useToast();
   const [properties, setProperties] = React.useState<PropertyListItem[] | null>(null);
@@ -107,9 +110,15 @@ function RelevesContent() {
                 Ouvrez la fiche d&apos;un bien, section « Compteurs & fluides », pour activer le sous-comptage SONEB
                 ou SBEE et définir le tarif au m³ / kWh.
               </p>
-              <Link href="/espace/biens">
-                <Button variant="secondary">Voir mes biens</Button>
-              </Link>
+              {canManageBiens ? (
+                <Link href="/espace/biens">
+                  <Button variant="secondary">Voir mes biens</Button>
+                </Link>
+              ) : (
+                <p className="text-body-xs text-ink-muted">
+                  Demandez à un employé avec accès « Biens » de l&apos;activer.
+                </p>
+              )}
             </CardContent>
           </Card>
         )}

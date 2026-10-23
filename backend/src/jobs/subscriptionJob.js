@@ -36,11 +36,20 @@ async function runSubscriptionJob() {
     const same = r.reminder_sent_for && new Date(r.reminder_sent_for).getTime() === new Date(r.current_period_end).getTime();
     if (same && r.reminder_days !== null && r.reminder_days <= threshold) continue;
     try {
-      await sendSubscriptionReminderEmail({
+      // `sendSubscriptionReminderEmail` ne lève JAMAIS en cas d'échec Resend (voir `sendViaResend`)
+      // — elle renvoie `{ sent: false, error }`. Marquer `reminder_sent_for` sans vérifier `sent`
+      // empêchait silencieusement et définitivement tout nouveau rappel pour cette échéance (bug
+      // trouvé à l'audit du 2026-10-23) : un DG dont le rappel échouait n'était jamais relancé avant
+      // la coupure de son accès.
+      const result = await sendSubscriptionReminderEmail({
         to: r.email, dgName: r.first_name, companyName: r.company_name, planLabel: (await getPlanAsync(r.plan_key)).label,
         daysLeft: threshold, renewUrl: `${config.frontendUrl}/abonnement`,
       });
-      await pool.query('UPDATE tenant_subscriptions SET reminder_sent_for = current_period_end, reminder_days = :d WHERE tenant_id = :t', { d: threshold, t: r.tenant_id });
+      if (result.sent) {
+        await pool.query('UPDATE tenant_subscriptions SET reminder_sent_for = current_period_end, reminder_days = :d WHERE tenant_id = :t', { d: threshold, t: r.tenant_id });
+      } else {
+        logger.warn('Rappel d’abonnement non envoyé — nouvelle tentative au prochain passage', { tenantId: r.tenant_id, error: result.error });
+      }
     } catch (err) {
       logger.warn('Rappel d’abonnement non envoyé', { tenantId: r.tenant_id, message: err.message });
     }

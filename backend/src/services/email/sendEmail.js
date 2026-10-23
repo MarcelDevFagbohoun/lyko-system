@@ -169,6 +169,10 @@ const FEATURE_LABELS = {
   sale_properties: 'Biens à vendre',
   advanced_accounting: 'Comptabilité avancée SYSCOHADA',
   audit_full: "Journal d'audit complet et support prioritaire",
+  // Label ajouté (demande utilisateur, 2026-10-23) pour que ce reçu puisse un jour lister cette
+  // fonction — `ai_assistant` reste absent de `features` sur demarrage/pro/entreprise
+  // (constants/plans.js) : aucune offre ne la coche pour l'instant, décision à part.
+  ai_assistant: 'Assistance IA',
 };
 
 /**

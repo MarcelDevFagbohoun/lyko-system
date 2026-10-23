@@ -27,4 +27,16 @@ async function getPermissionsBulk(userIds) {
   return map;
 }
 
-module.exports = { getPermissions, getPermissionsBulk };
+/**
+ * Vérification ponctuelle en cours de route (pas un middleware bloquant) : utile quand seule UNE
+ * PARTIE de la réponse doit être restreinte, pas la route entière (ex. fiche propriétaire/locataire
+ * lisible par tout employé, mais le détail financier réservé à qui a la permission adéquate — voir
+ * `routes/owners.js`/`routes/renters.js` `GET /:id`). Le DG passe toujours, comme `requireAnyPermission`.
+ */
+async function hasAnyPermission(user, ...keys) {
+  if (user.role === 'dg') return true;
+  const perms = await getPermissions(user.id, user.role);
+  return perms.some((p) => keys.includes(p));
+}
+
+module.exports = { getPermissions, getPermissionsBulk, hasAnyPermission };

@@ -9,7 +9,7 @@ const { appendAudit } = require('./audit');
 const { assertPasswordReauth } = require('./reauth');
 const { normalizeBeninPhone, maskPhone } = require('./phone');
 const { notifyOrderSent } = require('./notify');
-const { getEscrowBalances } = require('../commission');
+const { getEscrowBalances, getReservedOwnerPayouts } = require('../commission');
 const { assertPeriodOpenLocked } = require('../accountingPeriods');
 const { isModuleActive, genererEcriture } = require('../gl/glPostingService');
 
@@ -119,17 +119,14 @@ async function resolvePurpose(tenantId, input) {
     if (!owner) throw new ApiError(404, 'Propriétaire introuvable');
     if (owner.mandate_ended_at) throw new ApiError(422, 'Le mandat de ce propriétaire est terminé.');
     // Solde séquestre RÉSERVÉ : ce qui est déjà en cours d'envoi (ou envoyé mais pas encore enregistré) est déduit,
-    // pour que deux ordres simultanés ne puissent pas dépasser ensemble ce qui est réellement dû.
+    // pour que deux ordres simultanés ne puissent pas dépasser ensemble ce qui est réellement dû. Même calcul que
+    // `assertPayoutWithinBalance` (versement manuel, routes/owners.js) — une seule source de vérité partagée
+    // depuis l'audit du 2026-10-23, pour que les deux chemins se voient mutuellement.
     const balances = await getEscrowBalances(tenantId);
     const balance = balances.get(owner.id)?.balance ?? 0;
-    const [[reserved]] = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_orders
-       WHERE tenant_id = :tenantId AND beneficiary_owner_id = :ownerId AND purpose = 'reversement_proprietaire'
-         AND (status IN ('created','processing') OR (status = 'sent' AND applied_at IS NULL))`,
-      { tenantId, ownerId: owner.id },
-    );
-    if (input.amount > balance - Number(reserved.total)) {
-      throw new ApiError(422, `Le montant dépasse le solde disponible pour ce propriétaire (${Math.max(0, balance - Number(reserved.total))} FCFA).`);
+    const reserved = await getReservedOwnerPayouts(tenantId, owner.id);
+    if (input.amount > balance - reserved) {
+      throw new ApiError(422, `Le montant dépasse le solde disponible pour ce propriétaire (${Math.max(0, balance - reserved)} FCFA).`);
     }
     return {
       amount: input.amount,

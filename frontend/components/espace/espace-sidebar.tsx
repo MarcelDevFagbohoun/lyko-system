@@ -117,6 +117,9 @@ export function EspaceSidebar() {
       cadre: "patrimoine",
       items: [
         (canLocataires || canProprietaires) && { href: "/espace/biens", label: "Nos biens", icon: Building2 },
+        // Annuaire ouvert à tout employé connecté (voir le commentaire de `EmployeeHome` et
+        // `routes/owners.js`/`routes/renters.js` `canRead`) — volontairement pas de condition ici,
+        // contrairement aux autres liens de ce menu.
         { href: "/espace/proprietaires", label: "Propriétaires", icon: Landmark },
         { href: "/espace/locataires", label: "Locataires", icon: Users },
         canSaleProperties && { href: "/espace/biens-a-vendre", label: "Biens à vendre", icon: Tag },
@@ -126,7 +129,9 @@ export function EspaceSidebar() {
       cadre: "operations",
       items: [
         canPlaintes && { href: "/espace/plaintes", label: "Plaintes", icon: MessageSquareWarning },
-        (canLocataires || canAccounting) && { href: "/espace/relances", label: "Relances", icon: BellRing },
+        // `canCharges` manquait ici (audit du 2026-10-23) : la page Relances accepte déjà
+        // locataires/comptabilite/charges (voir `relances-view.tsx`), le menu devait suivre.
+        (canLocataires || canAccounting || canCharges) && { href: "/espace/relances", label: "Relances", icon: BellRing },
         { href: "/espace/taches", label: "Tâches", icon: ListTodo },
       ],
     },
@@ -135,7 +140,7 @@ export function EspaceSidebar() {
       items: [
         canAccounting && { href: "/espace/comptabilite", label: "Trésorerie & recettes", icon: Wallet, hint: "Comptabilité de trésorerie : encaissements de loyers, décaissements et solde de caisse." },
         canAccounting && { href: "/espace/cloture", label: "Clôture mensuelle", icon: Lock, hint: "Arrêté des comptes du mois : bilan, contrôles de cohérence, verrouillage de la période." },
-        canAccounting && { href: "/espace/comptabilite#depenses", label: "Charges d'exploitation", icon: Banknote, hint: "Dépenses de fonctionnement du cabinet et dépenses avancées pour le compte des propriétaires." },
+        canAccounting && { href: "/espace/comptabilite#depenses", label: "Charges d'exploitation", icon: Banknote, hint: "Dépenses de fonctionnement de l'entreprise et dépenses avancées pour le compte des propriétaires." },
         canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité générale", icon: Calculator, hint: "Partie double SYSCOHADA : plan comptable, journaux, grand livre, balance, états financiers." },
         canCharges && { href: "/espace/charges", label: "Charges locatives", icon: Receipt, hint: "Factures SONEB/SBEE refacturées aux locataires et reversées aux propriétaires." },
         // Salaires (demande utilisateur, 2026-10-18) : réservé au DG, jamais délégable via une

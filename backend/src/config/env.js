@@ -15,6 +15,18 @@ function required(name, fallback) {
   return value;
 }
 
+// Audit du 2026-10-23 : le commentaire ci-dessous promettait déjà « pas de dégradation silencieuse
+// en production » pour l'email, mais rien ne le vérifiait — `RESEND_API_KEY` manquant en prod
+// laissait `resendClient.js` journaliser au lieu d'envoyer, exactement comme en dev, y compris pour
+// le code de vérification d'inscription (sans lequel un compte ne peut jamais être activé). Même
+// principe que `secret()` ci-dessus pour les secrets JWT : échec au démarrage plutôt qu'un incident
+// silencieux en production.
+function requiredInProd(name) {
+  const value = process.env[name];
+  if (!value && isProd) throw new Error(`Variable d'environnement manquante en production : ${name} (aucun email ne pourrait être envoyé)`);
+  return value || '';
+}
+
 /** @param {string} name @param {number} fallback */
 function int(name, fallback) {
   const raw = process.env[name];
@@ -109,7 +121,7 @@ const config = {
   // contente de journaliser l'email au lieu de l'envoyer, pour ne jamais bloquer le
   // développement local ni la suite de tests sur un vrai appel réseau.
   email: {
-    apiKey: process.env.RESEND_API_KEY || '',
+    apiKey: requiredInProd('RESEND_API_KEY'),
     fromAddress: process.env.EMAIL_FROM_ADDRESS || 'service@cabinetmconseil.com',
   },
 };

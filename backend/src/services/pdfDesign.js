@@ -303,7 +303,10 @@ function drawNote(doc, y, label, text) {
  * Bandeau marine en tête de carte, zone de signature, nom et fonction dessous.
  */
 function drawSignatureCards(doc, y, cards, { section = true } = {}) {
-  const cardH = 112;
+  // Cachet/signature agrandis (demande utilisateur, 2026-10-23) : la carte et ses deux zones d'image
+  // grandissent ensemble pour rester professionnelles (ni signature écrasée, ni cachet rogné) — tout
+  // le reste du bloc (ligne d'appui, nom, fonction, mention) est redescendu en conséquence.
+  const cardH = 170;
   y = ensureRoom(doc, y, cardH + (section ? 40 : 10));
   if (section) y = drawSection(doc, y, 'Signatures');
   const gap = 15;
@@ -320,18 +323,18 @@ function drawSignatureCards(doc, y, cards, { section = true } = {}) {
     const boxY = y + 26;
     if (c.signatureFile) {
       try {
-        doc.image(c.signatureFile, x + 14, boxY, { fit: [w - 28, 42], align: 'center', valign: 'center' });
+        doc.image(c.signatureFile, x + 14, boxY, { fit: [w - 28, 65], align: 'center', valign: 'center' });
       } catch { /* signature illisible : on continue */ }
     }
     if (c.stampFile) {
       try {
-        doc.opacity(0.9).image(c.stampFile, x + w - 84, boxY - 4, { fit: [70, 70] }).opacity(1);
+        doc.opacity(0.9).image(c.stampFile, x + w - 106, boxY, { fit: [92, 92] }).opacity(1);
       } catch { /* cachet illisible : on continue */ }
     }
-    doc.moveTo(x + 14, boxY + 52).lineTo(x + w - 14, boxY + 52).dash(2, { space: 2 }).lineWidth(0.75).strokeColor(C.TINT_BORDER).stroke().undash();
-    doc.font(F.BOLD).fontSize(9).fillColor(C.INK).text(c.name || ' ', x + 14, boxY + 58, { width: w - 28, lineBreak: false });
+    doc.moveTo(x + 14, boxY + 100).lineTo(x + w - 14, boxY + 100).dash(2, { space: 2 }).lineWidth(0.75).strokeColor(C.TINT_BORDER).stroke().undash();
+    doc.font(F.BOLD).fontSize(9).fillColor(C.INK).text(c.name || ' ', x + 14, boxY + 106, { width: w - 28, lineBreak: false });
     const sub = [c.role, c.date && `Date : ${c.date}`].filter(Boolean).join('  ·  ');
-    if (sub) doc.font(F.SANS).fontSize(7.5).fillColor(C.MUTED).text(sub, x + 14, boxY + 71, { width: w - 28, lineBreak: false });
+    if (sub) doc.font(F.SANS).fontSize(7.5).fillColor(C.MUTED).text(sub, x + 14, boxY + 119, { width: w - 28, lineBreak: false });
     if (c.hint) doc.font(F.ITALIC).fontSize(7).fillColor(C.MUTED).text(c.hint, x + 14, y + cardH - 14, { width: w - 28, lineBreak: false });
   });
   return y + cardH + 14;

@@ -157,6 +157,8 @@ export type CreateDepositTransferInput = {
   paymentMethod: "especes" | "mobile_money" | "virement" | "cheque";
   motive: string;
   requestedByOwner: boolean;
+  /** Clé d'idempotence de CET envoi (voir `useIdempotencyKey`). */
+  idempotencyKey?: string;
 };
 export function createDepositTransfer(accessToken: string, ownerId: number, input: CreateDepositTransferInput) {
   return apiFetch<{ transferId: number }>(`/api/owners/${ownerId}/deposit-transfers`, {
@@ -171,15 +173,19 @@ export function getOwner(accessToken: string, id: number) {
   return apiFetch<{
     owner: Owner;
     properties: OwnerProperty[];
+    /** Faux pour un employé sans permission `proprietaires`/`comptabilite`/`locataires` — tous les
+     * champs financiers ci-dessous sont alors à leur valeur neutre (jamais l'ancien comportement qui
+     * les exposait à tout employé connecté, corrigé lors de l'audit du 2026-10-23). */
+    canSeeFinancials: boolean;
     escrowBalance: EscrowBalance;
-    depositsHeld: DepositsHeld;
-    depositPositions: { items: DepositPosition[]; withOwnerTotal: number };
-    depositTransfers: DepositTransfer[];
+    depositsHeld: DepositsHeld | null;
+    depositPositions: { items: DepositPosition[]; withOwnerTotal: number } | null;
+    depositTransfers: DepositTransfer[] | null;
     /** Impayés des locataires à l'entrée, non réglés (montant brut, jamais mélangé à `escrowBalance`). */
     openingDebtUnpaid: number;
     payouts: OwnerPayout[];
     /** Charges SONEB/SBEE encaissées / déjà reversées / à reverser — séparé du séquestre des loyers. */
-    chargesAccount: ChargeAccount;
+    chargesAccount: ChargeAccount | null;
     chargeRemittances: OwnerChargeRemittance[];
     activeCommissionRate: CommissionRate | null;
     commissionRates: CommissionRate[];

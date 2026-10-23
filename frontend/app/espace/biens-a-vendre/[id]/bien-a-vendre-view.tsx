@@ -431,7 +431,7 @@ function MarkSoldForm({
           </Field>
           {commissionPreview != null && (
             <p className="text-body-sm text-ink-muted">
-              Commission du cabinet : <span className="tabular font-currency-table text-ink">{formatFcfa(commissionPreview)}</span>
+              Commission de l&apos;entreprise : <span className="tabular font-currency-table text-ink">{formatFcfa(commissionPreview)}</span>
             </p>
           )}
           <div className="flex items-center gap-2">
@@ -461,7 +461,7 @@ function SaleSummaryCard({ sale }: { sale: NonNullable<SaleProperty["sale"]> }) 
             <p className="tabular font-currency-table text-headline-sm text-ink">{formatFcfa(sale.finalPrice)}</p>
           </div>
           <div>
-            <p className="font-label-sm uppercase tracking-wider text-ink-muted">Commission du cabinet</p>
+            <p className="font-label-sm uppercase tracking-wider text-ink-muted">Commission de l&apos;entreprise</p>
             <p className="tabular font-currency-table text-headline-sm text-ink">
               {formatFcfa(sale.commissionAmount)} <span className="text-body-sm text-ink-muted">({sale.commissionPercent}%)</span>
             </p>

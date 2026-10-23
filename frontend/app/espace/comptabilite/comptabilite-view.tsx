@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, ChevronDown, ChevronUp, Landmark, UserPlus, Percent, LogOut, Tag } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, Zap, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, ChevronDown, ChevronUp, Landmark, UserPlus, Percent, LogOut, Tag, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf, downloadAuthenticatedFile } from "@/lib/api/client";
 import {
@@ -551,33 +551,48 @@ function ComptabiliteContent() {
         <FixedAssetsSection accessToken={accessToken} />
 
         {dashboard && dashboard.totals.unpaidChargesCount > 0 && (
-          <Card className="border-warning-border bg-warning/5">
+          <Card className="border-warning-border">
             <CardHeader>
-              <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-warning text-white">
-                  <Droplets size={14} />
-                </span>
-                <CardTitle>Charges SONEB & SBEE impayées</CardTitle>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-warning-strong text-white shadow-sm">
+                    <Droplets size={16} />
+                  </span>
+                  <CardTitle>Charges SONEB &amp; SBEE impayées</CardTitle>
+                </div>
+                <Badge variant="warning" dot>
+                  {dashboard.totals.unpaidChargesCount} impayée{dashboard.totals.unpaidChargesCount > 1 ? "s" : ""}
+                </Badge>
               </div>
               <CardDescription>Toutes factures en attente de règlement, quelle que soit leur date de facturation.</CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <CardContent className="flex flex-col gap-4">
+              <div className="stagger grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {dashboard.unpaidChargesByType.map((u) => (
-                  <div key={u.utilityType} className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
-                    <span className="text-body-sm text-ink">{UTILITY_TYPE_LABELS[u.utilityType]}</span>
-                    <span className="tabular font-currency-table text-ink">{formatFcfa(u.total)} ({u.count})</span>
-                  </div>
+                  <StatCard
+                    key={u.utilityType}
+                    label={`${UTILITY_TYPE_LABELS[u.utilityType]} · ${u.count} facture${u.count > 1 ? "s" : ""}`}
+                    value={formatFcfa(u.total, { withSuffix: false })}
+                    unit="FCFA"
+                    icon={u.utilityType === "soneb" ? <Droplets size={16} /> : <Zap size={16} />}
+                    tone="warning"
+                  />
                 ))}
               </div>
-              <div className="flex items-center justify-between border-t border-border pt-3">
-                <span className="font-label-md text-ink">Total impayé</span>
-                <span className="tabular font-currency-table text-headline-sm text-warning-fg">
+
+              <div className="flex items-center justify-between rounded-xl bg-ink px-4 py-3.5 text-white shadow-sm">
+                <span className="font-label-sm uppercase tracking-wider text-white/80">Total impayé</span>
+                <span className="tabular font-display text-headline-md tracking-tight text-white">
                   {formatFcfa(dashboard.totals.unpaidCharges)}
                 </span>
               </div>
-              <Link href="/espace/charges" className="self-start">
-                <Button variant="secondary" size="sm">Voir le registre des charges</Button>
+
+              <Link
+                href="/espace/charges"
+                className="group inline-flex w-fit items-center gap-2 self-start rounded-lg border border-border px-3.5 py-2 text-body-sm font-semibold text-ink transition-colors hover:border-primary/30 hover:bg-surface-hover"
+              >
+                Voir le registre des charges
+                <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
               </Link>
             </CardContent>
           </Card>
@@ -745,7 +760,7 @@ function DashboardCards({ dashboard, onOpen }: { dashboard: AccountingDashboard;
         trend={{
           value:
             totals.treasuryNet != null
-              ? `${formatFcfa(totals.treasuryIn ?? 0)} entrés − ${formatFcfa(totals.treasuryOut ?? 0)} sortis, argent des propriétaires inclus (le résultat du cabinet est à part)`
+              ? `${formatFcfa(totals.treasuryIn ?? 0)} entrés − ${formatFcfa(totals.treasuryOut ?? 0)} sortis, argent des propriétaires inclus (le résultat de l'entreprise est à part)`
               : "Encaissé + frais d'agence + commission vente, moins reversé et dépenses de l'entreprise",
           direction: (totals.treasuryNet ?? totals.netCashFlow) >= 0 ? "up" : "down",
         }}

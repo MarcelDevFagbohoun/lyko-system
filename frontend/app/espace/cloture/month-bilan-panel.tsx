@@ -32,7 +32,7 @@ export const OUTFLOW_LABELS: Record<string, string> = {
   ownerPayouts: "Reversements aux propriétaires (mandants, 4671)",
   chargeRemittances: "Reversements de charges SONEB/SBEE",
   propertyExpenses: "Dépenses de Biens (avancées pour le propriétaire)",
-  cabinetExpenses: "Dépenses de fonctionnement du cabinet",
+  cabinetExpenses: "Dépenses de fonctionnement de l'entreprise",
   fixedAssets: "Achats d'immobilisations",
   rentDepositsReturned: "Dépôts de garantie restitués (cautions de loyer)",
   extraDepositsReturned: "Cautions supplémentaires restituées",
@@ -114,7 +114,7 @@ export function MonthBilanPanel({ month, accessToken }: { month: string; accessT
           hint={`${formatFcfa(b.treasury.in)} entrés − ${formatFcfa(b.treasury.out)} sortis (argent des propriétaires inclus)`}
         />
         <KpiCard
-          title="Résultat net du cabinet"
+          title="Résultat net de l'entreprise"
           value={b.cabinet.netIncome}
           hint="Commission + frais d'agence + pénalités + commissions de vente − dépenses de fonctionnement"
         />
@@ -257,7 +257,7 @@ function SyntheseTab({ b }: { b: MonthBilan }) {
       </div>
 
       <div className="flex flex-col gap-2">
-        <p className="font-label-sm uppercase tracking-wider text-ink-muted">Résultat du cabinet</p>
+        <p className="font-label-sm uppercase tracking-wider text-ink-muted">Résultat de l&apos;entreprise</p>
         <table className="w-full border-collapse text-body-sm">
           <tbody>
             {[
@@ -438,7 +438,7 @@ function DepensesTab({ b }: { b: MonthBilan }) {
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
-          { label: "Fonctionnement du cabinet", value: e.cabinetTotal },
+          { label: "Fonctionnement de l'entreprise", value: e.cabinetTotal },
           { label: "Dépenses de Biens", value: e.propertyTotal },
           { label: "Engagées, pas encore payées", value: e.engagedUnpaid.total },
           { label: "Charges impayées fin de mois", value: c.unpaidAtEndOfMonth.total },
@@ -470,7 +470,7 @@ function DepensesTab({ b }: { b: MonthBilan }) {
                   <Td>{formatDateLabel(l.paidAt)}</Td>
                   <Td strong>{l.label}</Td>
                   <Td>{l.category}</Td>
-                  <Td>{l.propertyCode ? `Bien ${l.propertyCode} (propriétaire)` : "Cabinet"}</Td>
+                  <Td>{l.propertyCode ? `Bien ${l.propertyCode} (propriétaire)` : "Entreprise"}</Td>
                   <Td right>{formatFcfa(l.amount)}</Td>
                 </tr>
               ))}

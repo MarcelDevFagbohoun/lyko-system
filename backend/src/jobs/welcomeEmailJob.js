@@ -31,8 +31,16 @@ async function runWelcomeEmailJob({ tenantIds = null } = {}) {
 
   for (const row of rows) {
     try {
-      await sendWelcomeEmail({ to: row.email, dgName: row.first_name, companyName: row.company_name });
-      await pool.query('UPDATE users SET welcome_email_sent_at = NOW() WHERE id = :id', { id: row.id });
+      // `sendWelcomeEmail` ne lève JAMAIS en cas d'échec Resend (voir `sendViaResend`) — elle
+      // renvoie `{ sent: false, error }`. Marquer `welcome_email_sent_at` sans vérifier `sent`
+      // excluait silencieusement et définitivement ce DG de toute nouvelle tentative (bug trouvé à
+      // l'audit du 2026-10-23, aucun email de bienvenue n'était alors jamais ré-essayé).
+      const result = await sendWelcomeEmail({ to: row.email, dgName: row.first_name, companyName: row.company_name });
+      if (result.sent) {
+        await pool.query('UPDATE users SET welcome_email_sent_at = NOW() WHERE id = :id', { id: row.id });
+      } else {
+        logger.error("Échec de l'envoi de l'email de bienvenue — nouvelle tentative au prochain passage", { userId: row.id, error: result.error });
+      }
     } catch (err) {
       logger.error("Échec de l'envoi de l'email de bienvenue", { userId: row.id, error: err.message });
     }

@@ -577,6 +577,22 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
   }
 });
 
+// Audit du 2026-10-23 : seule route GET de ce fichier sans limiteur, contrairement à toutes les
+// autres (login, mot de passe oublié...) qui protègent un signal comparable. Le signal ici est
+// faible (la réponse ne diffère de la version « par défaut » que si l'entreprise correspondante a
+// personnalisé ses intitulés de poste — une minorité), mais une énumération libre et illimitée
+// d'identifiants/numéros reste à fermer par principe. Quota généreux (30/15min) : le formulaire
+// n'appelle cette route qu'une fois par pause de frappe (350 ms de debounce, voir
+// `unified-login-form.tsx`), donc un vrai utilisateur ne l'atteint jamais ; en cas de 429, le
+// frontend retombe silencieusement sur les libellés par défaut (jamais bloquant).
+const roleTitlesLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de requêtes, réessayez plus tard.' },
+});
+
 // GET /api/auth/role-titles?identifier=XXXX  (employé)  ou  ?phone=XXXX  (DG)
 // — libellés des 3 postes personnalisés (Réglages) de l'entreprise
 // correspondante, pour le menu déroulant unique « Poste » À LA CONNEXION —
@@ -585,7 +601,7 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
 // défaut si rien ne correspond ou si aucun des deux paramètres n'est
 // fourni, pour ne jamais permettre de deviner si un identifiant/numéro
 // existe (même principe que le message de connexion générique ci-dessus).
-router.get('/role-titles', async (req, res, next) => {
+router.get('/role-titles', roleTitlesLimiter, async (req, res, next) => {
   try {
     const identifier = typeof req.query.identifier === 'string' ? req.query.identifier.trim() : '';
     const phone = typeof req.query.phone === 'string' ? req.query.phone.trim() : '';

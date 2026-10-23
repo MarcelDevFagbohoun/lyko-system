@@ -54,7 +54,16 @@ export type ActivityEntry = {
   at: string;
 };
 
-export function listActivity(accessToken: string, limit?: number) {
-  const qs = limit ? `?limit=${limit}` : "";
-  return apiFetch<{ entries: ActivityEntry[] }>(`/api/dashboard/activity${qs}`, { accessToken });
+// `date` ('AAAA-MM-DD') et `month` ('AAAA-MM') sont mutuellement exclusifs
+// côté serveur (date prioritaire) — l'appelant n'envoie jamais les deux.
+export type ActivityFilters = { limit?: number; date?: string; month?: string; type?: string };
+
+export function listActivity(accessToken: string, filters: ActivityFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.limit) params.set("limit", String(filters.limit));
+  if (filters.date) params.set("date", filters.date);
+  else if (filters.month) params.set("month", filters.month);
+  if (filters.type) params.set("type", filters.type);
+  const qs = params.toString();
+  return apiFetch<{ entries: ActivityEntry[] }>(`/api/dashboard/activity${qs ? `?${qs}` : ""}`, { accessToken });
 }

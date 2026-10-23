@@ -113,7 +113,7 @@ export function ChargeRemittanceCard({
           Charges encaissées
         </CardTitle>
         <CardDescription>
-          Les charges payées par les locataires restent chez le cabinet. Créditez-en le solde du propriétaire (en totalité
+          Les charges payées par les locataires restent chez l&apos;entreprise. Créditez-en le solde du propriétaire (en totalité
           ou en partie) : elles seront versées avec le reste de son solde depuis le menu Paiements.
         </CardDescription>
       </CardHeader>

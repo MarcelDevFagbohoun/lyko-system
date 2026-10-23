@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, FileText, Send, FileCheck2, DoorOpen, LogOut, Receipt, FileDown, Pencil, AlertTriangle, Plus, Link2, Copy, Check, MessageCircle } from "lucide-react";
+import { ArrowLeft, FileText, Send, FileCheck2, DoorOpen, LogOut, Receipt, FileDown, Pencil, AlertTriangle, Plus, Link2, Copy, Check, MessageCircle, Lock } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
@@ -1638,7 +1638,11 @@ function PaymentRegister({
         </form>
       )}
 
-      {lease.payments.length === 0 ? (
+      {!canManage ? (
+        <p className="flex items-center gap-2 text-body-sm text-ink-muted">
+          <Lock size={14} /> Historique des paiements réservé à la comptabilité ou à un employé avec la permission « Locataires ».
+        </p>
+      ) : lease.payments.length === 0 ? (
         <p className="text-body-sm text-ink-muted">Aucun paiement enregistré pour ce bail.</p>
       ) : (
         <div className="flex flex-col gap-2">

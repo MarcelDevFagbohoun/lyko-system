@@ -6,6 +6,7 @@ const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../ut
 const { hashToken } = require('../utils/tokens');
 const { msFromDuration } = require('../utils/cookies');
 const config = require('../config/env');
+const logger = require('../utils/logger');
 
 /**
  * Émet une paire access/refresh pour un utilisateur et persiste l'empreinte
@@ -60,7 +61,24 @@ async function rotateRefreshToken(oldToken) {
     { hash: oldHash },
   );
   const row = rows[0];
-  if (!row || row.revoked_at || new Date(row.expires_at) < new Date()) return null;
+  if (!row) return null;
+  if (row.revoked_at) {
+    // Rejeu d'un refresh token DÉJÀ tourné : le client légitime a reçu le nouveau à sa place et ne
+    // réutilise jamais l'ancien — ce rejeu est donc le signe d'un vol (cookie/stockage compromis,
+    // ou une réponse de rotation interceptée puis rejouée). Détection ajoutée à l'audit du
+    // 2026-10-23 : jusqu'ici ce cas était traité exactement comme un token simplement expiré, sans
+    // réaction — désormais, toutes les autres sessions actives de ce compte sont révoquées (y
+    // compris celle de l'éventuel voleur), forçant une reconnexion. Faux positifs possibles si
+    // l'utilisateur a deux onglets qui rafraîchissent en même temps juste après expiration d'un
+    // ancien token — acceptable : une reconnexion plutôt qu'une session potentiellement volée qui continue.
+    const revokedCount = await pool.query(
+      'UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = :userId AND revoked_at IS NULL',
+      { userId: row.user_id },
+    ).then(([r]) => r.affectedRows);
+    logger.warn('Rejeu d’un refresh token déjà révoqué détecté — toutes les sessions de ce compte ont été révoquées', { userId: row.user_id, revokedCount });
+    return null;
+  }
+  if (new Date(row.expires_at) < new Date()) return null;
 
   const [userRows] = await pool.query(
     `SELECT id, tenant_id, role, first_name, last_name, phone, email, must_change_password, status

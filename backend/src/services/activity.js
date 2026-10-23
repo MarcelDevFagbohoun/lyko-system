@@ -37,12 +37,18 @@ async function fetchRoleLabels(tenantId) {
  *
  * `actorUserId` (étape 18, historique personnel) restreint aux suppressions
  * effectuées PAR cet utilisateur précis — sinon comportement inchangé.
+ *
+ * `filters.date` ('AAAA-MM-DD') / `filters.month` ('AAAA-MM') (nouveau,
+ * filtres du Journal d'activité) restreignent sur la date de suppression —
+ * `date` prioritaire si les deux sont fournis. Absents par défaut, donc
+ * sans effet sur l'appel existant du « Journal des suppressions ».
  */
-async function listDeletedEntries(tenantId, actorUserId = null, roleLabels = null) {
+async function listDeletedEntries(tenantId, actorUserId = null, roleLabels = null, filters = {}) {
   if (!roleLabels) roleLabels = await fetchRoleLabels(tenantId);
-  const p = { tenantId, actorUserId };
+  const p = { tenantId, actorUserId, filterDate: filters.date ?? null, filterMonth: filters.month ?? null };
   const actorFilter = actorUserId ? 'AND e.deleted_by = :actorUserId' : '';
   const actorFilterUc = actorUserId ? 'AND uc.deleted_by = :actorUserId' : '';
+  const dateCond = (col) => (filters.date ? `AND DATE(${col}) = :filterDate` : filters.month ? `AND DATE_FORMAT(${col}, '%Y-%m') = :filterMonth` : '');
   const [expenseRows] = await pool.query(
     `SELECT e.id, e.category, e.label, e.amount, e.expense_date,
             cu.first_name AS created_first_name, cu.last_name AS created_last_name, cu.role AS created_role,
@@ -51,7 +57,7 @@ async function listDeletedEntries(tenantId, actorUserId = null, roleLabels = nul
      FROM expenses e
      JOIN users cu ON cu.id = e.recorded_by
      JOIN users du ON du.id = e.deleted_by
-     WHERE e.tenant_id = :tenantId AND e.deleted_at IS NOT NULL ${actorFilter}
+     WHERE e.tenant_id = :tenantId AND e.deleted_at IS NOT NULL ${actorFilter} ${dateCond('e.deleted_at')}
      ORDER BY e.deleted_at DESC`,
     p,
   );
@@ -67,7 +73,7 @@ async function listDeletedEntries(tenantId, actorUserId = null, roleLabels = nul
      JOIN property_units un ON un.id = l.unit_id
      JOIN users cu ON cu.id = uc.recorded_by
      JOIN users du ON du.id = uc.deleted_by
-     WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NOT NULL ${actorFilterUc}
+     WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NOT NULL ${actorFilterUc} ${dateCond('uc.deleted_at')}
      ORDER BY uc.deleted_at DESC`,
     p,
   );
@@ -108,12 +114,38 @@ async function listDeletedEntries(tenantId, actorUserId = null, roleLabels = nul
  * aux actions effectuées PAR cet utilisateur précis (colonne d'auteur —
  * `created_by`/`recorded_by`/`conducted_by`/`closed_by`/`set_by` selon le
  * module) — sinon comportement inchangé, c'est le journal DG complet.
+ *
+ * `filters` (nouveau, filtres du Journal d'activité) :
+ * - `filters.date` ('AAAA-MM-DD') / `filters.month` ('AAAA-MM') — restreint
+ *   chaque requête sur sa colonne de date (`date` prioritaire). Comme un
+ *   jour/mois donné produit naturellement peu de lignes par type, le
+ *   plafond par requête est relevé (voir `limitPerType`) plutôt que de
+ *   risquer de couper des résultats déjà filtrés en SQL.
+ * - `filters.type` — un seul type d'activité (ex. `rent_payment_recorded`).
+ *   N'exécute que la requête source correspondante (les autres sont
+ *   remplacées par une résolution immédiate) ; un filtre final sur `type`
+ *   reste appliqué après fusion, qui fait foi pour l'exactitude — le choix
+ *   des requêtes à sauter n'est qu'une optimisation.
+ * Tous facultatifs, absents par défaut : comportement du journal DG complet
+ * inchangé pour les deux appelants existants qui ne les passent pas encore.
  */
-async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
-  const limitPerType = Math.min(limit, 30);
-  const p = { tenantId, n: limitPerType, actorUserId };
+async function listRecentActivity(tenantId, limit = 60, actorUserId = null, filters = {}) {
+  const narrowed = Boolean(filters.date || filters.month || filters.type);
+  const limitPerType = Math.min(limit, narrowed ? 200 : 30);
+  const p = {
+    tenantId, n: limitPerType, actorUserId,
+    filterDate: filters.date ?? null, filterMonth: filters.month ?? null,
+  };
   const f = (col) => (actorUserId ? `AND ${col} = :actorUserId` : '');
+  const d = (col) => (filters.date ? `AND DATE(${col}) = :filterDate` : filters.month ? `AND DATE_FORMAT(${col}, '%Y-%m') = :filterMonth` : '');
   const roleLabels = await fetchRoleLabels(tenantId);
+
+  // Quand un type précis est demandé, seule sa requête source est utile —
+  // les autres seraient de la bande passante gaspillée, remplacées par une
+  // résolution immédiate de forme identique (`[[]]`, comme `pool.query`).
+  const only = (sectionType, queryPromise) => (filters.type && filters.type !== sectionType ? Promise.resolve([[]]) : queryPromise);
+  const deletedTypes = ['expense_deleted', 'charge_deleted'];
+  const onlyDeleted = (queryPromise) => (filters.type && !deletedTypes.includes(filters.type) ? Promise.resolve([]) : queryPromise);
 
   const [
     renters,
@@ -138,177 +170,177 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
     mainInvoicePayments,
     deleted,
   ] = await Promise.all([
-    pool.query(
+    only('renter_created', pool.query(
       `SELECT r.id, r.first_name, r.last_name, r.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM renters r LEFT JOIN users u ON u.id = r.created_by
-       WHERE r.tenant_id = :tenantId ${f('r.created_by')} ORDER BY r.created_at DESC LIMIT :n`,
+       WHERE r.tenant_id = :tenantId ${f('r.created_by')} ${d('r.created_at')} ORDER BY r.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('owner_created', pool.query(
       `SELECT o.id, o.name, o.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM owners o LEFT JOIN users u ON u.id = o.created_by
-       WHERE o.tenant_id = :tenantId ${f('o.created_by')} ORDER BY o.created_at DESC LIMIT :n`,
+       WHERE o.tenant_id = :tenantId ${f('o.created_by')} ${d('o.created_at')} ORDER BY o.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('property_created', pool.query(
       `SELECT p.id, p.code, p.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM properties p LEFT JOIN users u ON u.id = p.created_by
-       WHERE p.tenant_id = :tenantId ${f('p.created_by')} ORDER BY p.created_at DESC LIMIT :n`,
+       WHERE p.tenant_id = :tenantId ${f('p.created_by')} ${d('p.created_at')} ORDER BY p.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('unit_created', pool.query(
       `SELECT un.id, un.code, un.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM property_units un LEFT JOIN users u ON u.id = un.created_by
-       WHERE un.tenant_id = :tenantId ${f('un.created_by')} ORDER BY un.created_at DESC LIMIT :n`,
+       WHERE un.tenant_id = :tenantId ${f('un.created_by')} ${d('un.created_at')} ORDER BY un.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('lease_created', pool.query(
       `SELECT l.id, l.created_at, r.first_name AS r_fn, r.last_name AS r_ln, un.code AS unit_code,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM leases l
        JOIN renters r ON r.id = l.renter_id
        JOIN property_units un ON un.id = l.unit_id
        LEFT JOIN users u ON u.id = l.created_by
-       WHERE l.tenant_id = :tenantId ${f('l.created_by')} ORDER BY l.created_at DESC LIMIT :n`,
+       WHERE l.tenant_id = :tenantId ${f('l.created_by')} ${d('l.created_at')} ORDER BY l.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('rent_payment_recorded', pool.query(
       `SELECT rp.id, rp.amount, rp.covers_month, rp.covers_period_start, rp.created_at, rp.payment_method, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM rent_payments rp
        JOIN leases l ON l.id = rp.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = rp.recorded_by
-       WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL ${f('rp.recorded_by')} ORDER BY rp.created_at DESC LIMIT :n`,
+       WHERE rp.tenant_id = :tenantId AND rp.deleted_at IS NULL ${f('rp.recorded_by')} ${d('rp.created_at')} ORDER BY rp.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('owner_payout_recorded', pool.query(
       `SELECT op.id, op.amount, op.created_at, o.name AS owner_name,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM owner_payouts op
        JOIN owners o ON o.id = op.owner_id
        LEFT JOIN users u ON u.id = op.recorded_by
-       WHERE op.tenant_id = :tenantId ${f('op.recorded_by')} ORDER BY op.created_at DESC LIMIT :n`,
+       WHERE op.tenant_id = :tenantId ${f('op.recorded_by')} ${d('op.created_at')} ORDER BY op.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('expense_recorded', pool.query(
       `SELECT e.id, e.label, e.amount, e.created_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM expenses e LEFT JOIN users u ON u.id = e.recorded_by
-       WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL ${f('e.recorded_by')} ORDER BY e.created_at DESC LIMIT :n`,
+       WHERE e.tenant_id = :tenantId AND e.deleted_at IS NULL ${f('e.recorded_by')} ${d('e.created_at')} ORDER BY e.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('charge_recorded', pool.query(
       `SELECT uc.id, uc.utility_type, uc.amount, uc.created_at, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM utility_charges uc
        JOIN leases l ON l.id = uc.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = uc.recorded_by
-       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL ${f('uc.recorded_by')} ORDER BY uc.created_at DESC LIMIT :n`,
+       WHERE uc.tenant_id = :tenantId AND uc.deleted_at IS NULL ${f('uc.recorded_by')} ${d('uc.created_at')} ORDER BY uc.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('complaint_reported', pool.query(
       `SELECT c.id, c.code, c.title, c.created_at, c.reported_via_portal,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM complaints c LEFT JOIN users u ON u.id = c.created_by
-       WHERE c.tenant_id = :tenantId ${f('c.created_by')} ORDER BY c.created_at DESC LIMIT :n`,
+       WHERE c.tenant_id = :tenantId ${f('c.created_by')} ${d('c.created_at')} ORDER BY c.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('complaint_resolved', pool.query(
       `SELECT c.id, c.code, c.title, c.updated_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM complaints c LEFT JOIN users u ON u.id = c.resolved_by
        WHERE c.tenant_id = :tenantId AND c.status IN ('resolue', 'fermee') AND c.resolved_by IS NOT NULL
-       ${f('c.resolved_by')} ORDER BY c.updated_at DESC LIMIT :n`,
+       ${f('c.resolved_by')} ${d('c.updated_at')} ORDER BY c.updated_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('move_in_conducted', pool.query(
       `SELECT mi.id, mi.finalized_at AS created_at, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM move_in_reports mi
        JOIN leases l ON l.id = mi.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = mi.finalized_by
-       WHERE mi.tenant_id = :tenantId AND mi.status = 'finalized' ${f('mi.finalized_by')} ORDER BY mi.finalized_at DESC LIMIT :n`,
+       WHERE mi.tenant_id = :tenantId AND mi.status = 'finalized' ${f('mi.finalized_by')} ${d('mi.finalized_at')} ORDER BY mi.finalized_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('move_out_conducted', pool.query(
       `SELECT mo.id, mo.finalized_at AS created_at, mo.net_refund, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM move_out_reports mo
        JOIN leases l ON l.id = mo.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = mo.finalized_by
-       WHERE mo.tenant_id = :tenantId AND mo.status = 'finalized' ${f('mo.finalized_by')} ORDER BY mo.finalized_at DESC LIMIT :n`,
+       WHERE mo.tenant_id = :tenantId AND mo.status = 'finalized' ${f('mo.finalized_by')} ${d('mo.finalized_at')} ORDER BY mo.finalized_at DESC LIMIT :n`,
       p,
-    ),
+    )),
     // Réouvertures (étape 48, correction DG) — fiches finalisées rouvertes
     // pour corriger une erreur de saisie, motif obligatoire ; le motif lui-
     // même reste dans `reopen_reason` (consultable sur la fiche), pas
     // reproduit ici pour garder le journal lisible en une ligne.
-    pool.query(
+    only('move_in_reopened', pool.query(
       `SELECT mi.id, mi.reopened_at AS created_at, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM move_in_reports mi
        JOIN leases l ON l.id = mi.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = mi.reopened_by
-       WHERE mi.tenant_id = :tenantId AND mi.reopened_at IS NOT NULL ${f('mi.reopened_by')} ORDER BY mi.reopened_at DESC LIMIT :n`,
+       WHERE mi.tenant_id = :tenantId AND mi.reopened_at IS NOT NULL ${f('mi.reopened_by')} ${d('mi.reopened_at')} ORDER BY mi.reopened_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('move_out_reopened', pool.query(
       `SELECT mo.id, mo.reopened_at AS created_at, r.first_name AS r_fn, r.last_name AS r_ln,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM move_out_reports mo
        JOIN leases l ON l.id = mo.lease_id
        JOIN renters r ON r.id = l.renter_id
        LEFT JOIN users u ON u.id = mo.reopened_by
-       WHERE mo.tenant_id = :tenantId AND mo.reopened_at IS NOT NULL ${f('mo.reopened_by')} ORDER BY mo.reopened_at DESC LIMIT :n`,
+       WHERE mo.tenant_id = :tenantId AND mo.reopened_at IS NOT NULL ${f('mo.reopened_by')} ${d('mo.reopened_at')} ORDER BY mo.reopened_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('period_closed', pool.query(
       `SELECT ap.id, ap.period, ap.closed_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM accounting_periods ap LEFT JOIN users u ON u.id = ap.closed_by
-       WHERE ap.tenant_id = :tenantId ${f('ap.closed_by')} ORDER BY ap.closed_at DESC LIMIT :n`,
+       WHERE ap.tenant_id = :tenantId ${f('ap.closed_by')} ${d('ap.closed_at')} ORDER BY ap.closed_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('commission_rate_changed', pool.query(
       `SELECT cr.id, cr.rate, cr.starts_on, cr.created_at, o.name AS owner_name,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM owner_commission_rates cr
        JOIN owners o ON o.id = cr.owner_id
        LEFT JOIN users u ON u.id = cr.set_by
-       WHERE cr.tenant_id = :tenantId ${f('cr.set_by')} ORDER BY cr.created_at DESC LIMIT :n`,
+       WHERE cr.tenant_id = :tenantId ${f('cr.set_by')} ${d('cr.created_at')} ORDER BY cr.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('charge_remittance_recorded', pool.query(
       `SELECT cr.id, cr.amount, cr.created_at, o.name AS owner_name,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM owner_charge_remittances cr
        JOIN owners o ON o.id = cr.owner_id
        LEFT JOIN users u ON u.id = cr.recorded_by
-       WHERE cr.tenant_id = :tenantId ${f('cr.recorded_by')} ORDER BY cr.created_at DESC LIMIT :n`,
+       WHERE cr.tenant_id = :tenantId ${f('cr.recorded_by')} ${d('cr.created_at')} ORDER BY cr.created_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('charge_remittance_cancelled', pool.query(
       `SELECT cr.id, cr.amount, cr.deleted_at, o.name AS owner_name,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM owner_charge_remittances cr
        JOIN owners o ON o.id = cr.owner_id
        LEFT JOIN users u ON u.id = cr.deleted_by
-       WHERE cr.tenant_id = :tenantId AND cr.deleted_at IS NOT NULL ${f('cr.deleted_by')} ORDER BY cr.deleted_at DESC LIMIT :n`,
+       WHERE cr.tenant_id = :tenantId AND cr.deleted_at IS NOT NULL ${f('cr.deleted_by')} ${d('cr.deleted_at')} ORDER BY cr.deleted_at DESC LIMIT :n`,
       p,
-    ),
-    pool.query(
+    )),
+    only('main_invoice_payment_declared', pool.query(
       `SELECT b.id, b.utility_type, b.period_start, b.main_paid_amount, b.main_paid_recorded_at, pr.code AS property_code,
               u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM utility_reading_batches b
        JOIN properties pr ON pr.id = b.property_id
        LEFT JOIN users u ON u.id = b.main_paid_recorded_by
-       WHERE b.tenant_id = :tenantId AND b.main_paid_amount IS NOT NULL ${f('b.main_paid_recorded_by')}
+       WHERE b.tenant_id = :tenantId AND b.main_paid_amount IS NOT NULL ${f('b.main_paid_recorded_by')} ${d('b.main_paid_recorded_at')}
        ORDER BY b.main_paid_recorded_at DESC LIMIT :n`,
       p,
-    ),
-    listDeletedEntries(tenantId, actorUserId, roleLabels),
+    )),
+    onlyDeleted(listDeletedEntries(tenantId, actorUserId, roleLabels, filters)),
   ]);
 
   const entries = [
@@ -453,8 +485,9 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
     })),
   ];
 
-  entries.sort((a, b) => new Date(b.at) - new Date(a.at));
-  return entries.slice(0, limit);
+  const filtered = filters.type ? entries.filter((e) => e.type === filters.type) : entries;
+  filtered.sort((a, b) => new Date(b.at) - new Date(a.at));
+  return filtered.slice(0, limit);
 }
 
 module.exports = { listDeletedEntries, listRecentActivity };

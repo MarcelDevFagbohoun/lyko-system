@@ -750,7 +750,8 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
   }
 
   // --- Signatures des deux parties, jamais coupées entre deux pages. ---
-  const SIGNATURE_BLOCK_HEIGHT = 150;
+  // Cachet/signature agrandis (demande utilisateur, 2026-10-23) — voir le bloc plus bas.
+  const SIGNATURE_BLOCK_HEIGHT = 210;
   if (doc.y + SIGNATURE_BLOCK_HEIGHT > doc.page.height - doc.page.margins.bottom) doc.addPage();
   doc.moveDown(0.5);
   doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('Fait en deux exemplaires originaux, chacune des parties reconnaissant en avoir reçu un.', 50, doc.y, { width: 495 });
@@ -758,16 +759,19 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
 
   const sigTop = doc.y;
   doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(MUTED).text('LE LOCATAIRE', 50, sigTop, { characterSpacing: 0.5 });
-  doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(MUTED).text('POUR LE BAILLEUR (LE CABINET)', 315, sigTop, { characterSpacing: 0.5 });
+  doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(MUTED).text("POUR LE BAILLEUR (L'ENTREPRISE)", 315, sigTop, { characterSpacing: 0.5 });
 
   const tenantSigUrl = contract.tenantSignatureUrl;
   const agentSigUrl = contract.agentSignatureUrl;
   const sigImgY = sigTop + 16;
+  // Cachet/signature agrandis (demande utilisateur, 2026-10-23) : signature et cachet plus grands et
+  // plus lisibles, sans se chevaucher ni déborder de la page — nom/fonction redescendus sous le plus
+  // bas des deux (le cachet, désormais plus haut que la signature).
   if (tenantSigUrl) {
     const f = uploadedFile(tenantSigUrl);
     if (fs.existsSync(f)) {
       try {
-        doc.image(f, 50, sigImgY, { fit: [200, 55] });
+        doc.image(f, 50, sigImgY, { fit: [220, 75] });
       } catch {
         // Signature illisible : on continue sans (page déjà valide sans elle).
       }
@@ -790,14 +794,14 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
     const f = uploadedFile(agentSigUrl);
     if (fs.existsSync(f)) {
       try {
-        doc.image(f, 315, sigImgY, { fit: [130, 45] });
+        doc.image(f, 315, sigImgY, { fit: [150, 65] });
       } catch {
         // Signature illisible : repli sur celle de l'entreprise ci-dessous.
       }
     }
   } else if (signatureFile && fs.existsSync(signatureFile)) {
     try {
-      doc.image(signatureFile, 315, sigImgY, { fit: [130, 45] });
+      doc.image(signatureFile, 315, sigImgY, { fit: [150, 65] });
     } catch {
       // Signature illisible : ligne à signer par défaut.
     }
@@ -806,14 +810,14 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
   }
   if (stampFile && fs.existsSync(stampFile)) {
     try {
-      doc.opacity(0.9).image(stampFile, 400, sigImgY - 10, { fit: [100, 100] }).opacity(1);
+      doc.opacity(0.9).image(stampFile, 435, sigImgY, { fit: [110, 110] }).opacity(1);
     } catch {
       // Cachet illisible : on continue sans (pas bloquant).
     }
   }
   if (issuer?.role) {
-    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(`${issuer.first_name} ${issuer.last_name}`, 315, sigImgY + 55);
-    doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 315, sigImgY + 68);
+    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(`${issuer.first_name} ${issuer.last_name}`, 315, sigImgY + 118);
+    doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 315, sigImgY + 131);
   }
 
   drawFooter(doc, { verificationCode });

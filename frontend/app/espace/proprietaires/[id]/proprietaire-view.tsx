@@ -90,6 +90,10 @@ function ProprietaireContent() {
   const canSeeCharges = user?.role === "dg" || (user?.permissions.includes("charges") ?? false);
 
   const [owner, setOwner] = React.useState<Owner | null>(null);
+  // Faux pour un employé sans permission `proprietaires`/`comptabilite`/`locataires` (ex. seulement
+  // `plaintes`) — audit du 2026-10-23 : la fiche exposait jusqu'ici tout le détail financier à
+  // n'importe quel employé connecté. Pilote l'affichage des sections financières ci-dessous.
+  const [canSeeFinancials, setCanSeeFinancials] = React.useState(true);
   const [properties, setProperties] = React.useState<OwnerProperty[] | null>(null);
   const [payouts, setPayouts] = React.useState<OwnerPayout[] | null>(null);
   const [escrowBalance, setEscrowBalance] = React.useState<EscrowBalance | null>(null);
@@ -109,12 +113,13 @@ function ProprietaireContent() {
     getOwner(accessToken, ownerId)
       .then((res) => {
         setOwner(res.owner);
+        setCanSeeFinancials(res.canSeeFinancials);
         setProperties(res.properties);
         setPayouts(res.payouts);
         setEscrowBalance(res.escrowBalance);
         setDepositsHeld(res.depositsHeld);
-        setDepositPositions(res.depositPositions);
-        setDepositTransfers(res.depositTransfers);
+        setDepositPositions(res.depositPositions ?? { items: [], withOwnerTotal: 0 });
+        setDepositTransfers(res.depositTransfers ?? []);
         setOpeningDebtUnpaid(res.openingDebtUnpaid);
         setChargesAccount(res.chargesAccount);
         setChargeRemittances(res.chargeRemittances);
@@ -320,7 +325,11 @@ function ProprietaireContent() {
           />
         )}
 
-        <EscrowBalanceCard escrow={escrowBalance} depositsHeld={depositsHeld} openingDebtUnpaid={openingDebtUnpaid} />
+        {canSeeFinancials ? (
+          <EscrowBalanceCard escrow={escrowBalance} depositsHeld={depositsHeld} openingDebtUnpaid={openingDebtUnpaid} />
+        ) : (
+          <RestrictedFinancialsNotice />
+        )}
 
         <Card>
           <CardContent className="pt-5">
@@ -328,16 +337,18 @@ function ProprietaireContent() {
           </CardContent>
         </Card>
 
-        <DepositTransferCard
-          ownerId={owner.id}
-          ownerName={owner.name}
-          positions={depositPositions.items}
-          withOwnerTotal={depositPositions.withOwnerTotal}
-          transfers={depositTransfers}
-          accessToken={accessToken}
-          canRecord={canPayout && !archived}
-          onChanged={load}
-        />
+        {canSeeFinancials && (
+          <DepositTransferCard
+            ownerId={owner.id}
+            ownerName={owner.name}
+            positions={depositPositions.items}
+            withOwnerTotal={depositPositions.withOwnerTotal}
+            transfers={depositTransfers}
+            accessToken={accessToken}
+            canRecord={canPayout && !archived}
+            onChanged={load}
+          />
+        )}
 
         {chargesAccount && (
           <ChargeRemittanceCard
@@ -375,6 +386,7 @@ function ProprietaireContent() {
           </Card>
         )}
 
+        {canSeeFinancials && (
         <Card>
           <CardHeader>
             <CardTitle>Versements</CardTitle>
@@ -417,8 +429,24 @@ function ProprietaireContent() {
             )}
           </CardContent>
         </Card>
+        )}
       </div>
     </div>
+  );
+}
+
+/** Remplace les cartes financières quand l'employé n'a aucune permission financière sur ce propriétaire
+ * (ni `proprietaires`, ni `comptabilite`, ni `locataires`) — la fiche reste consultable (identité,
+ * patrimoine) mais le détail des sommes (séquestre, cautions, versements, commission) reste masqué. */
+function RestrictedFinancialsNotice() {
+  return (
+    <Card>
+      <CardContent className="flex items-center gap-2.5 py-5 text-body-sm text-ink-muted">
+        <Wallet size={16} className="shrink-0" />
+        Le détail financier de ce propriétaire (séquestre, cautions, versements, commission) n&apos;est
+        visible que par la comptabilité ou un employé avec la permission « Propriétaires »/« Locataires ».
+      </CardContent>
+    </Card>
   );
 }
 
@@ -685,7 +713,7 @@ function MandateCard({
               required
               minLength={5}
               className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              placeholder="Pourquoi ce propriétaire quitte le cabinet…"
+              placeholder="Pourquoi ce propriétaire quitte l'entreprise…"
             />
           </Field>
           <div className="flex items-center gap-2">
@@ -943,6 +971,11 @@ function PayoutForm({
   accessToken: string | null;
   onRecorded: () => void;
 }) {
+  // /espace/paiements est réservé à roles={["dg","comptable"]} — un agent avec la seule permission
+  // `proprietaires` (qui peut ouvrir ce formulaire) n'y a pas accès : lien mort sinon (audit du
+  // 2026-10-23). Le reste du formulaire ci-dessous reste disponible à cet agent.
+  const { user: payoutFormUser } = useAuth();
+  const canUseFedapayPage = payoutFormUser?.role === "dg" || payoutFormUser?.role === "comptable";
   const [open, setOpen] = React.useState(false);
   const [step, setStep] = React.useState<"form" | "confirm">("form");
   const [amount, setAmount] = React.useState("");
@@ -1015,12 +1048,18 @@ function PayoutForm({
         </Button>
       </div>
       <p className="text-body-xs text-ink-muted">
-        Ce formulaire enregistre un versement déjà réglé (espèces, virement…). Pour l&apos;envoyer réellement en Mobile Money via
-        FedaPay,{" "}
-        <Link href="/espace/paiements" className="text-primary hover:underline">
-          utilisez la page Paiements
-        </Link>{" "}
-        — le versement y est enregistré automatiquement une fois confirmé.
+        Ce formulaire enregistre un versement déjà réglé (espèces, virement…).
+        {canUseFedapayPage ? (
+          <>
+            {" "}Pour l&apos;envoyer réellement en Mobile Money via FedaPay,{" "}
+            <Link href="/espace/paiements" className="text-primary hover:underline">
+              utilisez la page Paiements
+            </Link>{" "}
+            — le versement y est enregistré automatiquement une fois confirmé.
+          </>
+        ) : (
+          " Pour l'envoyer réellement en Mobile Money via FedaPay, demandez au DG ou au comptable."
+        )}
       </p>
 
       {open && error && <p className="text-body-sm text-danger-fg">{error}</p>}

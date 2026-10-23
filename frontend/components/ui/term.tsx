@@ -4,8 +4,8 @@ import { cn } from "@/lib/utils";
 /** Glossaire comptable : terme technique + aide discrète (infobulle au survol / focus, soulignement pointillé). */
 export const GLOSSARY: Record<string, string> = {
   caution: "Dépôt de garantie : somme appartenant au locataire, conservée en dette envers lui (compte 165) jusqu'à sa sortie.",
-  mandants: "Fonds des propriétaires détenus par le cabinet pour leur compte (compte 4671 — comptes courants des mandants).",
-  commission: "Honoraires de gestion du cabinet, prélevés sur les loyers encaissés (produit du cabinet).",
+  mandants: "Fonds des propriétaires détenus par l'entreprise pour leur compte (compte 4671 — comptes courants des mandants).",
+  commission: "Honoraires de gestion de l'entreprise, prélevés sur les loyers encaissés (produit de l'entreprise).",
   cloture: "Arrêté des comptes du mois : bilan figé, contrôles de cohérence, période verrouillée.",
   tresorerie: "Mouvements réels d'argent (encaissements et décaissements) : caisse, banque, mobile money.",
   grandLivre: "Détail de toutes les écritures classées par compte comptable.",

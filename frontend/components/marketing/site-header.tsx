@@ -24,7 +24,7 @@ export function SiteHeader() {
     <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
       <div className="content-shell flex h-topbar items-center justify-between">
         <Link href="/" className="flex items-center" aria-label="Accueil Africa Immo Management">
-          <BrandLogo />
+          <BrandLogo className="h-10" />
         </Link>
 
         <nav className="hidden items-center gap-6 md:flex" aria-label="Navigation principale">

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
+import { PENDING_OFFER_KEY } from "@/lib/api/billing";
 import { SiteHeader } from "@/components/marketing/site-header";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -40,7 +41,14 @@ export function VerifierView() {
     setError(null);
     try {
       await verifyEmail(email.trim().toLowerCase(), code.trim());
-      router.push("/espace");
+      // Offre choisie sur Tarifs avant l'inscription (`PENDING_OFFER_KEY`) : on va directement
+      // la payer plutôt que de laisser l'utilisateur atterrir sur le tableau de bord général et
+      // devoir retrouver seul le menu Abonnement — `/espace/abonnement` la reprend tout seul.
+      let hasPendingOffer = false;
+      try {
+        hasPendingOffer = localStorage.getItem(PENDING_OFFER_KEY) !== null;
+      } catch {}
+      router.push(hasPendingOffer ? "/espace/abonnement" : "/espace");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Une erreur est survenue. Réessayez.");
     } finally {

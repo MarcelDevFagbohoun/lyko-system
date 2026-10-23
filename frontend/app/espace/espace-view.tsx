@@ -4,11 +4,9 @@ import Link from "next/link";
 import { UserPlus, Building2, ArrowRight, Receipt } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { MyTasksCard } from "@/components/espace/my-tasks-card";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
 import { PriorityPanel } from "@/components/espace/priority-panel";
 import { EmployeeHome } from "@/components/espace/employee-home";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CADRES } from "@/lib/module-theme";
 
@@ -45,8 +43,6 @@ function EspaceContent() {
         </div>
 
         <PriorityPanel />
-
-        {!isDg && <MyTasksCard />}
 
         {canCharges && <UtilityAlertsCard hideWhenEmpty />}
 
@@ -130,25 +126,6 @@ function EspaceContent() {
             </Card>
           )}
         </div>
-
-        {!isDg && user && user.permissions.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Vos accès</CardTitle>
-              <CardDescription>
-                Modules autorisés par votre direction générale. Ils s&apos;activeront au fil de la
-                construction de chaque module.
-              </CardDescription>
-            </CardHeader>
-            <div className="flex flex-wrap gap-2 px-4 pb-4 sm:px-5 sm:pb-5">
-              {user.permissions.map((key) => (
-                <Badge key={key} variant="info">
-                  {key.replace(/_/g, " ")}
-                </Badge>
-              ))}
-            </div>
-          </Card>
-        )}
       </div>
     </div>
   );

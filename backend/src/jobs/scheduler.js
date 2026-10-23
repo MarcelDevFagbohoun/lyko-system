@@ -72,7 +72,7 @@ function startScheduler() {
   // Toutes les heures — inscriptions jamais vérifiées après 24h : nettoyage.
   cron.schedule('0 * * * *', runSafely('nettoyage des inscriptions abandonnées', runRegistrationCleanupJob));
 
-  logger.info('Tâches planifiées (node-cron) démarrées : 9 tâches actives');
+  logger.info('Tâches planifiées (node-cron) démarrées : 12 tâches actives');
 }
 
 module.exports = { startScheduler };

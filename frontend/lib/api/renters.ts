@@ -302,7 +302,10 @@ export function listRenters(accessToken: string) {
 }
 
 export function getRenter(accessToken: string, id: number) {
-  return apiFetch<{ renter: Renter; leases: Lease[] }>(`/api/renters/${id}`, { accessToken });
+  // `canSeeFinancials` (audit du 2026-10-23) : faux pour un employé sans permission `locataires`/
+  // `comptabilite` — chaque `lease.payments`/`openingDebtPayments`/`additionalDeposits` est alors déjà
+  // vide côté serveur (jamais besoin de filtrer soi-même côté client).
+  return apiFetch<{ renter: Renter; canSeeFinancials: boolean; leases: Lease[] }>(`/api/renters/${id}`, { accessToken });
 }
 
 export type CreateRenterInput = {

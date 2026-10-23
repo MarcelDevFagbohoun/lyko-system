@@ -70,6 +70,9 @@ export const FEATURE_LABELS: Record<string, string> = {
   sale_properties: "Biens à vendre",
   advanced_accounting: "Comptabilité avancée SYSCOHADA",
   audit_full: "Journal d'audit complet et support prioritaire",
+  // Label ajouté (demande utilisateur, 2026-10-23) — `ai_assistant` reste absent de `features` sur
+  // demarrage/pro/entreprise (backend constants/plans.js) : aucune offre ne la coche pour l'instant.
+  ai_assistant: "Assistance IA",
 };
 
 export const fetchCatalog = () => apiFetch<Catalog>("/api/billing/plans");

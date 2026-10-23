@@ -565,6 +565,26 @@ async function getOwnersWithoutCommissionRate(tenantId) {
 }
 
 /**
+ * Montant déjà réservé par des ordres FedaPay en cours pour ce propriétaire (créés, en traitement,
+ * ou envoyés mais pas encore appliqués à `owner_payouts`) — à déduire du solde séquestre avant
+ * d'autoriser un NOUVEAU versement, manuel ou FedaPay. Faille trouvée à l'audit du 2026-10-23 :
+ * `assertPayoutWithinBalance` (versement manuel, routes/owners.js) ignorait ces ordres en cours —
+ * un propriétaire pouvait être payé deux fois (une fois par FedaPay, une fois en espèces/virement
+ * manuel) pendant qu'un ordre FedaPay était encore `processing`, avant que `owner_payouts` n'existe.
+ * Cette même requête vivait en double dans `services/payments/orders.js` (`resolvePurpose`) —
+ * désormais une seule source de vérité, utilisée par les deux chemins.
+ */
+async function getReservedOwnerPayouts(tenantId, ownerId, db = pool) {
+  const [[row]] = await db.query(
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_orders
+     WHERE tenant_id = :tenantId AND beneficiary_owner_id = :ownerId AND purpose = 'reversement_proprietaire'
+       AND (status IN ('created','processing') OR (status = 'sent' AND applied_at IS NULL))`,
+    { tenantId, ownerId },
+  );
+  return Number(row.total);
+}
+
+/**
  * Un reversement ne peut jamais dépasser ce que le cabinet détient
  * RÉELLEMENT pour ce propriétaire (`getEscrowBalances`) — audit comptable
  * du 23/09/2026, anomalie A2 : sans ce contrôle, un montant absurde était
@@ -580,8 +600,13 @@ async function assertPayoutWithinBalance(tenantId, ownerId, amount, db = pool) {
   // simultanés, chacun inférieur au solde, pouvaient le dépasser ensemble).
   const balances = await getEscrowBalances(tenantId, db);
   const balance = balances.get(ownerId)?.balance ?? 0;
-  if (amount > balance) {
-    throw new ApiError(400, `Le montant dépasse le solde séquestre réellement détenu pour ce propriétaire (${balance} FCFA)`);
+  // Réservé par un ordre FedaPay en cours (voir `getReservedOwnerPayouts`) — sans cette déduction, un
+  // versement manuel pouvait s'ajouter à un envoi FedaPay déjà en route pour le même propriétaire.
+  const reserved = await getReservedOwnerPayouts(tenantId, ownerId, db);
+  const available = balance - reserved;
+  if (amount > available) {
+    const reservedNote = reserved > 0 ? ` (dont ${reserved} FCFA déjà réservés par un envoi FedaPay en cours)` : '';
+    throw new ApiError(400, `Le montant dépasse le solde séquestre réellement disponible pour ce propriétaire (${available} FCFA)${reservedNote}`);
   }
 }
 
@@ -593,6 +618,7 @@ module.exports = {
   loadRatesByOwner,
   buildOwnerCells,
   assertPayoutWithinBalance,
+  getReservedOwnerPayouts,
   getActiveCommissionRate,
   getTauxCommissionActif,
   getRecetteNetteMaison,

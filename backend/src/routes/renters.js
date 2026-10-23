@@ -18,6 +18,7 @@ const { toPublicInspectionReport, toPublicMoveOutReport } = require('../services
 const { toActor } = require('../utils/actor');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { resolvePropertyScope, assertRenterInScope } = require('../services/scope');
+const { hasAnyPermission } = require('../services/permissions');
 const { assertPeriodOpen, assertPeriodOpenLocked, getTenantRhythm } = require('../services/accountingPeriods');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { recordAdditionalDeposits, listLeaseDeposits, toPublic: toPublicLeaseDeposit } = require('../services/leaseDeposits');
@@ -552,6 +553,14 @@ router.get('/:id', canRead, async (req, res, next) => {
     const scopeAgentId = await resolvePropertyScope(req.user);
     await assertRenterInScope(req.user.tenantId, id, scopeAgentId);
 
+    // Détail financier (historique des paiements, dette initiale réglée, cautions supplémentaires) :
+    // contrairement à l'annuaire (nom/téléphone/adresse/statut du bail, voir `canRead`), réservé à qui
+    // gère réellement la relation locataire ou la comptabilité. Faille trouvée à l'audit du 2026-10-23 :
+    // tout le ledger était jusqu'ici servi à n'importe quel employé connecté. `arrears`/`rentStrip`
+    // (statut : en retard ou non) restent calculés et visibles pour tous — c'est le STATUT du bail,
+    // explicitement couvert par l'intention d'origine, pas le détail des transactions.
+    const canSeeFinancials = await hasAnyPermission(req.user, 'locataires', 'comptabilite');
+
     const [renterRows] = await pool.query(
       `SELECT r.*, ru.first_name AS renter_creator_first_name, ru.last_name AS renter_creator_last_name, ru.role AS renter_creator_role,
               nu.first_name AS notes_updater_first_name, nu.last_name AS notes_updater_last_name, nu.role AS notes_updater_role
@@ -692,8 +701,8 @@ router.get('/:id', canRead, async (req, res, next) => {
       const openingDebtPaid = openingDebtPayments.reduce((sum, p) => sum + p.amount, 0);
       return {
         ...lease,
-        payments,
-        additionalDeposits: sortedAdditionalDeposits(additionalDepositsByLease.get(row.id)),
+        payments: canSeeFinancials ? payments : [],
+        additionalDeposits: canSeeFinancials ? sortedAdditionalDeposits(additionalDepositsByLease.get(row.id)) : [],
         arrears: isActive
           ? computeArrears({
               startDate: lease.startDate,
@@ -726,7 +735,7 @@ router.get('/:id', canRead, async (req, res, next) => {
           : null,
         openingDebtPaid,
         openingDebtRemaining: lease.openingDebtAmount - openingDebtPaid,
-        openingDebtPayments,
+        openingDebtPayments: canSeeFinancials ? openingDebtPayments : [],
         moveInReport: toPublicInspectionReport(moveInByLease.get(row.id)),
         moveOutReport: toPublicMoveOutReport(moveOutByLease.get(row.id)),
       };
@@ -734,6 +743,7 @@ router.get('/:id', canRead, async (req, res, next) => {
 
     res.json({
       renter: toPublicRenter(renterRows[0]),
+      canSeeFinancials,
       leases,
     });
   } catch (err) {

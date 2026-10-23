@@ -81,7 +81,7 @@ export function FinalizeSection({
 
       {printedSignatures ? (
         <p className="text-body-sm text-ink-muted">
-          Après finalisation, imprimez le procès-verbal (PDF) : le locataire{tenantName ? ` (${tenantName})` : ""} et le cabinet le datent
+          Après finalisation, imprimez le procès-verbal (PDF) : le locataire{tenantName ? ` (${tenantName})` : ""} et l&apos;entreprise le datent
           et le signent à la main dans les cadres prévus.
         </p>
       ) : (

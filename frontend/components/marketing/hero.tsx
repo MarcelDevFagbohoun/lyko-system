@@ -4,7 +4,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
-import { formatFcfa } from "@/lib/utils";
+import { formatFcfa, cn } from "@/lib/utils";
 
 export function Hero() {
   return (
@@ -37,28 +37,40 @@ export function Hero() {
           arbitraire directe, qui contourne le problème quelle qu'en soit la cause. */}
       <div className="absolute inset-0 bg-[#F8FAFCED] lg:bg-gradient-to-r lg:from-canvas lg:via-canvas/92 lg:to-canvas/45" />
 
+      {/* Lueurs décoratives (même esprit que l'accueil employé) — purement
+          visuelles, masquées aux lecteurs d'écran, jamais sous `lg` où le
+          texte occupe toute la largeur et les recouvrirait. */}
+      <span
+        aria-hidden
+        className="animate-float-slow pointer-events-none absolute -right-24 top-10 hidden h-72 w-72 rounded-full bg-primary/15 blur-3xl lg:block"
+      />
+      <span
+        aria-hidden
+        className="animate-float-slow pointer-events-none absolute -right-10 bottom-0 hidden h-56 w-56 rounded-full bg-info/15 blur-3xl lg:block [animation-delay:-4s]"
+      />
+
       <div className="content-shell relative grid grid-cols-1 items-center gap-10 py-14 sm:py-20 lg:grid-cols-2 lg:gap-16">
         <div className="flex flex-col gap-6">
-          <Badge variant="primary" className="w-fit">
+          <Badge variant="primary" className="animate-fade-up w-fit">
             Gestion locative · Bénin
           </Badge>
-          <h1 className="font-display text-headline-2xl text-ink sm:text-[2.75rem] sm:leading-[1.1]">
+          <h1 className="animate-fade-up font-display text-headline-2xl text-ink [animation-delay:60ms] sm:text-[2.75rem] sm:leading-[1.1]">
             Encaissez à temps. Rendez des comptes justes à vos propriétaires.
           </h1>
-          <p className="max-w-xl text-body-lg text-ink-soft">
+          <p className="animate-fade-up max-w-xl text-body-lg text-ink-soft [animation-delay:120ms]">
             Africa Immo Management est le logiciel de gestion locative pensé pour le Bénin : loyers, charges SONEB/SBEE, relances
             WhatsApp, quittances, relevés propriétaires et comptabilité SYSCOHADA, dans un seul espace sécurisé pour toute
             votre équipe.
           </p>
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <Link href="/inscription" className={buttonVariants({ variant: "primary", size: "lg" })}>
+          <div className="animate-fade-up flex flex-col gap-3 [animation-delay:180ms] sm:flex-row">
+            <Link href="/inscription" className={cn(buttonVariants({ variant: "primary", size: "lg" }), "transition-transform hover:-translate-y-0.5")}>
               Créer mon compte
             </Link>
-            <Link href="/connexion" className={buttonVariants({ variant: "secondary", size: "lg" })}>
+            <Link href="/connexion" className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "transition-transform hover:-translate-y-0.5")}>
               Se connecter
             </Link>
           </div>
-          <div className="flex flex-col gap-2 pt-2 text-body-sm text-ink-muted sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
+          <div className="animate-fade-up flex flex-col gap-2 pt-2 text-body-sm text-ink-muted [animation-delay:240ms] sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
             <span className="inline-flex items-center gap-1.5">
               <BadgeCheck size={16} className="text-primary" />
               Quittances et contrats vérifiables en ligne
@@ -74,7 +86,7 @@ export function Hero() {
           </div>
         </div>
         {/* Aperçu produit — composants réels de la charte, pas une capture fictive */}
-        <Card className="p-4 shadow-lg sm:p-5">
+        <Card className="animate-fade-up p-4 shadow-lg transition-all duration-300 [animation-delay:180ms] hover:-translate-y-1 hover:shadow-xl sm:p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <p className="font-label-sm uppercase tracking-wider text-ink-muted">Tableau de bord de la direction</p>

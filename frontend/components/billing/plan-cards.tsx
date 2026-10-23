@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn, formatFcfa } from "@/lib/utils";
 
-const ORDER_FEATURES = ["core", "tenant_collect", "payroll", "payouts", "owner_portal", "sale_properties", "advanced_accounting", "audit_full"];
+const ORDER_FEATURES = ["core", "tenant_collect", "payroll", "payouts", "owner_portal", "sale_properties", "advanced_accounting", "audit_full", "ai_assistant"];
 
 /**
  * Grille des offres. `onChoose(plan, months)` : affiche un bouton par durée (espace connecté) ; sans lui, un seul bouton
