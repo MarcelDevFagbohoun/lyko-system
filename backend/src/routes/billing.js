@@ -14,6 +14,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const billing = require('../services/billing');
 const refunds = require('../services/refunds');
 const { streamSubscriptionInvoicePdf } = require('../services/pdf');
+const { getOrCreateIssuance } = require('../services/documentIssuance');
 const { getPlanAsync } = require('../services/planCatalog');
 const logger = require('../utils/logger');
 
@@ -107,7 +108,8 @@ router.get('/payments/:id/invoice.pdf', async (req, res, next) => {
     const [[p]] = await pool.query("SELECT * FROM subscription_payments WHERE id = :id AND tenant_id = :t AND status IN ('paid','refunded')", { id, t: req.user.tenantId });
     if (!p) throw new ApiError(404, 'Facture introuvable');
     const [[client]] = await pool.query('SELECT company_name, rccm, ifu FROM tenants WHERE id = :t', { t: req.user.tenantId });
-    streamSubscriptionInvoicePdf(res, { client, payment: p, planLabel: (await getPlanAsync(p.plan_key)).label });
+    const issuance = await getOrCreateIssuance(req.user.tenantId, 'recu_abonnement', p.id); // pas de limite de téléchargements
+    streamSubscriptionInvoicePdf(res, { client, payment: p, planLabel: (await getPlanAsync(p.plan_key)).label, verificationCode: issuance.verification_code });
   } catch (err) { next(err); }
 });
 

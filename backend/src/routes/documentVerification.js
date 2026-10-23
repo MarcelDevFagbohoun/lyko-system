@@ -33,6 +33,7 @@ const DOCUMENT_TYPE_LABELS = {
   carnet_charges: 'Carnet des charges SONEB/SBEE',
   etat_lieux_entree: 'État des lieux d’entrée',
   etat_lieux_sortie: 'État des lieux de sortie',
+  recu_abonnement: "Reçu d’abonnement Africa Immo Management",
 };
 
 // GET /api/verify/:code

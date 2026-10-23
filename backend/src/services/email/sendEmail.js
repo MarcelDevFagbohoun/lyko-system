@@ -31,31 +31,70 @@ function safeHeader(value) {
   return String(value ?? '').replace(/[\r\n\u0000-\u001f]+/g, ' ').trim().slice(0, 150);
 }
 
-function wrapHtml(bodyHtml) {
+/**
+ * Gabarit commun de tous les e-mails : mise en page à tableaux (compatible Gmail/Outlook/Apple Mail), 600 px de large,
+ * en-tête de marque, texte d'aperçu masqué (`preheader`) et pied de page légal. Aucune image externe : rien ne peut
+ * être bloqué par le client de messagerie.
+ */
+function wrapHtml(bodyHtml, { preheader = '' } = {}) {
+  const LEGAL = config.legal;
+  const legalLine = [LEGAL.name, LEGAL.address, LEGAL.rccm && `RCCM ${LEGAL.rccm}`, LEGAL.ifu && `IFU ${LEGAL.ifu}`].filter(Boolean).map(escapeHtml).join(' · ');
   return `<!doctype html>
 <html lang="fr">
-  <body style="margin:0;padding:32px 16px;background:#F1F5F9;font-family:Helvetica,Arial,sans-serif;color:${INK};">
-    <table role="presentation" width="100%" style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:12px;overflow:hidden;">
-      <tr><td style="background:${PRIMARY};height:6px;"></td></tr>
-      <tr><td style="padding:28px 28px 8px;">
-        <p style="margin:0;font-size:13px;letter-spacing:0.08em;color:${MUTED};text-transform:uppercase;">Africa Immo Management</p>
-      </td></tr>
-      <tr><td style="padding:0 28px 28px;">
-        ${bodyHtml}
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Africa Immo Management</title>
+  </head>
+  <body style="margin:0;padding:0;background:#EEF2F7;font-family:'Segoe UI',Helvetica,Arial,sans-serif;color:${INK};-webkit-text-size-adjust:100%;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(preheader)}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#EEF2F7;">
+      <tr><td align="center" style="padding:32px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#FFFFFF;border-radius:12px;overflow:hidden;border:1px solid #E2E8F0;">
+          <tr><td style="background:${PRIMARY};padding:22px 32px;">
+            <span style="font-size:18px;font-weight:700;letter-spacing:0.02em;color:#FFFFFF;">Africa Immo Management</span>
+            <span style="display:block;margin-top:2px;font-size:12px;color:#BFD0F5;">La gestion locative, simplement.</span>
+          </td></tr>
+          <tr><td style="padding:32px 32px 28px;font-size:15px;line-height:1.6;color:${INK};">
+            ${bodyHtml}
+          </td></tr>
+          <tr><td style="padding:20px 32px;background:#F8FAFC;border-top:1px solid #E2E8F0;font-size:12px;line-height:1.6;color:${MUTED};">
+            Ceci est un message automatique, merci de ne pas y répondre.<br>
+            ${legalLine}<br>
+            <a href="${config.frontendUrl}" style="color:${MUTED};">${escapeHtml(config.frontendUrl.replace(/^https?:\/\//, ''))}</a>
+            · <a href="${config.frontendUrl}/verifier" style="color:${MUTED};">Vérifier un document</a>
+          </td></tr>
+        </table>
       </td></tr>
     </table>
   </body>
 </html>`;
 }
 
-async function sendViaResend({ to, subject, html }) {
+/** Version texte brut (meilleure délivrabilité, lecteurs d'écran, clients sans HTML). */
+function htmlToText(html) {
+  return html
+    .replace(/<head[\s\S]*?<\/head>/gi, '')
+    .replace(/<div style="display:none[\s\S]*?<\/div>/i, '')
+    .replace(/<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '$2 ($1)')
+    .replace(/<\/(p|tr|li|h1|h2|div)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;|&zwnj;/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+async function sendViaResend({ to, subject, html, attachments }) {
   if (!isConfigured()) {
     logger.warn("Resend non configuré — email non envoyé (dev/test)", { to, subject });
     return { sent: false };
   }
   const client = getClient();
   try {
-    const result = await client.emails.send({ from: config.email.fromAddress, to, subject, html });
+    const result = await client.emails.send({ from: `Africa Immo Management <${config.email.fromAddress}>`, to, subject, html, text: htmlToText(html), ...(attachments?.length ? { attachments } : {}) });
     if (result?.error) {
       logger.error("Échec de l'envoi d'email (Resend)", { to, subject, error: result.error });
       return { sent: false, error: result.error };
@@ -121,34 +160,43 @@ const FEATURE_LABELS = {
 };
 
 /**
- * Confirmation d'abonnement (premier achat ou renouvellement) : offre, durée, échéance, avantages et limites.
- * `plan` vient du catalogue serveur (jamais du client) ; tout texte variable est échappé.
+ * Reçu d'abonnement (premier achat ou renouvellement) : offre, durée, échéance, avantages et limites, avec le reçu PDF
+ * en pièce jointe et son code de vérification publique. `plan` vient du catalogue serveur ; tout texte variable est échappé.
  */
-async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, months, amount, endDate, renewal }) {
+async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, months, amount, endDate, renewal, receiptNumber, verificationCode, pdf }) {
   const limit = (v) => (v == null ? 'illimité' : String(v));
   const features = Object.keys(FEATURE_LABELS).filter((k) => plan.features.includes(k));
+  const row = (label, value, strong) =>
+    `<tr><td style="padding:10px 0;border-bottom:1px solid #E2E8F0;color:${MUTED};font-size:14px;">${label}</td><td style="padding:10px 0;border-bottom:1px solid #E2E8F0;text-align:right;font-size:14px;${strong ? 'font-weight:700;' : ''}">${value}</td></tr>`;
   const html = wrapHtml(`
-    <h1 style="margin:0 0 12px;font-size:20px;">${renewal ? 'Abonnement renouvelé' : 'Votre abonnement est actif'}</h1>
-    <p style="margin:0 0 16px;font-size:14px;color:${MUTED};">
-      Bonjour ${escapeHtml(dgName)}, merci pour votre confiance. L'offre <strong>${escapeHtml(plan.label)}</strong> de « ${escapeHtml(companyName)} » est ${renewal ? 'prolongée' : 'activée'}.
-    </p>
-    <table role="presentation" width="100%" style="margin:0 0 16px;font-size:14px;border-collapse:collapse;">
-      <tr><td style="padding:6px 0;color:${MUTED};">Offre</td><td style="padding:6px 0;text-align:right;">${escapeHtml(plan.label)} — ${Number(months)} mois</td></tr>
-      <tr><td style="padding:6px 0;color:${MUTED};">Montant payé</td><td style="padding:6px 0;text-align:right;font-weight:bold;">${escapeHtml(formatAmount(amount))}</td></tr>
-      <tr><td style="padding:6px 0;color:${MUTED};">Valable jusqu'au</td><td style="padding:6px 0;text-align:right;">${escapeHtml(endDate)}</td></tr>
+    <h1 style="margin:0 0 8px;font-size:24px;line-height:1.3;color:${INK};">${renewal ? 'Votre abonnement est renouvelé' : 'Votre abonnement est actif'}</h1>
+    <p style="margin:0 0 24px;color:${MUTED};">Bonjour ${escapeHtml(dgName)}, merci pour votre confiance. L'offre <strong style="color:${INK};">${escapeHtml(plan.label)}</strong> de « ${escapeHtml(companyName)} » est ${renewal ? 'prolongée' : 'activée'}. Votre reçu est joint à ce message.</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;border-top:1px solid #E2E8F0;">
+      ${row('Offre', `${escapeHtml(plan.label)} — ${Number(months)} mois`)}
+      ${row('Montant payé', escapeHtml(formatAmount(amount)), true)}
+      ${row("Valable jusqu'au", escapeHtml(endDate))}
+      ${receiptNumber ? row('N° de reçu', `<span style="font-family:'Courier New',monospace;">${escapeHtml(receiptNumber)}</span>`) : ''}
     </table>
-    <p style="margin:0 0 8px;font-size:14px;font-weight:bold;">Ce que votre offre inclut</p>
-    <ul style="margin:0 0 16px;padding-left:18px;font-size:14px;color:${INK};line-height:1.7;">
+    ${verificationCode ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;"><tr><td style="background:#F1F5F9;border-radius:8px;padding:16px 20px;">
+      <span style="display:block;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:${MUTED};">Code de vérification du reçu</span>
+      <span style="display:block;margin:4px 0 6px;font-family:'Courier New',monospace;font-size:22px;font-weight:700;letter-spacing:0.08em;color:${PRIMARY};">${escapeHtml(verificationCode)}</span>
+      <span style="font-size:13px;color:${MUTED};">Toute personne peut confirmer l'authenticité du reçu sur <a href="${config.frontendUrl}/verifier" style="color:${PRIMARY};">${escapeHtml(config.frontendUrl.replace(/^https?:\/\//, ''))}/verifier</a>.</span>
+    </td></tr></table>` : ''}
+    <p style="margin:0 0 8px;font-size:16px;font-weight:700;">Ce que votre offre inclut</p>
+    <ul style="margin:0 0 24px;padding-left:20px;color:${INK};line-height:1.8;">
       <li><strong>${escapeHtml(limit(plan.limits.units))}</strong> unités · <strong>${escapeHtml(limit(plan.limits.owners))}</strong> propriétaires · <strong>${escapeHtml(limit(plan.limits.users))}</strong> utilisateurs</li>
       ${features.map((k) => `<li>${escapeHtml(FEATURE_LABELS[k])}</li>`).join('')}
     </ul>
-    <p style="margin:0 0 16px;font-size:13px;color:${MUTED};">Votre facture est disponible dans la page Abonnement de votre espace. Aucun prélèvement automatique : vous renouvelez quand vous le décidez.</p>
-    <p style="margin:0 0 20px;font-size:14px;">Nous vous souhaitons un très bon usage d'Africa Immo Management !</p>
-    <a href="${config.frontendUrl}/espace" style="display:inline-block;padding:10px 20px;background:${PRIMARY};color:#FFFFFF;text-decoration:none;border-radius:6px;font-size:14px;">
-      Ouvrir mon espace
-    </a>
-  `);
-  return sendViaResend({ to, subject: renewal ? 'Votre abonnement a été renouvelé' : 'Votre abonnement Africa Immo Management est actif', html });
+    <p style="margin:0 0 24px;font-size:13px;color:${MUTED};">Aucun prélèvement automatique : vous renouvelez quand vous le décidez. Vous retrouvez vos reçus dans la page Abonnement de votre espace.</p>
+    <p style="margin:0 0 28px;">Nous vous souhaitons un très bon usage d'Africa Immo Management !</p>
+    <a href="${config.frontendUrl}/espace" style="display:inline-block;padding:13px 28px;background:${PRIMARY};color:#FFFFFF;text-decoration:none;border-radius:8px;font-size:15px;font-weight:600;">Ouvrir mon espace</a>
+  `, { preheader: `${plan.label} — ${formatAmount(amount)} · valable jusqu'au ${endDate}. Votre reçu est en pièce jointe.` });
+  return sendViaResend({
+    to,
+    subject: renewal ? 'Abonnement renouvelé — votre reçu' : 'Abonnement activé — votre reçu',
+    html,
+    attachments: pdf ? [{ filename: `${receiptNumber || 'recu-abonnement'}.pdf`, content: pdf }] : undefined,
+  });
 }
 
 const PURPOSE_LABELS = {

@@ -11,7 +11,8 @@ export type DocumentType =
   | "releve_proprietaire"
   | "carnet_charges"
   | "etat_lieux_entree"
-  | "etat_lieux_sortie";
+  | "etat_lieux_sortie"
+  | "recu_abonnement";
 
 export type DocumentIssuanceStatus = {
   downloadCount: number;

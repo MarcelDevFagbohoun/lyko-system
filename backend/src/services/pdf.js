@@ -510,17 +510,18 @@ function streamOperationReceiptPdf(res, { tenant, op }) {
 }
 
 /** Facture d'abonnement Africa Immo Management, remise à l'entreprise cliente. */
-function streamSubscriptionInvoicePdf(res, { client, payment, planLabel }) {
+function streamSubscriptionInvoicePdf(res, { client, payment, planLabel, verificationCode }) {
   const paidOn = formatDateFr(isoDay(payment.paid_at));
   const LEGAL = require('../config/env').legal;
   const platform = { company_name: LEGAL.name };
   renderReceiptDocument(res, {
     tenant: platform,
     filename: `${payment.invoice_number}.pdf`,
-    title: 'FACTURE',
+    title: 'REÇU DE PAIEMENT',
     subtitle: 'Abonnement Africa Immo Management',
-    meta: [['N° de facture', payment.invoice_number], ['Payée le', paidOn]],
-    intro: { prefix: 'Facture acquittée le ', bold: paidOn },
+    meta: [['N° de reçu', payment.invoice_number], verificationCode ? ['Code de vérification', verificationCode] : ['Payé le', paidOn]],
+    verificationCode,
+    intro: { prefix: 'Paiement reçu et confirmé le ', bold: paidOn },
     partiesLabel: 'Client',
     parties: [
       ['Entreprise', client.company_name],
@@ -540,10 +541,24 @@ function streamSubscriptionInvoicePdf(res, { client, payment, planLabel }) {
       rows: [[`Abonnement ${planLabel}${payment.founder_price ? ' (tarif fondateur)' : ''}`, `${payment.months} mois`, D.fcfa(payment.amount)]],
     },
     total: { label: 'Total payé', amount: D.fcfa(payment.amount), raw: payment.amount },
-    wordsPrefix: 'Arrêtée la présente facture à la somme de',
-    note: 'Facture acquittée : le paiement a été confirmé par le prestataire de paiement. Document généré automatiquement.',
+    wordsPrefix: 'Arrêté le présent reçu à la somme de',
+    note: 'Reçu acquitté : le paiement a été confirmé par le prestataire de paiement. Document généré automatiquement.',
     signatureTitle: 'Africa Immo Management',
     issuer: null,
+  });
+}
+
+/** Reçu d'abonnement en mémoire (pièce jointe d'e-mail) : même document que le téléchargement, sans réponse HTTP. */
+function buildSubscriptionReceiptBuffer(args) {
+  const { PassThrough } = require('stream');
+  return new Promise((resolve, reject) => {
+    const sink = new PassThrough();
+    sink.setHeader = () => {};
+    const chunks = [];
+    sink.on('data', (c) => chunks.push(c));
+    sink.on('end', () => resolve(Buffer.concat(chunks)));
+    sink.on('error', reject);
+    try { streamSubscriptionInvoicePdf(sink, args); } catch (e) { reject(e); }
   });
 }
 
@@ -2133,6 +2148,7 @@ module.exports = {
   streamPaymentAdvicePdf,
   streamOperationReceiptPdf,
   streamSubscriptionInvoicePdf,
+  buildSubscriptionReceiptBuffer,
   streamChargeReceiptPdf,
   streamLeaseContractPdf,
   streamOwnerStatementPdf,

@@ -173,6 +173,18 @@ async function notifyActivation(p, endDate, renewal) {
   );
   if (!u?.email) return;
   const plan = await getPlanAsync(p.plan_key);
+  // Reçu PDF + code de vérification publique ; si la génération échoue, l'e-mail part quand même sans pièce jointe.
+  let pdf; let verificationCode; let receiptNumber;
+  try {
+    const [[pay]] = await pool.query('SELECT * FROM subscription_payments WHERE id = :id', { id: p.id });
+    const [[client]] = await pool.query('SELECT company_name, rccm, ifu FROM tenants WHERE id = :t', { t: p.tenant_id });
+    const issuance = await require('./documentIssuance').getOrCreateIssuance(p.tenant_id, 'recu_abonnement', p.id);
+    verificationCode = issuance.verification_code;
+    receiptNumber = pay.invoice_number;
+    pdf = await require('./pdf').buildSubscriptionReceiptBuffer({ client, payment: pay, planLabel: plan.label, verificationCode });
+  } catch (e) {
+    logger.warn('Abonnement : reçu PDF non généré', { id: p.id, message: e.message });
+  }
   await require('./email/sendEmail').sendSubscriptionActivatedEmail({
     to: u.email,
     dgName: u.first_name,
@@ -182,6 +194,9 @@ async function notifyActivation(p, endDate, renewal) {
     amount: p.amount,
     endDate: new Date(endDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }),
     renewal,
+    receiptNumber,
+    verificationCode,
+    pdf,
   });
 }
 

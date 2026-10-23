@@ -109,3 +109,11 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - Inscription → code e-mail → connexion : tant que l'entreprise n'a jamais payé, le directeur est redirigé vers la page « Choisissez votre offre » (aucun accès à l'espace avant le premier paiement).
 - Menu Tarifs : le bouton d'une offre mémorise le choix, mène à l'inscription, et après connexion l'offre est ouverte directement sur le récapitulatif de paiement.
 - Après paiement confirmé (renvoi FedaPay ou webhook), e-mail au directeur : offre, durée, montant, date d'échéance, avantages et limites. Aucune migration.
+
+## Lot 10 — e-mails professionnels et reçu d'abonnement vérifiable
+
+- Migration `117_subscription_receipt_verification.sql` **à appliquer** (type de document `recu_abonnement`).
+- Gabarit commun de tous les e-mails refondu (en-tête de marque, texte d'aperçu, version texte, pied de page légal) ; expéditeur affiché « Africa Immo Management ».
+- Après chaque paiement d'abonnement : e-mail avec le **reçu PDF en pièce jointe**, son numéro (AIM-AAAA-NNNNNN) et un **code de vérification** (XXXX-XXXX-XXXX) contrôlable publiquement sur `/verifier`. Même reçu téléchargeable depuis la page Abonnement.
+- Renseigner `PLATFORM_LEGAL_ADDRESS`, `PLATFORM_LEGAL_RCCM` et `PLATFORM_LEGAL_IFU` pour qu'ils figurent dans le pied des e-mails et sur le reçu.
+- Prérequis d'envoi : domaine vérifié dans Resend (SPF, DKIM) et `EMAIL_FROM_ADDRESS` sur ce domaine.
