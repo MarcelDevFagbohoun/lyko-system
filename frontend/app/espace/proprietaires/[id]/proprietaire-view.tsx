@@ -31,6 +31,7 @@ import { buildWhatsAppHref } from "@/lib/validation/auth";
 import { formatFcfa, formatDateLabel, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { DocumentDownloadStatus } from "@/components/documents/document-download-status";
+import { NoteThread } from "@/components/notes/note-thread";
 import { DepositTransferCard } from "./deposit-transfer-card";
 import { Badge } from "@/components/ui/badge";
 import { UtilityPointPanel } from "@/components/charges/utility-point-panel";
@@ -318,6 +319,12 @@ function ProprietaireContent() {
         )}
 
         <EscrowBalanceCard escrow={escrowBalance} depositsHeld={depositsHeld} openingDebtUnpaid={openingDebtUnpaid} />
+
+        <Card>
+          <CardContent className="pt-5">
+            <NoteThread entityType="owner" entityId={owner.id} accessToken={accessToken} title="Notes sur ce propriétaire" />
+          </CardContent>
+        </Card>
 
         <DepositTransferCard
           ownerId={owner.id}

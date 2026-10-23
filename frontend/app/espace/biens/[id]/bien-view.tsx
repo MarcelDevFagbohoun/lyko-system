@@ -35,6 +35,7 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
+import { NoteThread } from "@/components/notes/note-thread";
 import { Attribution } from "@/components/ui/attribution";
 import { StatCard } from "@/components/ui/stat-card";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -138,6 +139,12 @@ function BienContent() {
           <ArrowLeft size={16} />
           Retour aux biens
         </Link>
+
+        <Card>
+          <CardContent className="pt-5">
+            <NoteThread entityType="property" entityId={property.id} accessToken={accessToken} title="Notes sur ce bien" />
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
