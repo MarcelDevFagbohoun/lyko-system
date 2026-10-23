@@ -23,18 +23,18 @@ const INFLOW_LABELS: Record<string, string> = {
   lateFees: "Pénalités de retard",
   saleCommissions: "Commissions de vente",
   otherIncomes: "Autres entrées (honoraires, intérêts, remboursements…)",
-  rentDeposits: "Cautions de loyer reçues",
+  rentDeposits: "Dépôts de garantie reçus (cautions de loyer)",
   extraDeposits: "Cautions supplémentaires reçues",
   depositsRecoveredFromOwners: "Cautions récupérées auprès des propriétaires",
   utilityCollected: "Charges SONEB/SBEE payées par les locataires",
 };
 const OUTFLOW_LABELS: Record<string, string> = {
-  ownerPayouts: "Reversements aux propriétaires",
+  ownerPayouts: "Reversements aux propriétaires (mandants, 4671)",
   chargeRemittances: "Reversements de charges SONEB/SBEE",
   propertyExpenses: "Dépenses de Biens (avancées pour le propriétaire)",
   cabinetExpenses: "Dépenses de fonctionnement du cabinet",
   fixedAssets: "Achats d'immobilisations",
-  rentDepositsReturned: "Cautions de loyer restituées",
+  rentDepositsReturned: "Dépôts de garantie restitués (cautions de loyer)",
   extraDepositsReturned: "Cautions supplémentaires restituées",
   depositsTransferredToOwners: "Cautions remises aux propriétaires",
 };
@@ -49,7 +49,7 @@ const METHOD_LABELS: Record<string, string> = {
 
 type TabKey = "synthese" | "biens" | "proprietaires" | "locataires" | "depenses" | "controles";
 const TABS: { key: TabKey; label: string }[] = [
-  { key: "synthese", label: "Entrées & sorties" },
+  { key: "synthese", label: "Encaissements & décaissements" },
   { key: "biens", label: "Par bien" },
   { key: "proprietaires", label: "Propriétaires" },
   { key: "locataires", label: "Locataires" },
@@ -206,8 +206,8 @@ function SyntheseTab({ b }: { b: MonthBilan }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <LinesTable title="Entrées d'argent" lines={b.inflows.lines} labels={INFLOW_LABELS} total={b.inflows.total} />
-        <LinesTable title="Sorties d'argent" lines={b.outflows.lines} labels={OUTFLOW_LABELS} total={b.outflows.total} />
+        <LinesTable title="Encaissements" lines={b.inflows.lines} labels={INFLOW_LABELS} total={b.inflows.total} />
+        <LinesTable title="Décaissements" lines={b.outflows.lines} labels={OUTFLOW_LABELS} total={b.outflows.total} />
       </div>
 
       {b.depositTransfers && (b.depositTransfers.lines.length > 0 || b.depositTransfers.stillWithOwners.total > 0) && (
@@ -262,12 +262,12 @@ function SyntheseTab({ b }: { b: MonthBilan }) {
         <table className="w-full border-collapse text-body-sm">
           <tbody>
             {[
-              ["Commission sur loyers", b.cabinet.commission],
+              ["Commissions de gestion sur loyers", b.cabinet.commission],
               ["Frais d'agence", b.cabinet.entryFees],
               ["Pénalités de retard réglées", b.cabinet.lateFees],
               ["Commissions de vente", b.cabinet.saleCommissions],
               ["Autres entrées", b.cabinet.otherIncomes ?? 0],
-              ["− Dépenses de fonctionnement", -b.cabinet.expenses],
+              ["− Charges d'exploitation", -b.cabinet.expenses],
             ].map(([label, value]) => (
               <tr key={label as string} className="border-b border-border-subtle">
                 <Td>{label}</Td>

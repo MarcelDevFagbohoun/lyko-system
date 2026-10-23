@@ -6,6 +6,7 @@ import { ApiError } from "@/lib/api/client";
 import { createDepositTransfer, type DepositPosition, type DepositTransfer } from "@/lib/api/owners";
 import { formatDateLabel, formatFcfa } from "@/lib/utils";
 import { useToast } from "@/lib/toast/toast-context";
+import { Term } from "@/components/ui/term";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -99,9 +100,9 @@ export function DepositTransferCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Cautions remises au propriétaire</CardTitle>
+        <CardTitle>Dépôts de garantie remis au propriétaire</CardTitle>
         <CardDescription>
-          Les cautions appartiennent aux locataires : elles doivent leur être restituées à la sortie. Les remettre au propriétaire
+          Les <Term k="caution">cautions</Term> appartiennent aux locataires : elles doivent leur être restituées à la sortie. Les remettre au propriétaire
           (à sa demande ou pour un motif justifié) n&apos;en fait pas une recette — elles restent à récupérer. Ce point figure dans le bilan du mois.
         </CardDescription>
       </CardHeader>

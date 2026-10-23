@@ -40,7 +40,7 @@ import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import { CADRES, type Cadre } from "@/lib/module-theme";
 import { cn } from "@/lib/utils";
 
-type NavItem = { href: string; label: string; icon: typeof LayoutDashboard };
+type NavItem = { href: string; label: string; icon: typeof LayoutDashboard; hint?: string };
 type NavGroup = { cadre: Cadre; items: NavItem[] };
 
 /**
@@ -112,24 +112,24 @@ export function EspaceSidebar() {
     {
       cadre: "finances",
       items: [
-        canAccounting && { href: "/espace/comptabilite", label: "Comptabilité", icon: Wallet },
-        canAccounting && { href: "/espace/cloture", label: "Clôture", icon: Lock },
-        canAccounting && { href: "/espace/comptabilite#depenses", label: "Dépenses", icon: Banknote },
-        canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité avancée", icon: Calculator },
-        canCharges && { href: "/espace/charges", label: "Charges", icon: Receipt },
+        canAccounting && { href: "/espace/comptabilite", label: "Trésorerie & recettes", icon: Wallet, hint: "Comptabilité de trésorerie : encaissements de loyers, décaissements et solde de caisse." },
+        canAccounting && { href: "/espace/cloture", label: "Clôture mensuelle", icon: Lock, hint: "Arrêté des comptes du mois : bilan, contrôles de cohérence, verrouillage de la période." },
+        canAccounting && { href: "/espace/comptabilite#depenses", label: "Charges d'exploitation", icon: Banknote, hint: "Dépenses de fonctionnement du cabinet et dépenses avancées pour le compte des propriétaires." },
+        canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité générale", icon: Calculator, hint: "Partie double SYSCOHADA : plan comptable, journaux, grand livre, balance, états financiers." },
+        canCharges && { href: "/espace/charges", label: "Charges locatives", icon: Receipt, hint: "Factures SONEB/SBEE refacturées aux locataires et reversées aux propriétaires." },
         // Salaires (demande utilisateur, 2026-10-18) : réservé au DG, jamais délégable via une
         // permission — la rémunération du personnel reste une donnée sensible (même principe que
         // `/espace/employes`).
-        isDg && { href: "/espace/salaires", label: "Salaires", icon: HandCoins },
+        isDg && { href: "/espace/salaires", label: "Paie du personnel", icon: HandCoins, hint: "Salaires et charges de personnel (réservé à la direction)." },
         // Paiements sortants FedaPay : lecture DG + comptable, envoi DG uniquement (contrôlé par le serveur).
-        (isDg || user?.role === "comptable") && { href: "/espace/paiements", label: "Paiements", icon: Send },
+        (isDg || user?.role === "comptable") && { href: "/espace/paiements", label: "Versements", icon: Send, hint: "Reversements aux propriétaires (compte 4671 — mandants) et paiements sortants." },
       ],
     },
     {
       cadre: "administration",
       items: [
         isDg && { href: "/espace/employes", label: "Employés", icon: Briefcase },
-        isDg && { href: "/espace/journal", label: "Journal", icon: History },
+        isDg && { href: "/espace/journal", label: "Piste d'audit", icon: History, hint: "Journal horodaté de toutes les opérations, avec leur auteur." },
         isDg && { href: "/espace/abonnement", label: "Abonnement", icon: CreditCard },
         !isDg && { href: "/espace/historique", label: "Historique", icon: Clock },
       ],
@@ -188,6 +188,7 @@ export function EspaceSidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    title={item.hint}
                     className={cn(
                       "group relative flex items-center gap-3 rounded-lg px-2.5 py-2.5 font-label-md transition-all duration-150 ease-out",
                       active
