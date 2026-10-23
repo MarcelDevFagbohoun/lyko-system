@@ -72,3 +72,8 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - **Activer la 2FA** : back-office > onglet « Sécurité » > scanner le QR code avec Google Authenticator/Authy. Ensuite chaque connexion demande le code. Le journal (onglet « Journal ») garde connexions, refus, remboursements, attributions et modifications d'offres.
 - **Dépassement de limites** : si une offre est abaissée sous l'usage d'une entreprise, celle-ci voit un bandeau et le back-office l'indique dans « Entreprises ».
 - **Identifiants conservés volontairement** (les changer casserait des données ou des sessions en cours) : nom de base `lyko_system` et utilisateur `lyko`, `JWT_ISSUER`, cookie `lyko_refresh`, métadonnée FedaPay `lyko_reference`, base hors-ligne `lyko-offline`. Aucun n'est visible par un utilisateur.
+
+## Lot 4 — cautions chez le propriétaire, notes en bulles, vocabulaire comptable
+
+- Migrations à appliquer : `111_owner_deposit_transfers.sql` (reversement des cautions), `112_entity_notes.sql` (notes datées ; reprend les anciennes notes locataire/propriétaire comme première bulle).
+- Comptabilité avancée : nouveau compte 4673 et deux règles (`caution_reversee_proprietaire`, `caution_recuperee_proprietaire`) créés automatiquement au premier reversement.
