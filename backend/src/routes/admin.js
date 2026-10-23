@@ -139,7 +139,7 @@ router.get('/tenants', async (_req, res, next) => {
 });
 
 router.get('/refunds', async (req, res, next) => {
-  try { res.json({ refunds: await refunds.listRefunds({ status: typeof req.query.status === 'string' ? req.query.status : null }) }); } catch (err) { next(err); }
+  try { res.json({ refunds: await refunds.listRefunds({ status: typeof req.query.status === 'string' ? req.query.status : null, full: true }) }); } catch (err) { next(err); }
 });
 const idOf = (req) => { const id = Number(req.params.id); if (!Number.isInteger(id)) throw new ApiError(400, 'Identifiant invalide'); return id; };
 router.post('/refunds/:id/approve', async (req, res, next) => {
@@ -156,6 +156,9 @@ router.post('/refunds/:id/reject', async (req, res, next) => {
 });
 router.post('/refunds/:id/pay', async (req, res, next) => {
   try { const out = await refunds.pay({ id: idOf(req), adminId: req.admin.id }); await audit(req, 'refund_pay', `refund:${req.params.id}`, out); res.json(out); } catch (err) { next(err); }
+});
+router.post('/refunds/:id/mark-paid', async (req, res, next) => {
+  try { const out = await refunds.markPaidManually({ id: idOf(req), adminId: req.admin.id, reference: req.body?.reference }); await audit(req, 'refund_mark_paid', `refund:${req.params.id}`, { reference: req.body?.reference ?? null }); res.json(out); } catch (err) { next(err); }
 });
 router.post('/refunds/:id/refresh', async (req, res, next) => {
   try { res.json(await refunds.refresh({ id: idOf(req) })); } catch (err) { next(err); }

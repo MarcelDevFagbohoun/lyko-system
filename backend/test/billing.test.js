@@ -120,6 +120,12 @@ test('paiement approuvé : abonnement actif 4 mois, garantie 15 jours, facture ;
   assert.equal(d.refundOpen, true);
 });
 
+test('abonnement en cours : changer d’offre refusé (409), renouveler la même offre accepté', async () => {
+  const other = await buy('entreprise', 4);
+  assert.equal(other.status, 409);
+  assert.equal((await buy('demarrage', 1)).status, 409);
+});
+
 test('renouvellement : prix normal (plus de tarif fondateur), prolonge depuis l’échéance', async () => {
   const before = new Date((await sub()).current_period_end).getTime();
   const r = await buy('pro', 4);
@@ -145,6 +151,7 @@ test('webhook : signature fausse ignorée ; signature valide active', async () =
 });
 
 test('montant FedaPay différent du montant attendu : refusé, rien activé', async () => {
+  await pool.query('UPDATE tenant_subscriptions SET current_period_end = DATE_SUB(NOW(), INTERVAL 1 HOUR) WHERE tenant_id = :t', { t: fx.tenantId }); // échu : le changement d'offre redevient possible
   const r = await buy('entreprise', 4);
   const id = await txOf(r.body.reference);
   Object.assign(txs.get(id), { status: 'approved', amount: 100 });
@@ -155,6 +162,7 @@ test('montant FedaPay différent du montant attendu : refusé, rien activé', as
 
 test('paiement refusé par FedaPay : échec', async () => {
   const r = await buy('demarrage', 2);
+  assert.equal(r.status, 201);
   txs.get(await txOf(r.body.reference)).status = 'declined';
   assert.equal(await confirm(r.body.reference), 'failed');
 });

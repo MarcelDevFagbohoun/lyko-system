@@ -65,7 +65,7 @@ async function notifyOrderSent(order) {
   for (const dg of dgs) {
     await deliver({
       tenantId: order.tenant_id, orderId: order.id, role: 'dg', to: dg.email,
-      payload: { ...base, recipientName: dg.first_name, label: `${order.label} — ${order.beneficiary_name}` },
+      payload: { ...base, recipientName: dg.first_name, label: `${order.label} (${order.beneficiary_name})` },
     });
   }
 }

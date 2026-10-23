@@ -509,43 +509,80 @@ function streamOperationReceiptPdf(res, { tenant, op }) {
   });
 }
 
-/** Facture d'abonnement Africa Immo Management, remise à l'entreprise cliente. */
+/**
+ * Reçu d'abonnement Africa Immo Management, remis à l'entreprise cliente. Mise en page « facture » épurée : gros titre,
+ * bloc clé/valeur, émetteur et client côte à côte, montant payé, tableau Description / Qté / Prix unitaire / Montant,
+ * totaux, logo en haut à droite, code de vérification en pied de page.
+ */
 function streamSubscriptionInvoicePdf(res, { client, payment, planLabel, verificationCode }) {
+  const LEGAL = config.legal;
   const paidOn = formatDateFr(isoDay(payment.paid_at));
-  const LEGAL = require('../config/env').legal;
-  const platform = { company_name: LEGAL.name };
-  renderReceiptDocument(res, {
-    tenant: platform,
-    filename: `${payment.invoice_number}.pdf`,
-    title: 'REÇU DE PAIEMENT',
-    subtitle: 'Abonnement Africa Immo Management',
-    meta: [['N° de reçu', payment.invoice_number], verificationCode ? ['Code de vérification', verificationCode] : ['Payé le', paidOn]],
-    verificationCode,
-    intro: { prefix: 'Paiement reçu et confirmé le ', bold: paidOn },
-    partiesLabel: 'Client',
-    parties: [
-      ['Entreprise', client.company_name],
-      ['RCCM / IFU', [client.rccm, client.ifu].filter(Boolean).join(' / ') || '—'],
-      ['Référence de paiement', payment.reference],
-      // Identité fiscale de l'émetteur (renseignée via PLATFORM_LEGAL_* ; absente tant qu'elle n'est pas configurée).
-      ...[['Émetteur', LEGAL.name], ['RCCM / IFU émetteur', [LEGAL.rccm, LEGAL.ifu].filter(Boolean).join(' / ')], ['Adresse émetteur', LEGAL.address]]
-        .filter(([, v]) => v),
-    ],
-    detailLabel: 'Détail',
-    lines: {
-      columns: [
-        { label: 'Désignation', width: 235 },
-        { label: 'Durée', width: 120 },
-        { label: 'Montant', width: 140, align: 'right', bold: true },
-      ],
-      rows: [[`Abonnement ${planLabel}${payment.founder_price ? ' (tarif fondateur)' : ''}`, `${payment.months} mois`, D.fcfa(payment.amount)]],
-    },
-    total: { label: 'Total payé', amount: D.fcfa(payment.amount), raw: payment.amount },
-    wordsPrefix: 'Arrêté le présent reçu à la somme de',
-    note: 'Reçu acquitté : le paiement a été confirmé par le prestataire de paiement. Document généré automatiquement.',
-    signatureTitle: 'Africa Immo Management',
-    issuer: null,
-  });
+  const doc = new PDFDocument({ size: 'A4', margins: { top: 56, bottom: 56, left: 56, right: 56 }, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${payment.invoice_number}.pdf"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  doc.pipe(res);
+
+  const L = 56; const R = doc.page.width - 56; const W = R - L;
+  const money = (n) => D.fcfa(n);
+  // Titre et logo
+  doc.font('Helvetica-Bold').fontSize(26).fillColor(INK).text('Reçu de paiement', L, 56);
+  const logo = path.join(__dirname, '..', '..', 'assets', 'logo-mark.png');
+  if (fs.existsSync(logo)) doc.image(logo, R - 48, 52, { width: 48, height: 48 });
+  // Bloc clé / valeur
+  let y = 108;
+  const kv = (k, v, mono) => {
+    doc.font('Helvetica-Bold').fontSize(10).fillColor(INK).text(k, L, y, { width: 130, lineBreak: false });
+    doc.font(mono ? 'Courier' : 'Helvetica').fontSize(10).fillColor(INK).text(v, L + 135, y, { width: W - 135, lineBreak: false });
+    y += 16;
+  };
+  kv('N° de reçu', payment.invoice_number, true);
+  kv('Date de paiement', paidOn);
+  kv('Référence', payment.reference, true);
+  // Émetteur / client
+  y += 18;
+  const half = W / 2;
+  const issuerLines = [LEGAL.name, LEGAL.address, LEGAL.rccm && `RCCM ${LEGAL.rccm}`, LEGAL.ifu && `IFU ${LEGAL.ifu}`].filter(Boolean);
+  const clientLines = [client.company_name, client.rccm && `RCCM ${client.rccm}`, client.ifu && `IFU ${client.ifu}`].filter(Boolean);
+  const blockTop = y;
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(INK).text(issuerLines[0], L, blockTop, { width: half - 12 });
+  doc.font('Helvetica').fontSize(10).fillColor(INK_SOFT).text(issuerLines.slice(1).join('\n'), L, doc.y + 2, { width: half - 12 });
+  const leftEnd = doc.y;
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(INK).text('Facturé à', L + half, blockTop, { width: half });
+  doc.font('Helvetica').fontSize(10).fillColor(INK_SOFT).text(clientLines.join('\n'), L + half, doc.y + 2, { width: half });
+  y = Math.max(leftEnd, doc.y) + 28;
+  // Montant payé
+  doc.font('Helvetica-Bold').fontSize(16).fillColor(INK).text(`${money(payment.amount)} payés le ${paidOn}`, L, y, { width: W });
+  y = doc.y + 26;
+  // Tableau
+  const cols = [{ x: L, w: W - 270, a: 'left', t: 'Description' }, { x: L + W - 270, w: 50, a: 'right', t: 'Qté' }, { x: L + W - 220, w: 110, a: 'right', t: 'Prix unitaire' }, { x: L + W - 110, w: 110, a: 'right', t: 'Montant' }];
+  doc.font('Helvetica').fontSize(9).fillColor(MUTED);
+  cols.forEach((c) => doc.text(c.t, c.x, y, { width: c.w, align: c.a, lineBreak: false }));
+  y += 16;
+  doc.moveTo(L, y).lineTo(R, y).lineWidth(0.7).strokeColor(BORDER_STRONG).stroke();
+  y += 10;
+  const label = `Abonnement ${planLabel}${payment.founder_price ? ' (tarif fondateur)' : ''}`;
+  doc.font('Helvetica').fontSize(10).fillColor(INK).text(label, cols[0].x, y, { width: cols[0].w, lineBreak: false });
+  doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(`${payment.months} mois`, cols[0].x, y + 14, { width: cols[0].w, lineBreak: false });
+  doc.font('Helvetica').fontSize(10).fillColor(INK);
+  doc.text('1', cols[1].x, y, { width: cols[1].w, align: 'right', lineBreak: false });
+  doc.text(money(payment.amount), cols[2].x, y, { width: cols[2].w, align: 'right', lineBreak: false });
+  doc.text(money(payment.amount), cols[3].x, y, { width: cols[3].w, align: 'right', lineBreak: false });
+  y += 40;
+  const totalRow = (t, v, strong) => {
+    doc.moveTo(L + W - 270, y - 6).lineTo(R, y - 6).lineWidth(0.5).strokeColor(BORDER).stroke();
+    doc.font(strong ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor(strong ? INK : MUTED).text(t, L + W - 270, y, { width: 150, lineBreak: false });
+    doc.fillColor(INK).text(v, L + W - 120, y, { width: 120, align: 'right', lineBreak: false });
+    y += 22;
+  };
+  totalRow('Sous-total', money(payment.amount));
+  totalRow('Total', money(payment.amount));
+  totalRow('Montant payé', money(payment.amount), true);
+  y += 10;
+  doc.font('Helvetica').fontSize(9).fillColor(MUTED).text('Paiement confirmé par le prestataire de paiement. Document généré automatiquement.', L, y, { width: W });
+
+  drawFooter(doc, { verificationCode });
+  doc.end();
 }
 
 /** Reçu d'abonnement en mémoire (pièce jointe d'e-mail) : même document que le téléchargement, sans réponse HTTP. */

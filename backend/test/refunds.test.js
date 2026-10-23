@@ -115,11 +115,21 @@ test('demande dans les 15 jours : créée une seule fois, raison obligatoire', a
   assert.ok(list.refunds.some((x) => x.id === refundId));
 });
 
-test('délai dépassé : demande refusée (autre entreprise simulée)', async () => {
-  await pool.query('UPDATE tenant_subscriptions SET refund_eligible_until = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE tenant_id = :t', { t: fx.tenantId });
+test('hors garantie : l’annulation reste possible, remboursée au prorata des jours restants', async () => {
   await pool.query('DELETE FROM subscription_refunds WHERE id = :id', { id: refundId });
+  await pool.query('UPDATE tenant_subscriptions SET refund_eligible_until = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE tenant_id = :t', { t: fx.tenantId });
+  // Période de 4 mois qui se termine dans ~60 jours : environ la moitié reste à rembourser.
+  await pool.query("UPDATE subscription_payments SET period_end = DATE_ADD(NOW(), INTERVAL 60 DAY) WHERE tenant_id = :t", { t: fx.tenantId });
   const r = await call('POST', '/api/billing/refund-requests', { reason: 'Demande hors délai de quinze jours' }, dgHdr());
-  assert.equal(r.status, 400);
+  assert.equal(r.status, 201);
+  const [[row]] = await pool.query('SELECT kind, amount_paid, amount_original, days_remaining FROM subscription_refunds WHERE id = :id', { id: (await r.json()).id });
+  assert.equal(row.kind, 'cancellation');
+  assert.equal(row.amount_original, 49000);
+  assert.ok(row.days_remaining >= 59 && row.days_remaining <= 61);
+  assert.ok(row.amount_paid > 20000 && row.amount_paid < 27000, `prorata attendu ~24 000, obtenu ${row.amount_paid}`);
+  assert.equal((await call('POST', '/api/billing/refund-requests', { reason: 'Seconde demande pendant examen' }, dgHdr())).status, 409);
+  await pool.query('DELETE FROM subscription_refunds WHERE tenant_id = :t', { t: fx.tenantId });
+  await pool.query("UPDATE subscription_payments SET period_end = DATE_ADD(NOW(), INTERVAL 4 MONTH) WHERE tenant_id = :t", { t: fx.tenantId });
   await pool.query('UPDATE tenant_subscriptions SET refund_eligible_until = DATE_ADD(NOW(), INTERVAL 10 DAY) WHERE tenant_id = :t', { t: fx.tenantId });
   refundId = (await (await call('POST', '/api/billing/refund-requests', { reason: 'Les fonctions ne correspondent pas à mon besoin' }, dgHdr())).json()).id;
 });
@@ -129,6 +139,7 @@ test('validation admin : frais retenus, montant remboursé = payé − frais, li
   assert.equal(bad.status, 400);
   const ok = await (await call('POST', `/api/admin/refunds/${refundId}/approve`, { feeAmount: 1500, note: 'ok' }, adHdr())).json();
   assert.equal(ok.refundAmount, 49000 - 1500);
+  assert.equal((await sub()).status, 'cancelled'); // l'accès est coupé dès l'acceptation
   assert.equal((await call('POST', `/api/admin/refunds/${refundId}/approve`, {}, adHdr())).status, 409); // déjà traitée
   // le jeton n'est stocké que haché : on en pose un connu pour la suite
   token = 'a'.repeat(64);
@@ -149,7 +160,27 @@ test('virement en échec : relançable, rien n’est clôturé', async () => {
   payoutOutcome = 'failed';
   const r = await (await call('POST', `/api/admin/refunds/${refundId}/pay`, null, adHdr())).json();
   assert.equal(r.status, 'failed');
-  assert.equal((await sub()).status, 'active');
+  assert.equal((await sub()).status, 'cancelled');
+});
+
+test('coordonnées au nouveau format : compte bancaire, remboursement manuel avec référence', async () => {
+  const [ins] = await pool.query("INSERT INTO subscription_payments (tenant_id, reference, plan_key, months, amount, status, is_first_purchase, period_end) VALUES (:t, :r, 'pro', 4, 65000, 'paid', 0, DATE_ADD(NOW(), INTERVAL 4 MONTH))", { t: fx.tenantId, r: 'd'.repeat(32) });
+  const tk = 'e'.repeat(64);
+  const [rf] = await pool.query("INSERT INTO subscription_refunds (tenant_id, payment_id, kind, status, reason, amount_paid, fee_amount, refund_amount, token_hash, token_expires_at) VALUES (:t, :p, 'cancellation', 'approved', 'Motif de test', 50000, 1000, 49000, SHA2(:tk, 256), DATE_ADD(NOW(), INTERVAL 1 DAY))", { t: fx.tenantId, p: ins.insertId, tk });
+  const bad = await call('POST', `/api/billing/refund-link/${tk}`, { lastName: 'Dossou', firstName: 'Awa', accountType: 'banque', accountNumber: '12', accountLabel: 'Compte courant' });
+  assert.equal(bad.status, 400);
+  const ok = await call('POST', `/api/billing/refund-link/${tk}`, { lastName: 'Dossou', firstName: 'Awa', accountType: 'banque', accountNumber: 'BJ66 BJ061 01234 56789', accountLabel: 'Compte courant Awa Dossou' });
+  assert.equal(ok.status, 200);
+  // Pas de virement FedaPay pour un compte bancaire.
+  assert.equal((await call('POST', `/api/admin/refunds/${rf.insertId}/pay`, null, adHdr())).status, 409);
+  assert.equal((await call('POST', `/api/admin/refunds/${rf.insertId}/mark-paid`, { reference: '' }, adHdr())).status, 400);
+  assert.equal((await call('POST', `/api/admin/refunds/${rf.insertId}/mark-paid`, { reference: 'VIR-2026-001' }, adHdr())).status, 200);
+  const [[row]] = await pool.query('SELECT status, paid_manually, paid_reference FROM subscription_refunds WHERE id = :id', { id: rf.insertId });
+  assert.deepEqual({ ...row }, { status: 'paid', paid_manually: 1, paid_reference: 'VIR-2026-001' });
+  const list = await (await call('GET', '/api/admin/refunds', null, adHdr())).json();
+  assert.equal(list.refunds.find((x) => x.id === rf.insertId).payeeAccountNumber, 'BJ66 BJ061 01234 56789'); // l'admin voit le numéro complet
+  await pool.query('DELETE FROM subscription_refunds WHERE id = :id', { id: rf.insertId });
+  await pool.query('UPDATE tenant_subscriptions SET status = \'cancelled\' WHERE tenant_id = :t', { t: fx.tenantId });
 });
 
 test('virement réussi : montant exact, abonnement clôturé et coupé, paiement marqué remboursé', async () => {
@@ -159,8 +190,7 @@ test('virement réussi : montant exact, abonnement clôturé et coupé, paiement
   const last = [...payouts.values()].pop();
   assert.equal(last.amount, 47500);
   assert.equal(last.body.mode, 'mtn_open');
-  assert.equal((await sub()).status, 'refunded');
-  assert.equal((await pool.query('SELECT status FROM subscription_payments WHERE tenant_id = :t', { t: fx.tenantId }))[0][0].status, 'refunded');
+  assert.equal((await sub()).status, 'cancelled');
   assert.equal((await call('GET', '/api/payslips', null, dgHdr())).status, 402);
   // second paiement impossible
   assert.equal((await call('POST', `/api/admin/refunds/${refundId}/pay`, null, adHdr())).status, 409);

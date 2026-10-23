@@ -55,6 +55,14 @@ async function founderTaken(conn = pool) {
 async function quote(tenantId, planKey, months, conn = pool) {
   const found = await findOffer(planKey, months);
   if (!found) throw new ApiError(400, 'Offre inconnue');
+  // Abonnement en cours : on peut le renouveler (même offre, la période s'ajoute à la fin de la précédente), pas changer d'offre.
+  const [[cur]] = await conn.query(
+    "SELECT plan_key, status, (current_period_end IS NOT NULL AND current_period_end > NOW()) AS running FROM tenant_subscriptions WHERE tenant_id = :tenantId",
+    { tenantId },
+  );
+  if (cur && cur.status === 'active' && Number(cur.running) === 1 && cur.plan_key !== 'interne' && cur.plan_key !== planKey) {
+    throw new ApiError(409, "Votre abonnement est en cours : vous pouvez le renouveler, mais pas changer d'offre avant son terme.");
+  }
   const [[paid]] = await conn.query("SELECT COUNT(*) AS n FROM subscription_payments WHERE tenant_id = :tenantId AND status IN ('paid','refunded')", { tenantId });
   const isFirst = Number(paid.n) === 0;
   let price = found.offer.price;
@@ -100,7 +108,7 @@ async function startCheckout({ tenantId, userId, planKey, months }) {
   try {
     const checkout = await fedapay.createCheckout(account, {
       amount: q.price,
-      description: `Abonnement Africa Immo Management ${(await getPlanAsync(planKey)).label} — ${months} mois`,
+      description: `Abonnement Africa Immo Management ${(await getPlanAsync(planKey)).label}, ${months} mois`,
       callbackUrl: `${config.frontendUrl}/abonnement/retour?ref=${reference}`,
       reference,
       customer: { name: `${dg?.first_name ?? ''} ${dg?.last_name ?? ''}`.trim() || tenant.company_name, email: dg?.email },
@@ -174,13 +182,17 @@ async function notifyActivation(p, endDate, renewal) {
   if (!u?.email) return;
   const plan = await getPlanAsync(p.plan_key);
   // Reçu PDF + code de vérification publique ; si la génération échoue, l'e-mail part quand même sans pièce jointe.
-  let pdf; let verificationCode; let receiptNumber;
+  let pdf; let verificationCode; let receiptNumber; let paidOn; let reference; let founder; let clientInfo;
   try {
     const [[pay]] = await pool.query('SELECT * FROM subscription_payments WHERE id = :id', { id: p.id });
     const [[client]] = await pool.query('SELECT company_name, rccm, ifu FROM tenants WHERE id = :t', { t: p.tenant_id });
     const issuance = await require('./documentIssuance').getOrCreateIssuance(p.tenant_id, 'recu_abonnement', p.id);
     verificationCode = issuance.verification_code;
     receiptNumber = pay.invoice_number;
+    paidOn = new Date(pay.paid_at || Date.now()).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    reference = pay.reference;
+    founder = pay.founder_price;
+    clientInfo = client;
     pdf = await require('./pdf').buildSubscriptionReceiptBuffer({ client, payment: pay, planLabel: plan.label, verificationCode });
   } catch (e) {
     logger.warn('Abonnement : reçu PDF non généré', { id: p.id, message: e.message });
@@ -197,6 +209,10 @@ async function notifyActivation(p, endDate, renewal) {
     receiptNumber,
     verificationCode,
     pdf,
+    paidOn: paidOn || undefined,
+    reference: reference || undefined,
+    founder: !!founder,
+    client: clientInfo,
   });
 }
 

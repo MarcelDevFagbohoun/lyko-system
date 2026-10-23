@@ -11,7 +11,9 @@ const { normalizeBeninPhone } = require('./payments/phone');
 const { sendBillingEmail } = require('./email/sendEmail');
 
 /**
- * Remboursement sous garantie (15 jours après le PREMIER paiement). Parcours :
+ * Annulation d'abonnement avec remboursement. Montant : au prorata des jours restants au jour de la demande ; pendant
+ * la garantie de 15 jours qui suit le PREMIER paiement, le premier paiement est remboursé en entier (promesse
+ * « satisfait ou remboursé » de la page Tarifs). À l'acceptation, l'accès de l'entreprise est coupé. Parcours :
  *   requested  → le DG demande, en donnant sa raison
  *   approved   → l'admin de la plateforme valide (frais FedaPay retenus fixés) : le DG reçoit un lien à usage unique par courriel
  *   details_received → le DG a saisi son numéro Mobile Money via ce lien
@@ -34,26 +36,63 @@ async function logEvent(conn, tenantId, type, actor, details) {
   });
 }
 
+const OPEN_STATUSES = ['requested', 'approved', 'details_received', 'processing', 'failed'];
+
+/**
+ * Valeur non utilisée des paiements encore couverts : pour chaque paiement payé dont la période se termine dans le
+ * futur, montant × (jours restants depuis max(aujourd'hui, début de sa période) / jours de sa période). Gère les
+ * renouvellements anticipés (plusieurs périodes mises bout à bout).
+ */
+async function computeProrata(conn, tenantId) {
+  const [rows] = await conn.query(
+    `SELECT amount, months,
+            DATEDIFF(period_end, GREATEST(NOW(), DATE_SUB(period_end, INTERVAL months MONTH))) AS days_left,
+            DATEDIFF(period_end, DATE_SUB(period_end, INTERVAL months MONTH)) AS days_total
+     FROM subscription_payments
+     WHERE tenant_id = :t AND status = 'paid' AND period_end IS NOT NULL AND period_end > NOW()`,
+    { t: tenantId },
+  );
+  let base = 0; let original = 0; let days = 0;
+  for (const r of rows) {
+    const left = Math.max(0, Number(r.days_left)); const total = Math.max(1, Number(r.days_total));
+    base += Math.floor((Number(r.amount) * left) / total);
+    original += Number(r.amount);
+    days += left;
+  }
+  return { base, original, days };
+}
+
 async function requestRefund({ tenantId, userId, reason }) {
   const text = String(reason ?? '').trim();
-  if (text.length < 10 || text.length > 1000) throw new ApiError(400, 'Expliquez la raison de votre demande (10 à 1000 caractères).');
+  if (text.length < 10 || text.length > 1000) throw new ApiError(400, "Expliquez le motif de votre demande d'annulation (10 à 1000 caractères).");
   const conn = await pool.getConnection();
   let id;
   try {
     await conn.beginTransaction();
     await conn.query('SELECT tenant_id FROM tenant_subscriptions WHERE tenant_id = :t FOR UPDATE', { t: tenantId });
-    const [[s]] = await conn.query('SELECT status, (refund_eligible_until IS NOT NULL AND refund_eligible_until > NOW()) AS open FROM tenant_subscriptions WHERE tenant_id = :t', { t: tenantId });
-    if (!s || s.status !== 'active' || Number(s.open) !== 1) throw new ApiError(400, "Le délai de remboursement de 15 jours est dépassé ou ne s'applique pas à votre abonnement.");
-    const [[p]] = await conn.query("SELECT id, amount FROM subscription_payments WHERE tenant_id = :t AND status = 'paid' AND is_first_purchase = 1 ORDER BY id LIMIT 1", { t: tenantId });
-    if (!p) throw new ApiError(400, 'Aucun paiement remboursable.');
-    const [[exists]] = await conn.query('SELECT id FROM subscription_refunds WHERE payment_id = :p LIMIT 1', { p: p.id });
-    if (exists) throw new ApiError(409, 'Une demande de remboursement existe déjà pour ce paiement.');
+    const [[s]] = await conn.query(
+      "SELECT status, plan_key, (current_period_end IS NOT NULL AND current_period_end > NOW()) AS running, (refund_eligible_until IS NOT NULL AND refund_eligible_until > NOW()) AS guarantee FROM tenant_subscriptions WHERE tenant_id = :t",
+      { t: tenantId },
+    );
+    if (!s || s.status !== 'active' || s.plan_key === 'interne' || Number(s.running) !== 1) throw new ApiError(400, "Aucun abonnement actif à annuler.");
+    const [[open]] = await conn.query(`SELECT id FROM subscription_refunds WHERE tenant_id = :t AND status IN (${OPEN_STATUSES.map((x) => `'${x}'`).join(',')}) LIMIT 1`, { t: tenantId });
+    if (open) throw new ApiError(409, "Une demande d'annulation est déjà en cours d'examen.");
+    const [[last]] = await conn.query("SELECT id FROM subscription_payments WHERE tenant_id = :t AND status = 'paid' ORDER BY id DESC LIMIT 1", { t: tenantId });
+    if (!last) throw new ApiError(400, 'Aucun paiement remboursable.');
+
+    const pr = await computeProrata(conn, tenantId);
+    let base = pr.base; let original = pr.original; let days = pr.days; let paymentId = last.id;
+    if (Number(s.guarantee) === 1) {
+      const [[first]] = await conn.query("SELECT id, amount FROM subscription_payments WHERE tenant_id = :t AND status = 'paid' AND is_first_purchase = 1 ORDER BY id LIMIT 1", { t: tenantId });
+      if (first) { base = Number(first.amount); original = Number(first.amount); paymentId = first.id; }
+    }
+    if (base <= 0) throw new ApiError(400, "Il ne reste aucun jour remboursable sur votre abonnement.");
     const [ins] = await conn.query(
-      'INSERT INTO subscription_refunds (tenant_id, payment_id, reason, requested_by, amount_paid) VALUES (:t, :p, :reason, :u, :amount)',
-      { t: tenantId, p: p.id, reason: text, u: userId, amount: p.amount },
+      "INSERT INTO subscription_refunds (tenant_id, payment_id, kind, reason, requested_by, amount_paid, days_remaining, amount_original) VALUES (:t, :p, 'cancellation', :reason, :u, :amount, :days, :orig)",
+      { t: tenantId, p: paymentId, reason: text, u: userId, amount: base, days, orig: original },
     );
     id = ins.insertId;
-    await logEvent(conn, tenantId, 'refund_requested', `user:${userId}`, { refundId: id });
+    await logEvent(conn, tenantId, 'cancellation_requested', `user:${userId}`, { refundId: id, base, days });
     await conn.commit();
   } catch (err) {
     await conn.rollback().catch(() => {});
@@ -64,27 +103,30 @@ async function requestRefund({ tenantId, userId, reason }) {
   if (config.platform.adminEmail) {
     const dg = await dgOf(tenantId);
     await sendBillingEmail({
-      to: config.platform.adminEmail, subject: `Demande de remboursement — ${dg.company}`, heading: 'Nouvelle demande de remboursement',
-      paragraphs: [`${dg.company} demande le remboursement de son premier abonnement.`, `Raison : ${text}`], linkUrl: `${config.frontendUrl}/admin/remboursements`, linkLabel: 'Ouvrir le back-office',
+      to: config.platform.adminEmail, subject: `Demande d'annulation de ${dg.company}`, heading: "Nouvelle demande d'annulation",
+      paragraphs: [`${dg.company} demande l'annulation de son abonnement.`, `Motif indiqué : ${text}`], linkUrl: `${config.frontendUrl}/admin/remboursements`, linkLabel: 'Ouvrir le back-office',
     });
   }
   return { id };
 }
 
-const publicRefund = (r) => ({
-  id: r.id, tenantId: r.tenant_id, companyName: r.company_name, status: r.status, reason: r.reason,
+const publicRefund = (r, full = false) => ({
+  id: r.id, tenantId: r.tenant_id, companyName: r.company_name, status: r.status, kind: r.kind, reason: r.reason,
+  daysRemaining: r.days_remaining, amountOriginal: r.amount_original, payeeFirstName: r.payee_first_name, payeeAccountType: r.payee_account_type,
+  payeeAccountNumber: r.payee_account_number ? (full ? r.payee_account_number : `${r.payee_account_number.slice(0, 4)}••••${r.payee_account_number.slice(-2)}`) : null,
+  payeeAccountLabel: r.payee_account_label, payeeOtherDetail: r.payee_other_detail, paidManually: !!r.paid_manually,
   amountPaid: r.amount_paid, feeAmount: r.fee_amount, refundAmount: r.refund_amount, adminNote: r.admin_note,
-  payeeName: r.payee_name, payeePhone: r.payee_phone ? `${r.payee_phone.slice(0, 6)}••••${r.payee_phone.slice(-2)}` : null, payeeOperator: r.payee_operator,
+  payeeName: r.payee_name, payeePhone: r.payee_phone ? (full ? r.payee_phone : `${r.payee_phone.slice(0, 6)}••••${r.payee_phone.slice(-2)}`) : null, payeeOperator: r.payee_operator,
   createdAt: r.created_at, decidedAt: r.decided_at, paidAt: r.paid_at,
 });
 
-async function listRefunds({ tenantId = null, status = null } = {}) {
+async function listRefunds({ tenantId = null, status = null, full = false } = {}) {
   const [rows] = await pool.query(
     `SELECT r.*, t.company_name FROM subscription_refunds r JOIN tenants t ON t.id = r.tenant_id
      WHERE (:tenantId IS NULL OR r.tenant_id = :tenantId) AND (:status IS NULL OR r.status = :status) ORDER BY r.id DESC LIMIT 200`,
     { tenantId, status },
   );
-  return rows.map(publicRefund);
+  return rows.map((r) => publicRefund(r, full));
 }
 
 async function load(id) {
@@ -107,14 +149,17 @@ async function approve({ id, adminId, feeAmount = null, note = null }) {
   );
   if (upd.affectedRows !== 1) throw new ApiError(409, 'Cette demande a déjà été traitée.');
   await logEvent(pool, r.tenant_id, 'refund_approved', `admin:${adminId}`, { refundId: id, fee, refundAmount });
+  // L'annulation acceptée coupe l'accès tout de suite : l'entreprise est remboursée de la période non utilisée.
+  await pool.query("UPDATE tenant_subscriptions SET status = 'cancelled', refund_eligible_until = NULL WHERE tenant_id = :t AND plan_key <> 'interne'", { t: r.tenant_id });
   const dg = await dgOf(r.tenant_id);
   if (dg.email) {
+    const days = r.days_remaining != null ? ` pour ${r.days_remaining} jour${r.days_remaining > 1 ? 's' : ''} restant${r.days_remaining > 1 ? 's' : ''}` : '';
     await sendBillingEmail({
-      to: dg.email, subject: 'Votre remboursement est accepté — indiquez où le recevoir', heading: 'Remboursement accepté',
+      to: dg.email, subject: "Votre demande d'annulation est acceptée", heading: "Annulation acceptée",
       paragraphs: [
-        `Bonjour ${dg.name}, votre demande de remboursement est acceptée.`,
-        `Montant à vous rembourser : ${refundAmount} FCFA (${r.amount_paid} FCFA payés, moins ${fee} FCFA de frais du prestataire de paiement).`,
-        `Indiquez le numéro Mobile Money qui recevra le virement (lien valable ${TOKEN_TTL_DAYS} jours, utilisable une seule fois).`,
+        `Bonjour ${dg.name}, nous avons accepté votre demande d'annulation. L'accès à votre espace est désormais fermé.`,
+        `Montant à vous rembourser : ${refundAmount} FCFA${days} (${r.amount_paid} FCFA, moins ${fee} FCFA de frais du prestataire de paiement).`,
+        `Pour recevoir ce remboursement, indiquez-nous votre nom, votre prénom et le compte à créditer. Le lien est valable ${TOKEN_TTL_DAYS} jours et ne peut servir qu'une fois.`,
       ],
       linkUrl: `${config.frontendUrl}/abonnement/remboursement?token=${token}`, linkLabel: 'Indiquer mes coordonnées',
     });
@@ -131,7 +176,7 @@ async function reject({ id, adminId, note }) {
   await logEvent(pool, r.tenant_id, 'refund_rejected', `admin:${adminId}`, { refundId: id });
   const dg = await dgOf(r.tenant_id);
   if (dg.email) {
-    await sendBillingEmail({ to: dg.email, subject: 'Votre demande de remboursement', heading: 'Demande de remboursement refusée', paragraphs: [`Bonjour ${dg.name}, votre demande n'a pas pu être acceptée.`, `Motif : ${text}`] });
+    await sendBillingEmail({ to: dg.email, subject: "Réponse à votre demande d'annulation", heading: "Demande d'annulation refusée", paragraphs: [`Bonjour ${dg.name}, nous ne pouvons pas donner suite à votre demande d'annulation. Votre abonnement reste actif.`, `Motif : ${text}`] });
   }
 }
 
@@ -150,29 +195,64 @@ const tokenInfo = async (token) => {
   return { companyName: r.company_name, refundAmount: r.refund_amount };
 };
 
-async function submitDetails(token, { name, phone, operator }) {
+const ACCOUNT_TYPES = ['mtn', 'moov', 'celtiis', 'banque', 'autre'];
+
+/**
+ * Coordonnées de réception. Nouveau format : { lastName, firstName, accountType, accountNumber, accountLabel, otherDetail }.
+ * Ancien format conservé : { name, phone, operator } (Mobile Money MTN ou Moov).
+ */
+async function submitDetails(token, body) {
   const r = await byToken(token);
-  const n = String(name ?? '').trim();
-  const p = normalizeBeninPhone(String(phone ?? ''));
-  if (n.length < 3 || n.length > 100) throw new ApiError(400, 'Nom du titulaire invalide.');
-  if (!p) throw new ApiError(400, 'Numéro Mobile Money invalide.');
-  if (!['mtn', 'moov'].includes(operator)) throw new ApiError(400, 'Opérateur invalide.');
+  const b = body ?? {};
+  const legacy = b.operator !== undefined && b.accountType === undefined;
+  const accountType = legacy ? b.operator : b.accountType;
+  if (!ACCOUNT_TYPES.includes(accountType)) throw new ApiError(400, 'Type de compte invalide.');
+  const lastName = String(legacy ? b.name : b.lastName ?? '').trim();
+  const firstName = String(b.firstName ?? '').trim();
+  if (lastName.length < 2 || lastName.length > 100) throw new ApiError(400, 'Nom du titulaire invalide.');
+  if (!legacy && (firstName.length < 2 || firstName.length > 80)) throw new ApiError(400, 'Prénom invalide.');
+  const rawNumber = String(legacy ? b.phone : b.accountNumber ?? '').trim();
+  const mobile = accountType === 'mtn' || accountType === 'moov' || accountType === 'celtiis';
+  let phone = null; let accountNumber = null;
+  if (mobile) {
+    phone = normalizeBeninPhone(rawNumber);
+    if (!phone) throw new ApiError(400, 'Numéro Mobile Money invalide.');
+    accountNumber = phone;
+  } else {
+    if (rawNumber.length < 5 || rawNumber.length > 60) throw new ApiError(400, 'Numéro de compte invalide.');
+    accountNumber = rawNumber;
+  }
+  const label = String(b.accountLabel ?? '').trim();
+  if (!legacy && (label.length < 2 || label.length > 120)) throw new ApiError(400, "Indiquez l'intitulé du compte.");
+  const other = String(b.otherDetail ?? '').trim();
+  if (accountType === 'autre' && (other.length < 2 || other.length > 120)) throw new ApiError(400, 'Précisez le type de compte.');
   const [upd] = await pool.query(
-    "UPDATE subscription_refunds SET status = 'details_received', payee_name = :n, payee_phone = :p, payee_operator = :o, token_hash = NULL, token_expires_at = NULL WHERE id = :id AND status = 'approved'",
-    { n, p, o: operator, id: r.id },
+    `UPDATE subscription_refunds SET status = 'details_received', payee_name = :ln, payee_first_name = :fn, payee_phone = :p,
+       payee_operator = :op, payee_account_type = :at, payee_account_number = :an, payee_account_label = :al, payee_other_detail = :od,
+       token_hash = NULL, token_expires_at = NULL WHERE id = :id AND status = 'approved'`,
+    {
+      ln: lastName, fn: firstName || null, p: phone, op: accountType === 'mtn' || accountType === 'moov' ? accountType : null,
+      at: accountType, an: accountNumber, al: label || null, od: accountType === 'autre' ? other : null, id: r.id,
+    },
   );
   if (upd.affectedRows !== 1) throw new ApiError(404, 'Lien invalide ou expiré.');
   await logEvent(pool, r.tenant_id, 'refund_details_received', 'client', { refundId: r.id });
+  if (config.platform.adminEmail) {
+    await sendBillingEmail({
+      to: config.platform.adminEmail, subject: `Coordonnées reçues de ${r.company_name}`, heading: 'Coordonnées de remboursement reçues',
+      paragraphs: [`${r.company_name} a indiqué où recevoir ${r.refund_amount} FCFA. Vous pouvez effectuer le remboursement.`], linkUrl: `${config.frontendUrl}/admin/remboursements`, linkLabel: 'Ouvrir le back-office',
+    });
+  }
 }
 
-async function finalizePaid(refund) {
+async function finalizePaid(refund, { manual = false, reference = null } = {}) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [upd] = await conn.query("UPDATE subscription_refunds SET status = 'paid', paid_at = NOW() WHERE id = :id AND status IN ('processing','failed')", { id: refund.id });
+    const [upd] = await conn.query("UPDATE subscription_refunds SET status = 'paid', paid_at = NOW(), paid_manually = :m, paid_reference = :ref WHERE id = :id AND status IN ('processing','failed','details_received')", { id: refund.id, m: manual ? 1 : 0, ref: reference });
     if (upd.affectedRows === 1) {
-      await conn.query("UPDATE subscription_payments SET status = 'refunded' WHERE id = :p", { p: refund.payment_id });
-      await conn.query("UPDATE tenant_subscriptions SET status = 'refunded', refund_eligible_until = NULL WHERE tenant_id = :t", { t: refund.tenant_id });
+      if (refund.kind !== 'cancellation') await conn.query("UPDATE subscription_payments SET status = 'refunded' WHERE id = :p", { p: refund.payment_id });
+      await conn.query("UPDATE tenant_subscriptions SET status = :st, refund_eligible_until = NULL WHERE tenant_id = :t AND plan_key <> 'interne'", { st: refund.kind === 'cancellation' ? 'cancelled' : 'refunded', t: refund.tenant_id });
       await logEvent(conn, refund.tenant_id, 'refunded', 'fedapay', { refundId: refund.id, amount: refund.refund_amount });
     }
     await conn.commit();
@@ -184,13 +264,16 @@ async function finalizePaid(refund) {
   }
   const dg = await dgOf(refund.tenant_id);
   if (dg.email) {
-    await sendBillingEmail({ to: dg.email, subject: 'Remboursement envoyé', heading: 'Remboursement envoyé', paragraphs: [`Bonjour ${dg.name}, ${refund.refund_amount} FCFA viennent d'être envoyés sur votre compte Mobile Money. Votre abonnement est clôturé.`] });
+    await sendBillingEmail({ to: dg.email, subject: 'Votre remboursement a été envoyé', heading: 'Remboursement envoyé', paragraphs: [`Bonjour ${dg.name}, nous venons de vous envoyer ${refund.refund_amount} FCFA sur le compte que vous avez indiqué. Votre abonnement est clôturé.`, "Merci d'avoir utilisé Africa Immo Management. Vous pouvez vous réabonner à tout moment."] });
   }
 }
 
 /** Déclenche le virement FedaPay. Réservé à l'admin ; ne s'exécute qu'une fois (transition atomique vers `processing`). */
 async function pay({ id, adminId }) {
   const r = await load(id);
+  if (r.payee_account_type && !['mtn', 'moov'].includes(r.payee_account_type)) {
+    throw new ApiError(409, "Ce compte n'est pas un Mobile Money MTN ou Moov : effectuez le virement vous-même, puis cliquez sur « Marquer comme payé ».");
+  }
   const [claim] = await pool.query("UPDATE subscription_refunds SET status = 'processing' WHERE id = :id AND status IN ('details_received','failed') AND payout_id IS NULL", { id });
   if (claim.affectedRows !== 1) throw new ApiError(409, "Ce remboursement n'est pas prêt à être payé (coordonnées manquantes ou virement déjà lancé).");
   const account = platformAccount();
@@ -228,4 +311,15 @@ async function refresh({ id }) {
   return { status: 'processing' };
 }
 
-module.exports = { requestRefund, listRefunds, approve, reject, tokenInfo, submitDetails, pay, refresh };
+/** Remboursement effectué hors FedaPay (virement bancaire, Celtiis, autre) : l'admin confirme avec une référence. */
+async function markPaidManually({ id, adminId, reference }) {
+  const ref = String(reference ?? '').trim();
+  if (ref.length < 3 || ref.length > 120) throw new ApiError(400, 'Indiquez la référence du virement.');
+  const r = await load(id);
+  if (r.status !== 'details_received') throw new ApiError(409, "Ce remboursement n'est pas prêt à être marqué comme payé.");
+  await finalizePaid(r, { manual: true, reference: ref });
+  await logEvent(pool, r.tenant_id, 'refund_paid_manually', `admin:${adminId}`, { refundId: id, reference: ref });
+  return { status: 'paid' };
+}
+
+module.exports = { markPaidManually, requestRefund, listRefunds, approve, reject, tokenInfo, submitDetails, pay, refresh };

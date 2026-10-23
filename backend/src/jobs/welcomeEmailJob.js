@@ -39,7 +39,7 @@ async function runWelcomeEmailJob({ tenantIds = null } = {}) {
       if (result.sent) {
         await pool.query('UPDATE users SET welcome_email_sent_at = NOW() WHERE id = :id', { id: row.id });
       } else {
-        logger.error("Échec de l'envoi de l'email de bienvenue — nouvelle tentative au prochain passage", { userId: row.id, error: result.error });
+        logger.error("Échec de l'envoi de l'email de bienvenue, nouvelle tentative au prochain passage", { userId: row.id, error: result.error });
       }
     } catch (err) {
       logger.error("Échec de l'envoi de l'email de bienvenue", { userId: row.id, error: err.message });
