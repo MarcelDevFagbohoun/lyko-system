@@ -71,6 +71,8 @@ interface StatCardProps {
   trend?: { value: string; direction: "up" | "down" | "flat" };
   tone?: "default" | "success" | "warning" | "danger" | "info";
   className?: string;
+  /** Carte cliquable : ouvre le détail (clavier : Entrée / Espace). */
+  onClick?: () => void;
 }
 
 type ToneStyle = { card: string; label: string; chip: string; value: string; unit: string; trend: string };
@@ -110,14 +112,29 @@ const neutralTrendTone: Record<NonNullable<StatCardProps["trend"]>["direction"],
   flat: "text-ink-muted",
 };
 
-export function StatCard({ label, value, unit, icon, trend, tone = "default", className }: StatCardProps) {
+export function StatCard({ label, value, unit, icon, trend, tone = "default", className, onClick }: StatCardProps) {
   const s = toneStyles[tone];
   const trendColor = tone === "default" ? neutralTrendTone[trend?.direction ?? "flat"] : s.trend;
 
   return (
     <Card
+      {...(onClick
+        ? {
+            role: "button",
+            tabIndex: 0,
+            onClick,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            },
+            "aria-label": `${label} — voir le détail`,
+          }
+        : {})}
       className={cn(
         "group relative flex flex-col justify-between overflow-hidden p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5",
+        onClick && "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2",
         s.card,
         className,
       )}
@@ -145,6 +162,11 @@ export function StatCard({ label, value, unit, icon, trend, tone = "default", cl
         {unit && <span className={cn("pb-0.5 text-body-sm", s.unit)}>{unit}</span>}
       </div>
 
+      {onClick && (
+        <span className={cn("absolute bottom-2 right-3 text-body-xs font-semibold opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100", tone === "default" ? "text-primary" : "text-white/90")}>
+          Voir le détail →
+        </span>
+      )}
       {trend && (
         <div className={cn("mt-3 flex items-center gap-1 text-body-xs", trendColor)}>
           {trend.direction !== "flat" && <span aria-hidden>{trend.direction === "up" ? "▲" : "▼"}</span>}

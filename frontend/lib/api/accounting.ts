@@ -253,6 +253,31 @@ export function getDashboard(accessToken: string, from: string, to: string) {
   );
 }
 
+export type CardKey =
+  | "rent" | "entryFees" | "saleCommissions" | "otherIncomes" | "ownerPayouts" | "expenses"
+  | "propertyExpenses" | "unpaidCharges" | "tenantArrears" | "treasury";
+export type CardDetail = {
+  card: CardKey;
+  title: string;
+  period: { from: string; to: string };
+  /** Chiffre de la carte du tableau de bord. */
+  total: number;
+  /** Somme des lignes ci-dessous ; `matches` = (somme des lignes === total). */
+  rowsTotal: number;
+  matches: boolean;
+  count: number;
+  undated?: boolean;
+  asOf?: string;
+  columns: { key: string; label: string; type: "text" | "date" | "money" }[];
+  rows: Record<string, string | number>[];
+  formula: { label: string; amount: number; op: "plus" | "minus" | "total" | "info"; note?: string }[];
+  notes: string[];
+  treasuryLines?: { inflows: { key: string; amount: number }[]; outflows: { key: string; amount: number }[] };
+};
+export function getCardDetail(accessToken: string, card: CardKey, from: string, to: string) {
+  return apiFetch<CardDetail>(`/api/accounting/card-detail?card=${card}&from=${from}&to=${to}`, { accessToken });
+}
+
 /** Rapport mensuel exportable (étape 18) — même période que le tableau de bord écran. */
 export function accountingReportPdfPath(from: string, to: string) {
   return `/api/accounting/dashboard.pdf?from=${from}&to=${to}`;

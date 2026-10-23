@@ -15,7 +15,7 @@ import { cn, formatDateLabel, formatFcfa } from "@/lib/utils";
  * figée à la clôture ; un mois ouvert, le calcul en direct.
  */
 
-const INFLOW_LABELS: Record<string, string> = {
+export const INFLOW_LABELS: Record<string, string> = {
   rent: "Loyers encaissés (argent réel)",
   openingDebt: "Dette initiale réglée",
   prorata: "Prorata d'entrée",
@@ -28,7 +28,7 @@ const INFLOW_LABELS: Record<string, string> = {
   depositsRecoveredFromOwners: "Cautions récupérées auprès des propriétaires",
   utilityCollected: "Charges SONEB/SBEE payées par les locataires",
 };
-const OUTFLOW_LABELS: Record<string, string> = {
+export const OUTFLOW_LABELS: Record<string, string> = {
   ownerPayouts: "Reversements aux propriétaires (mandants, 4671)",
   chargeRemittances: "Reversements de charges SONEB/SBEE",
   propertyExpenses: "Dépenses de Biens (avancées pour le propriétaire)",

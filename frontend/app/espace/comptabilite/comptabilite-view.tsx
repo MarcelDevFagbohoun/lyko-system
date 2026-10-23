@@ -29,6 +29,7 @@ import {
   type ExpenseCategory,
   type Supplier,
   type AccountingDashboard,
+  type CardKey,
   type RentPaymentEntry,
   type OwnerPayoutEntry,
   type DeletedEntry,
@@ -53,6 +54,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
+import { CardDetailDialog } from "@/components/accounting/card-detail-dialog";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
 
@@ -109,6 +111,7 @@ function ComptabiliteContent() {
   const [ownerPayouts, setOwnerPayouts] = React.useState<OwnerPayoutEntry[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [exportingXlsx, setExportingXlsx] = React.useState(false);
+  const [openCard, setOpenCard] = React.useState<CardKey | null>(null);
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
@@ -222,7 +225,9 @@ function ComptabiliteContent() {
 
         <RentMonthCard yearMonth={yearMonth} />
 
-        {dashboard && <DashboardCards dashboard={dashboard} />}
+        {dashboard && <DashboardCards dashboard={dashboard} onOpen={setOpenCard} />}
+
+        <CardDetailDialog card={openCard} initialMonth={yearMonth} accessToken={accessToken} onClose={() => setOpenCard(null)} />
 
         {dashboard && dashboard.tenantArrears.length > 0 && (
           <Card className="border-danger-border bg-danger/5">
@@ -655,12 +660,13 @@ function DeletedEntriesSection({ accessToken }: { accessToken: string | null }) 
 // Chaque carte reprend la teinte de son statut réel (vert = favorable, rouge
 // = défavorable, orange = à surveiller) — la couleur porte l'information,
 // jamais seule (icône + libellé toujours présents), tokens Badge/charte.
-function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
+function DashboardCards({ dashboard, onOpen }: { dashboard: AccountingDashboard; onOpen: (card: CardKey) => void }) {
   const { totals } = dashboard;
   return (
     <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <StatCard
         label="Loyers encaissés"
+        onClick={() => onOpen("rent")}
         icon={<TrendingUp size={16} />}
         value={formatFcfa(totals.rentCollected)}
         tone={totals.rentCollected > 0 ? "success" : "default"}
@@ -668,6 +674,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label="Frais d'agence à l'entrée"
+        onClick={() => onOpen("entryFees")}
         icon={<UserPlus size={16} />}
         value={formatFcfa(totals.entryFeesCollected)}
         tone={totals.entryFeesCollected > 0 ? "success" : "default"}
@@ -675,6 +682,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label="Commission sur ventes de biens"
+        onClick={() => onOpen("saleCommissions")}
         icon={<Tag size={16} />}
         value={formatFcfa(totals.saleCommissionsCollected)}
         tone={totals.saleCommissionsCollected > 0 ? "success" : "default"}
@@ -682,6 +690,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label="Autres entrées"
+        onClick={() => onOpen("otherIncomes")}
         icon={<TrendingUp size={16} />}
         value={formatFcfa(totals.otherIncomes)}
         tone={totals.otherIncomes > 0 ? "success" : "default"}
@@ -689,6 +698,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label="Versé aux propriétaires"
+        onClick={() => onOpen("ownerPayouts")}
         icon={<TrendingDown size={16} />}
         value={formatFcfa(totals.ownerPayouts)}
         tone={totals.ownerPayouts > 0 ? "success" : "default"}
@@ -696,6 +706,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label="Dépenses de l'entreprise"
+        onClick={() => onOpen("expenses")}
         icon={<Wallet size={16} />}
         value={formatFcfa(totals.expenses)}
         tone={totals.expenses > 0 ? "warning" : "default"}
@@ -703,6 +714,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label="Travaux facturés aux biens"
+        onClick={() => onOpen("propertyExpenses")}
         icon={<Wallet size={16} />}
         value={formatFcfa(totals.propertyExpenses)}
         tone="info"
@@ -710,6 +722,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label="Impayés SONEB/SBEE"
+        onClick={() => onOpen("unpaidCharges")}
         icon={<Droplets size={16} />}
         value={formatFcfa(totals.unpaidCharges)}
         tone={totals.unpaidChargesCount > 0 ? "danger" : "success"}
@@ -717,6 +730,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label="Impayés locataires"
+        onClick={() => onOpen("tenantArrears")}
         icon={<AlertTriangle size={16} />}
         value={formatFcfa(totals.tenantArrears)}
         tone={totals.tenantArrearsCount > 0 ? "danger" : "success"}
@@ -724,6 +738,7 @@ function DashboardCards({ dashboard }: { dashboard: AccountingDashboard }) {
       />
       <StatCard
         label={totals.treasuryNet != null ? "Trésorerie réelle" : "Solde net"}
+        onClick={() => onOpen("treasury")}
         icon={<Scale size={16} />}
         value={formatFcfa(totals.treasuryNet ?? totals.netCashFlow)}
         tone={(totals.treasuryNet ?? totals.netCashFlow) >= 0 ? "success" : "danger"}

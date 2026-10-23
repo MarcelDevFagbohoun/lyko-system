@@ -70,6 +70,7 @@ const { resolvePropertyScope } = require('../services/scope');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { streamAccountingReportPdf, formatMonthLabel } = require('../services/pdf');
 const { getClosingOverview } = require('../services/closingOverview');
+const { getCardDetail } = require('../services/accountingCardDetail');
 const logger = require('../utils/logger');
 
 const { getMonthBilan, storeBilanSnapshot, getStoredBilan, MONTH_RE } = require('../services/monthBilan');
@@ -1401,6 +1402,20 @@ router.get('/dashboard', canAccounting, async (req, res, next) => {
 // comptable (étape 18, demande directe de l'utilisateur) : même calcul que
 // l'écran, mis en page pour être imprimé ou transmis (à la direction
 // générale, ou à un comptable externe).
+// GET /api/accounting/card-detail?card=&from=&to= — détail daté d'une carte du tableau de bord (voir
+// services/accountingCardDetail.js : mêmes filtres que `computeAccountingDashboard`).
+router.get('/card-detail', canAccounting, async (req, res, next) => {
+  const parsed = dashboardQuerySchema.safeParse(req.query);
+  if (!parsed.success) return next(new ApiError(400, 'Période invalide', parsed.error.flatten().fieldErrors));
+  try {
+    const detail = await getCardDetail(req.user, String(req.query.card), parsed.data);
+    if (!detail) return next(new ApiError(400, 'Carte inconnue'));
+    res.json(detail);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/dashboard.pdf', canAccounting, async (req, res, next) => {
   const parsed = dashboardQuerySchema.safeParse(req.query);
   if (!parsed.success) {
