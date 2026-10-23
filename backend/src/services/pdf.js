@@ -1345,7 +1345,6 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
-  kkiapay: 'Paiement en ligne',
   // Réglé par prélèvement sur la caution à la sortie (demande utilisateur, 2026-10-18) — jamais
   // sélectionnable manuellement, uniquement généré par `POST /:leaseId/move-out-report/finalize`.
   caution: 'Prélevé sur la caution',
@@ -1370,7 +1369,7 @@ const POINT_STATUS_COLORS = {
   solde: SUCCESS_FG,
 };
 const UTILITY_SHORT = { soneb: 'SONEB', sbee: 'SBEE' };
-const PAYMENT_METHOD_SHORT = { especes: 'Espèces', mobile_money: 'Mobile M.', virement: 'Virement', cheque: 'Chèque', kkiapay: 'En ligne' };
+const PAYMENT_METHOD_SHORT = { especes: 'Espèces', mobile_money: 'Mobile M.', virement: 'Virement', cheque: 'Chèque' };
 // Limite basse du contenu avant de basculer sur une nouvelle page (le pied de page occupe y ≥ 772).
 const CONTENT_BOTTOM = 715;
 

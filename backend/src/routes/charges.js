@@ -28,7 +28,6 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
-  kkiapay: 'Paiement en ligne',
   caution: 'Prélevé sur la caution',
 };
 
@@ -463,7 +462,7 @@ router.get('/:id/payments', async (req, res, next) => {
  */
 async function recordUtilityPayment(
   conn,
-  { tenantId, charge, amount, paymentMethod, paidAt, notes, recordedBy, kkiapayTransactionId = null, settledFromDeposit = false },
+  { tenantId, charge, amount, paymentMethod, paidAt, notes, recordedBy, onlineTransactionId = null, settledFromDeposit = false },
 ) {
   // Bug corrigé (audit fermeture du mois, point 3, 16/10/2026) : ce point d'insertion UNIQUE dans
   // `utility_payments` ne vérifiait jamais lui-même la clôture du mois — seul l'appelant "route directe"
@@ -482,8 +481,8 @@ async function recordUtilityPayment(
   }
 
   const [paymentResult] = await conn.query(
-    `INSERT INTO utility_payments (tenant_id, charge_id, amount, payment_method, paid_at, notes, recorded_by, kkiapay_transaction_id, settled_from_deposit)
-     VALUES (:tenantId, :chargeId, :amount, :paymentMethod, :paidAt, :notes, :recordedBy, :kkiapayTransactionId, :settledFromDeposit)`,
+    `INSERT INTO utility_payments (tenant_id, charge_id, amount, payment_method, paid_at, notes, recorded_by, online_transaction_id, settled_from_deposit)
+     VALUES (:tenantId, :chargeId, :amount, :paymentMethod, :paidAt, :notes, :recordedBy, :onlineTransactionId, :settledFromDeposit)`,
     {
       tenantId,
       chargeId: charge.id,
@@ -492,7 +491,7 @@ async function recordUtilityPayment(
       paidAt,
       notes: notes ?? null,
       recordedBy: recordedBy ?? null,
-      kkiapayTransactionId,
+      onlineTransactionId,
       settledFromDeposit: settledFromDeposit ? 1 : 0,
     },
   );

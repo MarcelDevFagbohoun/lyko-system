@@ -219,7 +219,7 @@ async function insertReceiptForPayment(conn, tenantId, paymentId, maxAttempts = 
  * lien de paiement, webhook), jamais dupliqué.
  *
  * `recordedBy` : `null` pour un paiement confirmé par FedaPay (aucun employé
- * ne l'a saisi). `kkiapayTransactionId`, s'il est fourni, n'est attaché qu'à
+ * ne l'a saisi). `onlineTransactionId`, s'il est fourni, n'est attaché qu'à
  * la PREMIÈRE ligne créée (la colonne est UNIQUE — un paiement qui se
  * répartit sur plusieurs mois ne doit pas tenter d'insérer la même
  * référence FedaPay deux fois) ; il suffit à identifier la transaction pour
@@ -229,7 +229,7 @@ async function insertReceiptForPayment(conn, tenantId, paymentId, maxAttempts = 
  */
 async function recordRentPayment(
   conn,
-  { tenantId, lease, coversMonth, amount, paymentMethod, paidAt, notes, recordedBy, kkiapayTransactionId = null },
+  { tenantId, lease, coversMonth, amount, paymentMethod, paidAt, notes, recordedBy, onlineTransactionId = null },
 ) {
   // Nom du locataire pour le libellé de l'écriture comptable uniquement —
   // `lease` (chargé par `loadLease`) ne porte pas cette jointure.
@@ -292,8 +292,8 @@ async function recordRentPayment(
     // 085 — `covers_period_start` (date réelle) est TOUJOURS renseignée, quel que soit le rythme.
     const coversPeriodStart = isCalendaire ? `${alloc.coversMonth}-01` : alloc.coversMonth;
     const [paymentResult] = await conn.query(
-      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, notes, recorded_by, kkiapay_transaction_id)
-       VALUES (:tenantId, :leaseId, :coversMonth, :coversPeriodStart, :amount, :method, :paidAt, :notes, :recordedBy, :kkiapayTransactionId)`,
+      `INSERT INTO rent_payments (tenant_id, lease_id, covers_month, covers_period_start, amount, payment_method, paid_at, notes, recorded_by, online_transaction_id)
+       VALUES (:tenantId, :leaseId, :coversMonth, :coversPeriodStart, :amount, :method, :paidAt, :notes, :recordedBy, :onlineTransactionId)`,
       {
         tenantId,
         leaseId: lease.id,
@@ -304,7 +304,7 @@ async function recordRentPayment(
         paidAt,
         notes: notes ?? null,
         recordedBy: recordedBy ?? null,
-        kkiapayTransactionId: i === 0 ? kkiapayTransactionId : null,
+        onlineTransactionId: i === 0 ? onlineTransactionId : null,
       },
     );
     const paymentId = paymentResult.insertId;

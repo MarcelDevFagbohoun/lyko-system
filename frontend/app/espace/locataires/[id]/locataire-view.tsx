@@ -586,7 +586,7 @@ function NewLeaseCard({
         unitId: selectedUnit.id,
         monthlyRent: rent,
         depositAmount: deposit,
-        depositPaymentMethod: deposit > 0 ? (depositPaymentMethod as Exclude<PaymentMethod, "kkiapay">) : undefined,
+        depositPaymentMethod: deposit > 0 ? (depositPaymentMethod as PaymentMethod) : undefined,
         depositPaidAt: deposit > 0 ? depositPaidAt : undefined,
         ...buildRentDuePayload(rhythm, rentDueDay),
         startDate,

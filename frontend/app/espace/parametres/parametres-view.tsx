@@ -89,6 +89,9 @@ function ParametresContent() {
   const [depositSbeeEnabled, setDepositSbeeEnabled] = React.useState(false);
   const [depositSonebEnabled, setDepositSonebEnabled] = React.useState(false);
   const [depositPeintureEnabled, setDepositPeintureEnabled] = React.useState(false);
+  const [utilityPassThroughPercent, setUtilityPassThroughPercent] = React.useState("100");
+  const [commissionTiming, setCommissionTiming] = React.useState<"encaissement" | "reversement">("encaissement");
+  const [expenseAlertThreshold, setExpenseAlertThreshold] = React.useState("");
 
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
@@ -112,6 +115,9 @@ function ParametresContent() {
         setDepositSbeeEnabled(res.settings.depositSbeeEnabled);
         setDepositSonebEnabled(res.settings.depositSonebEnabled);
         setDepositPeintureEnabled(res.settings.depositPeintureEnabled);
+        setUtilityPassThroughPercent(String(res.settings.utilityPassThroughPercent));
+        setCommissionTiming(res.settings.commissionTiming);
+        setExpenseAlertThreshold(res.settings.expenseAlertThreshold != null ? String(res.settings.expenseAlertThreshold) : "");
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Impossible de charger les paramètres."));
   }, [accessToken]);
@@ -160,6 +166,9 @@ function ParametresContent() {
         depositSbeeEnabled,
         depositSonebEnabled,
         depositPeintureEnabled,
+        utilityPassThroughPercent: Math.min(100, Math.max(0, Number(utilityPassThroughPercent) || 0)),
+        commissionTiming,
+        expenseAlertThreshold: expenseAlertThreshold ? Number(expenseAlertThreshold) : null,
       });
       setSettings(res.settings);
       setStampFile(null);
@@ -399,6 +408,72 @@ function ParametresContent() {
                   <option value="aucun">Ne rien facturer (comportement actuel)</option>
                   <option value="prorata">Facturer le prorata d&apos;entrée</option>
                 </select>
+              </Field>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Charges SONEB / SBEE</CardTitle>
+              <CardDescription>
+                Part de chaque charge encaissée qui revient au propriétaire ; le reste est gardé par l&apos;entreprise
+                comme frais de gestion. 100 % = tout est reversé, rien n&apos;est gardé.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Field label="Part reversée au propriétaire (%)" htmlFor="utilityPassThroughPercent">
+                <Input
+                  id="utilityPassThroughPercent"
+                  inputMode="numeric"
+                  className="max-w-[8rem]"
+                  value={utilityPassThroughPercent}
+                  onChange={(e) => setUtilityPassThroughPercent(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                />
+              </Field>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Commission de l&apos;entreprise</CardTitle>
+              <CardDescription>
+                Moment où votre commission est constatée : dès l&apos;encaissement du loyer, ou seulement quand
+                l&apos;argent est reversé au propriétaire. Modifie le solde dû aux propriétaires.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Field label="Moment de la commission" htmlFor="commissionTiming">
+                <select
+                  id="commissionTiming"
+                  value={commissionTiming}
+                  onChange={(e) => setCommissionTiming(e.target.value as "encaissement" | "reversement")}
+                  className="h-[38px] w-full max-w-md rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <option value="encaissement">À l&apos;encaissement du loyer</option>
+                  <option value="reversement">Au reversement au propriétaire</option>
+                </select>
+              </Field>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Alertes</CardTitle>
+              <CardDescription>
+                Le directeur général est prévenu quand une dépense dépasse ce montant. Laissez vide pour ne recevoir
+                aucune alerte.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Field label="Seuil d'alerte sur une dépense (FCFA)" htmlFor="expenseAlertThreshold">
+                <Input
+                  id="expenseAlertThreshold"
+                  inputMode="numeric"
+                  className="max-w-xs"
+                  placeholder="Aucune alerte"
+                  value={expenseAlertThreshold}
+                  onChange={(e) => setExpenseAlertThreshold(e.target.value.replace(/\D/g, ""))}
+                />
               </Field>
             </CardContent>
           </Card>

@@ -36,7 +36,6 @@ const METHOD_LABELS: Record<string, string> = {
   mobile_money: "Mobile Money",
   virement: "Virement",
   cheque: "Chèque",
-  kkiapay: "En ligne",
 };
 
 function monthOffset(ym: string, delta: number): string {

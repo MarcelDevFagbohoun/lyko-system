@@ -191,7 +191,7 @@ export type UtilityBatchSummary = {
 };
 
 /** Modes acceptés pour la facture mère (pas FedaPay : c'est le propriétaire qui règle, pas un locataire en ligne). */
-export type MainPaymentMethod = Exclude<PaymentMethod, "kkiapay">;
+export type MainPaymentMethod = PaymentMethod;
 
 /** Paiement de la facture mère par le propriétaire (mémo — aucun mouvement de caisse du cabinet). */
 export type MainPayment = {

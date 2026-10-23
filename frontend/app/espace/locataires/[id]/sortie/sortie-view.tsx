@@ -381,8 +381,8 @@ function DraftEditor({
         leaseId,
         tenantSignature,
         agentSignature,
-        netRefund > 0 ? (refundPaymentMethod as Exclude<PaymentMethod, "kkiapay">) : undefined,
-        additionalDepositRefundMethods as Partial<Record<AdditionalDepositType, Exclude<PaymentMethod, "kkiapay">>>,
+        netRefund > 0 ? (refundPaymentMethod as PaymentMethod) : undefined,
+        additionalDepositRefundMethods as Partial<Record<AdditionalDepositType, PaymentMethod>>,
         tenantReserves || undefined,
         shortfall > 0 && balance.resolution
           ? { resolution: balance.resolution, paymentMethod: balance.paymentMethod || undefined, note: balance.note.trim() || undefined }

@@ -22,13 +22,11 @@ router.use(requireAuth);
 const canAdvanced = requirePermission('comptabilite_avancee');
 
 const SETTINGS_COLUMNS =
-  'gl_depreciation_prorata_temporis, gl_utility_passthrough_percent, gl_commission_timing, gl_irf_enabled, gl_irf_rate';
+  'gl_depreciation_prorata_temporis, gl_irf_enabled, gl_irf_rate';
 
 function toPublicSettings(tenant) {
   return {
     depreciationProrataTemporis: !!tenant.gl_depreciation_prorata_temporis,
-    utilityPassThroughPercent: Number(tenant.gl_utility_passthrough_percent),
-    commissionTiming: tenant.gl_commission_timing,
     irfEnabled: !!tenant.gl_irf_enabled,
     irfRate: Number(tenant.gl_irf_rate),
   };
@@ -58,14 +56,6 @@ router.patch('/', canAdvanced, async (req, res, next) => {
   if (data.depreciationProrataTemporis !== undefined) {
     fields.push('gl_depreciation_prorata_temporis = :depreciationProrataTemporis');
     params.depreciationProrataTemporis = data.depreciationProrataTemporis ? 1 : 0;
-  }
-  if (data.utilityPassThroughPercent !== undefined) {
-    fields.push('gl_utility_passthrough_percent = :utilityPassThroughPercent');
-    params.utilityPassThroughPercent = data.utilityPassThroughPercent;
-  }
-  if (data.commissionTiming !== undefined) {
-    fields.push('gl_commission_timing = :commissionTiming');
-    params.commissionTiming = data.commissionTiming;
   }
   if (data.irfEnabled !== undefined) {
     fields.push('gl_irf_enabled = :irfEnabled');

@@ -10,7 +10,7 @@ const { listPortfolioArrears, paymentPeriodKey } = require('./rentTracking');
 const { resolvePropertyScope } = require('./scope');
 const { getMonthBilan } = require('./monthBilan');
 
-const METHOD = { especes: 'Espèces', mobile_money: 'Mobile Money', virement: 'Virement', cheque: 'Chèque', kkiapay: 'Paiement en ligne', caution: 'Prélevé sur la caution' };
+const METHOD = { especes: 'Espèces', mobile_money: 'Mobile Money', virement: 'Virement', cheque: 'Chèque', caution: 'Prélevé sur la caution' };
 const CATEGORY = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
 const UTILITY = Object.fromEntries((UTILITY_TYPES ?? []).map((u) => [u.key, u.label]));
 const INCOME_CATEGORY = { prestation: 'Prestation', commission: 'Commission', interets: 'Intérêts', remboursement: 'Remboursement', subvention_don: 'Subvention / don', autre: 'Autre' };

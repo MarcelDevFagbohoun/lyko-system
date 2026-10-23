@@ -2284,7 +2284,6 @@ function GlSettingsCard({ accessToken }: { accessToken: string | null }) {
   const [settings, setSettings] = React.useState<GlSettings | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [percentInput, setPercentInput] = React.useState("");
   const [irfRateInput, setIrfRateInput] = React.useState("");
   const toast = useToast();
 
@@ -2293,7 +2292,6 @@ function GlSettingsCard({ accessToken }: { accessToken: string | null }) {
     getGlSettings(accessToken)
       .then((s) => {
         setSettings(s);
-        setPercentInput(String(s.utilityPassThroughPercent));
         setIrfRateInput(String(s.irfRate));
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les réglages."));
@@ -2312,41 +2310,6 @@ function GlSettingsCard({ accessToken }: { accessToken: string | null }) {
         next.depreciationProrataTemporis
           ? "Amortissement proratisé au mois d'acquisition."
           : "Amortissement en mois plein, sans prorata.",
-      );
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible de modifier ce réglage.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function savePercent() {
-    if (!accessToken || !settings) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const next = await updateGlSettings(accessToken, { utilityPassThroughPercent: Number(percentInput) });
-      setSettings(next);
-      setPercentInput(String(next.utilityPassThroughPercent));
-      toast.success(`${next.utilityPassThroughPercent} % des charges SONEB/SBEE seront répercutées.`);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible de modifier ce réglage.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function setCommissionTiming(timing: "encaissement" | "reversement") {
-    if (!accessToken || !settings || settings.commissionTiming === timing) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const next = await updateGlSettings(accessToken, { commissionTiming: timing });
-      setSettings(next);
-      toast.success(
-        timing === "encaissement"
-          ? "Commission comptabilisée dès l'encaissement du loyer."
-          : "Commission comptabilisée au reversement au propriétaire.",
       );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de modifier ce réglage.");
@@ -2394,7 +2357,8 @@ function GlSettingsCard({ accessToken }: { accessToken: string | null }) {
         <CardTitle>Réglages</CardTitle>
         <CardDescription>
           D&apos;autres choix que SYSCOHADA ne tranche pas — à ajuster une fois l&apos;avis de votre expert-comptable
-          obtenu.
+          obtenu. Les charges SONEB/SBEE répercutées, le moment de la commission et le seuil d&apos;alerte se règlent
+          dans les Paramètres généraux.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -2415,59 +2379,6 @@ function GlSettingsCard({ accessToken }: { accessToken: string | null }) {
             </p>
           </span>
         </label>
-
-        <div className="rounded-lg border border-border px-3 py-2.5">
-          <p className="font-label-md text-ink">Charges SONEB/SBEE répercutées au locataire</p>
-          <p className="text-body-xs text-ink-muted">
-            Part de chaque charge encaissée qui éteint la dette du locataire (411) ; le reste est gardé par
-            l&apos;entreprise comme frais de gestion (706). 100 % = tout répercuté, rien gardé (comportement historique).
-          </p>
-          <div className="mt-2 flex items-center gap-2">
-            <Input
-              inputMode="numeric"
-              value={percentInput}
-              onChange={(e) => setPercentInput(e.target.value.replace(/\D/g, "").slice(0, 3))}
-              className="w-20 tabular"
-            />
-            <span className="text-body-sm text-ink-soft">%</span>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={submitting || percentInput === "" || Number(percentInput) === settings.utilityPassThroughPercent}
-              onClick={savePercent}
-            >
-              Enregistrer
-            </Button>
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-border px-3 py-2.5">
-          <p className="font-label-md text-ink">Moment de comptabilisation de la commission</p>
-          <p className="text-body-xs text-ink-muted">
-            La commission de l&apos;entreprise (706) peut être constatée dès l&apos;encaissement du loyer (comportement
-            historique), ou seulement au moment où l&apos;argent est réellement reversé au propriétaire.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <Button
-              type="button"
-              size="sm"
-              variant={settings.commissionTiming === "encaissement" ? "primary" : "secondary"}
-              disabled={submitting}
-              onClick={() => setCommissionTiming("encaissement")}
-            >
-              À l&apos;encaissement du loyer
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={settings.commissionTiming === "reversement" ? "primary" : "secondary"}
-              disabled={submitting}
-              onClick={() => setCommissionTiming("reversement")}
-            >
-              Au reversement au propriétaire
-            </Button>
-          </div>
-        </div>
 
         <div className="rounded-lg border border-border px-3 py-2.5">
           <label className="flex items-start gap-2.5">

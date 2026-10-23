@@ -64,7 +64,7 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - **Inscription** : la case d'acceptation est obligatoire ; la date et la version acceptées sont conservées (`tenants.terms_accepted_at/terms_version`).
 - **Production** : `/diagnostics` est introuvable et `/api/health/db` ne renvoie plus de détail technique.
 - **Tests** : `npm test` (dans `backend`) utilise la base `<DB_NAME>_test` créée automatiquement ; il refuse de tourner sur la base de développement.
-- **Identifiant technique** : la valeur `kkiapay` stockée pour un paiement en ligne est un identifiant historique conservé (affiché « Paiement en ligne ») ; tout passe désormais par FedaPay.
+- Paiements en ligne : tout passe par FedaPay (enregistrés en Mobile Money). KKiaPay a été entièrement retiré (voir Lot 8).
 
 ## Lot 3 — back-office
 
@@ -97,4 +97,9 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - Les charges payées par les locataires restent chez le cabinet. Le bouton « Créditer le solde » crée un transfert interne (partiel possible, plafonné aux charges encaissées non encore ajoutées) : le solde du propriétaire augmente, puis tout est versé depuis le menu Paiements (FedaPay ou saisie manuelle).
 - Comptabilité avancée : nouvelle règle `charge_ajoutee_solde_proprietaire` (débit 411, crédit 4671 du propriétaire), ajoutée automatiquement au premier transfert, à valider par l'expert-comptable. Annulation possible avec motif tant que le solde n'est pas déjà versé ; l'écriture est alors extournée.
 - Les anciens reversements de charges réellement payés restent dans l'historique (`kind = cash`) et ne modifient pas le solde.
-- Part répercutée : le montant créditable au solde d'un propriétaire tient compte du réglage « % répercuté » (Comptabilité avancée → Règles comptables, 100 % par défaut). Le reste des charges encaissées est affiché « Gardé par le cabinet (frais de gestion) ». Le pourcentage actuel s'applique à l'ensemble des encaissements (pas d'historique des changements de réglage).
+- Part répercutée : le montant créditable au solde d'un propriétaire tient compte du réglage « % répercuté » (Paramètres → Charges SONEB / SBEE, 100 % par défaut). Le reste des charges encaissées est affiché « Gardé par le cabinet (frais de gestion) ». Le pourcentage actuel s'applique à l'ensemble des encaissements (pas d'historique des changements de réglage).
+
+## Lot 8 — réglages généraux élargis, KKiaPay retiré
+
+- Migration `116_remove_kkiapay.sql` **à appliquer au déploiement** : les anciens paiements « kkiapay » deviennent « mobile_money », la colonne `kkiapay_transaction_id` devient `online_transaction_id`, les clés KKiaPay des entreprises sont supprimées.
+- Paramètres généraux (accessibles sans comptabilité avancée) : % de charges SONEB/SBEE répercuté, moment de comptabilisation de la commission, seuil d'alerte de dépense. Ces réglages sont pris en compte en comptabilité simple. La retenue IRF et la proratisation de l'amortissement restent en Comptabilité avancée.

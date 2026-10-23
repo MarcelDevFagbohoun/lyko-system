@@ -59,6 +59,10 @@ function toPublicSettings(tenant) {
     depositSbeeEnabled: !!tenant.deposit_sbee_enabled,
     depositSonebEnabled: !!tenant.deposit_soneb_enabled,
     depositPeintureEnabled: !!tenant.deposit_peinture_enabled,
+    // Réglages comptables à effet sur les soldes, valables avec ou sans comptabilité avancée.
+    utilityPassThroughPercent: Number(tenant.gl_utility_passthrough_percent ?? 100),
+    commissionTiming: tenant.gl_commission_timing ?? 'encaissement',
+    expenseAlertThreshold: tenant.gl_expense_alert_threshold != null ? Number(tenant.gl_expense_alert_threshold) : null,
   };
 }
 
@@ -165,6 +169,19 @@ router.patch(
       if (data.depositPeintureEnabled !== undefined) {
         fields.push('deposit_peinture_enabled = :depositPeintureEnabled');
         params.depositPeintureEnabled = data.depositPeintureEnabled;
+      }
+
+      if (data.utilityPassThroughPercent !== undefined) {
+        fields.push('gl_utility_passthrough_percent = :utilityPassThroughPercent');
+        params.utilityPassThroughPercent = data.utilityPassThroughPercent;
+      }
+      if (data.commissionTiming !== undefined) {
+        fields.push('gl_commission_timing = :commissionTiming');
+        params.commissionTiming = data.commissionTiming;
+      }
+      if (data.expenseAlertThreshold !== undefined) {
+        fields.push('gl_expense_alert_threshold = :expenseAlertThreshold');
+        params.expenseAlertThreshold = data.expenseAlertThreshold;
       }
 
       const stampFile = req.files?.stamp?.[0];

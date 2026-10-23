@@ -43,7 +43,6 @@ const METHOD_LABELS: Record<string, string> = {
   mobile_money: "Mobile money",
   virement: "Virement",
   cheque: "Chèque",
-  kkiapay: "Paiement en ligne",
   caution: "Sur la caution",
 };
 

@@ -44,6 +44,13 @@ const updateSettingsSchema = z.object({
   // à la création d'un bail, ajustable bail par bail. Défaut 'aucun' (comportement historique inchangé).
   defaultEntryProration: z.enum(['aucun', 'prorata'], { errorMap: () => ({ message: "Choix du prorata d'entrée par défaut invalide" }) }).optional(),
 
+  // Charges SONEB/SBEE : part répercutée au locataire (le reste est gardé par l'entreprise comme frais de gestion).
+  utilityPassThroughPercent: z.coerce.number().int().min(0).max(100).optional(),
+  // Moment où la commission de l'entreprise est constatée : à l'encaissement du loyer ou au reversement au propriétaire.
+  commissionTiming: z.enum(['encaissement', 'reversement'], { errorMap: () => ({ message: 'Moment de commission invalide' }) }).optional(),
+  // Seuil d'alerte sur les grosses dépenses (FCFA). Chaîne vide = pas d'alerte.
+  expenseAlertThreshold: z.preprocess((v) => (v === '' || v === 'null' ? null : v), z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional()),
+
   // Cautions supplémentaires (étape 43, demande directe de l'utilisateur, 2026-09-28) — SBEE/SONEB/
   // peinture, chacune optionnelle et désactivée par défaut (voir constants/leaseDeposits.js).
   depositSbeeEnabled: z

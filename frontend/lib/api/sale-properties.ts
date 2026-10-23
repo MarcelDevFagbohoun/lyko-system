@@ -25,7 +25,7 @@ export const SALE_PROPERTY_STATUS_LABELS: Record<SalePropertyStatus, string> = {
   retire: "Retiré",
 };
 
-/** Mode de règlement d'une commission sur vente — jamais `kkiapay` (vente réglée hors ligne). */
+/** Mode de règlement d'une commission sur vente — vente réglée hors ligne. */
 export type SalePaymentMethod = "especes" | "mobile_money" | "virement" | "cheque";
 
 export const SALE_PAYMENT_METHOD_LABELS: Record<SalePaymentMethod, string> = {

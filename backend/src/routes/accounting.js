@@ -105,7 +105,6 @@ const PAYMENT_METHOD_LABELS = {
   mobile_money: 'Mobile Money',
   virement: 'Virement bancaire',
   cheque: 'Chèque',
-  kkiapay: 'Paiement en ligne',
   caution: 'Prélevé sur la caution',
 };
 

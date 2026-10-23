@@ -35,7 +35,6 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   mobile_money: "Mobile Money",
   virement: "Virement",
   cheque: "Chèque",
-  kkiapay: "Paiement en ligne",
 };
 
 const UTILITY_TYPE_LABELS: Record<string, string> = { soneb: "SONEB (eau)", sbee: "SBEE (électricité)" };

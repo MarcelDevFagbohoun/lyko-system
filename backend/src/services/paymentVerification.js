@@ -49,7 +49,7 @@ async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, l
         paidAt: todayIso(),
         notes: null,
         recordedBy: null,
-        kkiapayTransactionId: transactionKey,
+        onlineTransactionId: transactionKey,
       });
     } else {
       await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id: chargeId });
@@ -63,7 +63,7 @@ async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, l
         paidAt: todayIso(),
         notes: null,
         recordedBy: null,
-        kkiapayTransactionId: transactionKey,
+        onlineTransactionId: transactionKey,
       });
     }
 
@@ -84,7 +84,7 @@ async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, l
       );
       if (link && amount >= Number(link.amount)) {
         await conn.query(
-          `UPDATE payment_links SET status = 'paid', paid_at = NOW(), kkiapay_transaction_id = :tx
+          `UPDATE payment_links SET status = 'paid', paid_at = NOW(), online_transaction_id = :tx
            WHERE id = :id AND tenant_id = :t`,
           { tx: transactionKey, id: linkId, t: tenant.id },
         );

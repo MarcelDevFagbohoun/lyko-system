@@ -145,7 +145,7 @@ test('retour client : en attente → rien ; approuvé → enregistré UNE fois ;
   txs.get(await txOf(body.reference)).status = 'approved';
   assert.deepEqual(await confirm(body.reference), { state: 'paid' });
   assert.deepEqual(await confirm(body.reference), { state: 'paid' });
-  [rows] = await pool.query('SELECT id, payment_method, kkiapay_transaction_id AS tx, amount FROM rent_payments WHERE lease_id = :l', { l: A.leaseId });
+  [rows] = await pool.query('SELECT id, payment_method, online_transaction_id AS tx, amount FROM rent_payments WHERE lease_id = :l', { l: A.leaseId });
   assert.equal(rows.length, before + 1);
   const txId = await txOf(body.reference);
   const row = rows.find((r) => r.tx === `fedapay:${txId}`);
@@ -229,7 +229,7 @@ test('webhook : signature absente, fausse ou rejouée → ignoré ; signature va
   const id = await txOf(body.reference);
   txs.get(id).status = 'approved';
   const payload = { name: 'transaction.approved', entity: { id: Number(id) } };
-  const countRows = async () => (await pool.query('SELECT id FROM rent_payments WHERE lease_id = :l AND kkiapay_transaction_id = :k', { l: A.leaseId, k: `fedapay:${id}` }))[0].length;
+  const countRows = async () => (await pool.query('SELECT id FROM rent_payments WHERE lease_id = :l AND online_transaction_id = :k', { l: A.leaseId, k: `fedapay:${id}` }))[0].length;
 
   // sans signature
   let raw = JSON.stringify(payload);
@@ -267,7 +267,7 @@ test('webhook avec statut approuvé annoncé mais FedaPay dit « pending » : ri
   const id = await txOf(body.reference);
   const s = signed(WEBHOOK_SECRET, { name: 'transaction.approved', entity: { id: Number(id), status: 'approved', amount: 50000 } });
   await hook(A.tenantId, s.raw, s.header);
-  const [rows] = await pool.query('SELECT id FROM rent_payments WHERE kkiapay_transaction_id = :k', { k: `fedapay:${id}` });
+  const [rows] = await pool.query('SELECT id FROM rent_payments WHERE online_transaction_id = :k', { k: `fedapay:${id}` });
   assert.equal(rows.length, 0);
 });
 
@@ -298,7 +298,7 @@ test('paiement en ligne confirmé : visible sur le portail du locataire, avec qu
   assert.deepEqual(await confirm(body.reference), { state: 'paid' });
   const dash = await (await fetch(`${baseUrl}/api/portal/${token}`)).json();
   const txId = await txOf(body.reference);
-  const [[row]] = await pool.query('SELECT id FROM rent_payments WHERE kkiapay_transaction_id = :k', { k: `fedapay:${txId}` });
+  const [[row]] = await pool.query('SELECT id FROM rent_payments WHERE online_transaction_id = :k', { k: `fedapay:${txId}` });
   const p = dash.payments.find((x) => x.id === row.id);
   assert.ok(p, 'le paiement figure dans la liste du locataire');
   assert.ok(p.receipt, 'une quittance existe');
@@ -313,7 +313,7 @@ test('paiement en ligne : visible aussi sur la fiche du locataire côté entrepr
   txs.get(await txOf(body.reference)).status = 'approved';
   assert.deepEqual(await confirm(body.reference), { state: 'paid' });
   const txId = await txOf(body.reference);
-  const [[row]] = await pool.query('SELECT id FROM rent_payments WHERE kkiapay_transaction_id = :k', { k: `fedapay:${txId}` });
+  const [[row]] = await pool.query('SELECT id FROM rent_payments WHERE online_transaction_id = :k', { k: `fedapay:${txId}` });
   const res = await fetch(`${baseUrl}/api/renters/${A.renterId}`, { headers: bearer(A.dgId, A.tenantId) });
   assert.equal(res.status, 200);
   const text = JSON.stringify(await res.json());

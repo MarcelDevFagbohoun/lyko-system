@@ -263,19 +263,19 @@ function NouveauContent() {
         depositAmount: Number(form.depositAmount || "0"),
         depositPaymentMethod:
           Number(form.depositAmount || "0") > 0
-            ? (form.depositPaymentMethod as Exclude<PaymentMethod, "kkiapay">)
+            ? (form.depositPaymentMethod as PaymentMethod)
             : undefined,
         depositPaidAt: Number(form.depositAmount || "0") > 0 ? form.depositPaidAt : undefined,
         entryFeeAmount: Number(form.entryFeeAmount || "0"),
         entryFeePaymentMethod:
           Number(form.entryFeeAmount || "0") > 0
-            ? (form.entryFeePaymentMethod as Exclude<PaymentMethod, "kkiapay">)
+            ? (form.entryFeePaymentMethod as PaymentMethod)
             : undefined,
         entryFeePaidAt: Number(form.entryFeeAmount || "0") > 0 ? form.entryFeePaidAt : undefined,
         entryProration: form.entryProration,
         entryProrataPaymentMethod:
           form.entryProration === "prorata" && prorataPreview.amount > 0
-            ? (form.entryProrataPaymentMethod as Exclude<PaymentMethod, "kkiapay">)
+            ? (form.entryProrataPaymentMethod as PaymentMethod)
             : undefined,
         entryProrataPaidAt: form.entryProration === "prorata" && prorataPreview.amount > 0 ? form.entryProrataPaidAt : undefined,
         additionalDeposits: Object.fromEntries(
@@ -287,7 +287,7 @@ function NouveauContent() {
                 t.key,
                 {
                   amount: Number(entry.amount),
-                  paymentMethod: entry.paymentMethod as Exclude<PaymentMethod, "kkiapay">,
+                  paymentMethod: entry.paymentMethod as PaymentMethod,
                   paidAt: entry.paidAt,
                 },
               ];

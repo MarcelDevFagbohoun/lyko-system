@@ -354,7 +354,7 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null) {
       // « Auteur inconnu » générique de `toActor(null, ...)`, qui suggérerait
       // à tort un problème de données.
       actor:
-        r.payment_method === 'kkiapay'
+        r.a_fn == null && r.a_ln == null
           ? { name: 'Paiement en ligne', role: 'en_ligne', roleLabel: 'Paiement en ligne' }
           : toActor(r.a_fn, r.a_ln, r.a_role, roleLabels),
       at: r.created_at,

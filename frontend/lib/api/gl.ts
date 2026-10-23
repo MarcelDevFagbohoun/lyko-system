@@ -416,9 +416,7 @@ export type GlSettings = {
   /** Si actif, le mois d'acquisition d'une immobilisation est proratisé au nombre de jours restants (jour inclus) plutôt qu'un mois plein. */
   depreciationProrataTemporis: boolean;
   /** % d'une charge SONEB/SBEE encaissée répercuté au locataire (411) ; le reste est gardé par le cabinet (706) comme frais de gestion. 100 = comportement historique (tout répercuté). */
-  utilityPassThroughPercent: number;
   /** Moment où la commission du cabinet (706) est comptabilisée : "encaissement" (défaut, historique) ou "reversement" (reportée au versement effectif au propriétaire). */
-  commissionTiming: "encaissement" | "reversement";
   /** IRF (Impôt sur le Revenu Foncier) : si actif, une retenue est prélevée sur chaque reversement au propriétaire, au taux `irfRate` (%). */
   irfEnabled: boolean;
   irfRate: number;

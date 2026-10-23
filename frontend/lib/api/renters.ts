@@ -6,7 +6,7 @@ import type { InspectionCondition } from "@/lib/constants/inspection";
 // formulaire — uniquement une valeur d'AFFICHAGE pour un loyer réglé automatiquement par
 // prélèvement sur la caution à la sortie (voir routes/leases.js, `paymentMethodLabel` déjà
 // résolu côté serveur).
-export type PaymentMethod = "especes" | "mobile_money" | "virement" | "cheque" | "kkiapay" | "caution";
+export type PaymentMethod = "especes" | "mobile_money" | "virement" | "cheque" | "caution";
 
 /**
  * Convention de paiement du loyer (demande directe de l'utilisateur,
@@ -182,7 +182,7 @@ export type MoveOutReport = InspectionReport & {
   totalDeductions: number;
   netRefund: number;
   /** Bug corrigé (étape 48) : stocké et exigé depuis toujours, jamais renvoyé jusqu'ici. */
-  refundPaymentMethod: Exclude<PaymentMethod, "kkiapay"> | null;
+  refundPaymentMethod: PaymentMethod | null;
   glRegularizedAt: string | null;
   glRegularizedBy: Actor;
 };
@@ -318,7 +318,7 @@ export type CreateRenterInput = {
   depositAmount: number;
   // Requis côté serveur seulement si depositAmount > 0 (voir routes/renters.js
   // `recordDepositReceived`) — génère la contrepartie comptable de la caution.
-  depositPaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
+  depositPaymentMethod?: PaymentMethod;
   // Défaut : startDate si omis (la caution est presque toujours encaissée le
   // jour de la signature du bail).
   depositPaidAt?: string;
@@ -326,7 +326,7 @@ export type CreateRenterInput = {
   entryFeeAmount?: number;
   // Requis côté serveur seulement si entryFeeAmount > 0 (voir routes/renters.js
   // `recordEntryFeeReceived`) — génère la contrepartie comptable (706).
-  entryFeePaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
+  entryFeePaymentMethod?: PaymentMethod;
   entryFeePaidAt?: string;
   /**
    * Prorata d'entrée (étape 42) : 'aucun' (rien facturé, comportement historique) ou 'prorata' (jours
@@ -336,7 +336,7 @@ export type CreateRenterInput = {
    */
   entryProration?: "aucun" | "prorata";
   // Requis côté serveur seulement si le prorata calculé est > 0 (voir routes/renters.js `recordEntryProrataReceived`).
-  entryProrataPaymentMethod?: Exclude<PaymentMethod, "kkiapay">;
+  entryProrataPaymentMethod?: PaymentMethod;
   entryProrataPaidAt?: string;
   /** Bail calendaire (tenant resté en rythme "calendaire", le seul cas aujourd'hui exposé à l'écran). */
   rentDueDay?: number;
@@ -359,7 +359,7 @@ export type CreateRenterInput = {
    * simplement ignoré côté serveur. Mode de règlement requis seulement si le montant est > 0.
    */
   additionalDeposits?: Partial<
-    Record<AdditionalDepositType, { amount: number; paymentMethod?: Exclude<PaymentMethod, "kkiapay">; paidAt?: string }>
+    Record<AdditionalDepositType, { amount: number; paymentMethod?: PaymentMethod; paidAt?: string }>
   >;
 };
 
@@ -829,8 +829,8 @@ export function finalizeMoveOutReport(
   leaseId: number,
   tenantSignature: Blob | null,
   agentSignature: Blob | null,
-  refundPaymentMethod?: Exclude<PaymentMethod, "kkiapay">,
-  additionalDepositRefundMethods?: Partial<Record<AdditionalDepositType, Exclude<PaymentMethod, "kkiapay">>>,
+  refundPaymentMethod?: PaymentMethod,
+  additionalDepositRefundMethods?: Partial<Record<AdditionalDepositType, PaymentMethod>>,
   tenantReserves?: string,
   balance?: { resolution: BalanceResolution; paymentMethod?: string; note?: string },
 ) {
