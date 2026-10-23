@@ -514,7 +514,7 @@ function streamOperationReceiptPdf(res, { tenant, op }) {
  * bloc clé/valeur, émetteur et client côte à côte, montant payé, tableau Description / Qté / Prix unitaire / Montant,
  * totaux, logo en haut à droite, code de vérification en pied de page.
  */
-function streamSubscriptionInvoicePdf(res, { client, payment, planLabel, verificationCode }) {
+function streamSubscriptionInvoicePdf(res, { client, payment, planLabel, fromPlanLabel = null, verificationCode }) {
   const LEGAL = config.legal;
   const paidOn = formatDateFr(isoDay(payment.paid_at));
   const doc = new PDFDocument({ size: 'A4', margins: { top: 56, bottom: 56, left: 56, right: 56 }, bufferPages: true });
@@ -526,7 +526,7 @@ function streamSubscriptionInvoicePdf(res, { client, payment, planLabel, verific
   const L = 56; const R = doc.page.width - 56; const W = R - L;
   const money = (n) => D.fcfa(n);
   // Titre et logo
-  doc.font('Helvetica-Bold').fontSize(26).fillColor(INK).text('Reçu de paiement', L, 56);
+  doc.font('Helvetica-Bold').fontSize(26).fillColor(INK).text(Number(payment.credit_applied) > 0 ? 'Reçu de changement d\'offre' : 'Reçu de paiement', L, 56);
   const logo = path.join(__dirname, '..', '..', 'assets', 'logo-mark.png');
   if (fs.existsSync(logo)) doc.image(logo, R - 48, 52, { width: 48, height: 48 });
   // Bloc clé / valeur
@@ -562,20 +562,32 @@ function streamSubscriptionInvoicePdf(res, { client, payment, planLabel, verific
   doc.moveTo(L, y).lineTo(R, y).lineWidth(0.7).strokeColor(BORDER_STRONG).stroke();
   y += 10;
   const label = `Abonnement ${planLabel}${payment.founder_price ? ' (tarif fondateur)' : ''}`;
+  const credit = Number(payment.credit_applied) || 0;
+  const fullPrice = Number(payment.amount) + credit;
   doc.font('Helvetica').fontSize(10).fillColor(INK).text(label, cols[0].x, y, { width: cols[0].w, lineBreak: false });
   doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(`${payment.months} mois`, cols[0].x, y + 14, { width: cols[0].w, lineBreak: false });
   doc.font('Helvetica').fontSize(10).fillColor(INK);
   doc.text('1', cols[1].x, y, { width: cols[1].w, align: 'right', lineBreak: false });
-  doc.text(money(payment.amount), cols[2].x, y, { width: cols[2].w, align: 'right', lineBreak: false });
-  doc.text(money(payment.amount), cols[3].x, y, { width: cols[3].w, align: 'right', lineBreak: false });
+  doc.text(money(fullPrice), cols[2].x, y, { width: cols[2].w, align: 'right', lineBreak: false });
+  doc.text(money(fullPrice), cols[3].x, y, { width: cols[3].w, align: 'right', lineBreak: false });
   y += 40;
+  if (credit > 0) {
+    doc.font('Helvetica').fontSize(10).fillColor(INK).text(`Crédit${fromPlanLabel ? ` offre ${fromPlanLabel}` : ''}`, cols[0].x, y, { width: cols[0].w, lineBreak: false });
+    doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(payment.credit_days ? `${payment.credit_days} jours restants de l'abonnement précédent` : "Jours restants de l'abonnement précédent", cols[0].x, y + 14, { width: cols[0].w, lineBreak: false });
+    doc.font('Helvetica').fontSize(10).fillColor(INK);
+    doc.text('1', cols[1].x, y, { width: cols[1].w, align: 'right', lineBreak: false });
+    doc.text(`-${money(credit)}`, cols[2].x, y, { width: cols[2].w, align: 'right', lineBreak: false });
+    doc.text(`-${money(credit)}`, cols[3].x, y, { width: cols[3].w, align: 'right', lineBreak: false });
+    y += 40;
+  }
   const totalRow = (t, v, strong) => {
     doc.moveTo(L + W - 270, y - 6).lineTo(R, y - 6).lineWidth(0.5).strokeColor(BORDER).stroke();
     doc.font(strong ? 'Helvetica-Bold' : 'Helvetica').fontSize(10).fillColor(strong ? INK : MUTED).text(t, L + W - 270, y, { width: 150, lineBreak: false });
     doc.fillColor(INK).text(v, L + W - 120, y, { width: 120, align: 'right', lineBreak: false });
     y += 22;
   };
-  totalRow('Sous-total', money(payment.amount));
+  totalRow('Sous-total', money(fullPrice));
+  if (credit > 0) totalRow('Crédit déduit', `-${money(credit)}`);
   totalRow('Total', money(payment.amount));
   totalRow('Montant payé', money(payment.amount), true);
   y += 10;

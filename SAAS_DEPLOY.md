@@ -134,3 +134,13 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 - Pendant un abonnement actif, seul le renouvellement de la même offre est possible (409 sinon) ; il démarre à l'échéance en cours, sans coupure.
 - E-mails : logo servi depuis `FRONTEND_URL/brand/logo-mark.png` (le site doit être en ligne et public), mise en page type facture, textes réécrits sans tirets longs. Reçu PDF refait dans le même style, avec logo et code de vérification.
 - Une entreprise qui n'a jamais acheté d'abonnement n'a plus accès qu'à l'écran de choix et de paiement (sans menu, avec déconnexion).
+
+## Lot 13 — montée en gamme avec crédit, suivi des paiements échoués
+
+- Migration `120_subscription_upgrade_and_failures.sql` **à appliquer** (type de paiement, crédit appliqué, périodes consommées, motif d'échec, statut `anomaly`).
+- Montée en gamme : pendant un abonnement actif, une offre supérieure est proposée avec le **prorata des jours restants déduit du prix** (renouvellements d'avance compris). La nouvelle offre démarre aussitôt pour sa durée complète ; les périodes payées sont « consommées » (non remboursables, non réutilisables comme crédit). Offre inférieure refusée jusqu'au terme. Pas de tarif fondateur sur une montée en gamme.
+- Le reçu (e-mail et PDF) affiche le prix plein, la ligne « Crédit » et le montant réellement payé.
+- Annulation après une montée en gamme : le remboursement part de la valeur de la nouvelle période (prix plein) au prorata des jours restants.
+- Renouveler ou changer d'offre est refusé tant qu'une demande d'annulation est en cours d'examen.
+- Paiements échoués : refus ou annulation chez FedaPay, ou paiement resté ouvert plus de 2 heures, déclenchent un e-mail au directeur (une seule fois, bouton « Réessayer ») et une ligne dans le journal. Une bannière s'affiche dans la page Abonnement pendant 7 jours.
+- Anomalie (montant encaissé différent de celui attendu) : statut `anomaly`, e-mail à `PLATFORM_ADMIN_EMAIL`, onglet « Paiements à surveiller » du back-office. À régler à la main dans FedaPay.

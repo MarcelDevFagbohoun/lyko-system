@@ -22,6 +22,7 @@ export type Subscription = {
   refundOpen: boolean;
   refundEligibleUntil: string | null;
   founderPrice: boolean;
+  lastFailure?: { reference: string; planKey: PlanKey; months: number; amount: number; reason: string; anomaly: boolean; at: string } | null;
   overLimits?: { kind: string; label: string; count: number; max: number }[];
 };
 
@@ -30,6 +31,9 @@ export type SubscriptionPayment = {
   planKey: PlanKey;
   planLabel: string;
   months: number;
+  kind: "purchase" | "renewal" | "upgrade";
+  creditApplied: number;
+  upgradedFromPlan: PlanKey | null;
   amount: number;
   founderPrice: boolean;
   status: "paid" | "refunded";
@@ -38,7 +42,12 @@ export type SubscriptionPayment = {
   periodEnd: string | null;
 };
 
-export type Quote = { planKey: PlanKey; months: number; price: number; normalPrice: number; founder: boolean; isFirstPurchase: boolean };
+export type Quote = {
+  planKey: PlanKey; months: number; kind: "purchase" | "renewal" | "upgrade"; price: number; normalPrice: number; fullPrice: number;
+  credit: number; creditDays: number; fromPlan: PlanKey | null; founder: boolean; isFirstPurchase: boolean;
+};
+export type UpgradeOption = { planKey: PlanKey; months: number; fullPrice: number; credit: number; creditDays: number; price: number };
+export const fetchUpgradeOptions = (accessToken: string) => apiFetch<{ options: UpgradeOption[] }>("/api/billing/upgrade-options", { accessToken });
 
 export type RefundStatus = "requested" | "approved" | "rejected" | "details_received" | "processing" | "paid" | "failed";
 export type AccountType = "mtn" | "moov" | "celtiis" | "banque" | "autre";

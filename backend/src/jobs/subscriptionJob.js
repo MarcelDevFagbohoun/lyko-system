@@ -86,8 +86,17 @@ async function runSubscriptionReconciliation() {
       logger.warn('Remboursement : relecture du virement impossible', { id: r.id, message: err.message });
     }
   }
+  // Paiement ouvert depuis plus de 2 heures et toujours pas approuvé : le client est prévenu une seule fois (il peut encore aboutir).
+  const { notifyPaymentFailure } = require('../services/billing');
+  const [stale] = await pool.query(
+    `SELECT id FROM subscription_payments WHERE status = 'pending' AND failure_notified_at IS NULL
+       AND created_at <= DATE_SUB(NOW(), INTERVAL 2 HOUR) AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY id LIMIT 50`,
+  );
+  for (const p of stale) {
+    try { await notifyPaymentFailure(p.id, 'incomplete'); } catch (err) { logger.warn('Abonnement : signalement impossible', { id: p.id, message: err.message }); }
+  }
   // Paiements jamais finalisés au bout de 7 jours : clôturés (le client a abandonné).
-  await pool.query("UPDATE subscription_payments SET status = 'failed' WHERE status = 'pending' AND created_at <= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+  await pool.query("UPDATE subscription_payments SET status = 'failed', failure_reason = COALESCE(failure_reason, 'abandoned') WHERE status = 'pending' AND created_at <= DATE_SUB(NOW(), INTERVAL 7 DAY)");
 }
 
 module.exports = { runSubscriptionJob, runSubscriptionReconciliation };

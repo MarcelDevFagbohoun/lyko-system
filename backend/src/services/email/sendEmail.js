@@ -182,7 +182,7 @@ const FEATURE_LABELS = {
  * client, montant, tableau des lignes et totaux. Le PDF est joint et le code de vérification publique rappelé.
  * `plan` vient du catalogue serveur ; tout texte variable est échappé.
  */
-async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, months, amount, endDate, renewal, receiptNumber, verificationCode, pdf, paidOn, reference, founder, client }) {
+async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, months, amount, endDate, renewal, upgrade, credit = 0, creditDays, fromPlanLabel, receiptNumber, verificationCode, pdf, paidOn, reference, founder, client }) {
   const limit = (v) => (v == null ? 'illimité' : String(v));
   const features = Object.keys(FEATURE_LABELS).filter((k) => plan.features.includes(k));
   const LEGAL = config.legal;
@@ -194,8 +194,9 @@ async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, m
   const issuerLines = [LEGAL.name, LEGAL.address, LEGAL.rccm && `RCCM ${LEGAL.rccm}`, LEGAL.ifu && `IFU ${LEGAL.ifu}`].filter(Boolean);
   const clientLines = [companyName, client?.rccm && `RCCM ${client.rccm}`, client?.ifu && `IFU ${client.ifu}`, to].filter(Boolean);
   const label = `Abonnement ${plan.label}${founder ? ' (tarif fondateur)' : ''}`;
+  const fullPrice = Number(amount) + Number(credit);
   const html = wrapHtml(`
-    <h1 style="margin:8px 0 20px;font-size:28px;line-height:1.2;color:${INK};">${renewal ? 'Reçu de renouvellement' : 'Reçu de paiement'}</h1>
+    <h1 style="margin:8px 0 20px;font-size:28px;line-height:1.2;color:${INK};">${upgrade ? 'Reçu de changement d’offre' : renewal ? 'Reçu de renouvellement' : 'Reçu de paiement'}</h1>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
       ${receiptNumber ? kv('N° de reçu', `<span style="font-family:'Courier New',monospace;">${escapeHtml(receiptNumber)}</span>`) : ''}
       ${paidOn ? kv('Date de paiement', escapeHtml(paidOn)) : ''}
@@ -213,10 +214,17 @@ async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, m
       <tr>
         <td style="padding:12px 0;font-size:14px;color:${INK};">${escapeHtml(label)}<br><span style="font-size:12px;color:${MUTED};">${Number(months)} mois</span></td>
         <td align="right" style="padding:12px 0;font-size:14px;">1</td>
-        <td align="right" style="padding:12px 0;font-size:14px;">${escapeHtml(formatAmount(amount))}</td>
-        <td align="right" style="padding:12px 0;font-size:14px;">${escapeHtml(formatAmount(amount))}</td>
+        <td align="right" style="padding:12px 0;font-size:14px;">${escapeHtml(formatAmount(fullPrice))}</td>
+        <td align="right" style="padding:12px 0;font-size:14px;">${escapeHtml(formatAmount(fullPrice))}</td>
       </tr>
-      ${total('Sous-total', escapeHtml(formatAmount(amount)))}
+      ${credit > 0 ? `<tr>
+        <td style="padding:0 0 12px;font-size:14px;color:${INK};">Crédit${fromPlanLabel ? ` offre ${escapeHtml(fromPlanLabel)}` : ''}<br><span style="font-size:12px;color:${MUTED};">${creditDays ? `${Number(creditDays)} jours restants de votre abonnement précédent` : 'Jours restants de votre abonnement précédent'}</span></td>
+        <td align="right" style="padding:0 0 12px;font-size:14px;">1</td>
+        <td align="right" style="padding:0 0 12px;font-size:14px;">-${escapeHtml(formatAmount(credit))}</td>
+        <td align="right" style="padding:0 0 12px;font-size:14px;">-${escapeHtml(formatAmount(credit))}</td>
+      </tr>` : ''}
+      ${total('Sous-total', escapeHtml(formatAmount(fullPrice)))}
+      ${credit > 0 ? total('Crédit déduit', `-${escapeHtml(formatAmount(credit))}`) : ''}
       ${total('Total', escapeHtml(formatAmount(amount)))}
       ${total('Montant payé', escapeHtml(formatAmount(amount)), true)}
     </table>
@@ -235,7 +243,7 @@ async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, m
   `, { preheader: `${formatAmount(amount)} payés. Abonnement ${plan.label} valable jusqu'au ${endDate}.` });
   return sendViaResend({
     to,
-    subject: renewal ? 'Votre abonnement est renouvelé, voici votre reçu' : 'Votre abonnement est actif, voici votre reçu',
+    subject: upgrade ? `Vous êtes passé à l'offre ${plan.label}, voici votre reçu` : renewal ? 'Votre abonnement est renouvelé, voici votre reçu' : 'Votre abonnement est actif, voici votre reçu',
     html,
     attachments: pdf ? [{ filename: `${receiptNumber || 'recu-abonnement'}.pdf`, content: pdf }] : undefined,
   });

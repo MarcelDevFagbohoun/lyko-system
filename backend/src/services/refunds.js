@@ -38,29 +38,8 @@ async function logEvent(conn, tenantId, type, actor, details) {
 
 const OPEN_STATUSES = ['requested', 'approved', 'details_received', 'processing', 'failed'];
 
-/**
- * Valeur non utilisée des paiements encore couverts : pour chaque paiement payé dont la période se termine dans le
- * futur, montant × (jours restants depuis max(aujourd'hui, début de sa période) / jours de sa période). Gère les
- * renouvellements anticipés (plusieurs périodes mises bout à bout).
- */
-async function computeProrata(conn, tenantId) {
-  const [rows] = await conn.query(
-    `SELECT amount, months,
-            DATEDIFF(period_end, GREATEST(NOW(), DATE_SUB(period_end, INTERVAL months MONTH))) AS days_left,
-            DATEDIFF(period_end, DATE_SUB(period_end, INTERVAL months MONTH)) AS days_total
-     FROM subscription_payments
-     WHERE tenant_id = :t AND status = 'paid' AND period_end IS NOT NULL AND period_end > NOW()`,
-    { t: tenantId },
-  );
-  let base = 0; let original = 0; let days = 0;
-  for (const r of rows) {
-    const left = Math.max(0, Number(r.days_left)); const total = Math.max(1, Number(r.days_total));
-    base += Math.floor((Number(r.amount) * left) / total);
-    original += Number(r.amount);
-    days += left;
-  }
-  return { base, original, days };
-}
+const { computeUnusedValue } = require('./subscriptionCredit');
+const computeProrata = computeUnusedValue;
 
 async function requestRefund({ tenantId, userId, reason }) {
   const text = String(reason ?? '').trim();
@@ -77,13 +56,13 @@ async function requestRefund({ tenantId, userId, reason }) {
     if (!s || s.status !== 'active' || s.plan_key === 'interne' || Number(s.running) !== 1) throw new ApiError(400, "Aucun abonnement actif à annuler.");
     const [[open]] = await conn.query(`SELECT id FROM subscription_refunds WHERE tenant_id = :t AND status IN (${OPEN_STATUSES.map((x) => `'${x}'`).join(',')}) LIMIT 1`, { t: tenantId });
     if (open) throw new ApiError(409, "Une demande d'annulation est déjà en cours d'examen.");
-    const [[last]] = await conn.query("SELECT id FROM subscription_payments WHERE tenant_id = :t AND status = 'paid' ORDER BY id DESC LIMIT 1", { t: tenantId });
+    const [[last]] = await conn.query("SELECT id FROM subscription_payments WHERE tenant_id = :t AND status = 'paid' AND consumed_at IS NULL ORDER BY id DESC LIMIT 1", { t: tenantId });
     if (!last) throw new ApiError(400, 'Aucun paiement remboursable.');
 
     const pr = await computeProrata(conn, tenantId);
     let base = pr.base; let original = pr.original; let days = pr.days; let paymentId = last.id;
     if (Number(s.guarantee) === 1) {
-      const [[first]] = await conn.query("SELECT id, amount FROM subscription_payments WHERE tenant_id = :t AND status = 'paid' AND is_first_purchase = 1 ORDER BY id LIMIT 1", { t: tenantId });
+      const [[first]] = await conn.query("SELECT id, amount FROM subscription_payments WHERE tenant_id = :t AND status = 'paid' AND is_first_purchase = 1 AND consumed_at IS NULL ORDER BY id LIMIT 1", { t: tenantId });
       if (first) { base = Number(first.amount); original = Number(first.amount); paymentId = first.id; }
     }
     if (base <= 0) throw new ApiError(400, "Il ne reste aucun jour remboursable sur votre abonnement.");

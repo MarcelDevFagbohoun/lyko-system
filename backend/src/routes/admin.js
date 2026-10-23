@@ -138,6 +138,19 @@ router.get('/tenants', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get('/payment-issues', async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT p.id, p.reference, p.status, p.failure_reason, p.plan_key, p.months, p.kind, p.amount, p.credit_applied, p.created_at, t.company_name
+       FROM subscription_payments p JOIN tenants t ON t.id = p.tenant_id
+       WHERE (p.status = 'anomaly' OR (p.status = 'failed' AND p.failure_reason IS NOT NULL AND p.failure_reason <> 'gateway_unavailable') OR (p.status = 'pending' AND p.created_at <= DATE_SUB(NOW(), INTERVAL 2 HOUR)))
+         AND p.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+       ORDER BY (p.status = 'anomaly') DESC, p.id DESC LIMIT 200`,
+    );
+    res.json({ issues: rows.map((r) => ({ id: r.id, reference: r.reference, status: r.status, reason: r.failure_reason, planKey: r.plan_key, months: r.months, kind: r.kind, amount: r.amount, creditApplied: r.credit_applied, createdAt: r.created_at, companyName: r.company_name })) });
+  } catch (err) { next(err); }
+});
+
 router.get('/refunds', async (req, res, next) => {
   try { res.json({ refunds: await refunds.listRefunds({ status: typeof req.query.status === 'string' ? req.query.status : null, full: true }) }); } catch (err) { next(err); }
 });

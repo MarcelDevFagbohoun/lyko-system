@@ -2,13 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Check, FileDown, Minus } from "lucide-react";
+import { AlertTriangle, Check, FileDown, Minus } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
-  fetchCatalog, fetchSubscription, fetchQuote, startCheckout, listSubscriptionPayments, invoicePdfPath,
+  fetchCatalog, fetchSubscription, fetchQuote, fetchUpgradeOptions, startCheckout, listSubscriptionPayments, invoicePdfPath,
   listMyRefunds, offerLabel, limitLabel, FEATURE_LABELS, PENDING_OFFER_KEY,
-  type Catalog, type PlanKey, type Quote, type Refund, type Subscription, type SubscriptionPayment,
+  type Catalog, type PlanKey, type Quote, type Refund, type Subscription, type SubscriptionPayment, type UpgradeOption,
 } from "@/lib/api/billing";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { PlanCards } from "@/components/billing/plan-cards";
@@ -35,12 +35,14 @@ function AbonnementContent() {
   const [payments, setPayments] = React.useState<SubscriptionPayment[]>([]);
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [quote, setQuote] = React.useState<Quote | null>(null);
+  const [upgrades, setUpgrades] = React.useState<UpgradeOption[]>([]);
   const [busy, setBusy] = React.useState<string | null>(null);
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
     Promise.all([fetchCatalog(), fetchSubscription(accessToken), listSubscriptionPayments(accessToken), listMyRefunds(accessToken)])
-      .then(([c, s, p, r]) => { setCatalog(c); setSub(s); setPayments(p.payments); setRefunds(r.refunds); })
+      .then(([c, s, p, r]) => { setCatalog(c); setSub(s); setPayments(p.payments); setRefunds(r.refunds); return s.active ? fetchUpgradeOptions(accessToken) : { options: [] }; })
+      .then((u) => setUpgrades(u.options))
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Impossible de charger l'abonnement."));
   }, [accessToken, toast]);
   React.useEffect(() => load(), [load]);
@@ -170,6 +172,52 @@ function AbonnementContent() {
           </Card>
         )}
 
+        {sub?.lastFailure && (
+          <div role="alert" className="flex flex-col gap-2 rounded-lg border border-danger-border bg-danger-bg p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-danger-fg" />
+              <div>
+                <p className="font-label-md text-danger-fg">
+                  {sub.lastFailure.anomaly ? "Un paiement est en cours de vérification par notre équipe" : sub.lastFailure.reason === "incomplete" ? "Votre dernier paiement n'a pas été terminé" : "Votre dernier paiement n'a pas abouti"}
+                </p>
+                <p className="text-body-sm text-ink-soft">
+                  {formatFcfa(sub.lastFailure.amount)} · {catalog?.plans.find((p) => p.key === sub.lastFailure!.planKey)?.label} · {offerLabel(sub.lastFailure.months)}.
+                  {sub.lastFailure.anomaly ? " Nous vous répondons rapidement." : " Rien n'a été activé. Si votre compte a été débité, écrivez-nous avec la référence :"}
+                  {!sub.lastFailure.anomaly && <span className="ml-1 break-all font-mono text-body-xs">{sub.lastFailure.reference}</span>}
+                </p>
+              </div>
+            </div>
+            {!sub.lastFailure.anomaly && (
+              <Button variant="secondary" className="shrink-0" disabled={!!busy} onClick={() => choose(sub.lastFailure!.planKey, sub.lastFailure!.months)}>
+                Réessayer
+              </Button>
+            )}
+          </div>
+        )}
+
+        {currentPlan && upgrades.length > 0 && !reviewing && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Passer à une offre supérieure</CardTitle>
+              <CardDescription>Les jours qu&apos;il vous reste sur votre abonnement sont déduits du prix. La nouvelle offre démarre tout de suite.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-2">
+              {upgrades.map((o) => (
+                <div key={`${o.planKey}:${o.months}`} className="flex flex-col gap-2 rounded-lg border border-border p-4">
+                  <p className="font-label-md text-ink">{catalog?.plans.find((p) => p.key === o.planKey)?.label}, {offerLabel(o.months)}</p>
+                  <p className="text-body-sm text-ink-muted">
+                    Prix {formatFcfa(o.fullPrice)} − crédit {formatFcfa(o.credit)} ({o.creditDays} jour{o.creditDays > 1 ? "s" : ""} restants)
+                  </p>
+                  <p className="font-display text-headline-md text-ink">{formatFcfa(o.price)}</p>
+                  <Button variant="primary" disabled={!!busy} onClick={() => choose(o.planKey, o.months)}>
+                    {busy === `${o.planKey}:${o.months}` ? "Un instant…" : "Passer à cette offre"}
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
         {quote && (
           <Card className="border-primary">
             <CardHeader>
@@ -181,8 +229,15 @@ function AbonnementContent() {
             <CardContent className="flex flex-col gap-3">
               <p className="font-display text-headline-md text-ink">
                 {formatFcfa(quote.price)}
-                {quote.founder && <span className="ml-2 text-body-sm text-ink-faint line-through">{formatFcfa(quote.normalPrice)}</span>}
+                {quote.kind !== "upgrade" && quote.founder && <span className="ml-2 text-body-sm text-ink-faint line-through">{formatFcfa(quote.normalPrice)}</span>}
               </p>
+              {quote.kind === "upgrade" && (
+                <div className="rounded-lg bg-surface-muted p-3 text-body-sm text-ink-soft">
+                  <p>Prix de l&apos;offre : {formatFcfa(quote.fullPrice)}</p>
+                  <p>Crédit de votre abonnement actuel ({quote.creditDays} jour{quote.creditDays > 1 ? "s" : ""} restants) : −{formatFcfa(quote.credit)}</p>
+                  <p className="font-label-md text-ink">À payer : {formatFcfa(quote.price)}</p>
+                </div>
+              )}
               {quote.founder && <p className="text-body-sm text-success-fg">Tarif fondateur appliqué sur votre premier achat.</p>}
               {quote.isFirstPurchase && (
                 <p className="text-body-sm text-ink-muted">Garantie : remboursement possible pendant {catalog?.refundWindowDays ?? 15} jours, frais du prestataire de paiement déduits.</p>
@@ -208,7 +263,7 @@ function AbonnementContent() {
                       <span className="font-label-md text-ink">{formatFcfa(p.amount)}</span>
                       <span className="text-body-sm text-ink-muted">{p.paidAt ? formatDateLabel(p.paidAt.slice(0, 10)) : "-"}</span>
                     </div>
-                    <p className="text-body-sm text-ink-soft">{p.planLabel} · {offerLabel(p.months)}{p.status === "refunded" ? " (remboursé)" : ""} · {p.invoiceNumber ?? "-"}</p>
+                    <p className="text-body-sm text-ink-soft">{p.planLabel} · {offerLabel(p.months)}{p.kind === "upgrade" ? " (changement d'offre)" : ""}{p.status === "refunded" ? " (remboursé)" : ""} · {p.invoiceNumber ?? "-"}</p>
                     <Button variant="secondary" size="sm" className="self-start" onClick={() => accessToken && openAuthenticatedPdf(invoicePdfPath(p.id), accessToken)}>
                       <FileDown size={14} /> Reçu PDF
                     </Button>
@@ -230,7 +285,7 @@ function AbonnementContent() {
                   {payments.map((p) => (
                     <TableRow key={p.id}>
                       <TableCell>{p.invoiceNumber ?? "-"}</TableCell>
-                      <TableCell>{p.planLabel} · {offerLabel(p.months)}{p.status === "refunded" ? " (remboursé)" : ""}</TableCell>
+                      <TableCell>{p.planLabel} · {offerLabel(p.months)}{p.kind === "upgrade" ? " (changement d'offre)" : ""}{p.status === "refunded" ? " (remboursé)" : ""}</TableCell>
                       <TableCell>{p.paidAt ? formatDateLabel(p.paidAt.slice(0, 10)) : "-"}</TableCell>
                       <TableCell>{formatFcfa(p.amount)}</TableCell>
                       <TableCell>

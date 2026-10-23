@@ -120,10 +120,13 @@ test('paiement approuvé : abonnement actif 4 mois, garantie 15 jours, facture ;
   assert.equal(d.refundOpen, true);
 });
 
-test('abonnement en cours : changer d’offre refusé (409), renouveler la même offre accepté', async () => {
-  const other = await buy('entreprise', 4);
-  assert.equal(other.status, 409);
+test('abonnement en cours : une offre inférieure est refusée (409), une offre supérieure est une montée en gamme', async () => {
   assert.equal((await buy('demarrage', 1)).status, 409);
+  const up = await buy('entreprise', 4);
+  assert.equal(up.status, 201);
+  assert.equal(up.body.kind, 'upgrade');
+  assert.ok(up.body.amount < 180000);
+  await pool.query("UPDATE subscription_payments SET status = 'failed' WHERE reference = :r", { r: up.body.reference });
 });
 
 test('renouvellement : prix normal (plus de tarif fondateur), prolonge depuis l’échéance', async () => {

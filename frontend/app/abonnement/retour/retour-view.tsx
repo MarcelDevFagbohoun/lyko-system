@@ -59,7 +59,8 @@ export function RetourView() {
             <>
               <AlertTriangle size={32} className="text-danger-fg" />
               <p className="font-label-md text-danger-fg">Paiement non abouti</p>
-              <p className="text-body-sm text-ink-muted">Aucun abonnement n&apos;a été activé et rien n&apos;a été débité. Vous pouvez réessayer.</p>
+              <p className="text-body-sm text-ink-muted">Aucun abonnement n&apos;a été activé. Vous pouvez réessayer. Si votre compte a été débité, écrivez-nous en indiquant la référence ci-dessous : nous vérifions et nous régularisons.</p>
+              {/^[a-f0-9]{32}$/.test(ref) && <p className="break-all rounded bg-surface-muted px-2 py-1 font-mono text-body-xs text-ink-soft">{ref}</p>}
             </>
           )}
           {state !== "loading" && state !== "pending" && (

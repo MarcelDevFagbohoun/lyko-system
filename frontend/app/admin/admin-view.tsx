@@ -4,11 +4,12 @@ import * as React from "react";
 import QRCode from "qrcode";
 import { ApiError } from "@/lib/api/client";
 import {
-  adminLogin, adminMe, adminTenants, adminRefunds, adminApprove, adminReject, adminPay, adminMarkPaid, adminRefresh, adminGrant, adminSetInternal,
+  adminLogin, adminMe, adminTenants, adminRefunds, adminPaymentIssues, adminApprove, adminReject, adminPay, adminMarkPaid, adminRefresh, adminGrant, adminSetInternal,
   admin2faSetup, admin2faEnable, admin2faDisable, adminAudit,
   getAdminToken, setAdminToken, type AdminTenant, type AuditEntry,
 } from "@/lib/api/admin";
 import { ACCOUNT_TYPE_LABELS, type PlanKey, type Refund } from "@/lib/api/billing";
+import type { PaymentIssue } from "@/lib/api/admin";
 import { offerLabel } from "@/lib/api/billing";
 import { CatalogEditor } from "./catalog-editor";
 import { Badge } from "@/components/ui/badge";
@@ -96,8 +97,9 @@ const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "succes
 };
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
-  const [tab, setTab] = React.useState<"refunds" | "tenants" | "catalog" | "security" | "audit">("refunds");
+  const [tab, setTab] = React.useState<"refunds" | "payments" | "tenants" | "catalog" | "security" | "audit">("refunds");
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
+  const [issues, setIssues] = React.useState<PaymentIssue[]>([]);
   const [refs, setRefs] = React.useState<Record<number, string>>({});
   const [tenants, setTenants] = React.useState<AdminTenant[]>([]);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -108,8 +110,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [dialog, setDialog] = React.useState<{ kind: "grant" | "internal"; tenant: AdminTenant } | null>(null);
 
   const load = React.useCallback(() => {
-    Promise.all([adminRefunds(token), adminTenants(token)])
-      .then(([r, t]) => { setRefunds(r.refunds); setTenants(t.tenants); })
+    Promise.all([adminRefunds(token), adminTenants(token), adminPaymentIssues(token)])
+      .then(([r, t, i]) => { setRefunds(r.refunds); setTenants(t.tenants); setIssues(i.issues); })
       .catch((e) => { if (e instanceof ApiError && e.status === 401) onLogout(); else setMessage(e instanceof ApiError ? e.message : "Chargement impossible."); });
   }, [token, onLogout]);
   React.useEffect(() => load(), [load]);
@@ -125,8 +127,11 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
       <div className="content-shell flex flex-col gap-6 py-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="font-display text-headline-lg text-ink">Back-office</h1>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant={tab === "refunds" ? "primary" : "secondary"} onClick={() => setTab("refunds")}>Remboursements</Button>
+            <Button variant={tab === "payments" ? "primary" : "secondary"} onClick={() => setTab("payments")}>
+              Paiements à surveiller{issues.some((i) => i.status === "anomaly") ? " ⚠" : issues.length ? ` (${issues.length})` : ""}
+            </Button>
             <Button variant={tab === "tenants" ? "primary" : "secondary"} onClick={() => setTab("tenants")}>Entreprises</Button>
             <Button variant={tab === "catalog" ? "primary" : "secondary"} onClick={() => setTab("catalog")}>Offres et prix</Button>
             <Button variant={tab === "audit" ? "primary" : "secondary"} onClick={() => setTab("audit")}>Journal</Button>
@@ -197,6 +202,27 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                 </Card>
               );
             })}
+          </div>
+        )}
+
+        {tab === "payments" && (
+          <div className="flex flex-col gap-3">
+            <p className="text-body-sm text-ink-muted">Paiements d&apos;abonnement des 30 derniers jours qui n&apos;ont pas abouti. Une anomalie signifie que de l&apos;argent a été encaissé sans activer l&apos;abonnement : à vérifier en priorité dans FedaPay.</p>
+            {issues.length === 0 && <p className="text-body-md text-ink-muted">Rien à signaler.</p>}
+            {issues.map((i) => (
+              <Card key={i.id}>
+                <CardContent className="flex flex-col gap-1 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="font-label-md text-ink">{i.companyName} · {i.planKey} · {i.months} mois{i.kind === "upgrade" ? " (changement d'offre)" : ""}</p>
+                    <p className="text-body-sm text-ink-muted">{formatDateLabel(i.createdAt.slice(0, 10))} · {formatFcfa(i.amount)}{i.creditApplied ? ` (crédit ${formatFcfa(i.creditApplied)})` : ""}</p>
+                    <p className="break-all font-mono text-body-xs text-ink-faint">{i.reference}</p>
+                  </div>
+                  <Badge variant={i.status === "anomaly" ? "danger" : i.status === "pending" ? "warning" : "neutral"}>
+                    {i.status === "anomaly" ? "Anomalie : montant différent" : i.status === "pending" ? "Non terminé" : i.reason === "declined" ? "Refusé" : i.reason === "canceled" ? "Annulé" : i.reason === "abandoned" ? "Abandonné" : "Échoué"}
+                  </Badge>
+                </CardContent>
+              </Card>
+            ))}
           </div>
         )}
 

@@ -68,6 +68,10 @@ router.get('/refund-requests', async (req, res, next) => {
   try { res.json({ refunds: await refunds.listRefunds({ tenantId: req.user.tenantId }) }); } catch (err) { next(err); }
 });
 
+router.get('/upgrade-options', async (req, res, next) => {
+  try { res.json(await billing.upgradeOptions(req.user.tenantId)); } catch (err) { next(err); }
+});
+
 router.get('/subscription', async (req, res, next) => {
   try { res.json(await billing.describe(req.user.tenantId)); } catch (err) { next(err); }
 });
@@ -92,12 +96,12 @@ router.post('/checkout', checkoutLimiter, async (req, res, next) => {
 router.get('/payments', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, plan_key, months, amount, founder_price, status, invoice_number, paid_at, period_end FROM subscription_payments WHERE tenant_id = :t AND status IN ('paid','refunded') ORDER BY id DESC LIMIT 100",
+      "SELECT id, plan_key, months, kind, amount, credit_applied, credit_days, upgraded_from_plan, founder_price, status, invoice_number, paid_at, period_end FROM subscription_payments WHERE tenant_id = :t AND status IN ('paid','refunded') ORDER BY id DESC LIMIT 100",
       { t: req.user.tenantId },
     );
     const labels = {};
     for (const k of new Set(rows.map((r) => r.plan_key))) labels[k] = (await getPlanAsync(k)).label;
-    res.json({ payments: rows.map((r) => ({ id: r.id, planKey: r.plan_key, planLabel: labels[r.plan_key], months: r.months, amount: r.amount, founderPrice: !!r.founder_price, status: r.status, invoiceNumber: r.invoice_number, paidAt: r.paid_at, periodEnd: r.period_end })) });
+    res.json({ payments: rows.map((r) => ({ id: r.id, planKey: r.plan_key, planLabel: labels[r.plan_key], months: r.months, kind: r.kind, amount: r.amount, creditApplied: r.credit_applied, upgradedFromPlan: r.upgraded_from_plan, founderPrice: !!r.founder_price, status: r.status, invoiceNumber: r.invoice_number, paidAt: r.paid_at, periodEnd: r.period_end })) });
   } catch (err) { next(err); }
 });
 
@@ -109,7 +113,7 @@ router.get('/payments/:id/invoice.pdf', async (req, res, next) => {
     if (!p) throw new ApiError(404, 'Facture introuvable');
     const [[client]] = await pool.query('SELECT company_name, rccm, ifu FROM tenants WHERE id = :t', { t: req.user.tenantId });
     const issuance = await getOrCreateIssuance(req.user.tenantId, 'recu_abonnement', p.id); // pas de limite de téléchargements
-    streamSubscriptionInvoicePdf(res, { client, payment: p, planLabel: (await getPlanAsync(p.plan_key)).label, verificationCode: issuance.verification_code });
+    streamSubscriptionInvoicePdf(res, { client, payment: p, planLabel: (await getPlanAsync(p.plan_key)).label, fromPlanLabel: p.upgraded_from_plan ? (await getPlanAsync(p.upgraded_from_plan)).label : null, verificationCode: issuance.verification_code });
   } catch (err) { next(err); }
 });
 

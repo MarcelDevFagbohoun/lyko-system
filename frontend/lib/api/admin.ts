@@ -24,6 +24,8 @@ export const admin2faDisable = (t: string, password: string, code: string) =>
 export type AuditEntry = { id: number; adminEmail: string | null; action: string; target: string | null; details: string | null; ip: string | null; createdAt: string };
 export const adminAudit = (t: string) => apiFetch<{ entries: AuditEntry[] }>("/api/admin/audit", { accessToken: t });
 export const adminTenants = (t: string) => apiFetch<{ tenants: AdminTenant[] }>("/api/admin/tenants", { accessToken: t });
+export type PaymentIssue = { id: number; reference: string; status: "pending" | "failed" | "anomaly"; reason: string | null; planKey: string; months: number; kind: string; amount: number; creditApplied: number; createdAt: string; companyName: string };
+export const adminPaymentIssues = (t: string) => apiFetch<{ issues: PaymentIssue[] }>("/api/admin/payment-issues", { accessToken: t });
 export const adminRefunds = (t: string, status?: string) =>
   apiFetch<{ refunds: Refund[] }>(`/api/admin/refunds${status ? `?status=${status}` : ""}`, { accessToken: t });
 export const adminApprove = (t: string, id: number, feeAmount?: number, note?: string) =>
