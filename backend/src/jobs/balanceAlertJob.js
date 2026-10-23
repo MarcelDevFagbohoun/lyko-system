@@ -1,5 +1,7 @@
 'use strict';
 
+const { listActiveTenantIds } = require('../services/entitlements');
+
 /**
  * Alerte de balance déséquilibrée (section 6) — filet de sécurité : chaque
  * écriture est déjà vérifiée équilibrée à l'insertion (`genererEcriture`,
@@ -19,7 +21,7 @@ const logger = require('../utils/logger');
 // `tenantIds` : uniquement pour les tests (cibler un cabinet jetable) — le planificateur l'appelle
 // sans argument : tous les cabinets.
 async function runBalanceAlertJob({ tenantIds = null } = {}) {
-  const tenants = tenantIds ? tenantIds.map((id) => ({ id })) : (await pool.query('SELECT id FROM tenants'))[0];
+  const tenants = tenantIds ? tenantIds.map((id) => ({ id })) : (await listActiveTenantIds()).map((id) => ({ id }));
 
   for (const { id: tenantId } of tenants) {
     try {

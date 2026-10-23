@@ -1,5 +1,7 @@
 'use strict';
 
+const { listActiveTenantIds } = require('../services/entitlements');
+
 /**
  * Génération des loyers attendus chaque mois (section 6 du cahier des
  * charges, "Automatisations") — INFORMATIF uniquement : un résumé envoyé au
@@ -18,7 +20,7 @@ const { notifyDg } = require('../services/gl/glNotificationService');
 const logger = require('../utils/logger');
 
 async function runMonthlyRentDigest() {
-  const [tenants] = await pool.query('SELECT id FROM tenants');
+  const tenants = (await listActiveTenantIds()).map((id) => ({ id })); // entreprises à l'abonnement actif seulement
   const period = new Date().toISOString().slice(0, 7);
 
   for (const { id: tenantId } of tenants) {

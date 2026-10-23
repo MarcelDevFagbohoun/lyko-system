@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const config = require('../config/env');
+const { verifyAccessToken } = require('../utils/jwt');
 
 /**
  * Regroupe les protections transversales appliquées à toutes les routes.
@@ -21,9 +22,24 @@ const corsMiddleware = cors({
 });
 
 // Limiteur global : garde-fou contre le brute-force / scraping.
+// Utilisateur connecté => compté PAR ENTREPRISE (plafond large : plusieurs employés derrière une même connexion
+// internet ne se bloquent pas entre eux) ; visiteur anonyme => compté par adresse IP (plafond serré).
+function authedTenant(req) {
+  const [scheme, token] = (req.headers.authorization || '').split(' ');
+  if (scheme !== 'Bearer' || !token) return null;
+  try {
+    return verifyAccessToken(token).tenantId || null;
+  } catch (_e) {
+    return null;
+  }
+}
 const globalRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: config.isProd ? 300 : 1000,
+  keyGenerator: (req) => {
+    const t = authedTenant(req);
+    return t ? `tenant:${t}` : `ip:${req.ip}`;
+  },
+  max: (req) => (authedTenant(req) ? (config.isProd ? 3000 : 10000) : config.isProd ? 300 : 1000),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Trop de requêtes, réessayez plus tard.' },

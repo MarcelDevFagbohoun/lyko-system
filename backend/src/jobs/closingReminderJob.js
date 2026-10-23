@@ -1,5 +1,7 @@
 'use strict';
 
+const { listActiveTenantIds } = require('../services/entitlements');
+
 /**
  * Rappel de clôture mensuelle (section 6) — réutilise TEL QUEL le calcul de
  * clôturabilité déjà existant (`getPeriodClosability`, `routes/accounting.js
@@ -18,7 +20,7 @@ const { notifyDg } = require('../services/gl/glNotificationService');
 const logger = require('../utils/logger');
 
 async function runClosingReminderJob() {
-  const [tenants] = await pool.query('SELECT id FROM tenants');
+  const tenants = (await listActiveTenantIds()).map((id) => ({ id })); // entreprises à l'abonnement actif seulement
   const currentMonth = new Date().toISOString().slice(0, 7);
 
   for (const { id: tenantId } of tenants) {

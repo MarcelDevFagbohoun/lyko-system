@@ -183,3 +183,14 @@ test('coupure serveur : entreprise expirée => 402 sur les routes de base, /auth
   const ok = await call('GET', '/api/renters');
   assert.equal(ok.status, 200);
 });
+
+test('vitrine publique et tâches planifiées : ignorées pour une entreprise expirée', async () => {
+  const { listActiveTenantIds } = require('../src/services/entitlements');
+  await setSub('pro');
+  assert.ok((await listActiveTenantIds()).includes(fx.tenantId));
+  assert.equal((await fetch(`${base}/api/marketplace/public/${fx.tenantId}`)).status, 200);
+  await setSub('pro', 'active', 'DATE_SUB(NOW(), INTERVAL 1 DAY)');
+  assert.ok(!(await listActiveTenantIds()).includes(fx.tenantId));
+  assert.equal((await fetch(`${base}/api/marketplace/public/${fx.tenantId}`)).status, 404);
+  await setSub('pro');
+});

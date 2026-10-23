@@ -1,5 +1,7 @@
 'use strict';
 
+const { listActiveTenantIds } = require('../services/entitlements');
+
 /**
  * Liste quotidienne des relances (section 6, "clients à relancer avant le 5
  * du mois") — résumé quotidien envoyé au DG, réutilise TEL QUEL le calcul
@@ -19,7 +21,7 @@ const { notifyDg } = require('../services/gl/glNotificationService');
 const logger = require('../utils/logger');
 
 async function runDailyArrearsDigest() {
-  const [tenants] = await pool.query('SELECT id FROM tenants');
+  const tenants = (await listActiveTenantIds()).map((id) => ({ id })); // entreprises à l'abonnement actif seulement
   const today = new Date().toISOString().slice(0, 10);
 
   for (const { id: tenantId } of tenants) {

@@ -1,5 +1,7 @@
 'use strict';
 
+const { listActiveTenantIds } = require('../services/entitlements');
+
 /**
  * Alertes quotidiennes du suivi des charges SONEB/SBEE (étape 31) — réutilise
  * TEL QUEL le calcul des alertes (`listUtilityAlerts`) : zéro nouvelle règle
@@ -34,7 +36,7 @@ function buildDigestMessage(alerts) {
 // `tenantIds` / `today` : uniquement pour les tests (cibler un cabinet jetable et
 // fixer la date) — le planificateur l'appelle sans argument : tous les cabinets, aujourd'hui.
 async function runUtilityAlertsJob({ tenantIds = null, today = new Date().toISOString().slice(0, 10) } = {}) {
-  const tenants = tenantIds ? tenantIds.map((id) => ({ id })) : (await pool.query('SELECT id FROM tenants'))[0];
+  const tenants = tenantIds ? tenantIds.map((id) => ({ id })) : (await listActiveTenantIds()).map((id) => ({ id }));
 
   for (const { id: tenantId } of tenants) {
     try {

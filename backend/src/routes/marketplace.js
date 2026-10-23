@@ -26,6 +26,7 @@ const { optionalText } = require('../validators/renters');
 const { updateRequestStatusSchema } = require('../validators/marketplaceAccounts');
 const { toActor } = require('../utils/actor');
 const logger = require('../utils/logger');
+const { getEntitlements } = require('../services/entitlements');
 
 const router = Router();
 
@@ -89,6 +90,8 @@ router.get('/public/:tenantId', async (req, res, next) => {
       { tenantId },
     );
     if (!tenantRows[0]) throw new ApiError(404, 'Introuvable');
+    // Abonnement expiré/remboursé : la vitrine publique n'est plus servie.
+    if (!(await getEntitlements(tenantId)).active) throw new ApiError(404, 'Introuvable');
     const [rows] = await pool.query(
       `SELECT ${LISTING_SELECT} ${LISTING_JOIN}
        WHERE ml.tenant_id = :tenantId AND u.status = 'libre'

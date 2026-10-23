@@ -111,6 +111,19 @@ function enforceActiveSubscription(req, _res, next) {
   }, next);
 }
 
+/** Ids des entreprises dont l'abonnement est actif (toutes si les abonnements ne sont pas appliqués). */
+async function listActiveTenantIds() {
+  if (!config.features.subscriptionsEnforced) {
+    const [rows] = await pool.query('SELECT id FROM tenants');
+    return rows.map((r) => r.id);
+  }
+  const [rows] = await pool.query(
+    `SELECT s.tenant_id AS id FROM tenant_subscriptions s
+     WHERE s.status = 'active' AND (s.plan_key = 'interne' OR s.current_period_end > NOW())`,
+  );
+  return rows.map((r) => r.id);
+}
+
 /** Ligne d'abonnement initiale d'une nouvelle entreprise (dans la transaction d'inscription). */
 async function createInitialSubscription(conn, tenantId) {
   if (config.features.subscriptionsEnforced) {
@@ -120,4 +133,4 @@ async function createInitialSubscription(conn, tenantId) {
   }
 }
 
-module.exports = { enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };
+module.exports = { listActiveTenantIds, enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };

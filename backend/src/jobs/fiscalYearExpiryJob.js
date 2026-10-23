@@ -1,5 +1,7 @@
 'use strict';
 
+const { listActiveTenantIds } = require('../services/entitlements');
+
 /**
  * Rappel de fin d'exercice comptable (audit comptabilité avancée, point 9, 16/10/2026) — filet de
  * sécurité : si personne n'ouvre le prochain exercice à temps, TOUTE opération financière du cabinet
@@ -31,7 +33,7 @@ function addDays(dateStr, days) {
 // `tenantIds` / `today` : uniquement pour les tests (cibler un cabinet jetable et fixer la date) — le
 // planificateur l'appelle sans argument : tous les cabinets, aujourd'hui.
 async function runFiscalYearExpiryJob({ tenantIds = null, today = new Date().toISOString().slice(0, 10) } = {}) {
-  const tenants = tenantIds ? tenantIds.map((id) => ({ id })) : (await pool.query('SELECT id FROM tenants'))[0];
+  const tenants = tenantIds ? tenantIds.map((id) => ({ id })) : (await listActiveTenantIds()).map((id) => ({ id }));
 
   for (const { id: tenantId } of tenants) {
     try {

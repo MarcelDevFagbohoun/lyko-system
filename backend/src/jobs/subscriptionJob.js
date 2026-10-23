@@ -67,6 +67,16 @@ async function runSubscriptionReconciliation() {
       logger.warn('Abonnement : réconciliation impossible', { id: p.id, message: err.message });
     }
   }
+  // Virements de remboursement en cours : l'état est relu chez FedaPay sans attendre un clic de l'admin.
+  const refunds = require('../services/refunds');
+  const [pending] = await pool.query("SELECT id FROM subscription_refunds WHERE status = 'processing' AND payout_id IS NOT NULL ORDER BY id LIMIT 50");
+  for (const r of pending) {
+    try {
+      await refunds.refresh({ id: r.id });
+    } catch (err) {
+      logger.warn('Remboursement : relecture du virement impossible', { id: r.id, message: err.message });
+    }
+  }
   // Paiements jamais finalisés au bout de 7 jours : clôturés (le client a abandonné).
   await pool.query("UPDATE subscription_payments SET status = 'failed' WHERE status = 'pending' AND created_at <= DATE_SUB(NOW(), INTERVAL 7 DAY)");
 }
