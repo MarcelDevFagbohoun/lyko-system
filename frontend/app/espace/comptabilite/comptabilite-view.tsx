@@ -492,7 +492,7 @@ function ComptabiliteContent() {
           <CardHeader>
             <CardTitle>Journal des dépenses</CardTitle>
             <CardDescription>
-              Dépenses de fonctionnement de l&apos;entreprise pour la période sélectionnée. Les travaux facturés à un Bien
+              Dépenses de la période sélectionnée : une dépense payée apparaît au mois où l&apos;argent est sorti, une dépense à crédit encore impayée à sa date de saisie. Les travaux facturés à un Bien
               (repérés par son code ci-dessous) sont à la charge du propriétaire et n&apos;entrent pas dans les
               totaux de l&apos;entreprise.
             </CardDescription>

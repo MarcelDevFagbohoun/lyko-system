@@ -83,6 +83,18 @@ test('autres entrées et versements : hors période exclus', async () => {
   assert.equal((await get(`card-detail?card=expenses&${range}`)).total, 7000);
 });
 
+test('journal des dépenses aligné sur la carte : payées au mois du paiement, impayées à leur date', async () => {
+  const list = async (m) => (await get(`expenses?from=${m}-01&to=${m}-31`)).expenses;
+  const mars = await list('2026-03');
+  const paid = mars.filter((e) => e.paymentStatus === 'paid' && !e.propertyId).reduce((s, e) => s + e.amount, 0);
+  assert.equal(paid, (await get(`card-detail?card=expenses&${range}`)).total);
+  assert.ok(mars.some((e) => e.paymentStatus === 'unpaid'), 'la dépense à crédit reste visible dans le journal');
+  // Une dépense saisie en mars mais payée en avril n'apparaît plus en mars comme payée.
+  await pool.query("UPDATE expenses SET paid_at = '2026-04-03' WHERE tenant_id = :t AND label = 'Papier'", { t: fx.tenantId });
+  assert.ok(!(await list('2026-03')).some((e) => e.label === 'Papier'));
+  assert.ok((await list('2026-04')).some((e) => e.label === 'Papier'));
+});
+
 test('carte inconnue refusée', async () => {
   const r = await fetch(`${base}/api/accounting/card-detail?card=nope&${range}`, { headers: hdr() });
   assert.equal(r.status, 400);

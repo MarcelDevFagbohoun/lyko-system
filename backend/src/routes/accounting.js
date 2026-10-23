@@ -211,8 +211,10 @@ router.get('/expenses', canAccounting, async (req, res, next) => {
 
     const from = typeof req.query.from === 'string' ? req.query.from : '';
     const to = typeof req.query.to === 'string' ? req.query.to : '';
-    if (from) { where += ' AND e.expense_date >= :from'; params.from = from; }
-    if (to) { where += ' AND e.expense_date <= :to'; params.to = to; }
+    // Même règle que la carte « Dépenses » du tableau de bord : une dépense payée appartient au mois où
+    // l'argent est sorti (`paid_at`) ; une dépense à crédit pas encore payée reste, elle, à sa date de dépense.
+    if (from) { where += " AND (CASE WHEN e.payment_status = 'paid' THEN COALESCE(e.paid_at, e.expense_date) ELSE e.expense_date END) >= :from"; params.from = from; }
+    if (to) { where += " AND (CASE WHEN e.payment_status = 'paid' THEN COALESCE(e.paid_at, e.expense_date) ELSE e.expense_date END) <= :to"; params.to = to; }
 
     const category = typeof req.query.category === 'string' ? req.query.category : '';
     if (category && EXPENSE_CATEGORY_KEYS.includes(category)) {
