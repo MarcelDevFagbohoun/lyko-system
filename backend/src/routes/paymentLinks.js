@@ -11,6 +11,11 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { hashToken } = require('../utils/tokens');
 const { startCheckout } = require('../services/onlinePayments');
+const { UNIT_DESIGNATIONS } = require('../constants/properties');
+
+const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
+const fmt = (d) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+const UTILITY_LABELS = { soneb: 'Eau (SONEB)', sbee: 'Électricité (SBEE)' };
 
 const router = Router();
 
@@ -29,7 +34,7 @@ router.use(payLimiter);
  * inconnu, expiré ou déjà payé ne se distinguent jamais — pas d'énumération). */
 async function loadPaymentLink(token) {
   const [rows] = await pool.query(
-    `SELECT pl.*, t.company_name, t.logo_path, t.fedapay_collect_enabled
+    `SELECT pl.*, t.company_name, t.logo_path, t.fedapay_collect_enabled, t.contact_phone
      FROM payment_links pl
      JOIN tenants t ON t.id = pl.tenant_id
      WHERE pl.token_hash = :hash LIMIT 1`,
@@ -47,7 +52,30 @@ async function loadPaymentLink(token) {
 router.get('/:token', async (req, res, next) => {
   try {
     const link = await loadPaymentLink(req.params.token);
+    // Motif : de quoi il s'agit (locataire, logement, période) pour que la personne reconnaisse la demande.
+    const [[ctx]] = await pool.query(
+      `SELECT r.first_name, r.last_name, u.code AS unit_code, u.designation, u.designation_custom, p.address AS property_address,
+              uc.utility_type, uc.period_start, uc.period_end
+       FROM payment_links pl
+       LEFT JOIN utility_charges uc ON uc.id = pl.charge_id
+       JOIN leases l ON l.id = COALESCE(pl.lease_id, uc.lease_id)
+       JOIN renters r ON r.id = l.renter_id
+       JOIN property_units u ON u.id = l.unit_id
+       JOIN properties p ON p.id = u.property_id
+       WHERE pl.id = :id LIMIT 1`,
+      { id: link.id },
+    );
+    const unitLabel = ctx ? (ctx.designation === 'autre' ? ctx.designation_custom : DESIGNATION_LABELS[ctx.designation]) : null;
     res.json({
+      payerName: ctx ? `${ctx.first_name} ${ctx.last_name}`.trim() : null,
+      propertyAddress: ctx?.property_address ?? null,
+      unitLabel: unitLabel ? `${unitLabel}${ctx.unit_code ? ` ${ctx.unit_code}` : ''}` : null,
+      reason:
+        link.kind === 'loyer'
+          ? 'Paiement du loyer'
+          : `Facture ${UTILITY_LABELS[ctx?.utility_type] ?? "d'eau ou d'électricité"}${ctx?.period_start ? `, du ${fmt(ctx.period_start)} au ${fmt(ctx.period_end)}` : ''}`,
+      expiresAt: link.expires_at,
+      companyPhone: link.contact_phone || null,
       // Sert à construire côté client la référence posée dans le widget
       // (`t<tenantId>:link:<token>`), recoupée par le serveur à la
       // vérification — voir POST /:token/verify ci-dessous.

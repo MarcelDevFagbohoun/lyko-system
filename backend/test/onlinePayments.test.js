@@ -322,3 +322,21 @@ test('paiement en ligne : visible aussi sur la fiche du locataire côté entrepr
   assert.ok(all.includes(`"id":${row.id},`), 'le paiement en ligne figure sur la fiche');
   assert.ok(all.includes('Paiement en ligne'));
 });
+
+test('page de paiement par lien : le motif, le logement et la validité sont fournis', async () => {
+  const { generatePortalToken, hashToken } = require('../src/utils/tokens');
+  const token = generatePortalToken();
+  await pool.query(
+    "INSERT INTO payment_links (tenant_id, kind, lease_id, amount, token_hash, created_by, expires_at) VALUES (:t, 'loyer', :l, 55000, :h, :by, DATE_ADD(NOW(), INTERVAL 24 HOUR))",
+    { t: A.tenantId, l: A.leaseId, h: hashToken(token), by: A.dgId },
+  );
+  const r = await realFetch(`${baseUrl}/api/pay/${token}`);
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.reason, 'Paiement du loyer');
+  assert.equal(body.amount, 55000);
+  assert.ok(body.payerName && body.payerName.length > 1);
+  assert.ok(body.propertyAddress);
+  assert.ok(body.expiresAt);
+  assert.equal((await realFetch(`${baseUrl}/api/pay/${'z'.repeat(40)}`)).status, 404);
+});

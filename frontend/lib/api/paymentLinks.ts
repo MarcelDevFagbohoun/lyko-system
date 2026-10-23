@@ -30,6 +30,12 @@ export type PaymentLinkInfo = {
   kind: "loyer" | "charge";
   amount: number;
   onlinePaymentEnabled: boolean;
+  payerName: string | null;
+  propertyAddress: string | null;
+  unitLabel: string | null;
+  reason: string;
+  expiresAt: string;
+  companyPhone: string | null;
 };
 
 export function getPaymentLink(token: string) {
