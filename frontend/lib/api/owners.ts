@@ -67,6 +67,8 @@ export type OwnerChargeRemittance = {
   paidAt: string;
   paymentMethod: MainPaymentMethod;
   paymentMethodLabel: string;
+  /** 'balance' = ajouté au solde du propriétaire (transfert interne) ; 'cash' = ancien reversement réellement payé. */
+  kind: "balance" | "cash";
   notes: string | null;
   recordedBy: Actor;
   createdAt: string;
@@ -97,6 +99,8 @@ export type EscrowBalance = {
   totalCollected: number;
   totalPayouts: number;
   balance: number;
+  /** Charges SONEB/SBEE déjà ajoutées au solde (comprises dans totalCollected). */
+  chargeCredits?: number;
   /** Détail de ce qui compose la recette nette cumulée (étape 42), montants BRUTS avant commission :
    * loyers, dette initiale réglée, prorata d'entrée — les deux derniers appartiennent au propriétaire
    * au même titre qu'un loyer. */
@@ -250,7 +254,6 @@ export function createPayout(accessToken: string, ownerId: number, input: Create
 export type CreateChargeRemittanceInput = {
   amount: number;
   paidAt: string;
-  paymentMethod: MainPaymentMethod;
   periodLabel?: string;
   notes?: string;
   /** Clé d'idempotence de CET envoi (voir `useIdempotencyKey`). */

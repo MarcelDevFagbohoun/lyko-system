@@ -80,9 +80,8 @@ const createChargeRemittanceSchema = z.object({
     .max(1_000_000_000, 'Montant hors limite'),
   periodLabel: optionalText(50),
   paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide'),
-  paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque'], {
-    errorMap: () => ({ message: 'Mode de règlement invalide' }),
-  }),
+  // Transfert interne : aucun mode de règlement (toléré pour les anciens clients).
+  paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque']).optional(),
   notes: optionalText(255),
   idempotencyKey: idempotencyKeySchema,
 });

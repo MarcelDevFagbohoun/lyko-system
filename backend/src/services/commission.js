@@ -338,11 +338,18 @@ async function getEscrowBalances(tenantId, db = pool, asOfDate = null) {
     asOfDate ? { tenantId, asOfDate } : { tenantId },
   );
   const payoutsByOwner = new Map(payoutRows.map((r) => [r.owner_id, Number(r.total)]));
+  // Charges SONEB/SBEE ajoutées au solde du propriétaire (transferts internes, annulés exclus).
+  const [creditRows] = await db.query(
+    `SELECT owner_id, COALESCE(SUM(amount), 0) AS total FROM owner_charge_remittances
+     WHERE tenant_id = :tenantId AND kind = 'balance' AND deleted_at IS NULL${asOfDate ? ' AND paid_at <= :asOfDate' : ''} GROUP BY owner_id`,
+    asOfDate ? { tenantId, asOfDate } : { tenantId },
+  );
+  const chargeCreditsByOwner = new Map(creditRows.map((r) => [r.owner_id, Number(r.total)]));
 
   const balances = new Map();
   for (const c of buildOwnerCells(flows, ratesByOwner).values()) {
     if (!balances.has(c.ownerId)) {
-      balances.set(c.ownerId, { totalCollected: 0, totalPayouts: 0, balance: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } });
+      balances.set(c.ownerId, { totalCollected: 0, totalPayouts: 0, balance: 0, chargeCredits: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } });
     }
     const b = balances.get(c.ownerId);
     b.breakdown.rent += c.rent;
@@ -351,14 +358,22 @@ async function getEscrowBalances(tenantId, db = pool, asOfDate = null) {
     b.breakdown.expenses += c.expenses;
     b.totalCollected += c.recetteNette - (commissionDeductedAtCollection ? c.commission : 0);
   }
+  // Un propriétaire sans recette de loyer mais avec des charges ajoutées doit tout de même avoir un solde.
+  for (const ownerId of chargeCreditsByOwner.keys()) {
+    if (!balances.has(ownerId)) {
+      balances.set(ownerId, { totalCollected: 0, totalPayouts: 0, balance: 0, chargeCredits: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } });
+    }
+  }
   for (const [ownerId, b] of balances) {
+    b.chargeCredits = chargeCreditsByOwner.get(ownerId) ?? 0;
+    b.totalCollected += b.chargeCredits;
     b.totalPayouts = payoutsByOwner.get(ownerId) ?? 0;
     b.balance = b.totalCollected - b.totalPayouts;
   }
   // Versement sans aucune recette (anormal) : inclus avec un solde négatif explicite plutôt qu'absent.
   for (const [ownerId, totalPayouts] of payoutsByOwner) {
     if (!balances.has(ownerId)) {
-      balances.set(ownerId, { totalCollected: 0, totalPayouts, balance: -totalPayouts, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } });
+      balances.set(ownerId, { totalCollected: 0, totalPayouts, balance: -totalPayouts, chargeCredits: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } });
     }
   }
   return balances;

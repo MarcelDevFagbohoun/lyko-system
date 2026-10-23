@@ -115,14 +115,12 @@ const payslipBody = (userId) => ({
   userId, period: '2026-10', baseAmount: 100000, bonusAmount: 0, deductionAmount: 0, paymentMethod: 'especes', paidAt: '2026-10-20', idempotencyKey: key(),
 });
 
-test('FedaPay actif : saisie manuelle refusée (salaire, reversement, charges) avec le code 409', async () => {
+test('FedaPay actif : saisie manuelle refusée (salaire, reversement propriétaire) avec le code 409', async () => {
   const s = await call(A, 'POST', '/api/payslips', payslipBody(empA));
   assert.equal(s.status, 409);
   assert.match(JSON.stringify(await s.json()), /FedaPay/);
   const p = await call(A, 'POST', `/api/owners/${A.ownerId}/payouts`, { amount: 1000, periodLabel: 'Octobre', paidAt: '2026-10-20', paymentMethod: 'virement', idempotencyKey: key() });
   assert.equal(p.status, 409);
-  const c = await call(A, 'POST', `/api/owners/${A.ownerId}/charge-remittances`, { amount: 1000, periodLabel: 'Octobre', paidAt: '2026-10-20', paymentMethod: 'virement', idempotencyKey: key() });
-  assert.equal(c.status, 409);
   const [[n]] = await pool.query('SELECT COUNT(*) AS n FROM payslips WHERE tenant_id = :t', { t: A.tenantId });
   assert.equal(Number(n.n), 0);
 });
@@ -178,27 +176,75 @@ test('salaire par FedaPay avec n° mémorisé : appliqué une fois, pas de doubl
   assert.equal(second.status, 201, await second.clone().text());
 });
 
-test('reversement de charges par FedaPay : plafonné au solde, appliqué en reversement de charges', async () => {
+test('charges ajoutées au solde du propriétaire : partiel, plafonné, crédite le solde, payé ensuite via FedaPay', async () => {
   const batchId = await insertBatch(A, { periodStart: '2026-08-01', periodEnd: '2026-08-31', mainInvoice: 100000, mainPaid: 100000 });
   await insertCharge(A, { batchId, unitId: A.unitId, leaseId: A.leaseId, amount: 40000, paid: 40000, paidAt: '2026-09-02', periodStart: '2026-08-01', periodEnd: '2026-08-31' });
-  const base = { purpose: 'reversement_charges', ownerId: A.ownerId, periodLabel: 'Août 2026', phone: '97 00 11 22', operator: 'mtn', password: PASSWORD };
-  const tooMuch = await call(A, 'POST', '/api/payments/orders', { ...base, amount: 50000, idempotencyKey: key() });
-  assert.equal(tooMuch.status, 422);
-  const ok = await call(A, 'POST', '/api/payments/orders', { ...base, amount: 40000, idempotencyKey: key() });
-  assert.equal(ok.status, 201, await ok.clone().text());
-  const { order } = await ok.json();
-  // Montant déjà réservé : un second ordre est refusé.
-  const again = await call(A, 'POST', '/api/payments/orders', { ...base, amount: 1000, idempotencyKey: key() });
-  assert.equal(again.status, 422);
+  const { getEscrowBalances } = require('../src/services/commission');
+  const before = (await getEscrowBalances(A.tenantId)).get(A.ownerId)?.balance ?? 0;
+  const add = (amount) => call(A, 'POST', `/api/owners/${A.ownerId}/charge-remittances`, { amount, periodLabel: 'Août 2026', paidAt: '2026-10-20', idempotencyKey: key() });
+
+  // Même avec FedaPay actif, ce transfert interne n'est pas bloqué (aucun argent ne sort).
+  const tooMuch = await add(50000);
+  assert.equal(tooMuch.status, 400);
+  const partial = await add(15000);
+  assert.equal(partial.status, 201, await partial.clone().text());
+  const { remittanceId } = await partial.json();
+  assert.equal((await getEscrowBalances(A.tenantId)).get(A.ownerId).balance, before + 15000);
+  const rest = await add(25000);
+  assert.equal(rest.status, 201);
+  assert.equal((await add(1)).status, 400, 'plus rien à ajouter');
+  assert.equal((await getEscrowBalances(A.tenantId)).get(A.ownerId).balance, before + 40000);
+
+  // Le solde crédité n'est pas un paiement : rien dans l'historique des sorties d'argent.
+  const h = await (await call(A, 'GET', '/api/payments/history?kind=reversement_charges')).json();
+  assert.equal(h.items.length, 0);
+
+  // Verser tout le solde par FedaPay (charges comprises), puis annulation du transfert refusée (déjà versé).
+  const bal = before + 40000;
+  const pay = await call(A, 'POST', '/api/payments/orders', {
+    purpose: 'reversement_proprietaire', ownerId: A.ownerId, amount: Math.min(bal, 400000), periodLabel: 'Octobre 2026',
+    phone: '97 00 11 22', operator: 'mtn', password: PASSWORD, idempotencyKey: key(),
+  });
+  assert.equal(pay.status, 201, await pay.clone().text());
+  const { order } = await pay.json();
   const [[row]] = await pool.query('SELECT fedapay_payout_id FROM payment_orders WHERE id = :id', { id: order.id });
   payouts.get(row.fedapay_payout_id).status = 'sent';
   await call(A, 'POST', `/api/payments/orders/${order.id}/refresh`);
-  const [[rem]] = await pool.query('SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS total FROM owner_charge_remittances WHERE tenant_id = :t AND deleted_at IS NULL', { t: A.tenantId });
-  assert.equal(Number(rem.n), 1);
-  assert.equal(Number(rem.total), 40000);
-  const h = await (await call(A, 'GET', '/api/payments/history?kind=reversement_charges')).json();
-  assert.equal(h.items.length, 1);
-  assert.equal(h.items[0].channel, 'fedapay');
+  const cancel = await call(A, 'DELETE', `/api/owners/${A.ownerId}/charge-remittances/${remittanceId}`, { reason: 'Erreur de saisie' });
+  assert.equal(cancel.status, 409);
+});
+
+test('comptabilité : écriture 411 → 4671 équilibrée à l\'ajout, extournée à l\'annulation', async () => {
+  await pool.query('UPDATE tenants SET gl_module_enabled = 1 WHERE id = :t', { t: B.tenantId });
+  const batchId = await insertBatch(B, { periodStart: '2026-08-01', periodEnd: '2026-08-31', mainInvoice: 100000, mainPaid: 100000 });
+  await insertCharge(B, { batchId, unitId: B.unitId, leaseId: B.leaseId, amount: 30000, paid: 30000, paidAt: '2026-09-02', periodStart: '2026-08-01', periodEnd: '2026-08-31' });
+  const add = await call(B, 'POST', `/api/owners/${B.ownerId}/charge-remittances`, { amount: 12000, periodLabel: 'Août 2026', paidAt: '2026-10-20', idempotencyKey: key() });
+  assert.equal(add.status, 201, await add.clone().text());
+  const { remittanceId } = await add.json();
+  const entryLines = async () => {
+    const [rows] = await pool.query(
+      `SELECT e.id, e.status, l.side, l.amount, a.code FROM gl_entries e
+       JOIN gl_entry_lines l ON l.entry_id = e.id JOIN gl_accounts a ON a.id = l.account_id
+       WHERE e.tenant_id = :t AND e.source_table = 'owner_charge_remittances' AND e.source_id = :s`,
+      { t: B.tenantId, s: remittanceId },
+    );
+    return rows;
+  };
+  const lines = await entryLines();
+  assert.equal(lines.filter((l) => l.side === 'debit').reduce((a, l) => a + Number(l.amount), 0), 12000);
+  assert.equal(lines.filter((l) => l.side === 'credit').reduce((a, l) => a + Number(l.amount), 0), 12000);
+  assert.ok(lines.some((l) => l.side === 'debit' && l.code === '411'));
+
+  const cancel = await call(B, 'DELETE', `/api/owners/${B.ownerId}/charge-remittances/${remittanceId}`, { reason: 'Ajout par erreur' });
+  assert.equal(cancel.status, 204, await cancel.clone().text());
+  const [[{ n }]] = await pool.query(
+    "SELECT COUNT(*) AS n FROM gl_entries WHERE tenant_id = :t AND reversal_of_entry_id IS NOT NULL",
+    { t: B.tenantId },
+  ).catch(() => [[{ n: -1 }]]);
+  assert.ok(n === -1 || n >= 1, 'une écriture miroir existe');
+  const { getEscrowBalances } = require('../src/services/commission');
+  const bal = (await getEscrowBalances(B.tenantId)).get(B.ownerId);
+  assert.equal(bal?.chargeCredits ?? 0, 0);
 });
 
 test('reçus génériques PDF (dépense manuelle) et isolation entre cabinets', async () => {

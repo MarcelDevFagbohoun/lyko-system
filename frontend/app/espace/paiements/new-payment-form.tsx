@@ -12,7 +12,7 @@ import {
   type PaymentPurpose,
 } from "@/lib/api/payments";
 import { createPayslip, PAYSLIP_PAYMENT_METHOD_LABELS, type PayslipPaymentMethod, type StaffMember } from "@/lib/api/payslips";
-import { createChargeRemittance, createPayout, type OwnerListItem } from "@/lib/api/owners";
+import { createPayout, type OwnerListItem } from "@/lib/api/owners";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { formatFcfa } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,6 @@ const today = () => new Date().toISOString().slice(0, 10);
 const ACCOUNTING_EFFECT: Record<string, string> = {
   salaire: "Charge « Salaires » (dépense) et sortie de la trésorerie du mode choisi. Une fiche de paie est générée.",
   reversement_proprietaire: "Diminue la somme due au propriétaire (compte mandants 4671) et sort de la trésorerie du mode choisi.",
-  reversement_charges: "Diminue les charges SONEB/SBEE encaissées à reverser au propriétaire et sort de la trésorerie du mode choisi.",
 };
 
 /**
@@ -59,8 +58,8 @@ export function NewPaymentForm({
   const toast = useToast();
   const { key: idempotencyKey, renew } = useIdempotencyKey();
   const purposes: PaymentPurpose[] = fedapay
-    ? ["salaire", "reversement_proprietaire", "reversement_charges", "autre"]
-    : ["salaire", "reversement_proprietaire", "reversement_charges"];
+    ? ["salaire", "reversement_proprietaire", "autre"]
+    : ["salaire", "reversement_proprietaire"];
   const [purpose, setPurpose] = React.useState<PaymentPurpose>(presetUserId ? "salaire" : purposes[0]);
   const [userId, setUserId] = React.useState(presetUserId ? String(presetUserId) : "");
   const [ownerId, setOwnerId] = React.useState("");
@@ -112,7 +111,7 @@ export function NewPaymentForm({
       return "Choisissez le propriétaire.";
     }
     if (purpose !== "salaire" && total <= 0) return "Montant invalide.";
-    if ((purpose === "reversement_proprietaire" || purpose === "reversement_charges") && !periodLabel.trim()) return "Indiquez la période concernée.";
+    if (purpose === "reversement_proprietaire" && !periodLabel.trim()) return "Indiquez la période concernée.";
     if (fedapay) {
       if (!hasSavedNumber && phone.trim().length < 8) return "Numéro Mobile Money requis.";
       if (!password) return "Votre mot de passe est requis.";
@@ -176,10 +175,6 @@ export function NewPaymentForm({
       } else if (purpose === "reversement_proprietaire") {
         await createPayout(accessToken, Number(ownerId), {
           amount: total, periodLabel: periodLabel.trim(), paidAt, paymentMethod: method, notes: notes.trim() || undefined, idempotencyKey,
-        });
-      } else {
-        await createChargeRemittance(accessToken, Number(ownerId), {
-          amount: total, periodLabel: periodLabel.trim(), paidAt, paymentMethod: method as "especes" | "mobile_money" | "virement" | "cheque", notes: notes.trim() || undefined, idempotencyKey,
         });
       }
       toast.success("Paiement enregistré.");
@@ -248,7 +243,7 @@ export function NewPaymentForm({
 
           {purpose === "salaire" && salaryFields}
 
-          {(purpose === "reversement_proprietaire" || purpose === "reversement_charges") && (
+          {purpose === "reversement_proprietaire" && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <Field label="Propriétaire" htmlFor="pay-owner" required>
                 <select id="pay-owner" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} className={selectCls}>

@@ -4,7 +4,7 @@ import * as React from "react";
 import { HandCoins, ShieldCheck, X } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
 import { cancelChargeRemittance, createChargeRemittance, type OwnerChargeRemittance } from "@/lib/api/owners";
-import type { ChargeAccount, MainPaymentMethod } from "@/lib/api/charges";
+import type { ChargeAccount } from "@/lib/api/charges";
 import { formatFcfa } from "@/lib/utils";
 import { useToast } from "@/lib/toast/toast-context";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
@@ -12,17 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { FedapayNotice, useFedapayEnabled } from "@/components/payments/fedapay-notice";
 import { AccountLine } from "@/components/charges/utility-point-panel";
-
-const METHODS: { value: MainPaymentMethod; label: string }[] = [
-  { value: "virement", label: "Virement" },
-  { value: "mobile_money", label: "Mobile Money" },
-  { value: "especes", label: "Espèces" },
-  { value: "cheque", label: "Chèque" },
-];
-const selectCls =
-  "h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
 
 function todayIso() {
   const d = new Date();
@@ -53,19 +43,15 @@ export function ChargeRemittanceCard({
   onChanged: () => void;
 }) {
   const toast = useToast();
-  const fedapayOn = useFedapayEnabled();
   const [open, setOpen] = React.useState(false);
   const [step, setStep] = React.useState<"form" | "confirm">("form");
   const [amount, setAmount] = React.useState("");
-  const [method, setMethod] = React.useState<MainPaymentMethod>("virement");
   const [paidAt, setPaidAt] = React.useState(todayIso());
   const [label, setLabel] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const idem = useIdempotencyKey();
-
-  const methodLabel = METHODS.find((m) => m.value === method)?.label ?? method;
 
   function openForm() {
     setAmount(account.balance > 0 ? String(account.balance) : "");
@@ -88,7 +74,7 @@ export function ChargeRemittanceCard({
     setError(null);
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) return setError("Montant invalide.");
-    if (n > account.balance) return setError(`Le montant dépasse les charges à reverser (${formatFcfa(account.balance)}).`);
+    if (n > account.balance) return setError(`Le montant dépasse les charges disponibles (${formatFcfa(account.balance)}).`);
     if (!paidAt) return setError("Date requise.");
     setStep("confirm");
   }
@@ -102,7 +88,6 @@ export function ChargeRemittanceCard({
       const res = await createChargeRemittance(accessToken, ownerId, {
         amount: paid,
         paidAt,
-        paymentMethod: method,
         ...(label.trim() ? { periodLabel: label.trim() } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         idempotencyKey: idem.key,
@@ -110,10 +95,10 @@ export function ChargeRemittanceCard({
       idem.renew();
       reset();
       onChanged();
-      toast.success(`Reversement de ${formatFcfa(paid)} enregistré pour ${ownerName}.`);
+      toast.success(`${formatFcfa(paid)} de charges ajoutés au solde de ${ownerName}.`);
       if (res.accountingNote) toast.warning(res.accountingNote);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce reversement.");
+      setError(err instanceof ApiError ? err.message : "Impossible d'ajouter ces charges au solde.");
       setStep("form");
     } finally {
       setSubmitting(false);
@@ -125,28 +110,27 @@ export function ChargeRemittanceCard({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <HandCoins size={18} className="text-primary" />
-          Charges SONEB / SBEE à reverser
+          Charges SONEB / SBEE encaissées
         </CardTitle>
         <CardDescription>
-          Le propriétaire paie lui-même la facture mère : les charges encaissées chez ses locataires lui sont reversées
-          intégralement (l&apos;entreprise ne garde rien). Séparé du séquestre des loyers.
+          Les charges payées par les locataires restent chez le cabinet. Ajoutez-les au solde du propriétaire (en totalité
+          ou en partie) : elles seront versées avec le reste de son solde depuis le menu Paiements.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <AccountLine account={account} />
 
-        {canRecord && fedapayOn && account.balance > 0 && <FedapayNotice what="le reversement des charges" />}
-        {canRecord && !fedapayOn && (
+        {canRecord && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Nouveau reversement</span>
+              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Ajout au solde</span>
               {account.balance > 0 ? (
                 <Button variant="success" size="sm" onClick={() => (open ? reset() : openForm())}>
                   <HandCoins size={14} />
-                  {open ? "Fermer" : "Reverser des charges"}
+                  {open ? "Fermer" : "Ajouter les fonds des charges au solde du propriétaire"}
                 </Button>
               ) : (
-                <span className="text-body-xs text-ink-muted">Rien à reverser pour le moment.</span>
+                <span className="text-body-xs text-ink-muted">Aucune charge disponible à ajouter.</span>
               )}
             </div>
 
@@ -158,20 +142,11 @@ export function ChargeRemittanceCard({
                   <Field label="Montant (FCFA)" htmlFor="remitAmount" required hint={`Au plus ${formatFcfa(account.balance)}`}>
                     <Input id="remitAmount" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
                   </Field>
-                  <Field label="Date du reversement" htmlFor="remitDate" required>
+                  <Field label="Date de l'ajout" htmlFor="remitDate" required>
                     <Input id="remitDate" type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
                   </Field>
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label="Mode de règlement" htmlFor="remitMethod" required>
-                    <select id="remitMethod" value={method} onChange={(e) => setMethod(e.target.value as MainPaymentMethod)} className={selectCls}>
-                      {METHODS.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
                   <Field label="Libellé (optionnel)" htmlFor="remitLabel" hint="ex. Charges septembre 2026">
                     <Input id="remitLabel" value={label} maxLength={50} onChange={(e) => setLabel(e.target.value)} />
                   </Field>
@@ -180,7 +155,7 @@ export function ChargeRemittanceCard({
                   <Input id="remitNotes" value={notes} maxLength={255} onChange={(e) => setNotes(e.target.value)} />
                 </Field>
                 <Button type="submit" className="self-start">
-                  Vérifier le reversement
+                  Vérifier l&apos;ajout
                 </Button>
               </form>
             )}
@@ -189,19 +164,18 @@ export function ChargeRemittanceCard({
               <div className="flex flex-col gap-4 rounded-lg border border-primary/30 bg-surface-muted p-4">
                 <div className="flex items-center gap-2 text-primary">
                   <ShieldCheck size={18} />
-                  <span className="font-label-md">Vérifiez ce reversement avant confirmation</span>
+                  <span className="font-label-md">Vérifiez cet ajout avant confirmation</span>
                 </div>
                 <dl className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface text-body-sm">
-                  <ConfirmRow label="Propriétaire bénéficiaire" value={ownerName} strong />
+                  <ConfirmRow label="Solde crédité" value={ownerName} strong />
                   <ConfirmRow label="Montant" value={formatFcfa(Number(amount))} strong />
-                  <ConfirmRow label="Mode de règlement" value={methodLabel} />
-                  <ConfirmRow label="Date du reversement" value={paidAt} />
+                  <ConfirmRow label="Date de l'ajout" value={paidAt} />
                   {label.trim() && <ConfirmRow label="Libellé" value={label.trim()} />}
                   {notes.trim() && <ConfirmRow label="Note" value={notes.trim()} />}
                 </dl>
                 <p className="text-body-xs text-ink-muted">
-                  Cette action enregistre un reversement réel dans l&apos;historique du propriétaire. Il pourra être annulé
-                  (avec justification) en cas d&apos;erreur.
+                  Aucun argent ne sort : le solde du propriétaire augmente de ce montant (écriture comptable automatique).
+                  L&apos;ajout pourra être annulé, avec justification, tant que ce solde n&apos;a pas été versé.
                 </p>
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="sm" onClick={() => setStep("form")} disabled={submitting}>
@@ -209,7 +183,7 @@ export function ChargeRemittanceCard({
                   </Button>
                   {/* Taille standard : en `sm`, tailwind-merge écrase la couleur de texte du bouton plein (texte sombre sur fond marine). */}
                   <Button onClick={handleConfirm} disabled={submitting}>
-                    {submitting ? "Enregistrement…" : `Confirmer le reversement à ${ownerName}`}
+                    {submitting ? "Enregistrement…" : `Ajouter au solde de ${ownerName}`}
                   </Button>
                 </div>
               </div>
@@ -218,14 +192,14 @@ export function ChargeRemittanceCard({
         )}
 
         {remittances.length === 0 ? (
-          <p className="text-body-sm text-ink-muted">Aucun reversement de charges enregistré pour ce propriétaire.</p>
+          <p className="text-body-sm text-ink-muted">Aucun ajout de charges au solde pour ce propriétaire.</p>
         ) : (
           <Table>
             <TableHeader>
               <tr>
                 <TableHead>Date</TableHead>
                 <TableHead>Libellé</TableHead>
-                <TableHead>Mode</TableHead>
+                <TableHead>Nature</TableHead>
                 <TableHead>Enregistré par</TableHead>
                 <TableHead className="text-right">Montant</TableHead>
                 {canRecord && <TableHead />}
@@ -239,7 +213,7 @@ export function ChargeRemittanceCard({
                     {r.periodLabel || "—"}
                     {r.notes && <span className="block text-body-xs text-ink-muted">{r.notes}</span>}
                   </TableCell>
-                  <TableCell className="text-ink-soft">{r.paymentMethodLabel}</TableCell>
+                  <TableCell className="text-ink-soft">{r.kind === "balance" ? "Ajouté au solde" : `Reversé (${r.paymentMethodLabel})`}</TableCell>
                   <TableCell className="text-body-xs text-ink-muted">
                     {r.recordedBy?.name ?? "—"}
                     <span className="block">le {r.createdAt.slice(0, 10)}</span>
@@ -269,7 +243,7 @@ function ConfirmRow({ label, value, strong }: { label: string; value: string; st
   );
 }
 
-/** Annulation d'un reversement : justification obligatoire, la trace reste (suppression logique). */
+/** Annulation d'un ajout : justification obligatoire, la trace reste (suppression logique). */
 function CancelRemittance({
   ownerId,
   remittance,
@@ -294,7 +268,7 @@ function CancelRemittance({
     setError(null);
     try {
       await cancelChargeRemittance(accessToken, ownerId, remittance.id, reason.trim());
-      toast.info(`Reversement de ${formatFcfa(remittance.amount)} annulé.`);
+      toast.info(`Ajout de ${formatFcfa(remittance.amount)} annulé.`);
       onCancelled();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Annulation impossible.");
@@ -327,7 +301,7 @@ function CancelRemittance({
           Retour
         </Button>
         <Button variant="danger" size="sm" onClick={handleCancel} disabled={busy}>
-          {busy ? "…" : "Annuler le reversement"}
+          {busy ? "…" : "Annuler l'ajout"}
         </Button>
       </div>
     </div>

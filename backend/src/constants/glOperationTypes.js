@@ -22,6 +22,7 @@ const GL_OPERATION_TYPES = [
   'caution_restituee',
   'caution_supplementaire_recue',
   'caution_supplementaire_restituee',
+  'charge_ajoutee_solde_proprietaire',
   'caution_reversee_proprietaire',
   'caution_recuperee_proprietaire',
   'reversement_proprietaire',

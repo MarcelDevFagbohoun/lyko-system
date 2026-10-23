@@ -400,6 +400,18 @@ const RULES = [
     ],
   },
   {
+    operation_type: 'charge_ajoutee_solde_proprietaire',
+    label: 'Ajouter les charges encaissées au solde du propriétaire',
+    journal: 'OD',
+    narration_template: 'Charges SONEB/SBEE ajoutées au solde — {proprietaire}',
+    note:
+      "Transfert interne, sans mouvement de trésorerie : les charges encaissées auprès des locataires (créditées au 411 par `charge_locative_encaissee`) deviennent une dette envers le propriétaire (4671), versée ensuite avec son solde par `reversement_proprietaire`. Le 411 est débité globalement (non ventilé par locataire). À VALIDER par l'expert-comptable.",
+    lines: [
+      { side: 'debit', account: '411', formula: 'montant_total' },
+      { side: 'credit', role: 'tiers_proprietaire', formula: 'montant_total' },
+    ],
+  },
+  {
     operation_type: 'caution_reversee_proprietaire',
     label: 'Reverser une caution au propriétaire',
     journal: 'OD',

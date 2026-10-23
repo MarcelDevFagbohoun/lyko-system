@@ -98,6 +98,7 @@ async function listRemittances(db, tenantId, ownerId, { fromDate = null, toDate 
     periodLabel: r.period_label,
     paidAt: isoDate(r.paid_at),
     paymentMethod: r.payment_method,
+    kind: r.kind,
     notes: r.notes,
     createdAt: r.created_at,
     byFirstName: r.by_first_name,

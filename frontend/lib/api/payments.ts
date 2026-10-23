@@ -1,13 +1,12 @@
 import { apiFetch } from "./client";
 
-export type PaymentPurpose = "salaire" | "reversement_proprietaire" | "reversement_charges" | "autre";
+export type PaymentPurpose = "salaire" | "reversement_proprietaire" | "autre";
 export type PaymentStatus = "created" | "processing" | "sent" | "failed";
 export type PaymentOperator = "mtn" | "moov";
 
 export const PAYMENT_PURPOSE_LABELS: Record<PaymentPurpose, string> = {
   salaire: "Salaire",
   reversement_proprietaire: "Reversement propriétaire",
-  reversement_charges: "Reversement de charges",
   autre: "Autre paiement",
 };
 
@@ -66,7 +65,6 @@ export type CreatePaymentInput =
       saveNumber?: boolean;
     })
   | (Common & { purpose: "reversement_proprietaire"; ownerId: number; amount: number; periodLabel: string })
-  | (Common & { purpose: "reversement_charges"; ownerId: number; amount: number; periodLabel: string })
   | (Common & { purpose: "autre"; beneficiaryName: string; amount: number; label: string });
 
 export function getPaymentSummary(accessToken: string) {

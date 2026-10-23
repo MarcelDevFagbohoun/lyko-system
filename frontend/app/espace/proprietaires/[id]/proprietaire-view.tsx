@@ -495,6 +495,12 @@ function EscrowBalanceCard({
               <span className="tabular">{formatFcfa(escrow.breakdown.prorata)}</span>
             </div>
           )}
+          {(escrow.chargeCredits ?? 0) > 0 && (
+            <div className="flex items-center justify-between text-ink-soft">
+              <span>Charges SONEB/SBEE ajoutées au solde</span>
+              <span className="tabular">{formatFcfa(escrow.chargeCredits ?? 0)}</span>
+            </div>
+          )}
           {escrow.breakdown.expenses > 0 && (
             <div className="flex items-center justify-between text-ink-soft">
               <span>Dépenses rattachées à ses Biens</span>

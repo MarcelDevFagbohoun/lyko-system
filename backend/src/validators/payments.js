@@ -49,16 +49,6 @@ const ownerOrder = z
   })
   .strict();
 
-const chargesOrder = z
-  .object({
-    purpose: z.literal('reversement_charges'),
-    ownerId: z.coerce.number().int().positive('Propriétaire invalide'),
-    amount: amount('Montant'),
-    periodLabel: text(1, 50, 'Période'),
-    ...common,
-  })
-  .strict();
-
 const otherOrder = z
   .object({
     purpose: z.literal('autre'),
@@ -69,11 +59,11 @@ const otherOrder = z
   })
   .strict();
 
-const createOrderSchema = z.discriminatedUnion('purpose', [salaryOrder, ownerOrder, chargesOrder, otherOrder]);
+const createOrderSchema = z.discriminatedUnion('purpose', [salaryOrder, ownerOrder, otherOrder]);
 
 const listOrdersQuery = z.object({
   status: z.enum(['created', 'processing', 'sent', 'failed']).optional(),
-  purpose: z.enum(['salaire', 'reversement_proprietaire', 'reversement_charges', 'autre']).optional(),
+  purpose: z.enum(['salaire', 'reversement_proprietaire', 'autre']).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),

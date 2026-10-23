@@ -25,6 +25,7 @@ const { genererEcriture, isModuleActive } = require('../services/gl/glPostingSer
 const { resolvePropertyScope } = require('../services/scope');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
+const { extourneEcriture } = require('../services/gl/glReversalService');
 const { assertManualPaymentAllowed } = require('../services/payments/manualGuard');
 
 /**
@@ -299,7 +300,7 @@ router.get('/:id', canRead, async (req, res, next) => {
     // jamais scopé par agent (voir le commentaire de `getEscrowBalances`),
     // comme les versements/taux de commission ci-dessous sur cette même page.
     const escrowBalances = await getEscrowBalances(req.user.tenantId);
-    const escrow = escrowBalances.get(id) ?? { totalCollected: 0, totalPayouts: 0, balance: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } };
+    const escrow = escrowBalances.get(id) ?? { totalCollected: 0, totalPayouts: 0, balance: 0, chargeCredits: 0, breakdown: { rent: 0, openingDebt: 0, prorata: 0, expenses: 0 } };
     // Cautions détenues (demande utilisateur, 2026-10-17) — affichées à côté de la recette nette
     // cumulée ci-dessus, jamais fondues dedans (voir le commentaire de `getDepositsHeldByOwner`).
     const depositsHeld = await getDepositsHeldByOwner(req.user.tenantId, id);
@@ -316,6 +317,8 @@ router.get('/:id', canRead, async (req, res, next) => {
         totalCollected: escrow.totalCollected,
         totalPayouts: escrow.totalPayouts,
         balance: escrow.balance,
+        // Charges SONEB/SBEE déjà ajoutées au solde (comprises dans totalCollected).
+        chargeCredits: escrow.chargeCredits ?? 0,
         // Détail de ce qui compose le solde (étape 42, demande explicite de l'utilisateur) : loyers,
         // dette initiale réglée, prorata d'entrée — avant commission et dépenses, pour rester lisible.
         breakdown: escrow.breakdown,
@@ -337,6 +340,7 @@ router.get('/:id', canRead, async (req, res, next) => {
         paidAt: r.paidAt,
         paymentMethod: r.paymentMethod,
         paymentMethodLabel: PAYMENT_METHOD_LABELS[r.paymentMethod] ?? r.paymentMethod,
+        kind: r.kind,
         notes: r.notes,
         recordedBy: toActor(r.byFirstName, r.byLastName, r.byRole),
         createdAt: r.createdAt,
@@ -597,11 +601,14 @@ router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
 
   const conn = await pool.getConnection();
   try {
-    await assertManualPaymentAllowed(req.user.tenantId, 'le reversement de charges');
     const scopeAgentId = await resolvePropertyScope(req.user);
     const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
     assertMandateActive(owner);
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
+    if (await isModuleActive(pool, req.user.tenantId)) {
+      const seed = require('../db/seedGeneralLedger');
+      await seed.syncMissingPostingRules(req.user.tenantId);
+    }
 
     await conn.beginTransaction();
     // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
@@ -615,23 +622,36 @@ router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
     if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'charge_remittance', data.idempotencyKey);
     await assertRemittanceWithinBalance(conn, req.user.tenantId, id, data.amount);
 
+    // Transfert interne : le montant rejoint le solde du propriétaire, il ne sort d'aucune caisse.
     const [result] = await conn.query(
-      `INSERT INTO owner_charge_remittances (tenant_id, owner_id, amount, period_label, paid_at, payment_method, notes, recorded_by)
-       VALUES (:tenantId, :ownerId, :amount, :periodLabel, :paidAt, :paymentMethod, :notes, :recordedBy)`,
+      `INSERT INTO owner_charge_remittances (tenant_id, owner_id, amount, period_label, paid_at, payment_method, kind, notes, recorded_by)
+       VALUES (:tenantId, :ownerId, :amount, :periodLabel, :paidAt, 'virement', 'balance', :notes, :recordedBy)`,
       {
         tenantId: req.user.tenantId,
         ownerId: id,
         amount: data.amount,
         periodLabel: data.periodLabel,
         paidAt: data.paidAt,
-        paymentMethod: data.paymentMethod,
         notes: data.notes,
         recordedBy: req.user.id,
       },
     );
+    const glActive = await isModuleActive(conn, req.user.tenantId);
+    if (glActive) {
+      await genererEcriture(conn, {
+        tenantId: req.user.tenantId,
+        operationType: 'charge_ajoutee_solde_proprietaire',
+        entryDate: data.paidAt,
+        amount: data.amount,
+        narrationVars: { proprietaire: owner.name },
+        sourceTable: 'owner_charge_remittances',
+        sourceId: result.insertId,
+        createdBy: req.user.id,
+        context: { ownerId: id },
+      });
+    }
     await conn.commit();
 
-    const glActive = await isModuleActive(pool, req.user.tenantId);
     logger.info('Reversement de charges au propriétaire enregistré', {
       tenantId: req.user.tenantId,
       ownerId: id,
@@ -641,11 +661,7 @@ router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
     });
     res.status(201).json({
       remittanceId: result.insertId,
-      // Comptabilité avancée active : ce reversement n'est PAS comptabilisé
-      // automatiquement (règle à valider avec l'expert-comptable — B2).
-      accountingNote: glActive
-        ? "Comptabilité avancée : ce reversement de charges n'est pas encore comptabilisé automatiquement (règle à valider avec votre expert-comptable)."
-        : null,
+      accountingNote: null,
     });
   } catch (err) {
     await conn.rollback().catch(() => {});
@@ -673,7 +689,7 @@ router.delete('/:id/charge-remittances/:remittanceId', canPayout, async (req, re
     const owner = await loadOwner(pool, req.user.tenantId, id, scopeAgentId);
     assertMandateActive(owner);
     const [rows] = await pool.query(
-      'SELECT id, paid_at, amount, deleted_at FROM owner_charge_remittances WHERE id = :remittanceId AND owner_id = :id AND tenant_id = :tenantId LIMIT 1',
+      'SELECT id, paid_at, amount, kind, deleted_at FROM owner_charge_remittances WHERE id = :remittanceId AND owner_id = :id AND tenant_id = :tenantId LIMIT 1',
       { remittanceId, id, tenantId: req.user.tenantId },
     );
     if (!rows[0]) throw new ApiError(404, 'Reversement introuvable');
@@ -691,6 +707,23 @@ router.delete('/:id/charge-remittances/:remittanceId', canPayout, async (req, re
       { by: req.user.id, reason: parsed.data.reason, remittanceId },
     );
     if (result.affectedRows === 0) throw new ApiError(409, 'Ce reversement est déjà annulé.');
+    if (rows[0].kind === 'balance') {
+      // Annuler un transfert déjà versé au propriétaire rendrait son solde négatif : refusé.
+      const balances = await getEscrowBalances(req.user.tenantId, conn);
+      if ((balances.get(id)?.balance ?? 0) < 0) {
+        throw new ApiError(409, "Ce montant a déjà été versé au propriétaire : annulation impossible (son solde deviendrait négatif).");
+      }
+      const [glEntries] = await conn.query(
+        "SELECT id FROM gl_entries WHERE tenant_id = :tenantId AND source_table = 'owner_charge_remittances' AND source_id = :remittanceId AND status = 'validee'",
+        { tenantId: req.user.tenantId, remittanceId },
+      );
+      for (const entry of glEntries) {
+        await extourneEcriture(conn, {
+          tenantId: req.user.tenantId, entryId: entry.id, entryDate: new Date().toISOString().slice(0, 10),
+          userId: req.user.id, reason: `Charges retirées du solde du propriétaire — ${parsed.data.reason}`,
+        });
+      }
+    }
     await conn.commit();
 
     logger.info('Reversement de charges annulé', {

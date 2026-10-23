@@ -10,7 +10,6 @@ const { assertPasswordReauth } = require('./reauth');
 const { normalizeBeninPhone, maskPhone } = require('./phone');
 const { notifyOrderSent } = require('./notify');
 const { getEscrowBalances } = require('../commission');
-const { getChargeAccount } = require('../utilityRemittance');
 const { assertPeriodOpenLocked } = require('../accountingPeriods');
 const { isModuleActive, genererEcriture } = require('../gl/glPostingService');
 
@@ -140,32 +139,6 @@ async function resolvePurpose(tenantId, input) {
     };
   }
 
-  if (input.purpose === 'reversement_charges') {
-    const [[owner]] = await pool.query(
-      'SELECT id, name, email, mandate_ended_at FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1',
-      { id: input.ownerId, tenantId },
-    );
-    if (!owner) throw new ApiError(404, 'Propriétaire introuvable');
-    if (owner.mandate_ended_at) throw new ApiError(422, 'Le mandat de ce propriétaire est terminé.');
-    const account = await getChargeAccount(pool, tenantId, owner.id);
-    const [[reserved]] = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_orders
-       WHERE tenant_id = :tenantId AND beneficiary_owner_id = :ownerId AND purpose = 'reversement_charges'
-         AND (status IN ('created','processing') OR (status = 'sent' AND applied_at IS NULL))`,
-      { tenantId, ownerId: owner.id },
-    );
-    const available = Math.max(0, account.balance - Number(reserved.total));
-    if (input.amount > available) {
-      throw new ApiError(422, `Le montant dépasse les charges à reverser à ce propriétaire (${available} FCFA).`);
-    }
-    return {
-      amount: input.amount,
-      beneficiary: { type: 'owner', userId: null, ownerId: owner.id, name: owner.name, email: input.beneficiaryEmail ?? owner.email ?? null },
-      label: `Reversement de charges ${input.periodLabel} — ${owner.name}`,
-      context: { ownerId: owner.id, periodLabel: input.periodLabel },
-    };
-  }
-
   return {
     amount: input.amount,
     beneficiary: { type: 'other', userId: null, ownerId: null, name: input.beneficiaryName, email: input.beneficiaryEmail ?? null },
@@ -291,16 +264,6 @@ async function applyOrder(tenantId, orderId, { req = null } = {}) {
           recordedBy: order.created_by, skipBalanceCheck: true, skipIdempotency: true,
         });
         appliedRef = `owner_payouts:${payoutId}`;
-      } else if (order.purpose === 'reversement_charges') {
-        const { assertRemittanceWithinBalance } = require('../utilityRemittance');
-        await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', { id: context.ownerId, tenantId });
-        await assertRemittanceWithinBalance(conn, tenantId, context.ownerId, Number(order.amount));
-        const [rem] = await conn.query(
-          `INSERT INTO owner_charge_remittances (tenant_id, owner_id, amount, period_label, paid_at, payment_method, notes, recorded_by)
-           VALUES (:tenantId, :ownerId, :amount, :periodLabel, :paidAt, 'mobile_money', :notes, :by)`,
-          { tenantId, ownerId: context.ownerId, amount: Number(order.amount), periodLabel: context.periodLabel, paidAt, notes: `FedaPay ${order.reference}`, by: order.created_by },
-        );
-        appliedRef = `owner_charge_remittances:${rem.insertId}`;
       } else if (order.purpose === 'salaire') {
         const { recordPayslip } = require('../../routes/payslips');
         const [[employee]] = await conn.query('SELECT * FROM users WHERE id = :id AND tenant_id = :tenantId', { id: context.userId, tenantId });

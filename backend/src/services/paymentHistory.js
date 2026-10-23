@@ -84,7 +84,7 @@ async function listPaymentHistory(tenantId, { from = null, to = null, kinds = nu
     const [rows] = await pool.query(
       `SELECT cr.id, cr.amount, cr.period_label, cr.paid_at, cr.payment_method, o.name AS owner_name
        FROM owner_charge_remittances cr JOIN owners o ON o.id = cr.owner_id
-       WHERE cr.tenant_id = :tenantId AND cr.deleted_at IS NULL ${range('cr.paid_at')}`,
+       WHERE cr.tenant_id = :tenantId AND cr.deleted_at IS NULL AND cr.kind = 'cash' ${range('cr.paid_at')}`,
       params,
     );
     for (const r of rows) {
