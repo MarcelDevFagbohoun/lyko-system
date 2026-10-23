@@ -94,6 +94,6 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 ## Lot 7 — charges SONEB/SBEE ajoutées au solde du propriétaire
 
 - Migration `115_charge_credit_to_owner_balance.sql` (colonne `kind` sur `owner_charge_remittances`).
-- Les charges payées par les locataires restent chez le cabinet. Le bouton « Ajouter les fonds des charges au solde du propriétaire » crée un transfert interne (partiel possible, plafonné aux charges encaissées non encore ajoutées) : le solde du propriétaire augmente, puis tout est versé depuis le menu Paiements (FedaPay ou saisie manuelle).
+- Les charges payées par les locataires restent chez le cabinet. Le bouton « Créditer le solde » crée un transfert interne (partiel possible, plafonné aux charges encaissées non encore ajoutées) : le solde du propriétaire augmente, puis tout est versé depuis le menu Paiements (FedaPay ou saisie manuelle).
 - Comptabilité avancée : nouvelle règle `charge_ajoutee_solde_proprietaire` (débit 411, crédit 4671 du propriétaire), ajoutée automatiquement au premier transfert, à valider par l'expert-comptable. Annulation possible avec motif tant que le solde n'est pas déjà versé ; l'écriture est alors extournée.
 - Les anciens reversements de charges réellement payés restent dans l'historique (`kind = cash`) et ne modifient pas le solde.

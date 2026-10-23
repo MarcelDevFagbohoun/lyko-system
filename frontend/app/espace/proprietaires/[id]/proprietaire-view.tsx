@@ -497,7 +497,7 @@ function EscrowBalanceCard({
           )}
           {(escrow.chargeCredits ?? 0) > 0 && (
             <div className="flex items-center justify-between text-ink-soft">
-              <span>Charges SONEB/SBEE ajoutées au solde</span>
+              <span>Charges SONEB/SBEE créditées au solde</span>
               <span className="tabular">{formatFcfa(escrow.chargeCredits ?? 0)}</span>
             </div>
           )}

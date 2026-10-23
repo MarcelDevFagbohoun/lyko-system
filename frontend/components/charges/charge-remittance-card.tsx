@@ -95,10 +95,10 @@ export function ChargeRemittanceCard({
       idem.renew();
       reset();
       onChanged();
-      toast.success(`${formatFcfa(paid)} de charges ajoutés au solde de ${ownerName}.`);
+      toast.success(`${formatFcfa(paid)} de charges crédités au solde de ${ownerName}.`);
       if (res.accountingNote) toast.warning(res.accountingNote);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible d'ajouter ces charges au solde.");
+      setError(err instanceof ApiError ? err.message : "Impossible de créditer ce solde.");
       setStep("form");
     } finally {
       setSubmitting(false);
@@ -110,10 +110,10 @@ export function ChargeRemittanceCard({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <HandCoins size={18} className="text-primary" />
-          Charges SONEB / SBEE encaissées
+          Charges encaissées
         </CardTitle>
         <CardDescription>
-          Les charges payées par les locataires restent chez le cabinet. Ajoutez-les au solde du propriétaire (en totalité
+          Les charges payées par les locataires restent chez le cabinet. Créditez-en le solde du propriétaire (en totalité
           ou en partie) : elles seront versées avec le reste de son solde depuis le menu Paiements.
         </CardDescription>
       </CardHeader>
@@ -123,14 +123,14 @@ export function ChargeRemittanceCard({
         {canRecord && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Ajout au solde</span>
+              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Crédit du solde</span>
               {account.balance > 0 ? (
                 <Button variant="success" size="sm" onClick={() => (open ? reset() : openForm())}>
                   <HandCoins size={14} />
-                  {open ? "Fermer" : "Ajouter les fonds des charges au solde du propriétaire"}
+                  {open ? "Fermer" : "Créditer le solde"}
                 </Button>
               ) : (
-                <span className="text-body-xs text-ink-muted">Aucune charge disponible à ajouter.</span>
+                <span className="text-body-xs text-ink-muted">Aucune charge disponible à créditer.</span>
               )}
             </div>
 
@@ -142,7 +142,7 @@ export function ChargeRemittanceCard({
                   <Field label="Montant (FCFA)" htmlFor="remitAmount" required hint={`Au plus ${formatFcfa(account.balance)}`}>
                     <Input id="remitAmount" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} />
                   </Field>
-                  <Field label="Date de l'ajout" htmlFor="remitDate" required>
+                  <Field label="Date du crédit" htmlFor="remitDate" required>
                     <Input id="remitDate" type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
                   </Field>
                 </div>
@@ -155,7 +155,7 @@ export function ChargeRemittanceCard({
                   <Input id="remitNotes" value={notes} maxLength={255} onChange={(e) => setNotes(e.target.value)} />
                 </Field>
                 <Button type="submit" className="self-start">
-                  Vérifier l&apos;ajout
+                  Vérifier le crédit
                 </Button>
               </form>
             )}
@@ -164,18 +164,18 @@ export function ChargeRemittanceCard({
               <div className="flex flex-col gap-4 rounded-lg border border-primary/30 bg-surface-muted p-4">
                 <div className="flex items-center gap-2 text-primary">
                   <ShieldCheck size={18} />
-                  <span className="font-label-md">Vérifiez cet ajout avant confirmation</span>
+                  <span className="font-label-md">Vérifiez ce crédit avant confirmation</span>
                 </div>
                 <dl className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface text-body-sm">
                   <ConfirmRow label="Solde crédité" value={ownerName} strong />
                   <ConfirmRow label="Montant" value={formatFcfa(Number(amount))} strong />
-                  <ConfirmRow label="Date de l'ajout" value={paidAt} />
+                  <ConfirmRow label="Date du crédit" value={paidAt} />
                   {label.trim() && <ConfirmRow label="Libellé" value={label.trim()} />}
                   {notes.trim() && <ConfirmRow label="Note" value={notes.trim()} />}
                 </dl>
                 <p className="text-body-xs text-ink-muted">
                   Aucun argent ne sort : le solde du propriétaire augmente de ce montant (écriture comptable automatique).
-                  L&apos;ajout pourra être annulé, avec justification, tant que ce solde n&apos;a pas été versé.
+                  Le crédit pourra être annulé, avec justification, tant que ce solde n&apos;a pas été versé.
                 </p>
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="sm" onClick={() => setStep("form")} disabled={submitting}>
@@ -183,7 +183,7 @@ export function ChargeRemittanceCard({
                   </Button>
                   {/* Taille standard : en `sm`, tailwind-merge écrase la couleur de texte du bouton plein (texte sombre sur fond marine). */}
                   <Button onClick={handleConfirm} disabled={submitting}>
-                    {submitting ? "Enregistrement…" : `Ajouter au solde de ${ownerName}`}
+                    {submitting ? "Enregistrement…" : `Créditer le solde de ${ownerName}`}
                   </Button>
                 </div>
               </div>
@@ -192,7 +192,7 @@ export function ChargeRemittanceCard({
         )}
 
         {remittances.length === 0 ? (
-          <p className="text-body-sm text-ink-muted">Aucun ajout de charges au solde pour ce propriétaire.</p>
+          <p className="text-body-sm text-ink-muted">Aucun crédit de charges pour ce propriétaire.</p>
         ) : (
           <Table>
             <TableHeader>
@@ -213,7 +213,7 @@ export function ChargeRemittanceCard({
                     {r.periodLabel || "—"}
                     {r.notes && <span className="block text-body-xs text-ink-muted">{r.notes}</span>}
                   </TableCell>
-                  <TableCell className="text-ink-soft">{r.kind === "balance" ? "Ajouté au solde" : `Reversé (${r.paymentMethodLabel})`}</TableCell>
+                  <TableCell className="text-ink-soft">{r.kind === "balance" ? "Crédité au solde" : `Reversé (${r.paymentMethodLabel})`}</TableCell>
                   <TableCell className="text-body-xs text-ink-muted">
                     {r.recordedBy?.name ?? "—"}
                     <span className="block">le {r.createdAt.slice(0, 10)}</span>
@@ -243,7 +243,7 @@ function ConfirmRow({ label, value, strong }: { label: string; value: string; st
   );
 }
 
-/** Annulation d'un ajout : justification obligatoire, la trace reste (suppression logique). */
+/** Annulation d'un crédit : justification obligatoire, la trace reste (suppression logique). */
 function CancelRemittance({
   ownerId,
   remittance,
@@ -268,7 +268,7 @@ function CancelRemittance({
     setError(null);
     try {
       await cancelChargeRemittance(accessToken, ownerId, remittance.id, reason.trim());
-      toast.info(`Ajout de ${formatFcfa(remittance.amount)} annulé.`);
+      toast.info(`Crédit de ${formatFcfa(remittance.amount)} annulé.`);
       onCancelled();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Annulation impossible.");
@@ -301,7 +301,7 @@ function CancelRemittance({
           Retour
         </Button>
         <Button variant="danger" size="sm" onClick={handleCancel} disabled={busy}>
-          {busy ? "…" : "Annuler l'ajout"}
+          {busy ? "…" : "Annuler le crédit"}
         </Button>
       </div>
     </div>
