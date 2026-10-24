@@ -8,6 +8,7 @@
  * Contrastes élevés (texte foncé sur fond clair, texte blanc sur marine) pour rester lisibles à l'impression.
  */
 const fs = require('fs');
+const { parseActivities } = require('../utils/activities');
 const path = require('path');
 
 const C = {
@@ -110,12 +111,61 @@ function imageIfExists(relativePath) {
   return fs.existsSync(file) ? file : null;
 }
 
+
+const ACTIVITY_LINE_H = 10.5;
+const ACTIVITY_MAX_LINES = 3;
+
+/** Découpe les activités en lignes (retour à la ligne automatique si elles sont nombreuses), « +N » si tout ne tient pas. */
+function layoutActivityList(doc, activities, width, { font = F.SANS, size = 7.5 } = {}) {
+  const list = Array.isArray(activities) ? activities.filter(Boolean) : [];
+  if (list.length === 0) return { lines: [], height: 0 };
+  doc.font(font).fontSize(size);
+  const BULLET = 9; // puce + espace
+  const GAP = 12;
+  const lines = [[]];
+  let x = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const w = BULLET + doc.widthOfString(list[i]);
+    const cur = lines[lines.length - 1];
+    if (cur.length > 0 && x + GAP + w > width) {
+      if (lines.length === ACTIVITY_MAX_LINES) {
+        cur.push({ text: `+${list.length - i}`, w: BULLET + doc.widthOfString(`+${list.length - i}`), more: true });
+        return { lines, height: lines.length * ACTIVITY_LINE_H };
+      }
+      lines.push([]);
+      x = 0;
+    }
+    const line = lines[lines.length - 1];
+    x += (line.length > 0 ? GAP : 0) + w;
+    line.push({ text: list[i], w });
+  }
+  return { lines, height: lines.length * ACTIVITY_LINE_H };
+}
+
+/** Liste non ordonnée en ligne : « • Activité  • Activité … », sous le RCCM/IFU, dans le bloc d'identité. Renvoie la hauteur. */
+function drawActivityList(doc, layout, x, y, { font = F.SANS, size = 7.5, color = C.INK_SOFT, bullet = C.ACCENT } = {}) {
+  layout.lines.forEach((line, li) => {
+    let cx = x;
+    line.forEach((item, i) => {
+      if (i > 0) cx += 12;
+      const cy = y + li * ACTIVITY_LINE_H;
+      if (!item.more) doc.circle(cx + 2, cy + size / 2 - 0.3, 1.4).fill(bullet);
+      doc.font(font).fontSize(size).fillColor(color).text(item.text, cx + 9, cy, { lineBreak: false });
+      cx += item.w;
+    });
+  });
+  return layout.height;
+}
+
 /** Bandeau de première page : logo (sur tuile blanche), société, titre, sous-titre, carte de références. */
 function drawBanner(doc, tenant, { title, subtitle = null, meta = [], light = false } = {}) {
   if (light) return drawLightBanner(doc, tenant, { title, subtitle, meta });
   const w = doc.page.width;
-  doc.rect(0, 0, w, BANNER_H).fill(C.NAVY);
-  doc.rect(0, BANNER_H, w, 4).fill(C.ACCENT);
+  const acts = layoutActivityList(doc, parseActivities(tenant.activities), (meta.length > 0 ? 300 : WIDTH) - (imageIfExists(tenant.logo_path) ? 52 : 0));
+  const extra = acts.height > 0 ? acts.height + 4 : 0;
+  const bannerH = BANNER_H + extra;
+  doc.rect(0, 0, w, bannerH).fill(C.NAVY);
+  doc.rect(0, bannerH, w, 4).fill(C.ACCENT);
 
   let textX = LEFT;
   const logoFile = imageIfExists(tenant.logo_path);
@@ -133,6 +183,7 @@ function drawBanner(doc, tenant, { title, subtitle = null, meta = [], light = fa
   doc.font(F.BOLD).fontSize(10.5).fillColor(C.WHITE).text(String(tenant.company_name).toUpperCase(), textX, 28, { width: textW, characterSpacing: 0.6, lineBreak: false });
   const identity = [tenant.rccm && `RCCM ${tenant.rccm}`, tenant.ifu && `IFU ${tenant.ifu}`, tenant.contact_phone].filter(Boolean).join('  ·  ');
   doc.font(F.SANS).fontSize(7.5).fillColor(C.LIGHT_ON_NAVY).text(identity, textX, 43, { width: textW, lineBreak: false });
+  if (acts.height > 0) drawActivityList(doc, acts, textX, 55, { color: C.LIGHT_ON_NAVY, bullet: C.LIGHT_ON_NAVY });
 
   const titleW = hasMeta ? 300 : WIDTH;
   let titleSize = 22;
@@ -141,8 +192,8 @@ function drawBanner(doc, tenant, { title, subtitle = null, meta = [], light = fa
     titleSize -= 1;
     doc.fontSize(titleSize);
   }
-  doc.fillColor(C.WHITE).text(title, LEFT, 66, { width: titleW, lineBreak: false });
-  if (subtitle) doc.font(F.SANS).fontSize(10.5).fillColor(C.LIGHT_ON_NAVY).text(subtitle, LEFT, 66 + titleSize + 6, { width: titleW, lineBreak: false });
+  doc.fillColor(C.WHITE).text(title, LEFT, 66 + extra, { width: titleW, lineBreak: false });
+  if (subtitle) doc.font(F.SANS).fontSize(10.5).fillColor(C.LIGHT_ON_NAVY).text(subtitle, LEFT, 66 + extra + titleSize + 6, { width: titleW, lineBreak: false });
 
   if (hasMeta) {
     const cardX = 365;
@@ -158,8 +209,8 @@ function drawBanner(doc, tenant, { title, subtitle = null, meta = [], light = fa
   }
   doc._aimTitle = title;
   doc._aimContext = meta[0] ? String(meta[0][1] ?? '') : '';
-  doc.y = CONTENT_TOP;
-  return CONTENT_TOP;
+  doc.y = CONTENT_TOP + extra;
+  return CONTENT_TOP + extra;
 }
 
 
@@ -169,6 +220,9 @@ const L = { RULE: '#E2E8F0', PANEL: '#F1F5F9', PANEL_SOFT: '#F8FAFC', ACCENT: '#
 /** Bandeau clair : logo + société à gauche, grand titre sombre, carte de références grise à droite, filet fin dessous. */
 function drawLightBanner(doc, tenant, { title, subtitle, meta }) {
   const w = doc.page.width;
+  const acts = layoutActivityList(doc, parseActivities(tenant.activities), (meta.length > 0 ? 300 : WIDTH) - (imageIfExists(tenant.logo_path) ? 52 : 0));
+  const extra = acts.height > 0 ? acts.height + 4 : 0;
+  const bannerH = BANNER_H + extra;
   let textX = LEFT;
   const logoFile = imageIfExists(tenant.logo_path);
   if (logoFile) {
@@ -185,6 +239,7 @@ function drawLightBanner(doc, tenant, { title, subtitle, meta }) {
   doc.font(F.BOLD).fontSize(10.5).fillColor(L.INK).text(String(tenant.company_name).toUpperCase(), textX, 30, { width: textW, characterSpacing: 0.6, lineBreak: false });
   const identity = [tenant.rccm && `RCCM ${tenant.rccm}`, tenant.ifu && `IFU ${tenant.ifu}`, tenant.contact_phone].filter(Boolean).join('  ·  ');
   doc.font(F.SANS).fontSize(7.5).fillColor(L.MUTED).text(identity, textX, 45, { width: textW, lineBreak: false });
+  if (acts.height > 0) drawActivityList(doc, acts, textX, 57, { color: L.MUTED, bullet: L.ACCENT });
 
   const titleW = hasMeta ? 300 : WIDTH;
   let titleSize = 20;
@@ -193,8 +248,8 @@ function drawLightBanner(doc, tenant, { title, subtitle, meta }) {
     titleSize -= 1;
     doc.fontSize(titleSize);
   }
-  doc.fillColor(L.INK).text(title, LEFT, 78, { width: titleW, lineBreak: false });
-  if (subtitle) doc.font(F.SANS).fontSize(10).fillColor(L.MUTED).text(subtitle, LEFT, 78 + titleSize + 5, { width: titleW, lineBreak: false });
+  doc.fillColor(L.INK).text(title, LEFT, 78 + extra, { width: titleW, lineBreak: false });
+  if (subtitle) doc.font(F.SANS).fontSize(10).fillColor(L.MUTED).text(subtitle, LEFT, 78 + extra + titleSize + 5, { width: titleW, lineBreak: false });
 
   if (hasMeta) {
     const cardX = 365;
@@ -209,13 +264,13 @@ function drawLightBanner(doc, tenant, { title, subtitle, meta }) {
     });
   }
   // Filet fin sur toute la largeur + court accent bleu à gauche.
-  doc.rect(LEFT, BANNER_H, WIDTH, 0.75).fill(L.RULE);
-  doc.rect(LEFT, BANNER_H - 0.75, 56, 2.25).fill(L.ACCENT);
+  doc.rect(LEFT, bannerH, WIDTH, 0.75).fill(L.RULE);
+  doc.rect(LEFT, bannerH - 0.75, 56, 2.25).fill(L.ACCENT);
   doc._aimTitle = title;
   doc._aimContext = meta[0] ? String(meta[0][1] ?? '') : '';
   doc._aimLight = true;
-  doc.y = CONTENT_TOP;
-  return CONTENT_TOP;
+  doc.y = CONTENT_TOP + extra;
+  return CONTENT_TOP + extra;
 }
 
 /** Bandeau fin des pages suivantes (dessiné à la fin, pour toutes les pages sauf la première). */
@@ -429,6 +484,6 @@ function finishDocument(doc, { verificationCode = null, frontendHost = null, dow
 
 module.exports = {
   C, F, LEFT, WIDTH, CONTENT_TOP, fcfa, amountInWordsFr, sentenceAmount, imageIfExists,
-  drawBanner, drawContinuationBand, drawSection, drawInfoGrid, drawStatTiles, drawTable, drawTotalBar,
+  drawBanner, layoutActivityList, drawActivityList, drawContinuationBand, drawSection, drawInfoGrid, drawStatTiles, drawTable, drawTotalBar,
   drawWordsLine, drawNote, drawSignatureCards, finishDocument, ensureRoom,
 };

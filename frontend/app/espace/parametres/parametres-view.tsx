@@ -26,6 +26,7 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, CardToneProvider } from "@/components/ui/card";
+import { ActivitiesCard } from "@/components/espace/activities-card";
 import { StartDateCard } from "@/components/accounting/start-date-card";
 import { CADRES, type Cadre } from "@/lib/module-theme";
 import { Badge } from "@/components/ui/badge";
@@ -66,7 +67,7 @@ function SectionLabel({ cadre }: { cadre: Cadre }) {
 }
 
 function ParametresContent() {
-  const { accessToken, refreshUser } = useAuth();
+  const { accessToken, refreshUser, tenant } = useAuth();
   const [settings, setSettings] = React.useState<TenantSettings | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
 
@@ -74,6 +75,7 @@ function ParametresContent() {
   const [stampPreview, setStampPreview] = React.useState<string | null>(null);
   const [signatureFile, setSignatureFile] = React.useState<File | null>(null);
   const [signaturePreview, setSignaturePreview] = React.useState<string | null>(null);
+  const [activities, setActivities] = React.useState<string[]>([]);
   const [dgTitle, setDgTitle] = React.useState("");
   const [comptableTitle, setComptableTitle] = React.useState("");
   const [agentTitle, setAgentTitle] = React.useState("");
@@ -102,6 +104,7 @@ function ParametresContent() {
     getSettings(accessToken)
       .then((res) => {
         setSettings(res.settings);
+        setActivities(res.settings.activities ?? []);
         setDgTitle(res.settings.roleTitles.dg);
         setComptableTitle(res.settings.roleTitles.comptable);
         setAgentTitle(res.settings.roleTitles.agent);
@@ -151,6 +154,7 @@ function ParametresContent() {
       const res = await updateSettings(accessToken, {
         stamp: stampFile ?? undefined,
         signature: signatureFile ?? undefined,
+        activities,
         dgTitle,
         comptableTitle,
         agentTitle,
@@ -259,6 +263,8 @@ function ParametresContent() {
 
           <SectionLabel cadre="administration" />
           <CardToneProvider tone={CADRES.administration.tone}>
+          <ActivitiesCard companyName={tenant?.companyName ?? "Votre entreprise"} value={activities} onChange={setActivities} />
+
           <Card>
             <CardHeader>
               <CardTitle>Noms des postes</CardTitle>

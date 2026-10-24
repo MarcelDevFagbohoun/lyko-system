@@ -1,5 +1,7 @@
 'use strict';
 
+const { parseActivities } = require('../utils/activities');
+
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
@@ -669,6 +671,10 @@ function drawContractHeader(doc, tenant, { title, subtitle, refLines = [] }) {
   doc.font(SERIF_BOLD).fontSize(11).fillColor(CK.INK).text(String(tenant.company_name).toUpperCase(), textX, 44, { width: 280, characterSpacing: 1.2, lineBreak: false });
   const identity = [tenant.rccm && `RCCM ${tenant.rccm}`, tenant.ifu && `IFU ${tenant.ifu}`, tenant.contact_phone].filter(Boolean).join('  ·  ');
   doc.font(SERIF).fontSize(8.5).fillColor(CK.MUTED).text(identity, textX, 60, { width: 300, lineBreak: false });
+  // Activités de l'entreprise : liste à puces sur une même ligne (retour à la ligne si nombreuses), sous le RCCM/IFU.
+  const acts = D.layoutActivityList(doc, parseActivities(tenant.activities), 300 - (textX - left), { font: SERIF_ITALIC, size: 8.5 });
+  const extra = acts.height > 0 ? acts.height + 4 : 0;
+  if (acts.height > 0) D.drawActivityList(doc, acts, textX, 73, { font: SERIF_ITALIC, size: 8.5, color: CK.INK, bullet: CK.MUTED });
   refLines.slice(0, 3).forEach(([label, value], i) => {
     const v = String(value ?? '—');
     const yy = 42 + i * 13;
@@ -676,17 +682,17 @@ function drawContractHeader(doc, tenant, { title, subtitle, refLines = [] }) {
     doc.font(SERIF_BOLD).fontSize(8.5).fillColor(CK.INK).text(v, left + width - vw, yy, { lineBreak: false });
     doc.font(SERIF).fontSize(8.5).fillColor(CK.MUTED).text(`${label} : `, 365, yy, { width: width + left - vw - 369, align: 'right', lineBreak: false });
   });
-  doc.moveTo(left, 92).lineTo(left + width, 92).lineWidth(1.2).strokeColor(CK.INK).stroke();
-  doc.moveTo(left, 95.5).lineTo(left + width, 95.5).lineWidth(0.4).strokeColor(CK.INK).stroke();
+  doc.moveTo(left, 92 + extra).lineTo(left + width, 92 + extra).lineWidth(1.2).strokeColor(CK.INK).stroke();
+  doc.moveTo(left, 95.5 + extra).lineTo(left + width, 95.5 + extra).lineWidth(0.4).strokeColor(CK.INK).stroke();
 
-  doc.font(SERIF_BOLD).fontSize(24).fillColor(CK.INK).text(title, left, 118, { width, align: 'center', characterSpacing: 3, lineBreak: false });
-  if (subtitle) doc.font(SERIF_ITALIC).fontSize(12).fillColor(CK.MUTED).text(subtitle, left, 150, { width, align: 'center', lineBreak: false });
-  doc.moveTo(left + width / 2 - 24, 174).lineTo(left + width / 2 + 24, 174).lineWidth(0.8).strokeColor(CK.INK).stroke();
+  doc.font(SERIF_BOLD).fontSize(24).fillColor(CK.INK).text(title, left, 118 + extra, { width, align: 'center', characterSpacing: 3, lineBreak: false });
+  if (subtitle) doc.font(SERIF_ITALIC).fontSize(12).fillColor(CK.MUTED).text(subtitle, left, 150 + extra, { width, align: 'center', lineBreak: false });
+  doc.moveTo(left + width / 2 - 24, 174 + extra).lineTo(left + width / 2 + 24, 174 + extra).lineWidth(0.8).strokeColor(CK.INK).stroke();
   doc._aimTitle = title;
   doc._aimContext = refLines[0] ? String(refLines[0][1] ?? '') : '';
   doc._aimLight = true;
-  doc.y = 196;
-  return 196;
+  doc.y = 196 + extra;
+  return 196 + extra;
 }
 
 /** Bloc « Les parties » du récapitulatif : deux colonnes séparées par un filet, puis lignes libellé / valeur. */

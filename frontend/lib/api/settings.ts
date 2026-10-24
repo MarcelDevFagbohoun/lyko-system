@@ -5,6 +5,8 @@ import type { RentTiming } from "./renters";
 export type RoleTitlePresets = { dg: string[]; comptable: string[]; agent: string[] };
 
 export type TenantSettings = {
+  /** Activités de l'entreprise, affichées dans l'en-tête des documents (liste à puces sous RCCM/IFU). */
+  activities: string[];
   stampUrl: string | null;
   signatureUrl: string | null;
   roleTitles: RoleTitles;
@@ -43,6 +45,7 @@ export function updateSettings(
   input: {
     stamp?: File;
     signature?: File;
+    activities?: string[];
     dgTitle?: string;
     comptableTitle?: string;
     agentTitle?: string;
@@ -67,6 +70,7 @@ export function updateSettings(
   const fd = new FormData();
   if (input.stamp) fd.append("stamp", input.stamp);
   if (input.signature) fd.append("signature", input.signature);
+  if (input.activities !== undefined) fd.append("activities", JSON.stringify(input.activities));
   if (input.dgTitle !== undefined) fd.append("dgTitle", input.dgTitle);
   if (input.comptableTitle !== undefined) fd.append("comptableTitle", input.comptableTitle);
   if (input.agentTitle !== undefined) fd.append("agentTitle", input.agentTitle);
