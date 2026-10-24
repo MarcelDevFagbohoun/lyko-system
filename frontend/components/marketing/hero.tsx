@@ -45,13 +45,13 @@ export function Hero() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/img/hero.webp"
-              srcSet="/img/hero-480.webp 480w, /img/hero.webp 736w"
+              srcSet="/img/hero-480.webp 480w, /img/hero.webp 735w"
               sizes="(min-width: 1024px) 560px, 90vw"
-              width={736}
-              height={763}
-              alt="Résidence moderne gérée avec Africa Immo Management"
+              width={735}
+              height={860}
+              alt="Une équipe souriante gère ses biens avec Africa Immo Management"
               fetchPriority="high"
-              className="aspect-[4/4.2] w-full object-cover sm:aspect-[4/3.4]"
+              className="aspect-[4/4.6] w-full object-cover object-top sm:aspect-[4/3.8]"
             />
           </div>
           <Card className="absolute -bottom-8 left-3 right-3 p-4 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl sm:left-[-1.5rem] sm:right-auto sm:w-[27rem]">
