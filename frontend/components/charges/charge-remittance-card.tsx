@@ -112,10 +112,7 @@ export function ChargeRemittanceCard({
           <HandCoins size={18} className="text-primary" />
           Charges encaissées
         </CardTitle>
-        <CardDescription>
-          Les charges payées par les locataires restent chez l&apos;entreprise. Créditez-en le solde du propriétaire (en totalité
-          ou en partie) : elles seront versées avec le reste de son solde depuis le menu Paiements.
-        </CardDescription>
+        <CardDescription>Créditez le solde du propriétaire des charges encaissées.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <AccountLine account={account} />
@@ -123,14 +120,14 @@ export function ChargeRemittanceCard({
         {canRecord && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Crédit du solde</span>
+              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Crédits</span>
               {account.balance > 0 ? (
                 <Button variant="success" size="sm" onClick={() => (open ? reset() : openForm())}>
                   <HandCoins size={14} />
                   {open ? "Fermer" : "Créditer le solde"}
                 </Button>
               ) : (
-                <span className="text-body-xs text-ink-muted">Aucune charge disponible à créditer.</span>
+                <span className="text-body-xs text-ink-muted">Rien à créditer.</span>
               )}
             </div>
 
@@ -173,10 +170,7 @@ export function ChargeRemittanceCard({
                   {label.trim() && <ConfirmRow label="Libellé" value={label.trim()} />}
                   {notes.trim() && <ConfirmRow label="Note" value={notes.trim()} />}
                 </dl>
-                <p className="text-body-xs text-ink-muted">
-                  Aucun argent ne sort : le solde du propriétaire augmente de ce montant (écriture comptable automatique).
-                  Le crédit pourra être annulé, avec justification, tant que ce solde n&apos;a pas été versé.
-                </p>
+                <p className="text-body-xs text-ink-muted">Le solde du propriétaire augmente de ce montant. Annulable tant qu&apos;il n&apos;est pas versé.</p>
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="sm" onClick={() => setStep("form")} disabled={submitting}>
                     Modifier
@@ -192,7 +186,7 @@ export function ChargeRemittanceCard({
         )}
 
         {remittances.length === 0 ? (
-          <p className="text-body-sm text-ink-muted">Aucun crédit de charges pour ce propriétaire.</p>
+          <p className="text-body-sm text-ink-muted">Aucun crédit.</p>
         ) : (
           <Table>
             <TableHeader>
