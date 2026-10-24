@@ -88,7 +88,7 @@ export function createGlFiscalYear(accessToken: string, input: { label: string; 
 }
 
 export function closeGlFiscalYear(accessToken: string, id: number) {
-  return apiFetch<{ totalDebit: number; totalCredit: number }>(`/api/gl/fiscal-years/${id}/close`, {
+  return apiFetch<{ totalDebit: number; totalCredit: number; closingEntryId: number | null; resultat: number | null }>(`/api/gl/fiscal-years/${id}/close`, {
     method: "POST",
     accessToken,
   });
@@ -414,27 +414,102 @@ export function markAllGlNotificationsRead(accessToken: string) {
 // toutes — ouvert au DG ET au comptable autorisé, comme les comptes
 // renommables.
 
+export type GlProfile = "simple" | "standard" | "complet" | "personnalise";
+export type ItsBracket = { upTo: number | null; rate: number };
+
 export type GlSettings = {
   /** Si actif, le mois d'acquisition d'une immobilisation est proratisé au nombre de jours restants (jour inclus) plutôt qu'un mois plein. */
   depreciationProrataTemporis: boolean;
-  /** % d'une charge SONEB/SBEE encaissée répercuté au locataire (411) ; le reste est gardé par le cabinet (706) comme frais de gestion. 100 = comportement historique (tout répercuté). */
-  /** Moment où la commission du cabinet (706) est comptabilisée : "encaissement" (défaut, historique) ou "reversement" (reportée au versement effectif au propriétaire). */
   /** IRF (Impôt sur le Revenu Foncier) : si actif, une retenue est prélevée sur chaque reversement au propriétaire, au taux `irfRate` (%). */
   irfEnabled: boolean;
   irfRate: number;
+  /** Base de calcul de l'IRF : montant versé (défaut) ou loyer brut reconstitué. */
+  irfBase: "versement" | "loyer_brut";
+  profile: GlProfile;
+  vatEnabled: boolean;
+  vatRate: number;
+  closingMode: "simple" | "complet";
+  utilityAccountMode: "clients" | "proprietaire";
+  payrollLevel: "net" | "cnss" | "complet";
+  cnssEmployeeRate: number;
+  cnssEmployerRate: number;
+  itsBrackets: ItsBracket[] | null;
+  assetSaleProceeds: boolean;
 };
+
+export type GlSettingsUpdate = Partial<Omit<GlSettings, "profile">> & { profile?: Exclude<GlProfile, "personnalise"> };
 
 export function getGlSettings(accessToken: string) {
   return apiFetch<GlSettings>("/api/gl/settings", { accessToken });
 }
 
-export function updateGlSettings(accessToken: string, input: Partial<GlSettings>) {
+export function updateGlSettings(accessToken: string, input: GlSettingsUpdate) {
   return apiFetch<GlSettings>("/api/gl/settings", {
     method: "PATCH",
     accessToken,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+export type GlSettingsLogItem = { id: number; key: string; oldValue: string | null; newValue: string | null; createdAt: string; userName: string | null };
+
+export function getGlSettingsLog(accessToken: string) {
+  return apiFetch<{ items: GlSettingsLogItem[] }>("/api/gl/settings/log", { accessToken });
+}
+
+// ── TVA sur commissions, CNSS et ITS à reverser ──────────────────────────
+
+export type VatReport = {
+  enabled: boolean;
+  rate: number;
+  balanceOwed: number;
+  months: { month: string; baseHt: number; tva: number; ttc: number }[];
+  from: string;
+  to: string;
+};
+
+export function getVatReport(accessToken: string) {
+  return apiFetch<VatReport>("/api/gl/vat", { accessToken });
+}
+
+export function payVat(accessToken: string, input: { amount: number; paymentMethod: PaymentMethod; paidAt: string }) {
+  return apiFetch<{ entryId: number }>("/api/gl/vat/pay", {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function getPayrollLiabilities(accessToken: string) {
+  return apiFetch<{ cnss: number; its: number }>("/api/gl/payroll-liabilities", { accessToken });
+}
+
+export function payPayrollLiability(
+  accessToken: string,
+  input: { kind: "cnss" | "its"; amount: number; paymentMethod: PaymentMethod; paidAt: string },
+) {
+  return apiFetch<{ entryId: number }>("/api/gl/payroll-liabilities/pay", {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+// ── Clôture complète ─────────────────────────────────────────────────────
+
+export type ClosingPreview = { mode: "simple" | "complet"; resultat: number; accountsToClose: number; destinationAccount: "121" | "129" };
+
+export function getClosingPreview(accessToken: string, fiscalYearId: number) {
+  return apiFetch<ClosingPreview>(`/api/gl/fiscal-years/${fiscalYearId}/closing-preview`, { accessToken });
+}
+
+export type OpeningBalances = { items: { code: string; label: string; debit: number; credit: number }[]; totalDebit: number; totalCredit: number };
+
+export function getOpeningBalances(accessToken: string, fiscalYearId: number) {
+  return apiFetch<OpeningBalances>(`/api/gl/fiscal-years/${fiscalYearId}/opening-balances`, { accessToken });
 }
 
 // ── IRF (Impôt sur le Revenu Foncier) ─────────────────────────────────────

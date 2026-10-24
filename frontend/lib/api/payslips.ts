@@ -41,11 +41,30 @@ export type Payslip = {
   deductionLabel: string | null;
   grossAmount: number;
   netAmount: number;
+  cnssEmployeeAmount: number;
+  cnssEmployerAmount: number;
+  itsAmount: number;
   paymentMethod: PayslipPaymentMethod;
   paidAt: string;
   createdBy: Actor;
   createdAt: string;
 };
+
+export type PayrollPreview = {
+  level: "net" | "cnss" | "complet";
+  cnssEmployee: number;
+  cnssEmployer: number;
+  its: number;
+  taxableBase: number;
+  net: number;
+  cnssEmployeeRate: number;
+  cnssEmployerRate: number;
+};
+
+/** Calcul de la paie (CNSS/ITS) avec les mêmes règles que le paiement, avant d'enregistrer. */
+export function previewPayroll(accessToken: string, gross: number, deduction: number) {
+  return apiFetch<PayrollPreview>(`/api/payslips/preview?gross=${gross}&deduction=${deduction}`, { accessToken });
+}
 
 export function listStaff(accessToken: string) {
   return apiFetch<{ staff: StaffMember[] }>("/api/payslips/staff", { accessToken });

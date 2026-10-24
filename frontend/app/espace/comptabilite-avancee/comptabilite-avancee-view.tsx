@@ -48,15 +48,13 @@ import {
   listGlFiscalYears,
   createGlFiscalYear,
   closeGlFiscalYear,
+  getClosingPreview,
   listGlPostingRules,
   updateGlPostingRule,
   resyncGlPostingRules,
   renameGlSystemAccount,
-  getGlSettings,
-  updateGlSettings,
   getIrfBalance,
   payIrf,
-  type GlSettings,
   listGlEntries,
   getGlEntry,
   createManualGlEntry,
@@ -109,6 +107,8 @@ import { RENAMEABLE_SYSTEM_ACCOUNTS } from "@/lib/constants/glRenameableAccounts
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { GlOptionsCard } from "@/components/comptabilite/gl-options-card";
+import { StateLiabilities } from "@/components/comptabilite/state-liabilities";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
@@ -346,6 +346,7 @@ function DashboardTab({
 
       {indicator && <MandantsCabinetCard indicator={indicator} />}
       <IrfBalanceCard accessToken={accessToken} />
+      <StateLiabilities accessToken={accessToken} />
 
       {isDg && <NotificationsPanel accessToken={accessToken} />}
     </div>
@@ -1452,8 +1453,17 @@ function ExercicesTab({
 
   async function handleClose(fy: GlFiscalYear) {
     if (!accessToken) return;
+    let detail = "";
+    try {
+      const pv = await getClosingPreview(accessToken, fy.id);
+      if (pv.mode === "complet") {
+        detail = `\n\nRésultat de l'exercice : ${formatFcfa(Math.abs(pv.resultat))} (${pv.resultat >= 0 ? "bénéfice" : "perte"}). Il sera enregistré dans vos capitaux propres (compte ${pv.destinationAccount}) et reporté sur l'exercice suivant.`;
+      }
+    } catch {
+      detail = "";
+    }
     const ok = window.confirm(
-      `Clôturer définitivement l'exercice ${fy.label} ? Cette action est irréversible : plus aucune écriture ne pourra y être ajoutée.`,
+      `Clôturer définitivement l'exercice ${fy.label} ? Cette action est irréversible : plus aucune écriture ne pourra y être ajoutée.${detail}`,
     );
     if (!ok) return;
     setClosingId(fy.id);
@@ -2105,7 +2115,7 @@ function ReglesTab({
           condition d'accès à cet onglet) — décision explicite de l'utilisateur,
           contrairement à l'activation du module (ActivationCard, DG uniquement). */}
       <RenameableAccountsCard accessToken={accessToken} accounts={accounts} onChanged={onAccountsChanged} />
-      <GlSettingsCard accessToken={accessToken} />
+      <GlOptionsCard accessToken={accessToken} />
 
       <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2280,152 +2290,6 @@ function RenameableAccountRow({
       </div>
       {error && <p className="mt-1.5 text-body-xs text-danger-fg">{error}</p>}
     </div>
-  );
-}
-
-// Autres hypothèses de jugement comptable restées configurables (voir les
-// notes "À VALIDER" du seed) — pour l'instant, seul le prorata temporis de
-// l'amortissement. D'autres réglages viendront s'ajouter ici (commission,
-// répartition SONEB/SBEE...).
-function GlSettingsCard({ accessToken }: { accessToken: string | null }) {
-  const [settings, setSettings] = React.useState<GlSettings | null>(null);
-  const [submitting, setSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [irfRateInput, setIrfRateInput] = React.useState("");
-  const toast = useToast();
-
-  const load = React.useCallback(() => {
-    if (!accessToken) return;
-    getGlSettings(accessToken)
-      .then((s) => {
-        setSettings(s);
-        setIrfRateInput(String(s.irfRate));
-      })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les réglages."));
-  }, [accessToken]);
-
-  React.useEffect(() => load(), [load]);
-
-  async function toggleProrata() {
-    if (!accessToken || !settings) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const next = await updateGlSettings(accessToken, { depreciationProrataTemporis: !settings.depreciationProrataTemporis });
-      setSettings(next);
-      toast.success(
-        next.depreciationProrataTemporis
-          ? "Amortissement proratisé au mois d'acquisition."
-          : "Amortissement en mois plein, sans prorata.",
-      );
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible de modifier ce réglage.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function toggleIrf() {
-    if (!accessToken || !settings) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const next = await updateGlSettings(accessToken, { irfEnabled: !settings.irfEnabled });
-      setSettings(next);
-      toast.success(next.irfEnabled ? "Retenue IRF activée." : "Retenue IRF désactivée.");
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible de modifier ce réglage.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function saveIrfRate() {
-    if (!accessToken || !settings) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const next = await updateGlSettings(accessToken, { irfRate: Number(irfRateInput) });
-      setSettings(next);
-      setIrfRateInput(String(next.irfRate));
-      toast.success(`Taux IRF fixé à ${next.irfRate} %.`);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible de modifier ce réglage.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (!settings) return null;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Réglages</CardTitle>
-        <CardDescription>
-          D&apos;autres choix que SYSCOHADA ne tranche pas — à ajuster une fois l&apos;avis de votre expert-comptable
-          obtenu. Les charges SONEB/SBEE répercutées, le moment de la commission et le seuil d&apos;alerte se règlent
-          dans les Paramètres généraux.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {error && <p className="text-body-sm text-danger-fg">{error}</p>}
-        <label className="flex items-start gap-2.5 rounded-lg border border-border px-3 py-2.5">
-          <input
-            type="checkbox"
-            checked={settings.depreciationProrataTemporis}
-            disabled={submitting}
-            onChange={toggleProrata}
-            className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
-          />
-          <span>
-            <span className="font-label-md text-ink">Proratiser le 1er mois d&apos;amortissement</span>
-            <p className="text-body-xs text-ink-muted">
-              Une immobilisation acquise en cours de mois n&apos;amortit que les jours restants de ce mois-là, au
-              lieu d&apos;un mois plein. Les mois suivants restent pleins.
-            </p>
-          </span>
-        </label>
-
-        <div className="rounded-lg border border-border px-3 py-2.5">
-          <label className="flex items-start gap-2.5">
-            <input
-              type="checkbox"
-              checked={settings.irfEnabled}
-              disabled={submitting}
-              onChange={toggleIrf}
-              className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
-            />
-            <span>
-              <span className="font-label-md text-ink">Retenue IRF sur les reversements aux propriétaires</span>
-              <p className="text-body-xs text-ink-muted">
-                Impôt sur le Revenu Foncier retenu à la source à chaque reversement, en attente d&apos;être reversé
-                au fisc (voir la carte « IRF à reverser » ci-dessous). Désactivé par défaut.
-              </p>
-            </span>
-          </label>
-          {settings.irfEnabled && (
-            <div className="mt-2 flex items-center gap-2 pl-6">
-              <Input
-                inputMode="numeric"
-                value={irfRateInput}
-                onChange={(e) => setIrfRateInput(e.target.value.replace(/\D/g, "").slice(0, 3))}
-                className="w-20 tabular"
-              />
-              <span className="text-body-sm text-ink-soft">%</span>
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={submitting || irfRateInput === "" || Number(irfRateInput) === settings.irfRate}
-                onClick={saveIrfRate}
-              >
-                Enregistrer
-              </Button>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 

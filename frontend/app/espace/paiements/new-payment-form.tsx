@@ -11,7 +11,7 @@ import {
   type PaymentOrder,
   type PaymentPurpose,
 } from "@/lib/api/payments";
-import { createPayslip, PAYSLIP_PAYMENT_METHOD_LABELS, type PayslipPaymentMethod, type StaffMember } from "@/lib/api/payslips";
+import { createPayslip, previewPayroll, PAYSLIP_PAYMENT_METHOD_LABELS, type PayrollPreview, type PayslipPaymentMethod, type StaffMember } from "@/lib/api/payslips";
 import { createPayout, type OwnerListItem } from "@/lib/api/owners";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { formatFcfa } from "@/lib/utils";
@@ -94,7 +94,24 @@ export function NewPaymentForm({
   }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const gross = (Number(baseAmount) || 0) + (Number(bonusAmount) || 0);
-  const net = gross - (Number(deductionAmount) || 0);
+  const [payroll, setPayroll] = React.useState<PayrollPreview | null>(null);
+  React.useEffect(() => {
+    if (!accessToken || purpose !== "salaire" || gross <= 0) {
+      setPayroll(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      previewPayroll(accessToken, gross, Number(deductionAmount) || 0)
+        .then((p) => !cancelled && setPayroll(p))
+        .catch(() => !cancelled && setPayroll(null));
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [accessToken, purpose, gross, deductionAmount]);
+  const net = payroll ? payroll.net : gross - (Number(deductionAmount) || 0);
   const total = purpose === "salaire" ? net : Number(amount) || 0;
 
   const beneficiaryLabel =
@@ -211,6 +228,13 @@ export function NewPaymentForm({
       <Field label="Retenue (FCFA)" htmlFor="pay-deduction">
         <Input id="pay-deduction" inputMode="numeric" value={deductionAmount} onChange={(e) => setDeductionAmount(digits(e.target.value))} />
       </Field>
+      {payroll && payroll.level !== "net" && (
+        <div className="flex flex-col gap-0.5 rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-xs text-ink-soft sm:col-span-2">
+          <span className="flex justify-between gap-3"><span>CNSS part salarié ({payroll.cnssEmployeeRate} %)</span><span className="tabular">- {formatFcfa(payroll.cnssEmployee)}</span></span>
+          {payroll.level === "complet" && <span className="flex justify-between gap-3"><span>ITS</span><span className="tabular">- {formatFcfa(payroll.its)}</span></span>}
+          <span className="flex justify-between gap-3 text-ink-muted"><span>CNSS part employeur ({payroll.cnssEmployerRate} %), à votre charge</span><span className="tabular">{formatFcfa(payroll.cnssEmployer)}</span></span>
+        </div>
+      )}
       <div className="flex flex-col justify-end rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm">
         <span className="text-ink-muted">Net à payer</span>
         <span className="tabular font-currency-table text-headline-sm text-ink">{formatFcfa(Math.max(net, 0))}</span>

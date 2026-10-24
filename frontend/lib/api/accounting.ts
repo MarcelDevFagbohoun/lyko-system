@@ -648,7 +648,11 @@ export function depreciateFixedAsset(accessToken: string, id: number, period: st
  * écriture comptable de sortie (amortissement cumulé soldé, valeur nette
  * comptable résiduelle passée en charge) si le module avancé est actif.
  */
-export function disposeFixedAsset(accessToken: string, id: number, input: { disposedAt: string; reason: string }) {
+export function disposeFixedAsset(
+  accessToken: string,
+  id: number,
+  input: { disposedAt: string; reason: string; salePrice?: number; salePaymentMethod?: "especes" | "mobile_money" | "virement" | "cheque" },
+) {
   return apiFetch<{ fixedAssetId: number; disposedAt: string }>(`/api/accounting/fixed-assets/${id}/dispose`, {
     method: "POST",
     accessToken,

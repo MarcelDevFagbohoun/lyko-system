@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, Zap, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, ChevronDown, ChevronUp, Landmark, UserPlus, Percent, LogOut, Tag, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
+import { getGlSettings } from "@/lib/api/gl";
 import { ApiError, openAuthenticatedPdf, downloadAuthenticatedFile } from "@/lib/api/client";
 import {
   listExpenses,
@@ -1493,6 +1494,9 @@ function FixedAssetRow({
   const [disposing, setDisposing] = React.useState(false);
   const [disposedAt, setDisposedAt] = React.useState(todayIso());
   const [disposeReason, setDisposeReason] = React.useState("");
+  const [saleAllowed, setSaleAllowed] = React.useState(false);
+  const [salePrice, setSalePrice] = React.useState("");
+  const [saleMethod, setSaleMethod] = React.useState<"especes" | "mobile_money" | "virement" | "cheque">("virement");
   const [expanded, setExpanded] = React.useState(false);
   const [depreciations, setDepreciations] = React.useState<FixedAssetDepreciationEntry[] | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
@@ -1531,12 +1535,24 @@ function FixedAssetRow({
     }
   }
 
+  // Prix de vente proposé seulement si l'option est activée (réglage lisible par DG/comptable).
+  React.useEffect(() => {
+    if (!disposing || !accessToken) return;
+    getGlSettings(accessToken)
+      .then((s) => setSaleAllowed(s.assetSaleProceeds))
+      .catch(() => setSaleAllowed(false));
+  }, [disposing, accessToken]);
+
   async function handleDispose() {
     if (!accessToken || !disposeReason.trim()) return;
     setSubmitting(true);
     setError(null);
     try {
-      await disposeFixedAsset(accessToken, asset.id, { disposedAt, reason: disposeReason.trim() });
+      await disposeFixedAsset(accessToken, asset.id, {
+        disposedAt,
+        reason: disposeReason.trim(),
+        ...(saleAllowed && Number(salePrice) > 0 ? { salePrice: Number(salePrice), salePaymentMethod: saleMethod } : {}),
+      });
       setDisposing(false);
       onChanged();
       toast.success(`« ${asset.label} » sortie du patrimoine.`);
@@ -1641,6 +1657,34 @@ function FixedAssetRow({
                 placeholder="Motif (ex. volé, revendu, hors d'usage)"
               />
             </div>
+            {saleAllowed && (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Input
+                  inputMode="numeric"
+                  value={salePrice}
+                  onChange={(e) => setSalePrice(e.target.value.replace(/\D/g, ""))}
+                  placeholder="Prix de vente encaissé (FCFA), si vendu"
+                />
+                {Number(salePrice) > 0 && (
+                  <select
+                    value={saleMethod}
+                    onChange={(e) => setSaleMethod(e.target.value as typeof saleMethod)}
+                    className="h-10 w-full rounded-lg border border-border-strong bg-surface px-3 text-body-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    aria-label="Mode d'encaissement du prix"
+                  >
+                    <option value="virement">Virement</option>
+                    <option value="cheque">Chèque</option>
+                    <option value="especes">Espèces</option>
+                    <option value="mobile_money">Mobile Money</option>
+                  </select>
+                )}
+                {Number(salePrice) > 0 && (
+                  <p className="text-body-xs text-ink-muted sm:col-span-2">
+                    {Number(salePrice) >= asset.bookValue ? "Plus-value" : "Moins-value"} estimée : {formatFcfa(Math.abs(Number(salePrice) - asset.bookValue))}
+                  </p>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <Button variant="danger" size="sm" onClick={handleDispose} disabled={submitting || !disposeReason.trim()}>
                 {submitting ? "Enregistrement…" : "Confirmer la sortie"}
