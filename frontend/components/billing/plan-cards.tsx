@@ -32,7 +32,7 @@ export function PlanCards({
   return (
     <div className="grid gap-4 lg:grid-cols-3">
       {catalog.plans.map((plan) => (
-        <Card key={plan.key} className={cn("flex flex-col", plan.featured && "border-primary ring-1 ring-primary")}>
+        <Card key={plan.key} className={cn("flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-xl", plan.featured && "border-primary ring-1 ring-primary")}>
           <CardHeader>
             <div className="flex items-center justify-between gap-2">
               <CardTitle>{plan.label}</CardTitle>
