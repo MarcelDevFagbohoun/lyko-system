@@ -81,6 +81,13 @@ const ACCOUNTS = [
   { code: '422', label: 'Personnel, rémunérations dues', class: 4, type: 'passif', control: true },
   { code: '431', label: 'Sécurité sociale (CNSS)', class: 4, type: 'passif' },
   {
+    code: '447',
+    label: 'État, impôts retenus à la source (ITS)',
+    class: 4,
+    type: 'passif',
+    note: "ITS retenu sur les salaires (option « Paie » niveau complet), en attente de reversement au fisc — soldé par `reglement_its`.",
+  },
+  {
     code: '442',
     label: 'État, impôts et taxes recouvrables sur des tiers',
     class: 4,
@@ -104,6 +111,13 @@ const ACCOUNTS = [
     note: 'Numéro renommable par le DG (Comptabilité avancée → Réglages) une fois l\'avis de son expert-comptable obtenu — SYSCOHADA ne prévoit pas de compte officiel dédié au mandat de gestion locative (certains cabinets utilisent 4671, d\'autres un compte 46 "Associés").',
   },
   {
+    code: '4672',
+    label: 'Propriétaires — charges locatives encaissées',
+    class: 4,
+    type: 'passif',
+    note: "Charges SONEB/SBEE encaissées chez les locataires pour le compte du propriétaire, en attente d'être créditées à son solde (option « Charges sur un compte propriétaire »). Auxiliaire par propriétaire. Fonds de tiers : inclus dans le contrôle de séparation des fonds.",
+  },
+  {
     code: '4673',
     label: 'Propriétaires — cautions détenues pour le compte des locataires',
     class: 4,
@@ -124,6 +138,7 @@ const ACCOUNTS = [
   { code: '571', label: 'Caisse siège social', class: 5, type: 'actif' },
   {
     code: '552',
+    systemKey: 'mobile_money_account',
     label: 'Mobile Money',
     class: 5,
     type: 'actif',
@@ -140,6 +155,7 @@ const ACCOUNTS = [
   { code: '628', label: 'Frais de télécommunications (téléphone, internet)', class: 6, type: 'charge' },
   { code: '641', label: 'Impôts et taxes directs', class: 6, type: 'charge' },
   { code: '658', label: 'Charges diverses de gestion courante', class: 6, type: 'charge' },
+  { code: '664', label: 'Charges sociales (part patronale CNSS)', class: 6, type: 'charge' },
   {
     code: '661',
     label: 'Rémunérations directes versées au personnel',
@@ -189,6 +205,7 @@ const ACCOUNTS = [
     note: 'Numéro renommable par le DG (Comptabilité avancée → Réglages) une fois l\'avis de son expert-comptable obtenu — 758 "Produits divers" est une alternative courante.',
   },
   { code: '771', label: 'Intérêts et produits financiers', class: 7, type: 'produit' },
+  { code: '754', label: "Produits des cessions courantes d'immobilisations", class: 7, type: 'produit' },
   { code: '7588', label: 'Autres produits divers de gestion courante', class: 7, type: 'produit' },
   {
     code: '7594',
@@ -468,6 +485,43 @@ const RULES = [
     ],
   },
   {
+    operation_type: 'salaire_paye_detaille',
+    label: 'Payer un salaire (avec CNSS / ITS)',
+    journal: 'OD',
+    narration_template: 'Salaire {mois} — {employe}',
+    note:
+      "Paie détaillée (option « Paie » niveaux CNSS / complet) : charge de salaire (661), part patronale CNSS (664), dettes envers la CNSS (431) et le fisc (447), net versé en trésorerie. Taux et barème saisis par l'entreprise — À VALIDER par le comptable.",
+    lines: [
+      { side: 'debit', account: '661', formula: 'pourcentage_variable', param: 'paie_charge_salaire' },
+      { side: 'debit', account: '664', formula: 'pourcentage_variable', param: 'paie_cnss_patronale' },
+      { side: 'credit', account: '431', formula: 'pourcentage_variable', param: 'paie_cnss_totale' },
+      { side: 'credit', account: '447', formula: 'pourcentage_variable', param: 'paie_its' },
+      { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'reglement_cnss',
+    label: 'Reverser les cotisations à la CNSS',
+    journal: 'OD',
+    narration_template: 'Règlement CNSS — {periode}',
+    note: 'Solde tout ou partie du compte 431 (cotisations salariales et patronales dues à la CNSS).',
+    lines: [
+      { side: 'debit', account: '431', formula: 'montant_total' },
+      { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'reglement_its',
+    label: "Reverser l'ITS retenu au fisc",
+    journal: 'OD',
+    narration_template: 'Règlement ITS — {periode}',
+    note: 'Solde tout ou partie du compte 447 (ITS retenu sur les salaires).',
+    lines: [
+      { side: 'debit', account: '447', formula: 'montant_total' },
+      { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+    ],
+  },
+  {
     operation_type: 'reglement_tva',
     label: 'Reverser la TVA collectée au fisc',
     journal: 'OD',
@@ -580,6 +634,21 @@ const RULES = [
         { side: 'debit', account: c.depreciationAccount, formula: 'pourcentage_variable', param: 'amortissement_cumule' },
         { side: 'debit', account: '654', formula: 'montant_moins_pourcentage', param: 'amortissement_cumule' },
         { side: 'credit', account: c.assetAccount, formula: 'montant_total' },
+      ],
+    },
+    {
+      operation_type: `cession_${c.category}`,
+      label: `Vendre une immobilisation — ${c.label}`,
+      journal: 'OD',
+      narration_template: `Cession d'immobilisation — ${c.label} — {libelle}`,
+      note:
+        "Cession AVEC prix de vente (option « Vente d'immobilisations avec prix » des réglages comptables). Même traitement que la sortie (28xxx amortissement cumulé, 654 valeur nette comptable, 2xxx coût d'acquisition) PLUS l'encaissement du prix en trésorerie et son produit en 754. Plus-value ou moins-value = 754 − 654, visible au compte de résultat. À VALIDER par le comptable.",
+      lines: [
+        { side: 'debit', account: c.depreciationAccount, formula: 'pourcentage_variable', param: 'amortissement_cumule' },
+        { side: 'debit', account: '654', formula: 'montant_moins_pourcentage', param: 'amortissement_cumule' },
+        { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'pourcentage_variable', param: 'prix_cession' },
+        { side: 'credit', account: c.assetAccount, formula: 'montant_total' },
+        { side: 'credit', account: '754', formula: 'pourcentage_variable', param: 'prix_cession' },
       ],
     },
   ]),
@@ -756,9 +825,11 @@ async function seed(tenantId) {
 async function syncMissingAccounts(tenantId) {
   const conn = await pool.getConnection();
   try {
-    const [existingRows] = await conn.query('SELECT code FROM gl_accounts WHERE tenant_id = :tenantId', { tenantId });
+    const [existingRows] = await conn.query('SELECT code, system_key FROM gl_accounts WHERE tenant_id = :tenantId', { tenantId });
     const existingCodes = new Set(existingRows.map((r) => r.code));
-    const missing = ACCOUNTS.filter((a) => !existingCodes.has(a.code));
+    // Un compte renommable dont le numéro a été changé existe toujours (par sa clé) : ne pas le recréer.
+    const existingKeys = new Set(existingRows.map((r) => r.system_key).filter(Boolean));
+    const missing = ACCOUNTS.filter((a) => !existingCodes.has(a.code) && !(a.systemKey && existingKeys.has(a.systemKey)));
     if (missing.length === 0) return { added: [] };
 
     for (const a of missing) {

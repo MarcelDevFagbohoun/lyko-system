@@ -19,7 +19,7 @@ after(async () => {
   await closePool();
 });
 
-test('le seed tague les 2 comptes renommables avec leur system_key', async () => {
+test('le seed tague les 3 comptes renommables avec leur system_key', async () => {
   const [rows] = await pool.query(
     "SELECT code, system_key FROM gl_accounts WHERE tenant_id = :t AND system_key IS NOT NULL ORDER BY system_key",
     { t: fx.tenantId },
@@ -28,6 +28,7 @@ test('le seed tague les 2 comptes renommables avec leur system_key', async () =>
     rows.map((r) => ({ code: r.code, systemKey: r.system_key })),
     [
       { code: '707', systemKey: 'late_fee_income_account' },
+      { code: '552', systemKey: 'mobile_money_account' },
       { code: '4671', systemKey: 'owner_control_account' },
     ],
   );

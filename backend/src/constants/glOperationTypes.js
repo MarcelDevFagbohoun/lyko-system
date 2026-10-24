@@ -29,6 +29,9 @@ const GL_OPERATION_TYPES = [
   'reglement_irf',
   'reglement_tva',
   'salaire_paye',
+  'salaire_paye_detaille',
+  'reglement_cnss',
+  'reglement_its',
   'penalite_retard',
   'penalite_retard_encaissee',
   'reglement_fournisseur',
@@ -51,6 +54,9 @@ const GL_OPERATION_TYPES = [
   'sortie_informatique',
   'sortie_mobilier',
   'sortie_transport',
+  'cession_informatique',
+  'cession_mobilier',
+  'cession_transport',
 ];
 
 // Catégorie de `fixed_assets.category` → type d'opération d'ACQUISITION.
@@ -69,6 +75,13 @@ const FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE = {
 
 // Catégorie de `fixed_assets.category` → type d'opération de SORTIE du
 // patrimoine (vente, rebut, perte — étape « audit comptable » du 30/09/2026).
+// Variante AVEC prix de vente (option gl_asset_sale_proceeds).
+const FIXED_ASSET_CATEGORY_TO_SALE_TYPE = {
+  informatique: 'cession_informatique',
+  mobilier: 'cession_mobilier',
+  transport: 'cession_transport',
+};
+
 const FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE = {
   informatique: 'sortie_informatique',
   mobilier: 'sortie_mobilier',
@@ -117,5 +130,6 @@ module.exports = {
   FIXED_ASSET_CATEGORY_TO_ACQUISITION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE,
+  FIXED_ASSET_CATEGORY_TO_SALE_TYPE,
   GL_CORE_HOOKED_OPERATION_TYPES,
 };

@@ -28,17 +28,18 @@ async function computeMandantsCabinetIndicator(pool, tenantId) {
      FROM gl_accounts a
      LEFT JOIN gl_entry_lines el ON el.account_id = a.id
      WHERE a.tenant_id = :tenantId
-       AND (a.code IN ('521', '571', '552', '165') OR a.system_key = 'owner_control_account')
+       AND (a.code IN ('521', '571', '552', '165', '4672') OR a.system_key IN ('owner_control_account', 'mobile_money_account'))
      GROUP BY a.id, a.code, a.system_key`,
     { tenantId },
   );
   const byCode = Object.fromEntries(rows.map((r) => [r.code, Number(r.solde)]));
   const ownerRow = rows.find((r) => r.system_key === 'owner_control_account');
+  const mobileRow = rows.find((r) => r.system_key === 'mobile_money_account');
 
   const treasury = {
     banque: byCode['521'] ?? 0,
     caisse: byCode['571'] ?? 0,
-    mobileMoney: byCode['552'] ?? 0,
+    mobileMoney: mobileRow ? Number(mobileRow.solde) : byCode['552'] ?? 0,
   };
   const treasuryTotal = treasury.banque + treasury.caisse + treasury.mobileMoney;
   // Comptes de PASSIF (crédit-heavy) : leur solde brut (débit − crédit) est
@@ -46,12 +47,14 @@ async function computeMandantsCabinetIndicator(pool, tenantId) {
   // dû POSITIF, plus lisible.
   const dueToOwners = ownerRow ? -Number(ownerRow.solde) : 0;
   const depositsHeld = -(byCode['165'] ?? 0);
-  const fundsHeldForThirdParties = dueToOwners + depositsHeld;
+  const chargesHeld = -(byCode['4672'] ?? 0);
+  const fundsHeldForThirdParties = dueToOwners + depositsHeld + chargesHeld;
 
   return {
     treasury: { ...treasury, total: treasuryTotal },
     dueToOwners,
     depositsHeld,
+    chargesHeld,
     fundsHeldForThirdParties,
     coverage: treasuryTotal - fundsHeldForThirdParties,
   };

@@ -31,6 +31,7 @@ const {
   FIXED_ASSET_CATEGORY_TO_ACQUISITION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DEPRECIATION_TYPE,
   FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE,
+  FIXED_ASSET_CATEGORY_TO_SALE_TYPE,
 } = require('../constants/glOperationTypes');
 const { genererEcriture, isModuleActive, resolveOpenFiscalYear } = require('../services/gl/glPostingService');
 const { resolveExpensePosting } = require('../services/gl/glExpensePosting');
@@ -177,6 +178,7 @@ function toPublicFixedAsset(row) {
     status: row.status,
     disposedAt: isoDate(row.disposed_at),
     disposedReason: row.disposed_reason ?? null,
+    salePrice: row.disposed_sale_price != null ? Number(row.disposed_sale_price) : null,
     accumulatedDepreciation,
     bookValue: acquisitionCost - accumulatedDepreciation,
     createdAt: row.created_at,
@@ -941,9 +943,17 @@ router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) =
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
   const { disposedAt, reason } = parsed.data;
+  const salePrice = parsed.data.salePrice ?? 0;
 
   const conn = await pool.getConnection();
   try {
+    if (salePrice > 0) {
+      if (!parsed.data.salePaymentMethod) throw new ApiError(400, 'Indiquez comment le prix de vente a été encaissé.');
+      const [[opt]] = await pool.query('SELECT gl_asset_sale_proceeds AS on_ FROM tenants WHERE id = :t', { t: req.user.tenantId });
+      if (!opt.on_) {
+        throw new ApiError(422, "Pour enregistrer un prix de vente, activez d'abord l'option « Vente d'immobilisations avec prix » dans Comptabilité avancée → Réglages.");
+      }
+    }
     const existing = await loadFixedAsset(conn, req.user.tenantId, id);
     if (existing.status === 'disposed') throw new ApiError(409, 'Cette immobilisation a déjà été sortie du patrimoine.');
     // Étape 51bis (Basse #6) : aucune validation n'empêchait de sortir une immobilisation à une date
@@ -986,18 +996,22 @@ router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) =
 
     const [disposeResult] = await conn.query(
       `UPDATE fixed_assets
-       SET status = 'disposed', disposed_at = :disposedAt, disposed_reason = :reason, disposed_by = :by
+       SET status = 'disposed', disposed_at = :disposedAt, disposed_reason = :reason, disposed_by = :by,
+           disposed_sale_price = :salePrice, disposed_sale_method = :saleMethod
        WHERE id = :id AND status <> 'disposed'`,
-      { id, disposedAt, reason, by: req.user.id },
+      { id, disposedAt, reason, by: req.user.id, salePrice: salePrice > 0 ? salePrice : null, saleMethod: salePrice > 0 ? parsed.data.salePaymentMethod : null },
     );
     if (disposeResult.affectedRows === 0) throw new ApiError(409, 'Cette immobilisation a déjà été sortie du patrimoine.');
 
     if (await isModuleActive(conn, req.user.tenantId)) {
-      const operationType = FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE[existing.category];
+      const operationType = salePrice > 0
+        ? FIXED_ASSET_CATEGORY_TO_SALE_TYPE[existing.category]
+        : FIXED_ASSET_CATEGORY_TO_DISPOSAL_TYPE[existing.category];
       await genererEcriture(conn, {
         tenantId: req.user.tenantId,
         operationType,
         entryDate: disposedAt,
+        paymentMethod: salePrice > 0 ? parsed.data.salePaymentMethod : undefined,
         // `montant_total` de la règle = coût d'ACQUISITION brut (jamais la
         // VNC) : la règle elle-même dérive l'amortissement cumulé (compte
         // 28xxx) et la valeur nette comptable résiduelle (compte 654) à
@@ -1017,7 +1031,7 @@ router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) =
         sourceTable: 'fixed_asset_disposals',
         sourceId: id,
         createdBy: req.user.id,
-        context: { fixedAssetId: id },
+        context: { fixedAssetId: id, salePrice },
       });
     }
 

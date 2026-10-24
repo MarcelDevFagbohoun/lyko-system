@@ -92,7 +92,9 @@ async function resolvePurpose(tenantId, input) {
     if (!employee) throw new ApiError(404, 'Employé introuvable');
     if (employee.status !== 'active') throw new ApiError(422, "Cet employé n'est plus actif.");
     const gross = input.baseAmount + input.bonusAmount;
-    const net = gross - input.deductionAmount;
+    const { loadPayrollSettings, computePayroll } = require('../payroll');
+    const payroll = computePayroll(await loadPayrollSettings(pool, tenantId), { gross, deduction: input.deductionAmount });
+    const net = payroll.net;
     if (input.deductionAmount > gross || net <= 0) throw new ApiError(422, 'Le net à payer doit être supérieur à 0.');
     const [[existing]] = await pool.query(
       "SELECT id FROM payslips WHERE tenant_id = :tenantId AND user_id = :userId AND period = :period AND deleted_at IS NULL LIMIT 1",
@@ -107,6 +109,7 @@ async function resolvePurpose(tenantId, input) {
       context: {
         userId: employee.id, period: input.period, baseAmount: input.baseAmount, bonusAmount: input.bonusAmount,
         bonusLabel: input.bonusLabel, deductionAmount: input.deductionAmount, deductionLabel: input.deductionLabel,
+        payroll,
       },
     };
   }
@@ -270,7 +273,7 @@ async function applyOrder(tenantId, orderId, { req = null } = {}) {
         const { payslipId } = await recordPayslip(conn, {
           tenantId, employee,
           data: { ...context, paymentMethod: 'mobile_money', paidAt },
-          createdBy: order.created_by, grossAmount: gross, netAmount: gross - context.deductionAmount, skipIdempotency: true,
+          createdBy: order.created_by, grossAmount: gross, netAmount: Number(order.amount), payroll: context.payroll ?? undefined, skipIdempotency: true,
         });
         appliedRef = `payslips:${payslipId}`;
       } else {

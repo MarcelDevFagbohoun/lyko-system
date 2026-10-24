@@ -19,6 +19,7 @@ const { GL_ACCOUNT_ROLES } = require('../../constants/glAccountRoles');
 const { resolveLineAccount, resolveLineAmount } = require('./glAccountResolver');
 const { nextEntryNumber } = require('./glNumbering');
 const { applyVatSplit } = require('./glVat');
+const { applyUtilityAccountMode } = require('./glUtilityMode');
 const { ApiError } = require('../../middleware/error');
 
 /**
@@ -118,6 +119,9 @@ async function genererEcriture(
     ].includes(line.account_role);
     resolvedLines.push({ side: line.side, accountId, thirdPartyId, amount: Math.round(lineAmount), isTreasuryLine });
   }
+
+  // Option « charges sur compte propriétaire » (4672) : no-op hors opérations de charges.
+  await applyUtilityAccountMode(conn, tenantId, operationType, resolvedLines, contextWithDate);
 
   // Option TVA : extrait la TVA des lignes de commission (706 -> 706 HT + 443). No-op par défaut.
   await applyVatSplit(conn, tenantId, resolvedLines);

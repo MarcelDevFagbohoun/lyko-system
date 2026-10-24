@@ -84,10 +84,16 @@ async function resolveSupplierThirdParty(conn, tenantId, supplierId, controlAcco
 async function resolveTreasuryAccountId(conn, tenantId, paymentMethod) {
   const mapping = TREASURY_BY_PAYMENT_METHOD[paymentMethod];
   if (!mapping) throw new ApiError(400, `Mode de paiement non pris en charge par le plan comptable : ${paymentMethod}`);
-  const [rows] = await conn.query('SELECT id FROM gl_accounts WHERE tenant_id = :tenantId AND code = :code LIMIT 1', {
-    tenantId,
-    code: mapping.account,
-  });
+  // Le compte Mobile Money est renommable : résolu par system_key, repli sur le code d'origine.
+  const [rows] = mapping.account === '552'
+    ? await conn.query(
+        "SELECT id FROM gl_accounts WHERE tenant_id = :tenantId AND (system_key = 'mobile_money_account' OR code = '552') ORDER BY (system_key IS NULL) ASC LIMIT 1",
+        { tenantId },
+      )
+    : await conn.query('SELECT id FROM gl_accounts WHERE tenant_id = :tenantId AND code = :code LIMIT 1', {
+        tenantId,
+        code: mapping.account,
+      });
   if (!rows[0]) throw new ApiError(404, `Compte de trésorerie ${mapping.account} introuvable — plan comptable initialisé ?`);
   return rows[0].id;
 }
@@ -180,7 +186,19 @@ async function computeReversementDeductions(conn, tenantId, context, totalAmount
     commissionAmount = Math.round((totalAmount * rate) / 100);
   }
   const irfRate = await resolveIrfRate(conn, tenantId);
-  const irfAmount = Math.round((totalAmount * irfRate) / 100);
+  let irfBase = totalAmount;
+  if (irfRate > 0) {
+    const [[t]] = await conn.query('SELECT gl_irf_base FROM tenants WHERE id = :tenantId LIMIT 1', { tenantId });
+    // Option « loyer brut » : à l'encaissement-commission, le versement est déjà net de commission ; le loyer
+    // brut correspondant est reconstitué (versement ÷ (1 − commission)). Au reversement-commission, le
+    // versement EST le brut. L'IRF ne dépasse jamais ce qui reste après commission.
+    if (t?.gl_irf_base === 'loyer_brut' && timing === 'encaissement') {
+      const ownerId = context.ownerId ?? (await resolveOwnerFromLease(conn, tenantId, context.leaseId, context.entryDate)).id;
+      const rate = await resolveCommissionRate(conn, tenantId, ownerId, context.entryDate);
+      if (rate > 0 && rate < 100) irfBase = Math.round(totalAmount / (1 - rate / 100));
+    }
+  }
+  const irfAmount = Math.min(Math.round((irfBase * irfRate) / 100), totalAmount - commissionAmount);
   return { commissionAmount, irfAmount };
 }
 
@@ -287,6 +305,23 @@ async function resolveLineAmount(conn, { tenantId, line, totalAmount, context })
       return Number(line.fixed_amount);
     case 'pourcentage_variable':
     case 'montant_moins_pourcentage': {
+      // Paie détaillée : montants déjà calculés (services/payroll.js) et transmis par le contexte.
+      if (line.formula_param && line.formula_param.startsWith('paie_')) {
+        const p = context.payroll;
+        if (!p) throw new Error("Contexte manquant : payroll requis pour la paie détaillée");
+        const map = {
+          paie_charge_salaire: p.salaryCost,
+          paie_cnss_patronale: p.cnssEmployer,
+          paie_cnss_totale: p.cnssEmployee + p.cnssEmployer,
+          paie_its: p.its,
+        };
+        if (!(line.formula_param in map)) throw new Error(`Paramètre de paie inconnu : ${line.formula_param}`);
+        return map[line.formula_param];
+      }
+      if (line.formula_param === 'prix_cession') {
+        const price = Number(context.salePrice ?? 0);
+        return line.amount_formula === 'pourcentage_variable' ? price : totalAmount - price;
+      }
       if (line.formula_param === 'taux_repercussion_charge') {
         const rate = await resolveUtilityPassThroughPercent(conn, tenantId);
         const passedThrough = Math.round((totalAmount * rate) / 100);

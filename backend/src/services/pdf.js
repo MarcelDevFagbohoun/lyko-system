@@ -401,6 +401,8 @@ function streamPayslipPdf(res, { tenant, employee, payslip, issuer }) {
   if (Number(payslip.bonus_amount) > 0) rows.push([payslip.bonus_label || 'Prime', D.fcfa(payslip.bonus_amount)]);
   rows.push(['Salaire brut', D.fcfa(payslip.gross_amount)]);
   if (Number(payslip.deduction_amount) > 0) rows.push([payslip.deduction_label || 'Retenue', `- ${D.fcfa(payslip.deduction_amount)}`]);
+  if (Number(payslip.cnss_employee_amount) > 0) rows.push(['Cotisation CNSS (part salariale)', `- ${D.fcfa(payslip.cnss_employee_amount)}`]);
+  if (Number(payslip.its_amount) > 0) rows.push(['ITS (impôt sur traitements et salaires)', `- ${D.fcfa(payslip.its_amount)}`]);
   renderReceiptDocument(res, {
     tenant,
     filename: `fiche-de-paie-${payslip.period}-${employee.id}.pdf`,

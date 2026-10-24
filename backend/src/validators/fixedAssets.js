@@ -52,6 +52,9 @@ const depreciateFixedAssetSchema = z.object({
 const disposeFixedAssetSchema = z.object({
   disposedAt: dateSchema,
   reason: z.string().trim().min(5, 'Justification requise (5 caractères minimum)').max(255, 'Trop long'),
+  // Vente : prix encaissé et mode (option « Vente d'immobilisations avec prix »).
+  salePrice: z.coerce.number().int('Prix entier requis').nonnegative('Prix invalide').max(1_000_000_000, 'Montant hors limite').optional(),
+  salePaymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque']).optional(),
 });
 
 module.exports = {

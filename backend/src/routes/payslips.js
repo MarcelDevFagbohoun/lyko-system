@@ -27,6 +27,7 @@ const { maskPhone, normalizeBeninPhone } = require('../services/payments/phone')
 const { assertManualPaymentAllowed } = require('../services/payments/manualGuard');
 
 const { requireFeature } = require('../services/entitlements');
+const { loadPayrollSettings, computePayroll } = require('../services/payroll');
 const router = Router();
 router.use(requireAuth, requireRole('dg'), requireFeature('payroll'));
 
@@ -69,6 +70,9 @@ function toPublicPayslip(row, roleLabels) {
     deductionLabel: row.deduction_label,
     grossAmount: Number(row.gross_amount),
     netAmount: Number(row.net_amount),
+    cnssEmployeeAmount: Number(row.cnss_employee_amount ?? 0),
+    cnssEmployerAmount: Number(row.cnss_employer_amount ?? 0),
+    itsAmount: Number(row.its_amount ?? 0),
     paymentMethod: row.payment_method,
     paidAt: row.paid_at,
     createdBy: toActor(row.creator_first_name, row.creator_last_name, row.creator_role, roleLabels),
@@ -175,6 +179,19 @@ router.patch('/staff/:userId/momo', async (req, res, next) => {
   }
 });
 
+// GET /api/payslips/preview?gross=&deduction= — calcul de la paie (CNSS/ITS) avant paiement, mêmes règles que le paiement.
+router.get('/preview', async (req, res, next) => {
+  try {
+    const gross = Number(req.query.gross);
+    const deduction = Number(req.query.deduction ?? 0);
+    if (!Number.isFinite(gross) || gross < 0 || !Number.isFinite(deduction) || deduction < 0) throw new ApiError(400, 'Montants invalides');
+    const settings = await loadPayrollSettings(pool, req.user.tenantId);
+    res.json({ ...computePayroll(settings, { gross, deduction }), cnssEmployeeRate: settings.cnssEmployeeRate, cnssEmployerRate: settings.cnssEmployerRate });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/payslips?userId=&period= — historique, plus récent d'abord.
 router.get('/', async (req, res, next) => {
   try {
@@ -207,7 +224,16 @@ router.get('/', async (req, res, next) => {
  * et écriture comptable. Extrait de `POST /` pour être aussi appelé quand un paiement FedaPay est confirmé
  * (`services/payments/effects.js`). `data` = champs du schéma `createPayslipSchema`.
  */
-async function recordPayslip(conn, { tenantId, employee, data, createdBy, grossAmount, netAmount, skipIdempotency = false }) {
+async function recordPayslip(conn, { tenantId, employee, data, createdBy, grossAmount, netAmount: netIn, payroll: payrollIn, skipIdempotency = false }) {
+  // Détail social figé à la création : calculé ici sauf s'il a déjà été arrêté plus tôt (ordre FedaPay).
+  let payroll = payrollIn;
+  if (!payroll) {
+    const settings = await loadPayrollSettings(conn, tenantId);
+    payroll = computePayroll(settings, { gross: grossAmount, deduction: data.deductionAmount });
+    // Montant net déjà arrêté ailleurs (ancien ordre de paiement) et différent : on garde ce net, sans détail social.
+    if (netIn !== undefined && netIn !== payroll.net) payroll = computePayroll({ ...settings, level: 'net' }, { gross: grossAmount, deduction: data.deductionAmount });
+  }
+  const netAmount = payroll.net;
   // Bug évité (même classe que partout ailleurs dans ce projet) : re-vérifie SOUS VERROU, dans la
   // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
   await assertPeriodOpenLocked(conn, tenantId, data.paidAt);
@@ -234,10 +260,11 @@ async function recordPayslip(conn, { tenantId, employee, data, createdBy, grossA
   const [payslipResult] = await conn.query(
     `INSERT INTO payslips
        (tenant_id, user_id, period, base_amount, bonus_amount, bonus_label, deduction_amount, deduction_label,
-        gross_amount, net_amount, payment_method, paid_at, expense_id, created_by)
+        gross_amount, net_amount, cnss_employee_amount, cnss_employer_amount, its_amount,
+        payment_method, paid_at, expense_id, created_by)
      VALUES
        (:tenantId, :userId, :period, :baseAmount, :bonusAmount, :bonusLabel, :deductionAmount, :deductionLabel,
-        :grossAmount, :netAmount, :paymentMethod, :paidAt, :expenseId, :createdBy)`,
+        :grossAmount, :netAmount, :cnssEmployee, :cnssEmployer, :its, :paymentMethod, :paidAt, :expenseId, :createdBy)`,
     {
       tenantId: tenantId,
       userId: data.userId,
@@ -249,6 +276,9 @@ async function recordPayslip(conn, { tenantId, employee, data, createdBy, grossA
       deductionLabel: data.deductionLabel,
       grossAmount,
       netAmount,
+      cnssEmployee: payroll.cnssEmployee,
+      cnssEmployer: payroll.cnssEmployer,
+      its: payroll.its,
       paymentMethod: data.paymentMethod,
       paidAt: data.paidAt,
       expenseId,
@@ -260,7 +290,7 @@ async function recordPayslip(conn, { tenantId, employee, data, createdBy, grossA
   if (await isModuleActive(conn, tenantId)) {
     await genererEcriture(conn, {
       tenantId: tenantId,
-      operationType: 'salaire_paye',
+      operationType: payroll.level === 'net' ? 'salaire_paye' : 'salaire_paye_detaille',
       entryDate: data.paidAt,
       amount: netAmount,
       paymentMethod: data.paymentMethod,
@@ -268,11 +298,11 @@ async function recordPayslip(conn, { tenantId, employee, data, createdBy, grossA
       sourceTable: 'expenses',
       sourceId: expenseId,
       createdBy: createdBy,
-      context: {},
+      context: { payroll },
     });
   }
 
-  return { payslipId, expenseId, netAmount };
+  return { payslipId, expenseId, netAmount, payroll };
 }
 
 // POST /api/payslips — paie un salaire : crée la fiche ET la dépense correspondante (NET versé),
@@ -305,11 +335,13 @@ router.post('/', async (req, res, next) => {
     await assertPeriodOpen(req.user.tenantId, data.paidAt);
 
     const grossAmount = data.baseAmount + data.bonusAmount;
-    const netAmount = grossAmount - data.deductionAmount;
+    const payroll = computePayroll(await loadPayrollSettings(pool, req.user.tenantId), { gross: grossAmount, deduction: data.deductionAmount });
+    if (payroll.net <= 0) throw new ApiError(422, 'Le net à payer doit être supérieur à 0.');
+    const netAmount = payroll.net;
 
     await conn.beginTransaction();
     const { payslipId, netAmount: paidNet } = await recordPayslip(conn, {
-      tenantId: req.user.tenantId, employee, data, createdBy: req.user.id, grossAmount, netAmount,
+      tenantId: req.user.tenantId, employee, data, createdBy: req.user.id, grossAmount, netAmount, payroll,
     });
     await conn.commit();
     logger.info('Salaire payé', {
