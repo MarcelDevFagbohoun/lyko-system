@@ -21,13 +21,7 @@ export function SiteFooter() {
               Accueil
             </Link>
             <a href="#fonctionnalites" className="text-body-sm text-ink-soft hover:text-ink">
-              Pour qui
-            </a>
-            <a href="#argent" className="text-body-sm text-ink-soft hover:text-ink">
-              Comptabilité
-            </a>
-            <a href="#securite" className="text-body-sm text-ink-soft hover:text-ink">
-              Sécurité
+              Fonctionnalités
             </a>
             <a href="#questions" className="text-body-sm text-ink-soft hover:text-ink">
               Questions

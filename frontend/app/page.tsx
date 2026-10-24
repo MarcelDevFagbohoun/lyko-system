@@ -1,21 +1,17 @@
 import { SiteHeader } from "@/components/marketing/site-header";
 import { SiteFooter } from "@/components/marketing/site-footer";
+import { Features } from "@/components/marketing/features";
 import { Hero } from "@/components/marketing/hero";
 import { Pricing } from "@/components/marketing/pricing";
 import { TeamPhoto } from "@/components/marketing/team-photo";
-import { MadeForBenin } from "@/components/marketing/made-for-benin";
-import { ProblemSolution } from "@/components/marketing/problem-solution";
-import { Roles } from "@/components/marketing/roles";
-import { MoneyCompliance } from "@/components/marketing/money-compliance";
-import { SecurityBand } from "@/components/marketing/security-band";
 import { HowItWorks } from "@/components/marketing/how-it-works";
 import { Faq, FAQ_ITEMS } from "@/components/marketing/faq";
 import { CtaBanner } from "@/components/marketing/cta-banner";
 import { Reveal } from "@/components/marketing/reveal";
 
 /**
- * Landing page publique — accessible sans connexion. Parcours : promesse (héros) → tarifs → ancrage local →
- * avant/après → un espace par métier → photo d'équipe (si présente) → argent et comptabilité → confiance →
+ * Landing page publique — accessible sans connexion. Parcours : promesse (héros) → tarifs → aperçu bref des
+ * fonctionnalités (sans détail, pour ne pas servir de modèle à la copie) → photo d'équipe (si présente) →
  * démarrage → questions → appel à l'action. Aucun témoignage ni chiffre de performance inventé.
  */
 
@@ -30,7 +26,7 @@ const JSON_LD = {
       operatingSystem: "Web",
       inLanguage: "fr",
       description:
-        "Logiciel de gestion locative pensé pour le Bénin : loyers, relances WhatsApp, propriétaires, quittances et comptabilité SYSCOHADA.",
+        "Logiciel de gestion locative pensé pour le Bénin.",
     },
     {
       "@type": "FAQPage",
@@ -51,12 +47,8 @@ export default function LandingPage() {
       <main className="flex-1">
         <Hero />
         <Pricing />
-        <Reveal><MadeForBenin /></Reveal>
-        <Reveal><ProblemSolution /></Reveal>
-        <Reveal><Roles /></Reveal>
+        <Reveal><Features /></Reveal>
         <Reveal><TeamPhoto /></Reveal>
-        <Reveal><MoneyCompliance /></Reveal>
-        <Reveal><SecurityBand /></Reveal>
         <Reveal><HowItWorks /></Reveal>
         <Reveal><Faq /></Reveal>
         <Reveal><CtaBanner /></Reveal>
