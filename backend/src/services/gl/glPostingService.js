@@ -18,6 +18,7 @@ const { GL_OPERATION_TYPES } = require('../../constants/glOperationTypes');
 const { GL_ACCOUNT_ROLES } = require('../../constants/glAccountRoles');
 const { resolveLineAccount, resolveLineAmount } = require('./glAccountResolver');
 const { nextEntryNumber } = require('./glNumbering');
+const { applyVatSplit } = require('./glVat');
 const { ApiError } = require('../../middleware/error');
 
 /**
@@ -117,6 +118,9 @@ async function genererEcriture(
     ].includes(line.account_role);
     resolvedLines.push({ side: line.side, accountId, thirdPartyId, amount: Math.round(lineAmount), isTreasuryLine });
   }
+
+  // Option TVA : extrait la TVA des lignes de commission (706 -> 706 HT + 443). No-op par défaut.
+  await applyVatSplit(conn, tenantId, resolvedLines);
 
   // Refus de toute écriture déséquilibrée — LA garantie centrale du moteur. Audit comptabilité
   // avancée, point 8 (16/10/2026) : cette garantie n'existe qu'ICI, en code applicatif — MySQL ne

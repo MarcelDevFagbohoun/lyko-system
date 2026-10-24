@@ -88,6 +88,13 @@ const ACCOUNTS = [
     note: "IRF (Impôt sur le Revenu Foncier) retenu à la source sur le loyer avant reversement au propriétaire, en attente de reversement au fisc — voir `reversement_proprietaire` et `reglement_irf`. Compte mouvementé uniquement si `tenants.gl_irf_enabled` est activé (désactivé par défaut). Un seul débiteur (l'État), jamais de sous-compte par tiers, contrairement à 401/411/4671.",
   },
   {
+    code: '443',
+    label: 'État, TVA facturée',
+    class: 4,
+    type: 'passif',
+    note: "TVA collectée sur les commissions du cabinet (option « TVA sur mes commissions », `tenants.gl_vat_enabled`). Le taux de commission est considéré TTC : la TVA est extraite du montant, rien ne change pour le propriétaire ni pour la trésorerie. Soldée par `reglement_tva`. Compte mouvementé uniquement si l'option est activée.",
+  },
+  {
     code: '4671',
     systemKey: 'owner_control_account',
     label: 'Propriétaires mandants — comptes courants',
@@ -457,6 +464,18 @@ const RULES = [
       "Solde tout ou partie du compte 442 (IRF retenu, en attente de reversement au fisc) — jamais une nouvelle charge, juste l'extinction d'une dette déjà constatée à chaque reversement propriétaire. À VALIDER : périodicité réelle de versement au fisc (mensuelle ? trimestrielle ?) laissée au choix du cabinet — cette écriture peut être saisie à tout rythme.",
     lines: [
       { side: 'debit', account: '442', formula: 'montant_total' },
+      { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'reglement_tva',
+    label: 'Reverser la TVA collectée au fisc',
+    journal: 'OD',
+    narration_template: 'Règlement TVA — {periode}',
+    note:
+      "Solde tout ou partie du compte 443 (TVA collectée sur les commissions) — extinction d'une dette déjà constatée à chaque encaissement de commission, jamais une nouvelle charge. Périodicité (mensuelle) à confirmer avec votre comptable.",
+    lines: [
+      { side: 'debit', account: '443', formula: 'montant_total' },
       { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
     ],
   },

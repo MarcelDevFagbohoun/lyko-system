@@ -44,6 +44,7 @@ const glActivationRoutes = require('./gl/glActivation');
 const glBankReconciliationRoutes = require('./gl/glBankReconciliation');
 const glSettingsRoutes = require('./gl/glSettings');
 const glIrfRoutes = require('./gl/glIrf');
+const glVatRoutes = require('./gl/glVat');
 const fileRoutes = require('./files');
 const billingRoutes = require('./billing');
 const adminRoutes = require('./admin');
@@ -140,5 +141,6 @@ router.use('/gl/activation', glActivationRoutes);
 router.use('/gl/bank-reconciliations', glBankReconciliationRoutes);
 router.use('/gl/settings', glSettingsRoutes);
 router.use('/gl/irf', glIrfRoutes);
+router.use('/gl/vat', glVatRoutes);
 
 module.exports = router;

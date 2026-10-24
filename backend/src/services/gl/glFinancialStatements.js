@@ -24,6 +24,7 @@ async function fetchTrialBalanceRows(conn, tenantId, fiscalYearId) {
      JOIN gl_entry_lines el ON el.account_id = a.id
      JOIN gl_entries e ON e.id = el.entry_id
      WHERE a.tenant_id = :tenantId AND e.fiscal_year_id = :fiscalYearId
+       AND (e.source_operation_type IS NULL OR e.source_operation_type <> 'cloture_resultat')
      GROUP BY a.id, a.code, a.label, a.class, a.account_type
      ORDER BY a.code ASC`,
     { tenantId, fiscalYearId },
@@ -139,7 +140,7 @@ async function computeBalanceSheet(conn, tenantId, fiscalYearId) {
   const passif = [];
   const warnings = [];
   for (const r of rows) {
-    if (r.accountType === 'actif' && r.class >= 2 && r.class <= 5) {
+    if (r.accountType === 'actif' && r.class >= 1 && r.class <= 5) {
       const amount = r.totalDebit - r.totalCredit;
       if (amount === 0) continue;
       if (amount < 0 && !isContra(r.code)) {

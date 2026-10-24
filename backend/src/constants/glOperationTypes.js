@@ -27,6 +27,7 @@ const GL_OPERATION_TYPES = [
   'caution_recuperee_proprietaire',
   'reversement_proprietaire',
   'reglement_irf',
+  'reglement_tva',
   'salaire_paye',
   'penalite_retard',
   'penalite_retard_encaissee',

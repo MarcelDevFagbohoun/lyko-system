@@ -11,7 +11,7 @@ const { pool } = require('../../config/db');
 const { ApiError } = require('../../middleware/error');
 const { requireAuth, requirePermission } = require('../../middleware/auth');
 const { createFiscalYearSchema } = require('../../validators/gl/referentiels');
-const { cloturerExercice } = require('../../services/gl/glClosingService');
+const { cloturerExercice, previewClosing, getOpeningBalances } = require('../../services/gl/glClosingService');
 const { logGlAudit } = require('../../services/gl/glAuditService');
 const { notifyDg } = require('../../services/gl/glNotificationService');
 const logger = require('../../utils/logger');
@@ -79,6 +79,29 @@ router.post('/', canAdvanced, async (req, res, next) => {
     );
     logger.info('Exercice comptable ouvert', { tenantId: req.user.tenantId, fiscalYearId: result.insertId, by: req.user.id });
     res.status(201).json({ fiscalYearId: result.insertId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/gl/fiscal-years/:id/closing-preview — résultat et traitement prévus avant clôture.
+router.get('/:id/closing-preview', canAdvanced, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw new ApiError(400, 'Identifiant invalide');
+    res.json(await previewClosing(pool, req.user.tenantId, id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/gl/fiscal-years/:id/opening-balances — report à nouveau (soldes d'ouverture).
+router.get('/:id/opening-balances', canAdvanced, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw new ApiError(400, 'Identifiant invalide');
+    const items = await getOpeningBalances(pool, req.user.tenantId, id);
+    res.json({ items, totalDebit: items.reduce((s, r) => s + r.debit, 0), totalCredit: items.reduce((s, r) => s + r.credit, 0) });
   } catch (err) {
     next(err);
   }
