@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, AlertTriangle, XCircle, Info, X } from "lucide-react";
-import { useToast, type ToastItem, type ToastVariant } from "@/lib/toast/toast-context";
+import { useToast, useToastList, type ToastItem, type ToastVariant } from "@/lib/toast/toast-context";
 import { cn } from "@/lib/utils";
 
 const VARIANT_STYLE: Record<ToastVariant, { icon: typeof CheckCircle2; className: string; iconClassName: string; bar: string; title: string }> = {
@@ -21,7 +21,8 @@ const TOAST_DURATION_MS = 4000;
  * confirmation, sans jamais gérer sa propre présentation.
  */
 export function ToastStack() {
-  const { toasts, dismiss } = useToast();
+  const { dismiss } = useToast();
+  const toasts = useToastList();
 
   if (toasts.length === 0) return null;
 

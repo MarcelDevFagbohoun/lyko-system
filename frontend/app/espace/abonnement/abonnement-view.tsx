@@ -38,13 +38,33 @@ function AbonnementContent() {
   const [upgrades, setUpgrades] = React.useState<UpgradeOption[]>([]);
   const [busy, setBusy] = React.useState<string | null>(null);
 
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  // Seuls le catalogue et l'abonnement sont indispensables : l'historique, les demandes d'annulation et les offres
+  // supérieures échouent seuls sans vider la page. Une erreur s'affiche dans la page (avec « Réessayer »), jamais en rafale
+  // de messages, et ne relance rien automatiquement.
   const load = React.useCallback(() => {
     if (!accessToken) return;
-    Promise.all([fetchCatalog(), fetchSubscription(accessToken), listSubscriptionPayments(accessToken), listMyRefunds(accessToken)])
-      .then(([c, s, p, r]) => { setCatalog(c); setSub(s); setPayments(p.payments); setRefunds(r.refunds); return s.active ? fetchUpgradeOptions(accessToken) : { options: [] }; })
-      .then((u) => setUpgrades(u.options))
-      .catch((e) => toast.error(e instanceof ApiError ? e.message : "Impossible de charger l'abonnement."));
-  }, [accessToken, toast]);
+    setLoading(true);
+    setLoadError(null);
+    Promise.all([
+      fetchCatalog(),
+      fetchSubscription(accessToken),
+      listSubscriptionPayments(accessToken).catch(() => ({ payments: [] as SubscriptionPayment[] })),
+      listMyRefunds(accessToken).catch(() => ({ refunds: [] as Refund[] })),
+    ])
+      .then(async ([c, s, p, r]) => {
+        setCatalog(c);
+        setSub(s);
+        setPayments(p.payments);
+        setRefunds(r.refunds);
+        const u = s.active ? await fetchUpgradeOptions(accessToken).catch(() => ({ options: [] as UpgradeOption[] })) : { options: [] as UpgradeOption[] };
+        setUpgrades(u.options);
+      })
+      .catch((e) => setLoadError(e instanceof ApiError ? e.message : "Impossible de charger l'abonnement."))
+      .finally(() => setLoading(false));
+  }, [accessToken]);
   React.useEffect(() => load(), [load]);
 
   async function choose(plan: PlanKey, months: number) {
@@ -105,6 +125,21 @@ function AbonnementContent() {
                 : "Votre offre en cours, vos paiements et vos reçus."}
           </p>
         </div>
+
+        {loadError && !sub && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Impossible d&apos;afficher votre abonnement</CardTitle>
+              <CardDescription>
+                Le service d&apos;abonnement ne répond pas pour le moment. Votre espace et vos données ne sont pas affectés. Réessayez dans un instant ;
+                si le problème continue, écrivez-nous.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={load} disabled={loading}>{loading ? "Chargement…" : "Réessayer"}</Button>
+            </CardContent>
+          </Card>
+        )}
 
         {sub?.planKey === "interne" && (
           <Card>

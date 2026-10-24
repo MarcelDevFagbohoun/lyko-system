@@ -6,7 +6,6 @@ export type ToastVariant = "success" | "warning" | "danger" | "info";
 export type ToastItem = { id: number; variant: ToastVariant; message: string };
 
 type ToastContextValue = {
-  toasts: ToastItem[];
   dismiss: (id: number) => void;
   show: (variant: ToastVariant, message: string) => void;
   success: (message: string) => void;
@@ -16,6 +15,7 @@ type ToastContextValue = {
 };
 
 const ToastContext = React.createContext<ToastContextValue | null>(null);
+const ToastListContext = React.createContext<ToastItem[]>([]);
 
 const AUTO_DISMISS_MS = 4000;
 
@@ -59,9 +59,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Objet d'actions STABLE (jamais recréé quand la liste change) : la plupart des écrans le mettent dans les
+  // dépendances d'un `useEffect`/`useCallback` de chargement. S'il changeait à chaque toast, une erreur de
+  // chargement affichait un toast, ce qui relançait le chargement, qui échouait, qui affichait un toast…
+  // à l'infini (page Abonnement : pluie de toasts et requêtes en boucle).
   const value = React.useMemo<ToastContextValue>(
     () => ({
-      toasts,
       dismiss,
       show,
       success: (message) => show("success", message),
@@ -69,10 +72,19 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       error: (message) => show("danger", message),
       info: (message) => show("info", message),
     }),
-    [toasts, dismiss, show],
+    [dismiss, show],
   );
 
-  return <ToastContext.Provider value={value}>{children}</ToastContext.Provider>;
+  return (
+    <ToastContext.Provider value={value}>
+      <ToastListContext.Provider value={toasts}>{children}</ToastListContext.Provider>
+    </ToastContext.Provider>
+  );
+}
+
+/** Liste des toasts affichés — réservé au conteneur d'affichage (le seul à devoir se redessiner à chaque toast). */
+export function useToastList() {
+  return React.useContext(ToastListContext);
 }
 
 export function useToast() {
