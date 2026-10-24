@@ -4,24 +4,47 @@ const { verifyAccessToken } = require('../utils/jwt');
 const { ApiError } = require('./error');
 const { pool } = require('../config/db');
 
-/** Exige un access token JWT valide dans l'en-tête Authorization: Bearer ... */
-function requireAuth(req, res, next) {
+// Seules routes utilisables tant que le mot de passe temporaire n'a pas été remplacé.
+const ALLOWED_WHILE_MUST_CHANGE = ['/api/auth/me', '/api/auth/change-password', '/api/auth/logout', '/api/auth/refresh'];
+
+/**
+ * Exige un access token JWT valide dans l'en-tête Authorization: Bearer ...
+ *
+ * Changement de mot de passe obligatoire (compte employé créé avec un mot de passe temporaire) : appliqué
+ * ICI, côté serveur, pas seulement par l'interface — sinon un appel direct à l'API contournait l'obligation.
+ * La vérité est la base : on ne l'interroge que si le jeton porte l'indicateur (cas rare), ce qui évite une
+ * requête par appel et laisse passer un ancien jeton dont le mot de passe a, depuis, été changé.
+ */
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
   if (scheme !== 'Bearer' || !token) {
     return next(new ApiError(401, 'Authentification requise'));
   }
+  let payload;
   try {
-    const payload = verifyAccessToken(token);
-    req.user = {
-      id: payload.sub,
-      tenantId: payload.tenantId,
-      role: payload.role,
-      mustChangePassword: !!payload.mustChangePassword,
-    };
-    next();
+    payload = verifyAccessToken(token);
   } catch (_err) {
-    next(new ApiError(401, 'Session invalide ou expirée'));
+    return next(new ApiError(401, 'Session invalide ou expirée'));
+  }
+  req.user = {
+    id: payload.sub,
+    tenantId: payload.tenantId,
+    role: payload.role,
+    mustChangePassword: !!payload.mustChangePassword,
+  };
+  if (!req.user.mustChangePassword) return next();
+
+  try {
+    const [rows] = await pool.query('SELECT must_change_password FROM users WHERE id = :id LIMIT 1', { id: req.user.id });
+    const stillRequired = !!rows[0]?.must_change_password;
+    req.user.mustChangePassword = stillRequired;
+    if (!stillRequired) return next();
+    const path = (req.originalUrl || '').split('?')[0].replace(/\/+$/, '');
+    if (ALLOWED_WHILE_MUST_CHANGE.includes(path)) return next();
+    return next(new ApiError(403, 'Vous devez d\'abord changer votre mot de passe temporaire.', { code: 'PASSWORD_CHANGE_REQUIRED' }));
+  } catch (err) {
+    return next(err);
   }
 }
 
