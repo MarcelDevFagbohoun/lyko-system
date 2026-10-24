@@ -154,7 +154,7 @@ function formatFcfa(amount) {
  * du texte, ils bénéficient de l'alignement en chiffres fixes.
  */
 function drawHeader(doc, tenant, opts = {}) {
-  return D.drawBanner(doc, tenant, { title: opts.title ?? '', subtitle: opts.subtitle ?? null, meta: opts.meta ?? [] });
+  return D.drawBanner(doc, tenant, { title: opts.title ?? '', subtitle: opts.subtitle ?? null, meta: opts.meta ?? [], light: opts.light === true });
 }
 
 /**
@@ -1296,6 +1296,7 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
 
   drawHeader(doc, tenant, {
     title: 'PROCÈS-VERBAL DE SORTIE',
+    light: true,
     subtitle: '& décompte de caution',
     meta: [['Référence unité', property.unit_code ?? '—'], ...(verificationCode ? [['Code de vérification', verificationCode]] : [])],
   });
@@ -1459,6 +1460,7 @@ function streamMoveInPdf(res, { tenant, renter, property, lease, report, verific
 
   drawHeader(doc, tenant, {
     title: "ÉTAT DES LIEUX D'ENTRÉE",
+    light: true,
     subtitle: 'Procès-verbal contradictoire',
     meta: [['Référence unité', property.unit_code ?? '—'], ...(verificationCode ? [['Code de vérification', verificationCode]] : [])],
   });
