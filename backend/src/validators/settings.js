@@ -2,6 +2,7 @@
 
 const { z } = require('zod');
 const { ROLE_TITLE_PRESETS } = require('../constants/roles');
+const { MAX_ACTIVITIES, MAX_ACTIVITY_LENGTH, normalizeActivities } = require('../utils/activities');
 const { RENT_TIMING_KEYS } = require('../constants/rentTiming');
 
 // Menu déroulant fermé (jamais de champ libre) : seules les propositions de
@@ -15,7 +16,25 @@ const roleTitleField = (role) =>
     .transform((v) => v || null);
 
 // Chaîne vide envoyée volontairement = réinitialiser au modèle par défaut (NULL en base).
+// Activités affichées dans l'en-tête des documents : tableau (ou JSON en multipart) de courtes phrases.
+// Liste vide = aucune activité (NULL en base).
+const activitiesField = z
+  .preprocess((v) => {
+    if (typeof v === 'string') {
+      if (v.trim() === '') return [];
+      try {
+        return JSON.parse(v);
+      } catch {
+        return v;
+      }
+    }
+    return v;
+  }, z.array(z.string().trim().min(2, 'Activité trop courte').max(MAX_ACTIVITY_LENGTH, `Activité trop longue (${MAX_ACTIVITY_LENGTH} caractères max)`)).max(MAX_ACTIVITIES, `${MAX_ACTIVITIES} activités au maximum`))
+  .optional()
+  .transform((v) => (v === undefined ? undefined : normalizeActivities(v)));
+
 const updateSettingsSchema = z.object({
+  activities: activitiesField,
   dgTitle: roleTitleField('dg'),
   comptableTitle: roleTitleField('comptable'),
   agentTitle: roleTitleField('agent'),

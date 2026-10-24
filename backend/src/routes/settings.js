@@ -12,6 +12,7 @@ const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../uti
 const { ROLE_TITLE_PRESETS, resolveRoleLabels } = require('../constants/roles');
 const { encryptSecret } = require('../utils/encryption');
 const logger = require('../utils/logger');
+const { parseActivities } = require('../utils/activities');
 
 const router = Router();
 // Réglages de l'entreprise : réservés au DG (au même titre que la gestion des employés).
@@ -33,6 +34,8 @@ const upload = multer({
 
 function toPublicSettings(tenant) {
   return {
+    // Activités affichées dans l'en-tête des documents (contrats, états des lieux, quittances...).
+    activities: parseActivities(tenant.activities),
     stampUrl: tenant.stamp_path ? toProtectedFileUrl(tenant.stamp_path) : null,
     signatureUrl: tenant.signature_path ? toProtectedFileUrl(tenant.signature_path) : null,
     // Nom des 3 postes chez cette entreprise (Réglages) — menu déroulant
@@ -95,6 +98,10 @@ router.patch(
       const fields = [];
       const params = { id: req.user.tenantId };
 
+      if (data.activities !== undefined) {
+        fields.push('activities = :activities');
+        params.activities = data.activities.length > 0 ? JSON.stringify(data.activities) : null;
+      }
       if (data.dgTitle !== undefined) {
         fields.push('dg_title = :dgTitle');
         params.dgTitle = data.dgTitle;
