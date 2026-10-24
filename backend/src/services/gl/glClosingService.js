@@ -134,6 +134,8 @@ async function cloturerExercice(conn, { tenantId, fiscalYearId, userId }) {
 
 /** Aperçu avant clôture : résultat de l'exercice et traitement prévu. */
 async function previewClosing(conn, tenantId, fiscalYearId) {
+  const [[fy]] = await conn.query('SELECT id FROM gl_fiscal_years WHERE id = :id AND tenant_id = :tenantId', { id: fiscalYearId, tenantId });
+  if (!fy) throw new ApiError(404, 'Exercice comptable introuvable.');
   const [[tenantRow]] = await conn.query('SELECT gl_closing_mode FROM tenants WHERE id = :tenantId', { tenantId });
   const { resultat, lines } = await computeClosingBalances(conn, tenantId, fiscalYearId);
   return { mode: tenantRow.gl_closing_mode, resultat, accountsToClose: lines.length, destinationAccount: resultat >= 0 ? '121' : '129' };

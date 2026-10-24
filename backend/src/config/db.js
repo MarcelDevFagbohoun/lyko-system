@@ -29,6 +29,52 @@ const pool = mysql.createPool({
 });
 
 /**
+ * Garde anti-injection « par objet » : avec `query()` (requêtes préparées côté client), mysql2 transforme un
+ * paramètre qui est un OBJET en `colonne = valeur` (ex. { "id": 1 } → `id` = 1). Un JSON `{"id":{"a":1}}` non
+ * validé pourrait donc modifier la requête. Aucun appel légitime de l'application ne passe d'objet simple :
+ * toute valeur qui n'est pas un scalaire, une date, un tampon ou une liste de scalaires est refusée ici, pour
+ * TOUTES les requêtes, même si une route oublie de valider son entrée.
+ */
+function isScalar(v) {
+  return v === null || v === undefined || ['string', 'number', 'boolean', 'bigint'].includes(typeof v) || v instanceof Date || Buffer.isBuffer(v);
+}
+function assertSafeSqlParams(params) {
+  if (params === undefined || params === null) return;
+  const values = Array.isArray(params) ? params : typeof params === 'object' ? Object.values(params) : [];
+  for (const v of values) {
+    if (isScalar(v)) continue;
+    if (Array.isArray(v) && v.every((x) => isScalar(x) || (Array.isArray(x) && x.every(isScalar)))) continue;
+    const err = new Error('Paramètre de requête invalide.');
+    err.status = 400;
+    throw err;
+  }
+}
+function guardQueryMethod(target) {
+  for (const name of ['query', 'execute']) {
+    const original = target[name];
+    if (typeof original !== 'function') continue;
+    target[name] = function guarded(sql, params, ...rest) {
+      try {
+        assertSafeSqlParams(typeof sql === 'object' && sql !== null ? sql.values : params);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+      return original.call(this, sql, params, ...rest);
+    };
+  }
+}
+guardQueryMethod(pool);
+const originalGetConnection = pool.getConnection.bind(pool);
+pool.getConnection = async function guardedGetConnection(...args) {
+  const conn = await originalGetConnection(...args);
+  if (!conn.__sqlGuarded) {
+    guardQueryMethod(conn);
+    conn.__sqlGuarded = true;
+  }
+  return conn;
+};
+
+/**
  * Vérifie que la base répond. Renvoie un objet de diagnostic
  * (utilisé par la route /api/health/db et le script db:check).
  */
