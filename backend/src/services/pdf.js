@@ -251,14 +251,14 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
   res.setHeader('Cache-Control', 'private, no-store');
   doc.pipe(res);
 
-  let y = D.drawBanner(doc, tenant, { title, subtitle, meta });
+  let y = D.drawBanner(doc, tenant, { title, subtitle, meta, light: true });
   if (intro) {
     doc.font(D.F.SANS).fontSize(9.5).fillColor(D.C.INK_SOFT).text(intro.prefix, D.LEFT, y, { continued: true });
     doc.font(D.F.BOLD).fillColor(D.C.INK).text(intro.bold);
     y = doc.y + 16;
   }
   y = D.drawSection(doc, y, partiesLabel);
-  y = D.drawInfoGrid(doc, y, parties);
+  y = D.drawInfoGrid(doc, y, parties, { light: true });
   y = D.drawSection(doc, y, detailLabel);
   y = D.drawTable(doc, y, lines.columns, lines.rows);
   if (extraRows) y = D.drawTable(doc, y, extraRows.columns, extraRows.rows);

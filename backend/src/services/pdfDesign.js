@@ -111,7 +111,8 @@ function imageIfExists(relativePath) {
 }
 
 /** Bandeau de première page : logo (sur tuile blanche), société, titre, sous-titre, carte de références. */
-function drawBanner(doc, tenant, { title, subtitle = null, meta = [] } = {}) {
+function drawBanner(doc, tenant, { title, subtitle = null, meta = [], light = false } = {}) {
+  if (light) return drawLightBanner(doc, tenant, { title, subtitle, meta });
   const w = doc.page.width;
   doc.rect(0, 0, w, BANNER_H).fill(C.NAVY);
   doc.rect(0, BANNER_H, w, 4).fill(C.ACCENT);
@@ -161,11 +162,75 @@ function drawBanner(doc, tenant, { title, subtitle = null, meta = [] } = {}) {
   return CONTENT_TOP;
 }
 
+
+/** Palette « courrier » des reçus : fond blanc, gris ardoise, un seul filet d'accent (même esprit que les e-mails de facture). */
+const L = { RULE: '#E2E8F0', PANEL: '#F1F5F9', PANEL_SOFT: '#F8FAFC', ACCENT: '#1E3A8A', INK: '#0F172A', MUTED: '#64748B' };
+
+/** Bandeau clair : logo + société à gauche, grand titre sombre, carte de références grise à droite, filet fin dessous. */
+function drawLightBanner(doc, tenant, { title, subtitle, meta }) {
+  const w = doc.page.width;
+  let textX = LEFT;
+  const logoFile = imageIfExists(tenant.logo_path);
+  if (logoFile) {
+    try {
+      doc.roundedRect(LEFT, 26, 40, 40, 8).lineWidth(0.75).fillAndStroke(C.WHITE, L.RULE);
+      doc.image(logoFile, LEFT + 4, 30, { fit: [32, 32], align: 'center', valign: 'center' });
+      textX = LEFT + 52;
+    } catch {
+      textX = LEFT;
+    }
+  }
+  const hasMeta = meta.length > 0;
+  const textW = hasMeta ? 300 - (textX - LEFT) : WIDTH - (textX - LEFT);
+  doc.font(F.BOLD).fontSize(10.5).fillColor(L.INK).text(String(tenant.company_name).toUpperCase(), textX, 30, { width: textW, characterSpacing: 0.6, lineBreak: false });
+  const identity = [tenant.rccm && `RCCM ${tenant.rccm}`, tenant.ifu && `IFU ${tenant.ifu}`, tenant.contact_phone].filter(Boolean).join('  ·  ');
+  doc.font(F.SANS).fontSize(7.5).fillColor(L.MUTED).text(identity, textX, 45, { width: textW, lineBreak: false });
+
+  const titleW = hasMeta ? 300 : WIDTH;
+  let titleSize = 20;
+  doc.font(F.BOLD).fontSize(titleSize);
+  while (doc.widthOfString(title) > titleW && titleSize > 13) {
+    titleSize -= 1;
+    doc.fontSize(titleSize);
+  }
+  doc.fillColor(L.INK).text(title, LEFT, 78, { width: titleW, lineBreak: false });
+  if (subtitle) doc.font(F.SANS).fontSize(10).fillColor(L.MUTED).text(subtitle, LEFT, 78 + titleSize + 5, { width: titleW, lineBreak: false });
+
+  if (hasMeta) {
+    const cardX = 365;
+    const cardW = WIDTH + LEFT - cardX;
+    const items = meta.slice(0, 3);
+    const cardH = 14 + items.length * 26;
+    doc.roundedRect(cardX, 28, cardW, cardH, 8).fill(L.PANEL);
+    items.forEach(([label, value], i) => {
+      const y = 38 + i * 26;
+      doc.font(F.SANS).fontSize(6.5).fillColor(L.MUTED).text(String(label).toUpperCase(), cardX + 14, y, { width: cardW - 28, characterSpacing: 0.5, lineBreak: false });
+      doc.font(F.BOLD).fontSize(9.5).fillColor(L.INK).text(String(value ?? '—'), cardX + 14, y + 9, { width: cardW - 28, lineBreak: false });
+    });
+  }
+  // Filet fin sur toute la largeur + court accent bleu à gauche.
+  doc.rect(LEFT, BANNER_H, WIDTH, 0.75).fill(L.RULE);
+  doc.rect(LEFT, BANNER_H - 0.75, 56, 2.25).fill(L.ACCENT);
+  doc._aimTitle = title;
+  doc._aimContext = meta[0] ? String(meta[0][1] ?? '') : '';
+  doc._aimLight = true;
+  doc.y = CONTENT_TOP;
+  return CONTENT_TOP;
+}
+
 /** Bandeau fin des pages suivantes (dessiné à la fin, pour toutes les pages sauf la première). */
 function drawContinuationBand(doc, title, context) {
   const w = doc.page.width;
   const realBottom = doc.page.margins.bottom;
   doc.page.margins.bottom = 0;
+  if (doc._aimLight) {
+    doc.rect(LEFT, 36, WIDTH, 0.75).fill(L.RULE);
+    doc.rect(LEFT, 35, 40, 2.25).fill(L.ACCENT);
+    doc.font(F.BOLD).fontSize(10).fillColor(L.INK).text(title, LEFT, 14, { width: 320, lineBreak: false });
+    if (context) doc.font(F.SANS).fontSize(8.5).fillColor(L.MUTED).text(context, 370, 15, { width: 175, align: 'right', lineBreak: false });
+    doc.page.margins.bottom = realBottom;
+    return;
+  }
   doc.rect(0, 0, w, 36).fill(C.NAVY);
   doc.rect(0, 36, w, 3).fill(C.ACCENT);
   doc.font(F.BOLD).fontSize(10).fillColor(C.WHITE).text(title, LEFT, 13, { width: 320, lineBreak: false });
@@ -194,7 +259,9 @@ function ensureRoom(doc, y, needed) {
 }
 
 /** Cadre d'informations : grille de cellules (3 par ligne) libellé/valeur, séparateurs fins. */
-function drawInfoGrid(doc, y, cells, { columns = 3 } = {}) {
+function drawInfoGrid(doc, y, cells, { columns = 3, light = false } = {}) {
+  const border = light ? L.RULE : C.TINT_BORDER;
+  const labelColor = light ? L.MUTED : C.MUTED;
   const rows = [];
   for (let i = 0; i < cells.length; i += columns) rows.push(cells.slice(i, i + columns));
   const colW = WIDTH / columns;
@@ -204,14 +271,14 @@ function drawInfoGrid(doc, y, cells, { columns = 3 } = {}) {
   });
   const total = heights.reduce((a, b) => a + b, 0);
   y = ensureRoom(doc, y, total + 6);
-  doc.roundedRect(LEFT, y, WIDTH, total, 8).lineWidth(0.75).fillAndStroke(C.WHITE, C.TINT_BORDER);
+  doc.roundedRect(LEFT, y, WIDTH, total, 8).lineWidth(0.75).fillAndStroke(light ? L.PANEL_SOFT : C.WHITE, border);
   let cy = y;
   rows.forEach((row, ri) => {
-    if (ri > 0) doc.moveTo(LEFT, cy).lineTo(LEFT + WIDTH, cy).lineWidth(0.5).strokeColor(C.TINT_BORDER).stroke();
+    if (ri > 0) doc.moveTo(LEFT, cy).lineTo(LEFT + WIDTH, cy).lineWidth(0.5).strokeColor(border).stroke();
     row.forEach(([label, value], ci) => {
       const x = LEFT + ci * colW;
-      if (ci > 0) doc.moveTo(x, cy + 8).lineTo(x, cy + heights[ri] - 8).lineWidth(0.5).strokeColor(C.TINT_BORDER).stroke();
-      doc.font(F.SANS).fontSize(6.5).fillColor(C.MUTED).text(String(label).toUpperCase(), x + 12, cy + 10, { width: colW - 24, characterSpacing: 0.5, lineBreak: false });
+      if (ci > 0) doc.moveTo(x, cy + 8).lineTo(x, cy + heights[ri] - 8).lineWidth(0.5).strokeColor(border).stroke();
+      doc.font(F.SANS).fontSize(6.5).fillColor(labelColor).text(String(label).toUpperCase(), x + 12, cy + 10, { width: colW - 24, characterSpacing: 0.5, lineBreak: false });
       doc.font(F.BOLD).fontSize(9.5).fillColor(C.INK).text(String(value ?? '—'), x + 12, cy + 22, { width: colW - 24 });
     });
     cy += heights[ri];
