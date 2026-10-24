@@ -2114,9 +2114,17 @@ function ReglesTab({
       {/* Ouvert au DG ET au comptable autorisé (`comptabilite_avancee`, déjà la
           condition d'accès à cet onglet) — décision explicite de l'utilisateur,
           contrairement à l'activation du module (ActivationCard, DG uniquement). */}
-      <RenameableAccountsCard accessToken={accessToken} accounts={accounts} onChanged={onAccountsChanged} />
+      {/* Ordre voulu : d'abord les choix courants (profil et options), puis le réglage avancé replié. */}
       <GlOptionsCard accessToken={accessToken} />
 
+      <AdvancedGroup title="Numéros de comptes personnalisables" summary="2 comptes dont le numéro varie selon les cabinets">
+        <RenameableAccountsCard accessToken={accessToken} accounts={accounts} onChanged={onAccountsChanged} />
+      </AdvancedGroup>
+
+      <AdvancedGroup
+        title="Règles d'écritures par opération"
+        summary={rules ? `${rules.length} règle(s) · ${rules.filter((r) => r.isValidatedByAccountant).length} validée(s) par un comptable` : "Chargement…"}
+      >
       <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="text-body-sm text-ink-soft">
@@ -2180,7 +2188,24 @@ function ReglesTab({
         </div>
       )}
       </div>
+      </AdvancedGroup>
     </div>
+  );
+}
+
+/** Bloc de réglages avancés, replié par défaut : le titre et un résumé suffisent tant qu'on n'y touche pas. */
+function AdvancedGroup({ title, summary, children }: { title: string; summary: string; children: React.ReactNode }) {
+  return (
+    <details className="group/adv rounded-xl border border-border bg-surface shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl p-4 transition-colors hover:bg-surface-hover [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0">
+          <span className="block font-label-md text-ink">{title}</span>
+          <span className="block text-body-xs text-ink-muted">{summary} · réglage avancé</span>
+        </span>
+        <ChevronDown size={18} className="shrink-0 text-ink-muted transition-transform duration-200 group-open/adv:rotate-180" />
+      </summary>
+      <div className="flex flex-col gap-3 border-t border-border p-4">{children}</div>
+    </details>
   );
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronDown, ChevronUp, History, Info } from "lucide-react";
+import { Banknote, Check, ChevronDown, ChevronUp, History, Info, Landmark, Lock, Receipt, type LucideIcon } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
 import {
   getGlSettings,
@@ -69,6 +69,23 @@ function formatLogValue(v: string | null) {
   }
 }
 
+type GroupKey = "taxes" | "paie" | "exploitation" | "cloture";
+const GROUPS: { key: GroupKey; label: string; icon: LucideIcon; help: string }[] = [
+  { key: "taxes", label: "Taxes", icon: Landmark, help: "TVA sur vos commissions et retenue à la source sur les loyers." },
+  { key: "paie", label: "Paie", icon: Banknote, help: "Détail des fiches de paie : CNSS et impôt sur salaires." },
+  { key: "exploitation", label: "Biens & charges", icon: Receipt, help: "Charges SONEB/SBEE, ventes et amortissement du matériel." },
+  { key: "cloture", label: "Clôture", icon: Lock, help: "Ce qui se passe quand vous fermez une année comptable." },
+];
+
+function Pill({ on, children }: { on: boolean; children: React.ReactNode }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-body-xs", on ? "border-success-border bg-success-bg text-success-fg" : "border-border bg-surface-muted text-ink-muted")}>
+      <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", on ? "bg-success-strong" : "bg-border-strong")} />
+      {children}
+    </span>
+  );
+}
+
 function Choice({
   checked,
   onSelect,
@@ -115,12 +132,15 @@ function Choice({
   );
 }
 
-function Section({ title, help, children }: { title: string; help: string; children: React.ReactNode }) {
+function Section({ title, help, status, children }: { title: string; help: string; status?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2 rounded-xl border border-border p-3 sm:p-4">
-      <div>
-        <h3 className="font-label-md text-ink">{title}</h3>
-        <p className="text-body-xs text-ink-muted">{help}</p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-label-md text-ink">{title}</h3>
+          <p className="text-body-xs text-ink-muted">{help}</p>
+        </div>
+        {status}
       </div>
       {children}
     </section>
@@ -169,6 +189,7 @@ export function GlOptionsCard({ accessToken }: { accessToken: string | null }) {
   const [cnssEmp, setCnssEmp] = React.useState("0");
   const [cnssEr, setCnssEr] = React.useState("0");
   const [brackets, setBrackets] = React.useState<{ upTo: string; rate: string }[]>([]);
+  const [group, setGroup] = React.useState<GroupKey>("taxes");
   const [logOpen, setLogOpen] = React.useState(false);
   const [log, setLog] = React.useState<GlSettingsLogItem[] | null>(null);
 
@@ -288,8 +309,50 @@ export function GlOptionsCard({ accessToken }: { accessToken: string | null }) {
           </p>
         )}
 
+        {/* Navigation par thème : une seule famille d'options à l'écran, avec l'état de chacune en un coup d'œil. */}
+        <div role="tablist" aria-label="Familles d'options" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+          {GROUPS.map((g) => {
+            const on =
+              g.key === "taxes" ? s.vatEnabled || s.irfEnabled : g.key === "paie" ? s.payrollLevel !== "net" : g.key === "cloture" ? s.closingMode === "complet" : s.utilityAccountMode === "proprietaire" || s.assetSaleProceeds;
+            const Icon = g.icon;
+            const active = group === g.key;
+            return (
+              <button
+                key={g.key}
+                type="button"
+                role="tab"
+                id={`gl-tab-${g.key}`}
+                aria-selected={active}
+                aria-controls={`gl-panel-${g.key}`}
+                onClick={() => setGroup(g.key)}
+                className={cn(
+                  "flex shrink-0 items-center gap-2 rounded-xl border px-3.5 py-2 text-body-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                  active ? "border-primary bg-primary text-white shadow-md" : "border-border bg-surface text-ink-soft hover:-translate-y-0.5 hover:border-border-strong hover:shadow-sm",
+                )}
+              >
+                <Icon size={16} />
+                <span className="font-label-md">{g.label}</span>
+                <span aria-hidden className={cn("h-2 w-2 rounded-full", on ? (active ? "bg-white" : "bg-success-strong") : active ? "bg-white/40" : "bg-border-strong")} />
+              </button>
+            );
+          })}
+        </div>
+
+        {GROUPS.map((g) => (
+          <div
+            key={g.key}
+            role="tabpanel"
+            id={`gl-panel-${g.key}`}
+            aria-labelledby={`gl-tab-${g.key}`}
+            hidden={group !== g.key}
+            className={cn("flex-col gap-3", group === g.key ? "flex animate-fade-up" : "hidden")}
+          >
+            <p className="text-body-sm text-ink-soft">{g.help}</p>
+            {g.key === "taxes" && (
+              <>
         <Section
           title="TVA sur mes commissions"
+          status={<Pill on={s.vatEnabled}>{s.vatEnabled ? `Activée · ${s.vatRate} %` : "Désactivée"}</Pill>}
           help="Si votre cabinet est assujetti à la TVA, la taxe incluse dans votre commission est mise de côté pour l'État. Rien ne change pour les propriétaires ni pour la caisse."
         >
           <ToggleRow checked={s.vatEnabled} disabled={busy} onChange={() => apply({ vatEnabled: !s.vatEnabled }, s.vatEnabled ? "TVA désactivée." : "TVA activée.")} title="Calculer la TVA sur mes commissions">
@@ -306,29 +369,37 @@ export function GlOptionsCard({ accessToken }: { accessToken: string | null }) {
           )}
         </Section>
 
-        <Section title="Fin d'année" help="Ce qui se passe quand vous clôturez un exercice (une année comptable).">
-          <div role="radiogroup" className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <Choice checked={s.closingMode === "simple"} disabled={busy} onSelect={() => apply({ closingMode: "simple" }, "Clôture simple.")} title="Simple">
-              L&apos;année est seulement verrouillée. Aucune écriture n&apos;est ajoutée.
-            </Choice>
-            <Choice checked={s.closingMode === "complet"} disabled={busy} onSelect={() => apply({ closingMode: "complet" }, "Clôture complète activée.")} title="Complète" badge="Conseillé">
-              Le bénéfice ou la perte de l&apos;année est enregistré dans vos capitaux propres et reporté sur l&apos;année suivante.
-            </Choice>
-          </div>
+        <Section title="Impôt sur le revenu foncier (IRF)" status={<Pill on={s.irfEnabled}>{s.irfEnabled ? `Activé · ${s.irfRate} %` : "Désactivé"}</Pill>} help="Retenue à la source sur les loyers des propriétaires, à reverser au fisc.">
+          <ToggleRow checked={s.irfEnabled} disabled={busy} onChange={() => apply({ irfEnabled: !s.irfEnabled }, s.irfEnabled ? "Retenue IRF désactivée." : "Retenue IRF activée.")} title="Retenir l'IRF à chaque reversement">
+            Désactivé par défaut. La somme retenue est suivie dans « IRF à reverser ».
+          </ToggleRow>
+          {s.irfEnabled && (
+            <>
+              <div className="flex flex-wrap items-center gap-2 pl-1">
+                <span className="text-body-sm text-ink-soft">Taux</span>
+                <RateInput value={irfRate} onChange={(v) => setIrfRate(v.replace(/\D/g, ""))} />
+                <Button size="sm" variant="secondary" disabled={busy || irfRate === "" || Number(irfRate) === s.irfRate} onClick={() => apply({ irfRate: Number(irfRate) }, `Taux IRF fixé à ${irfRate} %.`)}>
+                  Enregistrer
+                </Button>
+              </div>
+              <div role="radiogroup" className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                <Choice checked={s.irfBase === "versement"} disabled={busy} onSelect={() => apply({ irfBase: "versement" }, "IRF calculé sur le montant versé.")} title="Sur le montant versé">
+                  Le taux s&apos;applique à la somme reversée au propriétaire.
+                </Choice>
+                <Choice checked={s.irfBase === "loyer_brut"} disabled={busy} onSelect={() => apply({ irfBase: "loyer_brut" }, "IRF calculé sur le loyer brut.")} title="Sur le loyer brut">
+                  Le taux s&apos;applique au loyer avant votre commission. Demandez à votre comptable laquelle des deux bases s&apos;applique.
+                </Choice>
+              </div>
+            </>
+          )}
         </Section>
 
-        <Section title="Charges SONEB / SBEE" help="Où est enregistré l'argent des factures d'eau et d'électricité encaissé chez les locataires, en attendant de le créditer au propriétaire.">
-          <div role="radiogroup" className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <Choice checked={s.utilityAccountMode === "clients"} disabled={busy} onSelect={() => apply({ utilityAccountMode: "clients" }, "Charges enregistrées sur le compte clients.")} title="Compte des locataires (actuel)">
-              Passe temporairement par le compte du locataire. Simple, mais le compte client paraît « créditeur ».
-            </Choice>
-            <Choice checked={s.utilityAccountMode === "proprietaire"} disabled={busy} onSelect={() => apply({ utilityAccountMode: "proprietaire" }, "Charges enregistrées sur un compte propriétaire.")} title="Compte du propriétaire" badge="Conseillé">
-              Le compte des locataires reste propre. L&apos;argent est suivi séparément pour chaque propriétaire.
-            </Choice>
-          </div>
-        </Section>
 
-        <Section title="Salaires" help="Niveau de détail des fiches de paie. Les taux et le barème sont à saisir selon la réglementation en vigueur : demandez-les à votre comptable.">
+              </>
+            )}
+            {g.key === "paie" && (
+              <>
+        <Section title="Salaires" status={<Pill on={s.payrollLevel !== "net"}>{s.payrollLevel === "net" ? "Net seul" : s.payrollLevel === "cnss" ? "Avec CNSS" : "CNSS + ITS"}</Pill>} help="Niveau de détail des fiches de paie. Les taux et le barème sont à saisir selon la réglementation en vigueur : demandez-les à votre comptable.">
           <div role="radiogroup" className="grid grid-cols-1 gap-2 md:grid-cols-3">
             <Choice checked={s.payrollLevel === "net"} disabled={busy} onSelect={() => apply({ payrollLevel: "net" }, "Paie : net seul.")} title="Net seul">
               Seul le net payé est enregistré.
@@ -395,35 +466,26 @@ export function GlOptionsCard({ accessToken }: { accessToken: string | null }) {
           )}
         </Section>
 
-        <Section title="Vente de matériel" help="Quand vous sortez une immobilisation (ordinateur, véhicule, mobilier) en la vendant.">
+
+              </>
+            )}
+            {g.key === "exploitation" && (
+              <>
+        <Section title="Charges SONEB / SBEE" status={<Pill on={s.utilityAccountMode === "proprietaire"}>{s.utilityAccountMode === "proprietaire" ? "Compte propriétaire" : "Compte locataires"}</Pill>} help="Où est enregistré l'argent des factures d'eau et d'électricité encaissé chez les locataires, en attendant de le créditer au propriétaire.">
+          <div role="radiogroup" className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            <Choice checked={s.utilityAccountMode === "clients"} disabled={busy} onSelect={() => apply({ utilityAccountMode: "clients" }, "Charges enregistrées sur le compte clients.")} title="Compte des locataires (actuel)">
+              Passe temporairement par le compte du locataire. Simple, mais le compte client paraît « créditeur ».
+            </Choice>
+            <Choice checked={s.utilityAccountMode === "proprietaire"} disabled={busy} onSelect={() => apply({ utilityAccountMode: "proprietaire" }, "Charges enregistrées sur un compte propriétaire.")} title="Compte du propriétaire" badge="Conseillé">
+              Le compte des locataires reste propre. L&apos;argent est suivi séparément pour chaque propriétaire.
+            </Choice>
+          </div>
+        </Section>
+
+        <Section title="Vente de matériel" status={<Pill on={s.assetSaleProceeds}>{s.assetSaleProceeds ? "Avec prix" : "Sans prix"}</Pill>} help="Quand vous sortez une immobilisation (ordinateur, véhicule, mobilier) en la vendant.">
           <ToggleRow checked={s.assetSaleProceeds} disabled={busy} onChange={() => apply({ assetSaleProceeds: !s.assetSaleProceeds }, s.assetSaleProceeds ? "Vente sans prix." : "Vente avec prix activée.")} title="Saisir le prix de vente">
             Le prix encaissé est enregistré en trésorerie, et le gain ou la perte sur la vente apparaît au compte de résultat.
           </ToggleRow>
-        </Section>
-
-        <Section title="Impôt sur le revenu foncier (IRF)" help="Retenue à la source sur les loyers des propriétaires, à reverser au fisc.">
-          <ToggleRow checked={s.irfEnabled} disabled={busy} onChange={() => apply({ irfEnabled: !s.irfEnabled }, s.irfEnabled ? "Retenue IRF désactivée." : "Retenue IRF activée.")} title="Retenir l'IRF à chaque reversement">
-            Désactivé par défaut. La somme retenue est suivie dans « IRF à reverser ».
-          </ToggleRow>
-          {s.irfEnabled && (
-            <>
-              <div className="flex flex-wrap items-center gap-2 pl-1">
-                <span className="text-body-sm text-ink-soft">Taux</span>
-                <RateInput value={irfRate} onChange={(v) => setIrfRate(v.replace(/\D/g, ""))} />
-                <Button size="sm" variant="secondary" disabled={busy || irfRate === "" || Number(irfRate) === s.irfRate} onClick={() => apply({ irfRate: Number(irfRate) }, `Taux IRF fixé à ${irfRate} %.`)}>
-                  Enregistrer
-                </Button>
-              </div>
-              <div role="radiogroup" className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                <Choice checked={s.irfBase === "versement"} disabled={busy} onSelect={() => apply({ irfBase: "versement" }, "IRF calculé sur le montant versé.")} title="Sur le montant versé">
-                  Le taux s&apos;applique à la somme reversée au propriétaire.
-                </Choice>
-                <Choice checked={s.irfBase === "loyer_brut"} disabled={busy} onSelect={() => apply({ irfBase: "loyer_brut" }, "IRF calculé sur le loyer brut.")} title="Sur le loyer brut">
-                  Le taux s&apos;applique au loyer avant votre commission. Demandez à votre comptable laquelle des deux bases s&apos;applique.
-                </Choice>
-              </div>
-            </>
-          )}
         </Section>
 
         <ToggleRow
@@ -434,6 +496,28 @@ export function GlOptionsCard({ accessToken }: { accessToken: string | null }) {
         >
           Un bien acquis en cours de mois n&apos;amortit que les jours restants de ce mois-là. Les mois suivants restent pleins.
         </ToggleRow>
+
+
+              </>
+            )}
+            {g.key === "cloture" && (
+              <>
+        <Section title="Fin d'année" status={<Pill on={s.closingMode === "complet"}>{s.closingMode === "complet" ? "Complète" : "Simple"}</Pill>} help="Ce qui se passe quand vous clôturez un exercice (une année comptable).">
+          <div role="radiogroup" className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            <Choice checked={s.closingMode === "simple"} disabled={busy} onSelect={() => apply({ closingMode: "simple" }, "Clôture simple.")} title="Simple">
+              L&apos;année est seulement verrouillée. Aucune écriture n&apos;est ajoutée.
+            </Choice>
+            <Choice checked={s.closingMode === "complet"} disabled={busy} onSelect={() => apply({ closingMode: "complet" }, "Clôture complète activée.")} title="Complète" badge="Conseillé">
+              Le bénéfice ou la perte de l&apos;année est enregistré dans vos capitaux propres et reporté sur l&apos;année suivante.
+            </Choice>
+          </div>
+        </Section>
+
+
+              </>
+            )}
+          </div>
+        ))}
 
         <div className="flex flex-col gap-2">
           <button type="button" onClick={toggleLog} className="flex items-center gap-1.5 self-start text-body-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
