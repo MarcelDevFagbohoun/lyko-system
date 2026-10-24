@@ -646,14 +646,91 @@ function streamChargeReceiptPdf(res, { tenant, renter, charge, payment }) {
   });
 }
 
-/** « Article N — Titre », puis le corps — page neuve avant le titre s'il ne reste pas assez de place
- * pour au moins amorcer le paragraphe (jamais un titre orphelin en bas de page). */
+// ── Contrat de bail : mise en page « cabinet d'avocats » — empattements (Times), noir chaud et filets fins, sans aplat de couleur. ──
+const SERIF = 'Times-Roman';
+const SERIF_BOLD = 'Times-Bold';
+const SERIF_ITALIC = 'Times-Italic';
+const CK = { INK: '#1C1917', MUTED: '#78716C', RULE: '#D6D3D1', ALERT: '#9A3412' };
+
+/** En-tête de contrat : société à gauche, référence à droite, double filet, titre centré espacé, sous-titre en italique. */
+function drawContractHeader(doc, tenant, { title, subtitle, refLines = [] }) {
+  const left = 50;
+  const width = 495;
+  let textX = left;
+  const logoFile = D.imageIfExists(tenant.logo_path);
+  if (logoFile) {
+    try {
+      doc.image(logoFile, left, 40, { fit: [38, 38], align: 'left', valign: 'center' });
+      textX = left + 50;
+    } catch {
+      textX = left;
+    }
+  }
+  doc.font(SERIF_BOLD).fontSize(11).fillColor(CK.INK).text(String(tenant.company_name).toUpperCase(), textX, 44, { width: 280, characterSpacing: 1.2, lineBreak: false });
+  const identity = [tenant.rccm && `RCCM ${tenant.rccm}`, tenant.ifu && `IFU ${tenant.ifu}`, tenant.contact_phone].filter(Boolean).join('  ·  ');
+  doc.font(SERIF).fontSize(8.5).fillColor(CK.MUTED).text(identity, textX, 60, { width: 300, lineBreak: false });
+  refLines.slice(0, 3).forEach(([label, value], i) => {
+    const v = String(value ?? '—');
+    const yy = 42 + i * 13;
+    const vw = doc.font(SERIF_BOLD).fontSize(8.5).widthOfString(v);
+    doc.font(SERIF_BOLD).fontSize(8.5).fillColor(CK.INK).text(v, left + width - vw, yy, { lineBreak: false });
+    doc.font(SERIF).fontSize(8.5).fillColor(CK.MUTED).text(`${label} : `, 365, yy, { width: width + left - vw - 369, align: 'right', lineBreak: false });
+  });
+  doc.moveTo(left, 92).lineTo(left + width, 92).lineWidth(1.2).strokeColor(CK.INK).stroke();
+  doc.moveTo(left, 95.5).lineTo(left + width, 95.5).lineWidth(0.4).strokeColor(CK.INK).stroke();
+
+  doc.font(SERIF_BOLD).fontSize(24).fillColor(CK.INK).text(title, left, 118, { width, align: 'center', characterSpacing: 3, lineBreak: false });
+  if (subtitle) doc.font(SERIF_ITALIC).fontSize(12).fillColor(CK.MUTED).text(subtitle, left, 150, { width, align: 'center', lineBreak: false });
+  doc.moveTo(left + width / 2 - 24, 174).lineTo(left + width / 2 + 24, 174).lineWidth(0.8).strokeColor(CK.INK).stroke();
+  doc._aimTitle = title;
+  doc._aimContext = refLines[0] ? String(refLines[0][1] ?? '') : '';
+  doc._aimLight = true;
+  doc.y = 196;
+  return 196;
+}
+
+/** Bloc « Les parties » du récapitulatif : deux colonnes séparées par un filet, puis lignes libellé / valeur. */
+function drawContractParties(doc, y, { owner, ownerNote, renter, renterNote, rows }) {
+  const left = 50;
+  const width = 495;
+  const mid = left + width / 2;
+  doc.font(SERIF_BOLD).fontSize(8).fillColor(CK.MUTED).text('RÉCAPITULATIF', left, y, { characterSpacing: 1.5, lineBreak: false });
+  doc.moveTo(left, y + 14).lineTo(left + width, y + 14).lineWidth(0.5).strokeColor(CK.RULE).stroke();
+  y += 24;
+  const colW = width / 2 - 18;
+  const drawParty = (x, role, name, note) => {
+    doc.font(SERIF_BOLD).fontSize(7.5).fillColor(CK.MUTED).text(role, x, y, { width: colW, characterSpacing: 1.2, lineBreak: false });
+    doc.font(SERIF_BOLD).fontSize(13).fillColor(CK.INK).text(name, x, y + 13, { width: colW });
+    const nameH = doc.heightOfString(name, { width: colW });
+    if (note) doc.font(SERIF_ITALIC).fontSize(9).fillColor(CK.MUTED).text(note, x, y + 15 + nameH, { width: colW });
+    return 15 + nameH + (note ? doc.heightOfString(note, { width: colW }) + 2 : 0);
+  };
+  const h1 = drawParty(left, 'LE BAILLEUR', owner, ownerNote);
+  const h2 = drawParty(mid + 18, 'LE LOCATAIRE', renter, renterNote);
+  const blockH = Math.max(h1, h2);
+  doc.moveTo(mid, y).lineTo(mid, y + blockH).lineWidth(0.5).strokeColor(CK.RULE).stroke();
+  y += blockH + 12;
+  doc.moveTo(left, y).lineTo(left + width, y).lineWidth(0.5).strokeColor(CK.RULE).stroke();
+  y += 10;
+  for (const [label, value] of rows) {
+    const h = doc.font(SERIF_BOLD).fontSize(10.5).heightOfString(value, { width: width - 150 });
+    doc.font(SERIF_ITALIC).fontSize(10.5).fillColor(CK.MUTED).text(label, left, y, { width: 140, lineBreak: false });
+    doc.font(SERIF_BOLD).fontSize(10.5).fillColor(CK.INK).text(value, left + 150, y, { width: width - 150 });
+    y += Math.max(h, 14) + 7;
+    doc.moveTo(left, y - 3).lineTo(left + width, y - 3).lineWidth(0.3).strokeColor(CK.RULE).stroke();
+  }
+  return y + 8;
+}
+
+/** « ARTICLE N » (petites capitales espacées), titre en gras, puis le corps justifié — jamais un titre orphelin en bas de page. */
 function drawContractArticle(doc, number, title, body) {
-  if (doc.y > doc.page.height - doc.page.margins.bottom - 70) doc.addPage();
-  doc.font(FONT_SANS_BOLD).fontSize(11.5).fillColor(PRIMARY).text(`Article ${number} — ${title}`, 50, doc.y, { width: 495 });
-  doc.moveDown(0.35);
-  doc.font(FONT_SANS).fontSize(10).fillColor(INK).text(body, 50, doc.y, { width: 495, align: 'justify', lineGap: 2 });
-  doc.moveDown(1);
+  if (doc.y > doc.page.height - doc.page.margins.bottom - 80) doc.addPage();
+  doc.font(SERIF_BOLD).fontSize(7.5).fillColor(CK.MUTED).text(`ARTICLE ${number}`, 50, doc.y, { width: 495, characterSpacing: 1.5 });
+  doc.moveDown(0.15);
+  doc.font(SERIF_BOLD).fontSize(12.5).fillColor(CK.INK).text(title, 50, doc.y, { width: 495 });
+  doc.moveDown(0.3);
+  doc.font(SERIF).fontSize(10.5).fillColor(CK.INK).text(body, 50, doc.y, { width: 495, align: 'justify', lineGap: 2.5 });
+  doc.moveDown(1.1);
 }
 
 /**
@@ -668,10 +745,10 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
   res.setHeader('Content-Disposition', `inline; filename="contrat-bail-${data.renter.lastName}.pdf"`);
   doc.pipe(res);
 
-  drawHeader(doc, tenant, {
+  drawContractHeader(doc, tenant, {
     title: 'CONTRAT DE BAIL',
     subtitle: contract.status === 'finalized' ? "Bail d'habitation — signé" : "Bail d'habitation — projet",
-    meta: [
+    refLines: [
       ['Référence', `BAIL-${String(leaseId).padStart(5, '0')}`],
       [
         contract.status === 'finalized' ? 'Signé le' : 'Rédigé le',
@@ -682,28 +759,26 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
   });
 
   if (contract.status !== 'finalized') {
-    doc
-      .font(FONT_SANS_BOLD)
-      .fontSize(9)
-      .fillColor(WARNING_FG)
-      .text('PROJET — NON SIGNÉ, à relire avant signature des deux parties.', 50, doc.y);
-    doc.moveDown(0.8);
+    doc.font(SERIF_BOLD).fontSize(9.5).fillColor(CK.ALERT).text('PROJET — NON SIGNÉ, à relire avant signature des deux parties.', 50, doc.y, { width: 495, align: 'center', characterSpacing: 0.4 });
+    doc.moveDown(1);
   }
 
-  // --- Récapitulatif : les faits essentiels en un coup d'œil. ---
-  let y = doc.y;
-  y += drawRow(doc, 'Bailleur', data.owner.name, y);
-  y += drawRow(doc, 'Locataire', `${data.renter.firstName} ${data.renter.lastName}`, y);
-  y += drawRow(
-    doc,
-    'Bien loué',
-    `${data.property.code}${data.property.address ? ', ' + data.property.address : ''} — ${data.unit.designationLabel} (${data.unit.code})`,
-    y,
-  );
-  y += drawRow(doc, 'Loyer mensuel', formatFcfa(data.lease.monthlyRent), y, { mono: true });
-  doc.y = y + 12;
-  doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(BORDER_STRONG).lineWidth(1).stroke();
-  doc.moveDown(1);
+  // --- Récapitulatif : les parties et les faits essentiels en un coup d'œil. ---
+  let y = drawContractParties(doc, doc.y, {
+    owner: data.owner.name,
+    ownerNote: `représenté par l'entreprise ${tenant.company_name}`,
+    renter: `${data.renter.firstName} ${data.renter.lastName}`,
+    renterNote: data.renter.phone ? `Tél. ${data.renter.phone}` : null,
+    rows: [
+      [
+        'Bien loué',
+        `${data.property.code}${data.property.address ? ', ' + data.property.address : ''} — ${data.unit.designationLabel} (${data.unit.code})`,
+      ],
+      ['Loyer mensuel', formatFcfa(data.lease.monthlyRent)],
+      ['Prise d’effet', formatDateFr(data.lease.startDate)],
+    ],
+  });
+  doc.y = y + 10;
 
   const ownerAddressPart = data.owner.address ? `, domicilié à ${data.owner.address}` : '';
   drawContractArticle(
@@ -805,12 +880,12 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
   const SIGNATURE_BLOCK_HEIGHT = 210;
   if (doc.y + SIGNATURE_BLOCK_HEIGHT > doc.page.height - doc.page.margins.bottom) doc.addPage();
   doc.moveDown(0.5);
-  doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('Fait en deux exemplaires originaux, chacune des parties reconnaissant en avoir reçu un.', 50, doc.y, { width: 495 });
+  doc.font(SERIF).fontSize(10).fillColor(CK.INK).text('Fait en deux exemplaires originaux, chacune des parties reconnaissant en avoir reçu un.', 50, doc.y, { width: 495 });
   doc.moveDown(1.2);
 
   const sigTop = doc.y;
-  doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(MUTED).text('LE LOCATAIRE', 50, sigTop, { characterSpacing: 0.5 });
-  doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(MUTED).text("POUR LE BAILLEUR (L'ENTREPRISE)", 315, sigTop, { characterSpacing: 0.5 });
+  doc.font(SERIF_BOLD).fontSize(8).fillColor(CK.MUTED).text('LE LOCATAIRE', 50, sigTop, { characterSpacing: 0.5 });
+  doc.font(SERIF_BOLD).fontSize(8).fillColor(CK.MUTED).text("POUR LE BAILLEUR (L'ENTREPRISE)", 315, sigTop, { characterSpacing: 0.5 });
 
   const tenantSigUrl = contract.tenantSignatureUrl;
   const agentSigUrl = contract.agentSignatureUrl;
@@ -828,7 +903,7 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
       }
     }
   } else {
-    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', 50, sigImgY + 30);
+    doc.font(SERIF).fontSize(10).fillColor(CK.INK).text('_________________________', 50, sigImgY + 30);
   }
 
   const signatureFile = issuer?.signature_path
@@ -857,7 +932,7 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
       // Signature illisible : ligne à signer par défaut.
     }
   } else {
-    doc.font(FONT_SANS).fontSize(10).fillColor(INK).text('_________________________', 315, sigImgY + 30);
+    doc.font(SERIF).fontSize(10).fillColor(CK.INK).text('_________________________', 315, sigImgY + 30);
   }
   if (stampFile && fs.existsSync(stampFile)) {
     try {
@@ -867,8 +942,8 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
     }
   }
   if (issuer?.role) {
-    doc.font(FONT_SANS_BOLD).fontSize(9).fillColor(INK).text(`${issuer.first_name} ${issuer.last_name}`, 315, sigImgY + 118);
-    doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 315, sigImgY + 131);
+    doc.font(SERIF_BOLD).fontSize(9).fillColor(CK.INK).text(`${issuer.first_name} ${issuer.last_name}`, 315, sigImgY + 118);
+    doc.font(SERIF).fontSize(8).fillColor(CK.MUTED).text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 315, sigImgY + 131);
   }
 
   drawFooter(doc, { verificationCode });
