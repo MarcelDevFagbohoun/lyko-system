@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { HandCoins, ShieldCheck, X } from "lucide-react";
+import { HandCoins, Lock, ShieldCheck, X } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
 import { cancelChargeRemittance, createChargeRemittance, type OwnerChargeRemittance } from "@/lib/api/owners";
 import type { ChargeAccount } from "@/lib/api/charges";
+import { listClosedPeriods } from "@/lib/api/accounting";
 import { formatFcfa } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/lib/toast/toast-context";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { Button } from "@/components/ui/button";
@@ -52,6 +54,15 @@ export function ChargeRemittanceCard({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const idem = useIdempotencyKey();
+  // Mois clôturés : un crédit daté dans l'un d'eux ne peut ni être créé ni annulé (le serveur refuse aussi).
+  const [closedPeriods, setClosedPeriods] = React.useState<{ periodStart: string; periodEnd: string }[]>([]);
+  React.useEffect(() => {
+    if (!accessToken) return;
+    listClosedPeriods(accessToken)
+      .then((res) => setClosedPeriods(res.periods.map((p) => ({ periodStart: p.periodStart, periodEnd: p.periodEnd }))))
+      .catch(() => setClosedPeriods([]));
+  }, [accessToken, remittances]);
+  const isClosed = (d: string) => closedPeriods.some((p) => d.slice(0, 10) >= p.periodStart && d.slice(0, 10) <= p.periodEnd);
 
   function openForm() {
     setAmount(account.balance > 0 ? String(account.balance) : "");
@@ -76,6 +87,7 @@ export function ChargeRemittanceCard({
     if (!Number.isFinite(n) || n <= 0) return setError("Montant invalide.");
     if (n > account.balance) return setError(`Le montant dépasse les charges disponibles (${formatFcfa(account.balance)}).`);
     if (!paidAt) return setError("Date requise.");
+    if (isClosed(paidAt)) return setError("Ce mois est clôturé : choisissez une date dans un mois ouvert.");
     setStep("confirm");
   }
 
@@ -112,7 +124,10 @@ export function ChargeRemittanceCard({
           <HandCoins size={18} className="text-primary" />
           Charges encaissées
         </CardTitle>
-        <CardDescription>Créditez le solde du propriétaire des charges encaissées.</CardDescription>
+        <CardDescription>
+          Les charges payées par les locataires restent chez l&apos;entreprise. Créditez-en le solde du propriétaire (en totalité
+          ou en partie) : elles seront versées avec le reste de son solde depuis le menu Paiements.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <AccountLine account={account} />
@@ -120,14 +135,14 @@ export function ChargeRemittanceCard({
         {canRecord && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Crédits</span>
+              <span className="font-label-sm uppercase tracking-wider text-ink-muted">Crédit du solde</span>
               {account.balance > 0 ? (
                 <Button variant="success" size="sm" onClick={() => (open ? reset() : openForm())}>
                   <HandCoins size={14} />
                   {open ? "Fermer" : "Créditer le solde"}
                 </Button>
               ) : (
-                <span className="text-body-xs text-ink-muted">Rien à créditer.</span>
+                <span className="text-body-xs text-ink-muted">Aucune charge disponible à créditer.</span>
               )}
             </div>
 
@@ -170,7 +185,10 @@ export function ChargeRemittanceCard({
                   {label.trim() && <ConfirmRow label="Libellé" value={label.trim()} />}
                   {notes.trim() && <ConfirmRow label="Note" value={notes.trim()} />}
                 </dl>
-                <p className="text-body-xs text-ink-muted">Le solde du propriétaire augmente de ce montant. Annulable tant qu&apos;il n&apos;est pas versé.</p>
+                <p className="text-body-xs text-ink-muted">
+                  Aucun argent ne sort : le solde du propriétaire augmente de ce montant (écriture comptable automatique).
+                  Le crédit pourra être annulé, avec justification, tant que ce solde n&apos;a pas été versé.
+                </p>
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="sm" onClick={() => setStep("form")} disabled={submitting}>
                     Modifier
@@ -186,7 +204,7 @@ export function ChargeRemittanceCard({
         )}
 
         {remittances.length === 0 ? (
-          <p className="text-body-sm text-ink-muted">Aucun crédit.</p>
+          <p className="text-body-sm text-ink-muted">Aucun crédit de charges pour ce propriétaire.</p>
         ) : (
           <Table>
             <TableHeader>
@@ -215,7 +233,13 @@ export function ChargeRemittanceCard({
                   <TableCell className="text-right tabular font-currency-table">{formatFcfa(r.amount)}</TableCell>
                   {canRecord && (
                     <TableCell className="text-right">
+                      {isClosed(r.paidAt) ? (
+                        <Badge variant="neutral">
+                          <Lock size={11} /> Clôturé
+                        </Badge>
+                      ) : (
                       <CancelRemittance ownerId={ownerId} remittance={r} accessToken={accessToken} onCancelled={onChanged} />
+                      )}
                     </TableCell>
                   )}
                 </TableRow>

@@ -56,3 +56,9 @@ test('isolation : l’aperçu de clôture d’un exercice d’une autre entrepri
   await assert.rejects(previewClosing(pool, fx.tenantId, fy.id), (e) => e.status === 404);
   await assert.rejects(previewClosing(pool, fx.tenantId, 99999999), (e) => e.status === 404);
 });
+
+test('connexion employé : le poste n’est plus requis (optionnel), mais s’il est fourni il doit être valide', () => {
+  const { employeeLoginSchema } = require('../src/validators/auth');
+  assert.equal(employeeLoginSchema.safeParse({ identifier: '7f3k-9qxm-2ptd', password: 'x' }).success, true);
+  assert.equal(employeeLoginSchema.safeParse({ identifier: '7F3K-9QXM-2PTD', role: 'dg', password: 'x' }).success, false);
+});

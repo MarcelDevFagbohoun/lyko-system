@@ -200,16 +200,19 @@ export function DepositTransferCard({
           <div className="flex flex-col gap-2">
             <span className="font-label-sm uppercase tracking-wider text-ink-muted">Historique</span>
             {transfers.map((t) => (
-              <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border px-3 py-2 text-body-sm">
+              <div
+                key={t.id}
+                className={`flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-body-sm ${t.direction === "to_owner" ? "border-danger-border bg-danger-bg text-danger-fg" : "border-border"}`}
+              >
                 <div>
-                  <span className="text-ink">{t.typeLabel} · {t.renterName}</span>
-                  <div className="text-body-xs text-ink-muted">
+                  <span className={t.direction === "to_owner" ? "text-danger-fg" : "text-ink"}>{t.typeLabel} · {t.renterName}</span>
+                  <div className={`text-body-xs ${t.direction === "to_owner" ? "text-danger-fg/80" : "text-ink-muted"}`}>
                     {formatDateLabel(t.paidAt)} · {t.motive}{t.requestedByOwner ? " · à sa demande" : ""}{t.recordedByName ? ` · ${t.recordedByName}` : ""}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant={t.direction === "to_owner" ? "warning" : "success"}>{t.direction === "to_owner" ? "Remis" : "Récupéré"}</Badge>
-                  <span className="tabular font-currency-table">{formatFcfa(t.amount)}</span>
+                  <span className="tabular font-currency-table">{t.direction === "to_owner" ? "− " : ""}{formatFcfa(t.amount)}</span>
                 </div>
               </div>
             ))}

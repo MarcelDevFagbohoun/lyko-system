@@ -174,7 +174,8 @@ const employeeLoginSchema = z.object({
     .trim()
     .toUpperCase()
     .min(4, 'Identifiant requis'),
-  role: z.enum(['comptable', 'agent'], { errorMap: () => ({ message: 'Poste invalide' }) }),
+  // Le poste n'est plus saisi à la connexion : il vient du compte. S'il est fourni (anciens clients), il doit correspondre.
+  role: z.enum(['comptable', 'agent'], { errorMap: () => ({ message: 'Poste invalide' }) }).optional(),
   password: z.string().min(1, 'Mot de passe requis'),
 });
 

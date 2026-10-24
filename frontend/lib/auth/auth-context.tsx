@@ -64,7 +64,7 @@ type AuthState = {
 
 type AuthContextValue = AuthState & {
   login: (phone: string, password: string) => Promise<void>;
-  loginEmployee: (identifier: string, role: "comptable" | "agent", password: string) => Promise<void>;
+  loginEmployee: (identifier: string, password: string) => Promise<void>;
   // Vérification d'email obligatoire (demande utilisateur, 2026-10-18) : l'inscription ne
   // connecte plus immédiatement — elle renvoie l'email pour lequel un code à 8 chiffres vient
   // d'être envoyé. `verifyEmail`/`resendVerificationCode` complètent le flux.
@@ -178,13 +178,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const loginEmployee = React.useCallback(
-    async (identifier: string, role: "comptable" | "agent", password: string) => {
+    async (identifier: string, password: string) => {
       const res = await apiFetch<{ user: AuthUser; tenant: AuthTenant; accessToken: string }>(
         "/api/auth/login-employee",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ identifier, role, password }),
+          body: JSON.stringify({ identifier, password }),
         },
       );
       setState({ user: res.user, tenant: res.tenant, accessToken: res.accessToken, status: "authenticated" });

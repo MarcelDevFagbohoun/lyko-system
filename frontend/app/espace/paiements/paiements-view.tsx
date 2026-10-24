@@ -303,7 +303,7 @@ function HistoryTable({
                 const st = STATUS_LABELS[i.status];
                 const rowKey = `${i.kind}-${i.id}-${i.reference ?? ""}`;
                 return (
-                  <TableRow key={rowKey}>
+                  <TableRow key={rowKey} className={i.kind === "restitution_caution" ? "bg-danger-bg [&>td]:!text-danger-fg [&_.text-ink-muted]:!text-danger-fg/80" : undefined}>
                     <TableCell>{new Date(i.date).toLocaleDateString("fr-FR")}</TableCell>
                     <TableCell>
                       {HISTORY_KIND_LABELS[i.kind]}

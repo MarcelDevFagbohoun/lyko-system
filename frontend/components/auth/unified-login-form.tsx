@@ -4,63 +4,41 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
-import { apiFetch, ApiError } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/client";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-type Role = "dg" | "comptable" | "agent";
-
-const DEFAULT_LABELS: Record<Role, string> = { dg: "Admin", comptable: "Comptable", agent: "Agent" };
+/** Identifiant employé généré par la direction : 3 blocs de 4 caractères, ex. 7F3K-9QXM-2PTD (au moins une lettre). */
+const EMPLOYEE_ID = /^[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}-[2-9A-HJKMNP-Z]{4}$/i;
+function isEmployeeIdentifier(v: string) {
+  return EMPLOYEE_ID.test(v) && /[A-Z]/i.test(v);
+}
 
 /**
- * Connexion unifiée : un seul formulaire, un menu déroulant « Poste »
- * listant les 3 rôles (DG compris, plus seulement comptable/agent) — au
- * lieu des deux onglets séparés Direction/Employé d'avant (demande directe
- * de l'utilisateur : « plusieurs postes au niveau du menu »). Le DG se
- * connecte par téléphone, l'employé par identifiant — seul le champ
- * affiché change selon le poste choisi, jamais le mécanisme d'authentification
- * sous-jacent (toujours `login()` pour dg, `loginEmployee()` sinon).
+ * Connexion unifiée, sans choix de poste : un seul champ (téléphone, e-mail ou
+ * identifiant employé) et le mot de passe. Le poste vient du compte, il n'est
+ * affiché que dans les pages « utilisateurs » où la direction l'a enregistré.
  */
 export function UnifiedLoginForm() {
   const { login, loginEmployee } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [role, setRole] = React.useState<Role>("dg");
-  const [phone, setPhone] = React.useState("");
-  const [identifier, setIdentifier] = React.useState("");
+  const [value, setValue] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  // Libellés personnalisés (Réglages) de l'entreprise correspondant à
-  // l'identifiant/numéro déjà saisi — inconnu avant ça, on retombe sur les
-  // libellés par défaut jusqu'à la réponse (jamais bloquant).
-  const [roleLabels, setRoleLabels] = React.useState<Record<Role, string>>(DEFAULT_LABELS);
-
-  React.useEffect(() => {
-    const value = role === "dg" ? phone.trim() : identifier.trim();
-    if (!value) {
-      setRoleLabels(DEFAULT_LABELS);
-      return;
-    }
-    const param = role === "dg" ? `phone=${encodeURIComponent(value)}` : `identifier=${encodeURIComponent(value)}`;
-    const timer = setTimeout(() => {
-      apiFetch<Record<Role, string>>(`/api/auth/role-titles?${param}`)
-        .then((res) => setRoleLabels(res))
-        .catch(() => setRoleLabels(DEFAULT_LABELS));
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [role, phone, identifier]);
+  const employee = isEmployeeIdentifier(value.trim());
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
-      if (role === "dg") {
-        await login(phone.trim(), password);
+      if (employee) {
+        await loginEmployee(value.trim().toUpperCase(), password);
       } else {
-        await loginEmployee(identifier.trim(), role, password);
+        await login(value.trim(), password);
       }
       router.push(searchParams.get("next") || "/espace");
     } catch (err) {
@@ -88,47 +66,21 @@ export function UnifiedLoginForm() {
         </div>
       )}
 
-      <Field label="Poste" htmlFor="role" required>
-        <select
-          id="role"
-          value={role}
-          onChange={(e) => setRole(e.target.value as Role)}
-          className="h-[42px] w-full rounded-lg border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        >
-          {(["dg", "comptable", "agent"] as const).map((r) => (
-            <option key={r} value={r}>
-              {roleLabels[r]}
-            </option>
-          ))}
-        </select>
+      <Field
+        label="Téléphone, e-mail ou identifiant"
+        htmlFor="login"
+        required
+        hint="Direction : téléphone ou e-mail d’inscription. Employé : identifiant transmis par la direction (ex. 7F3K-9QXM-2PTD)"
+      >
+        <Input
+          id="login"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          autoComplete="username"
+          autoFocus
+          className={employee ? "tabular uppercase tracking-wide" : undefined}
+        />
       </Field>
-
-      {role === "dg" ? (
-        <Field label="Téléphone ou e-mail" htmlFor="phone" required hint="Au choix : le numéro ou l’adresse e-mail de l’inscription">
-          <Input
-            id="phone"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            autoComplete="username"
-            autoFocus
-          />
-        </Field>
-      ) : (
-        <Field
-          label="Identifiant"
-          htmlFor="identifier"
-          required
-          hint="Transmis par votre direction générale, ex. 7F3K-9QXM-2PTD"
-        >
-          <Input
-            id="identifier"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value.toUpperCase())}
-            autoComplete="username"
-            className="tabular uppercase tracking-wide"
-          />
-        </Field>
-      )}
 
       <Field label="Mot de passe" htmlFor="password" required>
         <Input
@@ -143,7 +95,7 @@ export function UnifiedLoginForm() {
       <Button type="submit" size="lg" disabled={submitting}>
         {submitting ? "Connexion…" : "Se connecter"}
       </Button>
-      {role === "dg" ? (
+      {!employee ? (
         <Link href="/mot-de-passe-oublie" className="text-center text-body-sm font-label-md text-primary hover:underline">
           Mot de passe oublié ?
         </Link>

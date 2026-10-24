@@ -114,7 +114,7 @@ export function UtilityPointPanel({ ownerId }: { ownerId?: number }) {
             className="rounded border border-border-strong bg-surface px-2 py-1.5 text-body-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           />
         </label>
-        <p className="pb-2 text-body-xs text-ink-muted">Relevés validés uniquement.</p>
+        <p className="pb-2 text-body-xs text-ink-muted">Mois de début du relevé. Seuls les relevés validés comptent.</p>
         {ownerId != null && (
           <Button variant="secondary" size="sm" className="mb-1 ml-auto" onClick={() => openPdf(ownerId)} disabled={invalidRange}>
             <FileDown size={16} />
@@ -273,16 +273,17 @@ export function AccountLine({ account }: { account: ChargeAccount }) {
   const kept = account.keptByCabinet ?? 0;
   const total = account.collectedTotal ?? account.collected;
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2 rounded-lg border border-primary-border bg-primary-bg p-4">
+      <p className="font-label-md text-ink">Compte des charges (cumul à ce jour)</p>
       <ChargeLedgerTable
         caption="Compte des charges"
         rows={[
-          { label: "Encaissé chez les locataires", amount: total, tone: "default", of: total },
+          { label: "Charges encaissées", hint: "Reçues des locataires", amount: total, tone: "default", of: total },
           ...(kept > 0
-            ? [{ label: `Frais de gestion (${100 - (account.ownerSharePercent ?? 100)} %)`, amount: kept, tone: "warning" as const, of: total }]
+            ? [{ label: "Gardé par l'entreprise", hint: `Frais de gestion (${100 - (account.ownerSharePercent ?? 100)} %)`, amount: kept, tone: "warning" as const, of: total }]
             : []),
-          { label: "Déjà crédité", amount: account.remitted, tone: "success", of: total },
-          { label: "Reste à créditer", amount: account.balance, tone: account.balance > 0 ? "info" : "success", of: total, total: true },
+          { label: "Déjà créditées", hint: "Au solde du propriétaire", amount: account.remitted, tone: "success", of: total },
+          { label: "Reste à créditer", hint: "Part du propriétaire", amount: account.balance, tone: account.balance > 0 ? "info" : "success", of: total, total: true },
         ]}
       />
     </div>
@@ -298,17 +299,29 @@ function PointBody({ totals: t, batches }: { totals: PointTotals; batches: Batch
         rows={[
           { label: "Facture mère payée par le propriétaire", amount: t.mainPaidTotal, tone: "default", of: t.mainPaidTotal },
           { label: "Encaissé chez les locataires", amount: t.collectedTotal, tone: "info", of: t.mainPaidTotal },
-          { label: "Impayés des locataires", amount: t.tenantUnpaidTotal, tone: t.tenantUnpaidTotal > 0 ? "warning" : "success", of: t.mainPaidTotal },
+          { label: "Impayés des locataires", hint: "Encore récupérables", amount: t.tenantUnpaidTotal, tone: t.tenantUnpaidTotal > 0 ? "warning" : "success", of: t.mainPaidTotal },
           { label: "Reste à la charge du propriétaire", amount: t.gapTotal, tone: t.gapTotal > 0 ? "danger" : "success", of: t.mainPaidTotal, total: true },
         ]}
       />
+
+      {t.mainPaidTotal > 0 && t.gapTotal !== 0 && (
+        <p className="text-body-sm text-ink-soft">
+          Le reste de {formatFcfa(t.gapTotal)} se décompose en{" "}
+          <strong className="text-ink">{formatFcfa(t.nonRebilledTotal)}</strong> de consommation non refacturée
+          (parties communes, logements vacants, pertes de ligne) et{" "}
+          <strong className="text-ink">{formatFcfa(t.tenantUnpaidOnPaidTotal)}</strong> d&apos;impayés des
+          locataires, encore récupérables.
+        </p>
+      )}
 
       {t.pendingPaymentCount > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5 text-body-sm text-warning-fg">
           <AlertTriangle size={16} className="mt-0.5 shrink-0" />
           <span>
-            {t.pendingPaymentCount} facture{t.pendingPaymentCount > 1 ? "s" : ""} mère{t.pendingPaymentCount > 1 ? "s" : ""} non déclarée
-            {t.pendingPaymentCount > 1 ? "s" : ""} payée{t.pendingPaymentCount > 1 ? "s" : ""} ({formatFcfa(t.pendingInvoiceAmount)}).
+            {t.pendingPaymentCount} facture{t.pendingPaymentCount > 1 ? "s" : ""} mère{t.pendingPaymentCount > 1 ? "s" : ""} (
+            {formatFcfa(t.pendingInvoiceAmount)}) pas encore déclarée{t.pendingPaymentCount > 1 ? "s" : ""} payée
+            {t.pendingPaymentCount > 1 ? "s" : ""} : elle{t.pendingPaymentCount > 1 ? "s" : ""} ne pèse
+            {t.pendingPaymentCount > 1 ? "nt" : ""} pas dans le reste ci-dessus. Déclarez le paiement depuis le relevé.
           </span>
         </div>
       )}

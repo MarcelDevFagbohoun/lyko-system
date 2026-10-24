@@ -563,9 +563,9 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
     // garde de temporisation que /login ci-dessus (hash factice si `row`
     // n'existe pas).
     const passwordOk = await verifyPassword(password, row ? row.password_hash : DUMMY_PASSWORD_HASH);
-    if (!row || !passwordOk || row.role !== role) {
+    if (!row || !passwordOk || row.role === 'dg' || (role && row.role !== role)) {
       recordFailure(throttleKey);
-      throw new ApiError(401, 'Identifiant, poste ou mot de passe incorrect');
+      throw new ApiError(401, 'Identifiant ou mot de passe incorrect');
     }
     if (row.status !== 'active') {
       throw new ApiError(403, 'Ce compte a été désactivé. Contactez votre direction.');

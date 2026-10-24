@@ -367,7 +367,10 @@ function ProprietaireContent() {
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <CardTitle>Carnet SONEB / SBEE</CardTitle>
+                  <CardTitle>Carnet des charges SONEB / SBEE</CardTitle>
+                  <CardDescription>
+                    Ce que ce propriétaire a payé à la SONEB/SBEE face à ce qui a été encaissé chez ses locataires, mois par mois.
+                  </CardDescription>
                 </div>
                 <DocumentDownloadStatus
                   documentType="carnet_charges"
