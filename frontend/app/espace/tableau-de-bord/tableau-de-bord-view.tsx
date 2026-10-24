@@ -11,12 +11,7 @@ import {
   Droplets,
   Scale,
   PiggyBank,
-  MessageCircleWarning,
-  History,
-  ArrowRight,
   ClipboardCheck,
-  BellRing,
-  Wallet,
   Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -28,6 +23,7 @@ import { ClosingReminderBanner } from "@/components/accounting/closing-reminder-
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { ComplaintsPanel, QuickAccessPanel } from "@/components/espace/dashboard-panels";
 import { StatCard } from "@/components/ui/stat-card";
 import { CADRES, type Cadre } from "@/lib/module-theme";
 
@@ -204,60 +200,11 @@ function TableauDeBordContent() {
 
         <DashboardSection cadre="operations" title="À traiter" description="Ce qui demande votre attention aujourd'hui.">
           <div className="stagger grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card
-              tone={CADRES.operations.tone}
-              className={cn(
-                "border-l-4",
-                overview && overview.complaints.openCount > 0 ? "border-l-danger-strong" : "border-l-success-strong",
-              )}
-            >
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "flex h-7 w-7 items-center justify-center rounded-full text-white",
-                        overview && overview.complaints.openCount > 0 ? "bg-danger" : "bg-success",
-                      )}
-                    >
-                      <MessageCircleWarning size={14} />
-                    </span>
-                    <CardTitle>Plaintes en cours</CardTitle>
-                  </div>
-                  <Badge variant={overview && overview.complaints.openCount > 0 ? "danger" : "success"}>
-                    {overview ? overview.complaints.openCount : "…"}
-                  </Badge>
-                </div>
-                <CardDescription>Incidents non résolus, les plus urgents d&apos;abord.</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                {overview && overview.complaints.recent.length === 0 && (
-                  <p className="text-body-sm text-ink-muted">Aucune plainte en cours.</p>
-                )}
-                {overview?.complaints.recent.map((c) => (
-                  <Link
-                    key={c.id}
-                    href="/espace/plaintes"
-                    className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 hover:bg-surface-hover"
-                  >
-                    <div>
-                      <p className="font-label-md text-ink">
-                        {c.code} · {c.title}
-                      </p>
-                      <p className="text-body-xs text-ink-muted">
-                        {c.renterName} · {c.statusLabel} · signalée le {c.reportedAt}
-                      </p>
-                    </div>
-                    <Badge variant={c.priority === "urgente" ? "danger" : "neutral"} dot={c.priority === "urgente"}>
-                      {c.priority === "urgente" ? "Urgente" : "Normale"}
-                    </Badge>
-                  </Link>
-                ))}
-                <Link href="/espace/plaintes" className="mt-1 inline-flex items-center gap-1 text-body-sm text-primary hover:underline">
-                  Voir toutes les plaintes <ArrowRight size={14} />
-                </Link>
-              </CardContent>
-            </Card>
+            <ComplaintsPanel
+              loading={!overview}
+              openCount={overview?.complaints.openCount ?? 0}
+              items={overview?.complaints.recent ?? []}
+            />
 
             {overview && overview.inspections.pendingDepositRegularizations.length > 0 && (
               <Card tone={CADRES.finances.tone} className="border-l-4 border-l-warning-strong">
@@ -296,7 +243,7 @@ function TableauDeBordContent() {
               </Card>
             )}
 
-            <QuickLinksCard />
+            <QuickAccessPanel />
           </div>
         </DashboardSection>
       </div>
@@ -391,41 +338,5 @@ function DashboardSection({
       </div>
       {children}
     </section>
-  );
-}
-
-function QuickLinksCard() {
-  const links = [
-    { href: "/espace/relances", label: "Centre de relance des impayés", icon: <BellRing size={16} /> },
-    { href: "/espace/journal", label: "Journal d'activité", icon: <History size={16} /> },
-    { href: "/espace/comptabilite", label: "Comptabilité détaillée", icon: <Wallet size={16} /> },
-  ];
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <History size={16} className="text-ink-muted" />
-          <CardTitle>Accès rapides</CardTitle>
-        </div>
-        <CardDescription>Les autres vues transversales de votre espace.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        {links.map((l) => (
-          <Link
-            key={l.href}
-            href={l.href}
-            className="group flex items-center justify-between rounded-lg border border-border px-3 py-2.5 transition-colors hover:border-primary/30 hover:bg-surface-hover"
-          >
-            <span className="flex items-center gap-2.5 text-body-sm text-ink">
-              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-surface-muted text-primary transition-transform group-hover:scale-110">
-                {l.icon}
-              </span>
-              {l.label}
-            </span>
-            <ArrowRight size={14} className="text-ink-muted transition-transform group-hover:translate-x-0.5" />
-          </Link>
-        ))}
-      </CardContent>
-    </Card>
   );
 }

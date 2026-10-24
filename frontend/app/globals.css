@@ -122,3 +122,9 @@
   transform: translateX(-120%) skewX(-18deg); pointer-events: none;
 }
 .sheen:hover::after { animation: tile-sheen 0.9s ease-out; }
+
+/* ── Cartes du tableau de bord (Plaintes, Accès rapides) ── */
+.panel-rise { animation: card-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.draw-circle { stroke-dasharray: 150; stroke-dashoffset: 150; animation: draw-stroke 0.9s ease-out 0.15s forwards; }
+.draw-check { stroke-dasharray: 40; stroke-dashoffset: 40; animation: draw-stroke 0.5s ease-out 0.8s forwards; }
+@keyframes draw-stroke { to { stroke-dashoffset: 0; } }
