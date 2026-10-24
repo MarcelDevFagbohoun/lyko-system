@@ -1267,6 +1267,13 @@ function BalanceTab({ accessToken, fiscalYears }: { accessToken: string | null; 
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-1.5 text-body-sm">
+                {balanceSheet.warnings && balanceSheet.warnings.length > 0 && (
+                  <div className="mb-2 flex flex-col gap-1 rounded-lg border border-warning-border bg-warning-bg px-3 py-2 text-body-xs text-warning-fg">
+                    {balanceSheet.warnings.map((w) => (
+                      <p key={w}>{w}</p>
+                    ))}
+                  </div>
+                )}
                 <p className="font-label-sm uppercase tracking-wider text-ink-muted">Actif</p>
                 {balanceSheet.actif.map((a) => (
                   <div key={a.code} className="flex justify-between">

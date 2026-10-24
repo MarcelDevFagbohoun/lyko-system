@@ -321,6 +321,8 @@ export type BalanceSheet = {
   totalActif: number;
   totalPassif: number;
   balanced: boolean;
+  /** Anomalies de présentation (ex. caisse à solde créditeur). */
+  warnings?: string[];
 };
 
 export function getBalanceSheet(accessToken: string, fiscalYearId: number) {

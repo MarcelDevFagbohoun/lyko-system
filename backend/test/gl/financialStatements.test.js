@@ -269,3 +269,34 @@ test(
     assert.equal(result.closingBalance, 80000);
   },
 );
+
+test(
+  "computeBalanceSheet — un compte d'actif à solde CRÉDITEUR (caisse négative) est reclassé au passif avec " +
+    'un avertissement, jamais présenté en négatif dans l’actif (audit du 24/10/2026) ; le bilan reste équilibré',
+  async () => {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      // Caisse encaisse 100 000 puis paie 20 000 (fixture) ; un salaire de 500 000 la rend négative.
+      await genererEcriture(conn, {
+        tenantId: fx.tenantId,
+        operationType: 'salaire_paye',
+        entryDate: '2026-03-20',
+        amount: 500000,
+        paymentMethod: 'especes',
+        narrationVars: { mois: 'mars 2026', employe: 'Employé Test' },
+        createdBy: fx.dgId,
+      });
+      await conn.commit();
+    } finally {
+      conn.release();
+    }
+    const result = await computeBalanceSheet(pool, fx.tenantId, fx.fiscalYearId);
+    assert.ok(result.actif.every((a) => a.amount > 0 || a.code.startsWith('28')), 'aucun montant négatif dans l’actif');
+    const caisse = result.passif.find((p) => p.code === '571');
+    assert.ok(caisse, 'la caisse créditrice passe au passif');
+    assert.ok(caisse.amount > 0 && caisse.amount < 500000, 'montant positif présenté au passif');
+    assert.ok(result.warnings.some((w) => w.includes('571')), 'avertissement de caisse négative');
+    assert.equal(result.balanced, true);
+  },
+);

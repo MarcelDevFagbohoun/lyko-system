@@ -127,9 +127,10 @@ const ACCOUNTS = [
   { code: '604', label: 'Achats de fournitures', class: 6, type: 'charge' },
   { code: '622', label: 'Locations et charges locatives (bureau)', class: 6, type: 'charge' },
   { code: '624', label: 'Entretien, réparations', class: 6, type: 'charge' },
-  { code: '628', label: 'Transports', class: 6, type: 'charge' },
-  { code: '6281', label: 'Communication (téléphone, internet)', class: 6, type: 'charge' },
-  { code: '638', label: 'Autres charges externes (marketing)', class: 6, type: 'charge' },
+  // Numérotation SYSCOHADA corrigée (audit du 24/10/2026, migration 121) : transports = classe 61, télécoms = 628, publicité = 627.
+  { code: '618', label: 'Autres frais de transport', class: 6, type: 'charge' },
+  { code: '627', label: 'Publicité, publications, relations publiques', class: 6, type: 'charge' },
+  { code: '628', label: 'Frais de télécommunications (téléphone, internet)', class: 6, type: 'charge' },
   { code: '641', label: 'Impôts et taxes directs', class: 6, type: 'charge' },
   { code: '658', label: 'Charges diverses de gestion courante', class: 6, type: 'charge' },
   {
@@ -589,9 +590,9 @@ const RULES = [
   { operation_type: 'depense_loyer_bureau', label: 'Dépense — Loyer du bureau', account: '622' },
   { operation_type: 'depense_fournitures', label: 'Dépense — Fournitures', account: '604' },
   { operation_type: 'depense_entretien', label: 'Dépense — Entretien', account: '624' },
-  { operation_type: 'depense_transport', label: 'Dépense — Transport', account: '628' },
-  { operation_type: 'depense_communication', label: 'Dépense — Communication', account: '6281' },
-  { operation_type: 'depense_marketing', label: 'Dépense — Marketing', account: '638' },
+  { operation_type: 'depense_transport', label: 'Dépense — Transport', account: '618' },
+  { operation_type: 'depense_communication', label: 'Dépense — Communication', account: '628' },
+  { operation_type: 'depense_marketing', label: 'Dépense — Marketing', account: '627' },
   { operation_type: 'depense_taxes', label: 'Dépense — Taxes', account: '641' },
   { operation_type: 'depense_autre', label: 'Dépense — Autre', account: '658' },
 ].map((r) =>

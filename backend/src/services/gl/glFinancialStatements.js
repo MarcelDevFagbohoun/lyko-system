@@ -128,14 +128,39 @@ async function computeBalanceSheet(conn, tenantId, fiscalYearId) {
 
   const rows = await fetchCumulativeTrialBalanceRows(conn, tenantId, uptoDate);
 
-  const actif = rows
-    .filter((r) => r.accountType === 'actif' && r.class >= 2 && r.class <= 5)
-    .map((r) => ({ code: r.code, label: r.label, amount: r.totalDebit - r.totalCredit }))
-    .filter((r) => r.amount !== 0);
-  const passif = rows
-    .filter((r) => r.accountType === 'passif' && (r.class === 1 || r.class === 4))
-    .map((r) => ({ code: r.code, label: r.label, amount: r.totalCredit - r.totalDebit }))
-    .filter((r) => r.amount !== 0);
+  // Présentation SYSCOHADA/PCG : un compte ne reste dans son côté « naturel » que si son solde y est ; un
+  // solde au sens inverse est reclassé de l'autre côté du bilan (client créditeur, banque à découvert,
+  // compte propriétaire débiteur…), au lieu d'apparaître en NÉGATIF et de minorer le total (audit
+  // comptabilité avancée du 24/10/2026). Exception : les comptes d'amortissements/dépréciations (28, 29,
+  // 39, 49, 59), qui sont par nature SOUSTRACTIFS de l'actif et restent présentés en déduction.
+  const CONTRA_PREFIXES = ['28', '29', '39', '49', '59'];
+  const isContra = (code) => CONTRA_PREFIXES.some((p) => code.startsWith(p));
+  const actif = [];
+  const passif = [];
+  const warnings = [];
+  for (const r of rows) {
+    if (r.accountType === 'actif' && r.class >= 2 && r.class <= 5) {
+      const amount = r.totalDebit - r.totalCredit;
+      if (amount === 0) continue;
+      if (amount < 0 && !isContra(r.code)) {
+        passif.push({ code: r.code, label: `${r.label} (solde créditeur)`, amount: -amount, reclassified: true });
+        if (r.class === 5) {
+          warnings.push(
+            r.code.startsWith('57')
+              ? `Caisse (${r.code}) à solde créditeur de ${-amount} FCFA : une caisse ne peut pas être négative. Vérifiez les saisies ou le solde d'ouverture.`
+              : `Compte de trésorerie ${r.code} à solde créditeur de ${-amount} FCFA (découvert ?). Vérifiez les saisies ou le solde d'ouverture.`,
+          );
+        }
+      } else {
+        actif.push({ code: r.code, label: r.label, amount });
+      }
+    } else if (r.accountType === 'passif' && (r.class === 1 || r.class === 4)) {
+      const amount = r.totalCredit - r.totalDebit;
+      if (amount === 0) continue;
+      if (amount < 0) actif.push({ code: r.code, label: `${r.label} (solde débiteur)`, amount: -amount, reclassified: true });
+      else passif.push({ code: r.code, label: r.label, amount });
+    }
+  }
 
   // Résultat CUMULÉ (jamais seulement celui de l'exercice consulté) — voir
   // le commentaire de fonction ci-dessus pour le raisonnement complet.
@@ -154,7 +179,7 @@ async function computeBalanceSheet(conn, tenantId, fiscalYearId) {
   const totalActif = actif.reduce((s, r) => s + r.amount, 0);
   const totalPassif = passif.reduce((s, r) => s + r.amount, 0) + resultatNet;
 
-  return { actif, passif, resultatNet, totalActif, totalPassif, balanced: totalActif === totalPassif };
+  return { actif, passif, resultatNet, totalActif, totalPassif, balanced: totalActif === totalPassif, warnings };
 }
 
 /**

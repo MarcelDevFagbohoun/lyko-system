@@ -138,6 +138,7 @@ Tout est réglé par variables d'environnement, aucun changement de code n'est n
 ## Lot 13 — montée en gamme avec crédit, suivi des paiements échoués
 
 - Migration `120_subscription_upgrade_and_failures.sql` **à appliquer** (type de paiement, crédit appliqué, périodes consommées, motif d'échec, statut `anomaly`).
+- Migration `121_gl_ohada_expense_accounts.sql` **à appliquer** (renumérotation SYSCOHADA : transports 618, télécommunications 628, publicité 627 ; les écritures existantes suivent). Bilan : un solde à contre-sens est reclassé de l'autre côté, avec avertissement (caisse négative).
 - Montée en gamme : pendant un abonnement actif, une offre supérieure est proposée avec le **prorata des jours restants déduit du prix** (renouvellements d'avance compris). La nouvelle offre démarre aussitôt pour sa durée complète ; les périodes payées sont « consommées » (non remboursables, non réutilisables comme crédit). Offre inférieure refusée jusqu'au terme. Pas de tarif fondateur sur une montée en gamme.
 - Le reçu (e-mail et PDF) affiche le prix plein, la ligne « Crédit » et le montant réellement payé.
 - Annulation après une montée en gamme : le remboursement part de la valeur de la nouvelle période (prix plein) au prorata des jours restants.
