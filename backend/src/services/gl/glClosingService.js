@@ -153,7 +153,25 @@ async function getOpeningBalances(conn, tenantId, fiscalYearId) {
       GROUP BY a.id, a.code, a.label, a.class HAVING solde <> 0 ORDER BY a.code`,
     { tenantId, start: fy.start_date },
   );
-  return rows.map((r) => ({ code: r.code, label: r.label, debit: Number(r.solde) > 0 ? Number(r.solde) : 0, credit: Number(r.solde) < 0 ? -Number(r.solde) : 0 }));
+  const items = rows.map((r) => ({ code: r.code, label: r.label, debit: Number(r.solde) > 0 ? Number(r.solde) : 0, credit: Number(r.solde) < 0 ? -Number(r.solde) : 0 }));
+  // Résultat des exercices antérieurs pas encore affecté (clôture simple ou exercice non clôturé) : sans cette
+  // ligne, la balance d'ouverture ne s'équilibrerait pas.
+  const [[pl]] = await conn.query(
+    `SELECT COALESCE(SUM(CASE WHEN el.side = 'credit' THEN el.amount ELSE -el.amount END), 0) AS resultat
+       FROM gl_accounts a JOIN gl_entry_lines el ON el.account_id = a.id JOIN gl_entries e ON e.id = el.entry_id
+      WHERE a.tenant_id = :tenantId AND a.class IN (6, 7, 8) AND e.entry_date < :start`,
+    { tenantId, start: fy.start_date },
+  );
+  const unassigned = Number(pl.resultat);
+  if (unassigned !== 0) {
+    items.push({
+      code: '—',
+      label: 'Résultat des exercices précédents non encore affecté',
+      debit: unassigned < 0 ? -unassigned : 0,
+      credit: unassigned > 0 ? unassigned : 0,
+    });
+  }
+  return items;
 }
 
 /**

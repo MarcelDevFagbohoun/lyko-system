@@ -93,7 +93,7 @@ router.get('/', canAdvanced, async (req, res, next) => {
 router.get('/log', canAdvanced, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT l.id, l.setting_key, l.old_value, l.new_value, l.created_at, u.name AS user_name
+      `SELECT l.id, l.setting_key, l.old_value, l.new_value, l.created_at, CONCAT(u.first_name, ' ', u.last_name) AS user_name
          FROM gl_settings_log l LEFT JOIN users u ON u.id = l.user_id
         WHERE l.tenant_id = :t ORDER BY l.id DESC LIMIT 50`,
       { t: req.user.tenantId },

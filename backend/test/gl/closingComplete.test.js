@@ -130,3 +130,20 @@ test('clôture sans mouvement de gestion : pas d\'écriture de clôture, pas d\'
   const res = await close(r.insertId);
   assert.equal(res.closingEntryId, null);
 });
+
+test("balance d'ouverture : résultat non affecté (clôture simple) ajouté pour rester équilibrée", async () => {
+  await pool.query("UPDATE tenants SET gl_closing_mode = 'simple' WHERE id = :t", { t: fx.tenantId });
+  const [r] = await pool.query(
+    "INSERT INTO gl_fiscal_years (tenant_id, label, start_date, end_date, status) VALUES (:t, '2029', '2029-01-01', '2029-12-31', 'ouvert')",
+    { t: fx.tenantId },
+  );
+  await post('loyer_encaisse', '2029-06-05', 100000);
+  const [r2] = await pool.query(
+    "INSERT INTO gl_fiscal_years (tenant_id, label, start_date, end_date, status) VALUES (:t, '2030', '2030-01-01', '2030-12-31', 'ouvert')",
+    { t: fx.tenantId },
+  );
+  void r;
+  const opening = await getOpeningBalances(pool, fx.tenantId, r2.insertId);
+  assert.equal(opening.reduce((s, x) => s + x.debit, 0), opening.reduce((s, x) => s + x.credit, 0));
+  assert.ok(opening.some((x) => x.code === '—'));
+});

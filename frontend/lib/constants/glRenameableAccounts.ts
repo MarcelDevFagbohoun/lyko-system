@@ -12,4 +12,10 @@ export const RENAMEABLE_SYSTEM_ACCOUNTS = [
     defaultCode: "707",
     hint: "707 « Produits accessoires » par défaut — 758 « Produits divers » est une alternative courante.",
   },
+  {
+    key: "mobile_money_account",
+    label: "Mobile Money",
+    defaultCode: "552",
+    hint: "SYSCOHADA ne distingue pas le mobile money : 552 est un compte divisionnaire créé par extension. Votre comptable peut préférer un autre numéro de la classe 5 (ex. 585 « Virements de fonds » ou un sous-compte de 52).",
+  },
 ] as const;
