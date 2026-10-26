@@ -11,10 +11,12 @@
 export type Inline =
   | { kind: "text"; text: string }
   | { kind: "bold"; text: string }
+  | { kind: "italic"; text: string }
   | { kind: "code"; text: string }
   | { kind: "link"; text: string; href: string };
 
 export type Block =
+  | { kind: "heading"; level: 1 | 2 | 3; inlines: Inline[] }
   | { kind: "paragraph"; inlines: Inline[] }
   | { kind: "list"; ordered: boolean; items: Inline[][] };
 
@@ -25,7 +27,8 @@ export function isSafeInternalHref(href: string): boolean {
   return INTERNAL_HREF.test(href);
 }
 
-const INLINE = /\*\*([^*\n]+)\*\*|`([^`\n]+)`|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+// Italique `_texte_` : seulement entre deux limites de mot, pour ne pas toucher aux mots comme mon_fichier_final.
+const INLINE = /\*\*([^*\n]+)\*\*|`([^`\n]+)`|\[([^\]\n]+)\]\(([^)\s]+)\)|(?<![\w])_([^_\n]+)_(?![\w])/g;
 
 export function parseInline(source: string): Inline[] {
   const out: Inline[] = [];
@@ -34,6 +37,7 @@ export function parseInline(source: string): Inline[] {
     const index = m.index ?? 0;
     if (index > last) out.push({ kind: "text", text: source.slice(last, index) });
     if (m[1] !== undefined) out.push({ kind: "bold", text: m[1] });
+    else if (m[5] !== undefined) out.push({ kind: "italic", text: m[5] });
     else if (m[2] !== undefined) out.push({ kind: "code", text: m[2] });
     else if (isSafeInternalHref(m[4])) out.push({ kind: "link", text: m[3], href: m[4] });
     else out.push({ kind: "text", text: m[3] }); // lien externe / dangereux : on ne garde que son libellé
@@ -43,6 +47,7 @@ export function parseInline(source: string): Inline[] {
   return out;
 }
 
+const HEADING = /^(#{1,3})\s+(.+)$/;
 const BULLET = /^\s*[-*•]\s+(.*)$/;
 const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
 
@@ -65,6 +70,13 @@ export function parseMarkdown(source: string): Block[] {
     if (line.trim() === "") {
       flushParagraph();
       flushList();
+      continue;
+    }
+    const heading = HEADING.exec(line.trim());
+    if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "heading", level: heading[1].length as 1 | 2 | 3, inlines: parseInline(heading[2]) });
       continue;
     }
     const bullet = BULLET.exec(line);

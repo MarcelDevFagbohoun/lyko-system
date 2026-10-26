@@ -11,6 +11,8 @@ function renderInline(inlines: Inline[], onNavigate?: () => void) {
             {part.text}
           </strong>
         );
+      case "italic":
+        return <em key={i}>{part.text}</em>;
       case "code":
         return (
           <code key={i} className="rounded bg-surface-muted px-1 py-0.5 font-mono text-[0.85em] text-ink">
@@ -36,7 +38,11 @@ export function SafeMarkdown({ text, onNavigate }: { text: string; onNavigate?: 
   return (
     <div className="flex flex-col gap-2 text-body-sm leading-relaxed text-ink">
       {blocks.map((block, i) =>
-        block.kind === "paragraph" ? (
+        block.kind === "heading" ? (
+          <p key={i} className={block.level === 1 ? "mt-1 font-display text-headline-sm font-semibold text-ink" : block.level === 2 ? "mt-1 text-body-lg font-semibold text-ink" : "mt-0.5 font-semibold text-ink"}>
+            {renderInline(block.inlines, onNavigate)}
+          </p>
+        ) : block.kind === "paragraph" ? (
           <p key={i}>{renderInline(block.inlines, onNavigate)}</p>
         ) : block.ordered ? (
           <ol key={i} className="ml-5 list-decimal space-y-1">

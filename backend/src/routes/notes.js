@@ -9,6 +9,7 @@ const { requireAuth } = require('../middleware/auth');
 const { ApiError } = require('../middleware/error');
 const { resolvePropertyScope, assertRenterInScope } = require('../services/scope');
 const { toActor } = require('../utils/actor');
+const noteSheets = require('../services/noteSheets');
 
 const router = Router();
 router.use(requireAuth);
@@ -53,11 +54,48 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Fiche de notes (texte riche) d'un locataire ou d'un propriétaire ──────────────────────────────────────────────
+// Les anciennes notes en messages restent lisibles (`legacyNotes`) mais on n'en ajoute plus : on écrit dans la fiche.
+const SHEET_TYPES = ['renter', 'owner'];
+const sheetQuerySchema = z.object({ entityType: z.enum(SHEET_TYPES), entityId: z.coerce.number().int().positive() });
+const sheetSaveSchema = z.object({
+  entityType: z.enum(SHEET_TYPES),
+  entityId: z.number().int().positive(),
+  content: z.string().max(noteSheets.MAX_LENGTH, 'La fiche est trop longue.'),
+  version: z.number().int().min(0),
+});
+
+router.get('/sheet', async (req, res, next) => {
+  try {
+    const q = sheetQuerySchema.safeParse(req.query);
+    if (!q.success) throw new ApiError(400, 'Paramètres invalides');
+    const { entityType, entityId } = q.data;
+    await assertEntity(req.user, entityType, entityId);
+    const [sheet, legacyNotes] = await Promise.all([
+      noteSheets.getSheet(req.user.tenantId, entityType, entityId),
+      list(req.user.tenantId, entityType, entityId),
+    ]);
+    res.json({ sheet, legacyNotes });
+  } catch (err) { next(err); }
+});
+
+router.put('/sheet', async (req, res, next) => {
+  try {
+    const parsed = sheetSaveSchema.safeParse(req.body);
+    if (!parsed.success) throw new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors);
+    const { entityType, entityId, content, version } = parsed.data;
+    await assertEntity(req.user, entityType, entityId);
+    const sheet = await noteSheets.saveSheet({ tenantId: req.user.tenantId, userId: req.user.id, entityType, entityId, content, version });
+    res.json({ sheet });
+  } catch (err) { next(err); }
+});
+
 router.post('/', async (req, res, next) => {
   try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) throw new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors);
     const { entityType, entityId, body } = parsed.data;
+    if (SHEET_TYPES.includes(entityType)) throw new ApiError(400, 'Pour un locataire ou un propriétaire, écrivez dans la fiche de notes.');
     await assertEntity(req.user, entityType, entityId);
     await pool.query(
       'INSERT INTO entity_notes (tenant_id, entity_type, entity_id, body, author_id) VALUES (:t, :type, :id, :body, :by)',

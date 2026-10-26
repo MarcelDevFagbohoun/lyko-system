@@ -60,3 +60,23 @@ test("blocs : paragraphes, listes à puces et numérotées", () => {
   });
   assert.equal(blocks[2].kind === "list" && blocks[2].ordered, true);
 });
+
+test("fiche de notes : titres et italique, sans élargir la surface d'attaque", () => {
+  assert.deepEqual(parseMarkdown("## Paiement\ntexte"), [
+    { kind: "heading", level: 2, inlines: [{ kind: "text", text: "Paiement" }] },
+    { kind: "paragraph", inlines: [{ kind: "text", text: "texte" }] },
+  ]);
+  assert.equal((parseMarkdown("### Petit titre")[0] as { level: number }).level, 3);
+  assert.equal(parseMarkdown("#### trop profond")[0].kind, "paragraph"); // seuls les niveaux 1 à 3
+  assert.equal(parseMarkdown("#sans-espace")[0].kind, "paragraph");
+  assert.deepEqual(parseInline("un _mot_ ici"), [
+    { kind: "text", text: "un " },
+    { kind: "italic", text: "mot" },
+    { kind: "text", text: " ici" },
+  ]);
+  // les identifiants avec soulignés ne sont pas touchés
+  assert.deepEqual(parseInline("fichier_final_v2"), [{ kind: "text", text: "fichier_final_v2" }]);
+  // un titre ne peut pas cacher un lien externe ou une image
+  const h = parseMarkdown("# [x](https://evil.example)")[0] as { inlines: { kind: string }[] };
+  assert.equal(h.inlines.some((i) => i.kind === "link"), false);
+});

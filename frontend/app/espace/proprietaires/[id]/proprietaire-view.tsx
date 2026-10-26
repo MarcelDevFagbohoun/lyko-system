@@ -33,7 +33,7 @@ import {
 import { formatFcfa } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { DocumentDownloadStatus } from "@/components/documents/document-download-status";
-import { NoteThread } from "@/components/notes/note-thread";
+import { NoteSheet } from "@/components/notes/note-sheet";
 import { DepositTransferCard } from "./deposit-transfer-card";
 import { Badge } from "@/components/ui/badge";
 import { UtilityPointPanel } from "@/components/charges/utility-point-panel";
@@ -340,7 +340,7 @@ function ProprietaireContent() {
 
         <Card>
           <CardContent className="pt-5">
-            <NoteThread entityType="owner" entityId={owner.id} accessToken={accessToken} title="Notes sur ce propriétaire" />
+            <NoteSheet entityType="owner" entityId={owner.id} accessToken={accessToken} title="Fiche de notes du propriétaire" placeholder="Relation, préférences, modalités de versement, points d'attention…" />
           </CardContent>
         </Card>
 

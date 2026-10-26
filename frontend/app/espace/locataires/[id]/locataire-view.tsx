@@ -28,7 +28,7 @@ import { formatFcfa, buildRentReminderMessage } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { DocumentDownloadStatus } from "@/components/documents/document-download-status";
 import { Attribution } from "@/components/ui/attribution";
-import { NoteThread } from "@/components/notes/note-thread";
+import { NoteSheet } from "@/components/notes/note-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -163,7 +163,6 @@ function LocataireContent() {
               {renter.profession ? ` · ${renter.profession}` : ""}
             </p>
             <Attribution actor={renter.createdBy} verb="Fiche créée par" at={renter.createdAt} className="mt-1 block" />
-            <NoteThread entityType="renter" entityId={renter.id} accessToken={accessToken} title="Notes sur ce locataire" />
           </div>
           {activeLease && (
             <div className="flex flex-wrap gap-2">
@@ -196,6 +195,12 @@ function LocataireContent() {
           )}
         </div>
         )}
+
+        <Card>
+          <CardContent className="pt-5">
+            <NoteSheet entityType="renter" entityId={renter.id} accessToken={accessToken} title="Fiche de notes du locataire" />
+          </CardContent>
+        </Card>
 
         {canManage && <PortalLinkCard renter={renter} accessToken={accessToken} onGenerated={load} />}
 
