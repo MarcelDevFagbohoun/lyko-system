@@ -9,9 +9,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import {
   createRenter,
-  RENT_TIMING_LABELS,
   type PaymentMethod,
-  type RentTiming,
   type AdditionalDepositType,
 } from "@/lib/api/renters";
 import type { Unit } from "@/lib/api/properties";
@@ -22,8 +20,7 @@ import { PropertyUnitPicker } from "@/components/properties/property-unit-picker
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { useTenantRhythm } from "@/lib/hooks/use-tenant-rhythm";
-import { RentDueField, buildRentDuePayload, validateRentDue } from "@/components/renters/rent-due-field";
-import { Field, Input } from "@/components/ui/input";
+import { buildRentDuePayload, validateRentDue } from "@/components/renters/rent-due-field";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -33,7 +30,12 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { todayIso } from "@/lib/dates";
-import { ADDITIONAL_DEPOSIT_TYPES, DEPOSIT_PAYMENT_METHODS, FormState, INITIAL } from "./sections/form-state";
+import { ADDITIONAL_DEPOSIT_TYPES, FormState, INITIAL } from "./sections/form-state";
+import { IdentityFields } from "./sections/identity-fields";
+import { LeaseTermsFields } from "./sections/lease-terms-fields";
+import { ProrataBlock } from "./sections/prorata-block";
+import { AdditionalDepositsBlock } from "./sections/additional-deposits-block";
+import { BillingOptionsFields } from "./sections/billing-options-fields";
 import { PortalLinkSuccessPanel } from "./sections/portal-link-success-panel";
 import { CreatedRenter } from "./sections/types";
 
@@ -286,351 +288,14 @@ function NouveauContent() {
                 )}
               </div>
 
-              <div className="flex flex-col gap-4 border-t border-border pt-5">
-                <span className="font-label-sm uppercase tracking-wider text-ink-muted">Identité</span>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="Prénom" htmlFor="firstName" required error={touched.firstName ? errors.firstName : undefined}>
-                    <Input id="firstName" value={form.firstName} onChange={(e) => set("firstName", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, firstName: true }))} />
-                  </Field>
-                  <Field label="Nom" htmlFor="lastName" required error={touched.lastName ? errors.lastName : undefined}>
-                    <Input id="lastName" value={form.lastName} onChange={(e) => set("lastName", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, lastName: true }))} />
-                  </Field>
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="Numéro de téléphone" htmlFor="phone" required hint="Ex. 0161234567" error={touched.phone ? errors.phone : undefined}>
-                    <Input id="phone" value={form.phone} onChange={(e) => set("phone", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, phone: true }))} inputMode="tel" />
-                  </Field>
-                  <Field label="Email (optionnel)" htmlFor="email" error={touched.email ? errors.email : undefined}>
-                    <Input id="email" type="email" value={form.email} onChange={(e) => set("email", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, email: true }))} />
-                  </Field>
-                </div>
-                <Field label="Profession (optionnel)" htmlFor="profession">
-                  <Input id="profession" value={form.profession} onChange={(e) => set("profession", e.target.value)} />
-                </Field>
-              </div>
+              <IdentityFields form={form} set={set} touched={touched} setTouched={setTouched} errors={errors} />
 
               <div className="flex flex-col gap-4 border-t border-border pt-5">
                 <span className="font-label-sm uppercase tracking-wider text-ink-muted">Bail</span>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="Loyer mensuel (FCFA)" htmlFor="monthlyRent" required hint="Pré-rempli depuis l'unité, modifiable" error={touched.monthlyRent ? errors.monthlyRent : undefined}>
-                    <Input id="monthlyRent" inputMode="numeric" value={form.monthlyRent} onChange={(e) => set("monthlyRent", e.target.value.replace(/\D/g, ""))} onBlur={() => setTouched((t) => ({ ...t, monthlyRent: true }))} />
-                  </Field>
-                  <Field label="Caution (FCFA)" htmlFor="depositAmount" hint="0 si aucune" error={touched.depositAmount ? errors.depositAmount : undefined}>
-                    <Input id="depositAmount" inputMode="numeric" value={form.depositAmount} onChange={(e) => set("depositAmount", e.target.value.replace(/\D/g, ""))} onBlur={() => setTouched((t) => ({ ...t, depositAmount: true }))} />
-                  </Field>
-                </div>
-                {Number(form.depositAmount || "0") > 0 && (
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <Field
-                      label="Caution reçue par"
-                      htmlFor="depositPaymentMethod"
-                      required
-                      error={touched.depositPaymentMethod ? errors.depositPaymentMethod : undefined}
-                    >
-                      <select
-                        id="depositPaymentMethod"
-                        value={form.depositPaymentMethod}
-                        onChange={(e) => set("depositPaymentMethod", e.target.value)}
-                        onBlur={() => setTouched((t) => ({ ...t, depositPaymentMethod: true }))}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      >
-                        <option value="" disabled>
-                          Choisir…
-                        </option>
-                        {DEPOSIT_PAYMENT_METHODS.map((m) => (
-                          <option key={m.value} value={m.value}>
-                            {m.label}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Reçue le" htmlFor="depositPaidAt">
-                      <Input
-                        id="depositPaidAt"
-                        type="date"
-                        value={form.depositPaidAt}
-                        onChange={(e) => set("depositPaidAt", e.target.value)}
-                      />
-                    </Field>
-                  </div>
-                )}
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field
-                    label="Frais d'agence à l'entrée (FCFA)"
-                    htmlFor="entryFeeAmount"
-                    hint="Pris directement au locataire, jamais reversé au propriétaire — 0 si aucun"
-                    error={touched.entryFeeAmount ? errors.entryFeeAmount : undefined}
-                  >
-                    <Input
-                      id="entryFeeAmount"
-                      inputMode="numeric"
-                      value={form.entryFeeAmount}
-                      onChange={(e) => set("entryFeeAmount", e.target.value.replace(/\D/g, ""))}
-                      onBlur={() => setTouched((t) => ({ ...t, entryFeeAmount: true }))}
-                    />
-                  </Field>
-                </div>
-                {Number(form.entryFeeAmount || "0") > 0 && (
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <Field
-                      label="Frais d'agence reçus par"
-                      htmlFor="entryFeePaymentMethod"
-                      required
-                      error={touched.entryFeePaymentMethod ? errors.entryFeePaymentMethod : undefined}
-                    >
-                      <select
-                        id="entryFeePaymentMethod"
-                        value={form.entryFeePaymentMethod}
-                        onChange={(e) => set("entryFeePaymentMethod", e.target.value)}
-                        onBlur={() => setTouched((t) => ({ ...t, entryFeePaymentMethod: true }))}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      >
-                        <option value="" disabled>
-                          Choisir…
-                        </option>
-                        {DEPOSIT_PAYMENT_METHODS.map((m) => (
-                          <option key={m.value} value={m.value}>
-                            {m.label}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Reçus le" htmlFor="entryFeePaidAt">
-                      <Input
-                        id="entryFeePaidAt"
-                        type="date"
-                        value={form.entryFeePaidAt}
-                        onChange={(e) => set("entryFeePaidAt", e.target.value)}
-                      />
-                    </Field>
-                  </div>
-                )}
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <RentDueField
-                    rhythm={rhythm}
-                    value={form.rentDueDay}
-                    onChange={(v) => set("rentDueDay", v)}
-                    onBlur={() => setTouched((t) => ({ ...t, rentDueDay: true }))}
-                    error={touched.rentDueDay ? errors.rentDueDay : undefined}
-                  />
-                  <Field label="Date d'entrée" htmlFor="startDate" required error={touched.startDate ? errors.startDate : undefined}>
-                    <Input id="startDate" type="date" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} onBlur={() => setTouched((t) => ({ ...t, startDate: true }))} />
-                  </Field>
-                </div>
-
-                {/* Prorata d'entrée (étape 42) : calendaire uniquement (hypothèse "jour du mois",
-                    voir rentTracking.js) — pour un bail non-calendaire, ce bloc ne s'affiche pas,
-                    limitation documentée de l'étape 2. */}
-                {isCalendaireRhythm && prorataPreview.days > 0 && (
-                  <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-3">
-                    <p className="text-body-sm text-ink">
-                      Entrée le <strong>{form.startDate.split("-").reverse().join("/")}</strong>, échéance habituelle le{" "}
-                      {form.rentDueDay} — {prorataPreview.days} jour{prorataPreview.days > 1 ? "s" : ""} avant le premier cycle
-                      normal ({prorataPreview.dueDate.split("-").reverse().join("/")}).
-                    </p>
-                    <div className="flex flex-col gap-2">
-                      <label className="flex items-start gap-2.5 text-body-sm text-ink">
-                        <input
-                          type="radio"
-                          name="entryProration"
-                          checked={form.entryProration === "aucun"}
-                          onChange={() => {
-                            set("entryProration", "aucun");
-                            setTouched((t) => ({ ...t, entryProration: true }));
-                          }}
-                          className="mt-0.5"
-                        />
-                        <span>Ne rien facturer pour ces jours (le premier loyer plein sera dû à la prochaine échéance).</span>
-                      </label>
-                      <label className="flex items-start gap-2.5 text-body-sm text-ink">
-                        <input
-                          type="radio"
-                          name="entryProration"
-                          checked={form.entryProration === "prorata"}
-                          onChange={() => {
-                            set("entryProration", "prorata");
-                            setTouched((t) => ({ ...t, entryProration: true }));
-                          }}
-                          className="mt-0.5"
-                        />
-                        <span>
-                          Facturer le prorata d&apos;entrée : <strong>{formatFcfa(prorataPreview.amount)}</strong> pour{" "}
-                          {prorataPreview.days} jour{prorataPreview.days > 1 ? "s" : ""} (loyer ÷ 30 × jours) — appartient au
-                          propriétaire, ajouté à son compte séquestre.
-                        </span>
-                      </label>
-                    </div>
-                    {!isHistoricalStartDate && (
-                      <label htmlFor="upToDateAtOnboarding" className="flex items-start gap-2.5 text-body-xs text-ink-muted">
-                        <input
-                          id="upToDateAtOnboarding"
-                          type="checkbox"
-                          checked={form.upToDateAtOnboarding}
-                          onChange={(e) => {
-                            set("upToDateAtOnboarding", e.target.checked);
-                            setTouched((t) => ({ ...t, upToDateAtOnboarding: true }));
-                          }}
-                          className="mt-0.5"
-                        />
-                        <span>
-                          Faire démarrer le cycle de loyer normal à la prochaine échéance ({prorataPreview.dueDate.split("-").reverse().join("/")}
-                          ) plutôt qu&apos;à celle de ce mois-ci, déjà passée à la date d&apos;entrée — coché par défaut, sinon le
-                          bail apparaîtrait à tort en retard dès sa création.
-                        </span>
-                      </label>
-                    )}
-                    {form.entryProration === "prorata" && prorataPreview.amount > 0 && (
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                        <Field
-                          label="Prorata reçu par"
-                          htmlFor="entryProrataPaymentMethod"
-                          required
-                          error={touched.entryProrataPaymentMethod ? errors.entryProrataPaymentMethod : undefined}
-                        >
-                          <select
-                            id="entryProrataPaymentMethod"
-                            value={form.entryProrataPaymentMethod}
-                            onChange={(e) => set("entryProrataPaymentMethod", e.target.value)}
-                            onBlur={() => setTouched((t) => ({ ...t, entryProrataPaymentMethod: true }))}
-                            className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          >
-                            <option value="" disabled>
-                              Choisir…
-                            </option>
-                            {DEPOSIT_PAYMENT_METHODS.map((m) => (
-                              <option key={m.value} value={m.value}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
-                        <Field label="Reçu le" htmlFor="entryProrataPaidAt">
-                          <Input
-                            id="entryProrataPaidAt"
-                            type="date"
-                            value={form.entryProrataPaidAt}
-                            onChange={(e) => set("entryProrataPaidAt", e.target.value)}
-                          />
-                        </Field>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {enabledAdditionalDepositTypes.length > 0 && (
-                  <div className="flex flex-col gap-4 rounded-lg border border-border-subtle p-4">
-                    <p className="font-label-md text-ink">Cautions supplémentaires</p>
-                    {enabledAdditionalDepositTypes.map((t) => {
-                      const entry = form.additionalDeposits[t.key];
-                      const amountId = `additionalDeposit-${t.key}-amount`;
-                      const methodId = `additionalDeposit-${t.key}-method`;
-                      const paidAtId = `additionalDeposit-${t.key}-paidAt`;
-                      return (
-                        <div key={t.key} className="flex flex-col gap-3">
-                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <Field
-                              label={`${t.label} (FCFA)`}
-                              htmlFor={amountId}
-                              hint="0 si non demandée à ce locataire"
-                              error={additionalDepositsTouched[t.key] ? additionalDepositErrors[t.key] : undefined}
-                            >
-                              <Input
-                                id={amountId}
-                                inputMode="numeric"
-                                value={entry.amount}
-                                onChange={(e) => setAdditionalDeposit(t.key, { amount: e.target.value.replace(/\D/g, "") })}
-                                onBlur={() => setAdditionalDepositsTouched((tt) => ({ ...tt, [t.key]: true }))}
-                              />
-                            </Field>
-                          </div>
-                          {Number(entry.amount || "0") > 0 && (
-                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                              <Field label="Reçue par" htmlFor={methodId} required>
-                                <select
-                                  id={methodId}
-                                  value={entry.paymentMethod}
-                                  onChange={(e) => setAdditionalDeposit(t.key, { paymentMethod: e.target.value })}
-                                  onBlur={() => setAdditionalDepositsTouched((tt) => ({ ...tt, [t.key]: true }))}
-                                  className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                                >
-                                  <option value="" disabled>
-                                    Choisir…
-                                  </option>
-                                  {DEPOSIT_PAYMENT_METHODS.map((m) => (
-                                    <option key={m.value} value={m.value}>
-                                      {m.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </Field>
-                              <Field label="Reçue le" htmlFor={paidAtId}>
-                                <Input
-                                  id={paidAtId}
-                                  type="date"
-                                  value={entry.paidAt}
-                                  onChange={(e) => setAdditionalDeposit(t.key, { paidAt: e.target.value })}
-                                />
-                              </Field>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <Field
-                  label="Convention de paiement"
-                  htmlFor="rentTiming"
-                  hint="Réglable par défaut dans Paramètres — à ajuster ici si ce propriétaire a sa propre habitude"
-                >
-                  <select
-                    id="rentTiming"
-                    value={form.rentTiming}
-                    onChange={(e) => {
-                      set("rentTiming", e.target.value as RentTiming);
-                      setTouched((t) => ({ ...t, rentTiming: true }));
-                    }}
-                    className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  >
-                    {Object.entries(RENT_TIMING_LABELS).map(([key, label]) => (
-                      <option key={key} value={key}>{label}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field
-                  label="Impayés existants à l'entrée (FCFA)"
-                  htmlFor="openingDebtAmount"
-                  hint="Locataire déjà en place avant Africa Immo Management, avec un impayé connu — 0 si aucun"
-                  error={touched.openingDebtAmount ? errors.openingDebtAmount : undefined}
-                >
-                  <Input
-                    id="openingDebtAmount"
-                    inputMode="numeric"
-                    value={form.openingDebtAmount}
-                    onChange={(e) => set("openingDebtAmount", e.target.value.replace(/\D/g, ""))}
-                    onBlur={() => setTouched((t) => ({ ...t, openingDebtAmount: true }))}
-                  />
-                </Field>
-                {isHistoricalStartDate && (
-                  <label
-                    htmlFor="upToDateAtOnboarding"
-                    className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm text-ink"
-                  >
-                    <input
-                      id="upToDateAtOnboarding"
-                      type="checkbox"
-                      checked={form.upToDateAtOnboarding}
-                      onChange={(e) => set("upToDateAtOnboarding", e.target.checked)}
-                      className="mt-0.5"
-                    />
-                    <span>
-                      Ce locataire est à jour sur son loyer, y compris le mois en cours — évite un faux retard si
-                      l&apos;échéance de ce mois est déjà passée. (Les mois antérieurs à aujourd&apos;hui ne sont de
-                      toute façon jamais comptés, même sans cocher cette case.)
-                    </span>
-                  </label>
-                )}
+                <LeaseTermsFields form={form} set={set} touched={touched} setTouched={setTouched} errors={errors} rhythm={rhythm} />
+                <ProrataBlock form={form} set={set} touched={touched} setTouched={setTouched} errors={errors} isCalendaireRhythm={isCalendaireRhythm} isHistoricalStartDate={isHistoricalStartDate} prorataPreview={prorataPreview} />
+                <AdditionalDepositsBlock form={form} enabledTypes={enabledAdditionalDepositTypes} touchedByType={additionalDepositsTouched} setTouchedByType={setAdditionalDepositsTouched} errorsByType={additionalDepositErrors} setAdditionalDeposit={setAdditionalDeposit} />
+                <BillingOptionsFields form={form} set={set} touched={touched} setTouched={setTouched} errors={errors} isHistoricalStartDate={isHistoricalStartDate} />
               </div>
 
               <Button type="submit" size="lg" disabled={submitting || !selectedUnit || !online}>
