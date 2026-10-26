@@ -72,3 +72,13 @@ test("todayIso : AAAA-MM-JJ en heure locale", () => {
   const d = new Date();
   assert.equal(todayIso(), `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
 });
+
+import { monthEnd } from "../lib/dates.ts";
+
+test("monthEnd : dernier jour réel du mois", () => {
+  assert.equal(monthEnd("2026-04"), "2026-04-30");
+  assert.equal(monthEnd("2026-01"), "2026-01-31");
+  assert.equal(monthEnd("2026-02"), "2026-02-28");
+  assert.equal(monthEnd("2028-02"), "2028-02-29");
+  assert.equal(monthEnd("2026-12"), "2026-12-31");
+});

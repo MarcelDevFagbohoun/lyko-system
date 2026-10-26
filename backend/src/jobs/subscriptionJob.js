@@ -25,10 +25,10 @@ async function runSubscriptionJob() {
             t.company_name, u.first_name, u.email
      FROM tenant_subscriptions s
      JOIN tenants t ON t.id = s.tenant_id
-     JOIN users u ON u.tenant_id = s.tenant_id AND u.role = 'dg' AND u.email IS NOT NULL
+     JOIN users u ON u.id = (
+       SELECT MIN(d.id) FROM users d WHERE d.tenant_id = s.tenant_id AND d.role = 'dg' AND d.email IS NOT NULL)
      WHERE s.plan_key IS NOT NULL AND s.plan_key <> 'interne' AND s.status IN ('active','expired')
-       AND s.current_period_end > DATE_SUB(NOW(), INTERVAL 3 DAY) AND s.current_period_end <= DATE_ADD(NOW(), INTERVAL 8 DAY)
-     GROUP BY s.tenant_id`,
+       AND s.current_period_end > DATE_SUB(NOW(), INTERVAL 3 DAY) AND s.current_period_end <= DATE_ADD(NOW(), INTERVAL 8 DAY)`,
   );
   for (const r of rows) {
     const threshold = Number(r.is_over) === 1 ? 0 : Number(r.days_left) <= 1 ? 1 : Number(r.days_left) <= 7 ? 7 : null;

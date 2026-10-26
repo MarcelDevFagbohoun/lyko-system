@@ -15,7 +15,7 @@ const { requireAuth, requirePermission } = require('../../middleware/auth');
 const { computeIncomeStatement, computeBalanceSheet, computeCashFlow } = require('../../services/gl/glFinancialStatements');
 const { computeMandantsCabinetIndicator } = require('../../services/gl/glMandantsCabinetService');
 const { streamFinancialStatementsPdf } = require('../../services/pdf');
-const { isoDate } = require('../../utils/dates');
+const { isoDate, clampIsoDate } = require('../../utils/dates');
 
 const router = Router();
 router.use(requireAuth);
@@ -92,8 +92,8 @@ router.get('/general-ledger', canAdvanced, async (req, res, next) => {
 
     const params = { tenantId: req.user.tenantId, accountId };
     let where = 'e.tenant_id = :tenantId AND el.account_id = :accountId';
-    const from = typeof req.query.from === 'string' ? req.query.from : '';
-    const to = typeof req.query.to === 'string' ? req.query.to : '';
+    const from = clampIsoDate(req.query.from);
+    const to = clampIsoDate(req.query.to);
     if (from) { where += ' AND e.entry_date >= :from'; params.from = from; }
     if (to) { where += ' AND e.entry_date <= :to'; params.to = to; }
 
@@ -235,8 +235,8 @@ router.get('/balance-sheet', canAdvanced, async (req, res, next) => {
 
 // GET /api/gl/reports/cash-flow?from=&to= — tableau des flux de trésorerie.
 router.get('/cash-flow', canAdvanced, async (req, res, next) => {
-  const from = typeof req.query.from === 'string' ? req.query.from : '';
-  const to = typeof req.query.to === 'string' ? req.query.to : '';
+  const from = clampIsoDate(req.query.from);
+  const to = clampIsoDate(req.query.to);
   if (!from || !to) return next(new ApiError(400, 'Période requise (from/to)'));
   try {
     const result = await computeCashFlow(pool, req.user.tenantId, { from, to });

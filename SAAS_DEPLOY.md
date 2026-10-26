@@ -1,7 +1,7 @@
 # Mise en service du SaaS — liste de contrôle
 
 ## 1. Déploiement (aucun changement de comportement tant que les verrous sont éteints)
-1. Déployer la branche, appliquer les migrations **105 à 110** (`npm run db:migrate`).
+1. Déployer la branche, appliquer toutes les migrations en attente (jusqu’à la **126** à ce jour ; en production Docker elles s’appliquent automatiquement au démarrage de l’API) (`npm run db:migrate`).
    Les entreprises existantes passent en offre « interne » (accès complet, sans limite ni échéance).
 2. Variables d'environnement (backend) :
    | Variable | Rôle |

@@ -22,6 +22,7 @@ const { maskPhone } = require('../services/payments/phone');
 const { streamPaymentAdvicePdf } = require('../services/pdf');
 
 const { requireFeature } = require('../services/entitlements');
+const { clampIsoDate } = require('../utils/dates');
 const router = Router();
 router.use(requireAuth, requireFeature('payouts'));
 
@@ -170,7 +171,7 @@ router.get('/history', canSeePayments, async (req, res, next) => {
     const q = listHistoryQuery.parse(req.query);
     const kinds = q.kind ? [q.kind] : null;
     const data = await listPaymentHistory(req.user.tenantId, {
-      from: q.from ?? null, to: q.to ?? null, kinds, includeSalaries: req.user.role === 'dg',
+      from: clampIsoDate(q.from) || null, to: clampIsoDate(q.to) || null, kinds, includeSalaries: req.user.role === 'dg',
     });
     res.json(data);
   } catch (err) {

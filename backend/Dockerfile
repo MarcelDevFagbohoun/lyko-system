@@ -21,6 +21,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
 COPY scripts ./scripts
+# Logo des reçus PDF d'abonnement (sans ce dossier, le PDF s'imprime sans logo, en silence).
+COPY assets ./assets
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x docker-entrypoint.sh
 

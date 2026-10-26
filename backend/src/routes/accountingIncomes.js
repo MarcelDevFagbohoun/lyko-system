@@ -24,7 +24,7 @@ const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { toActor } = require('../utils/actor');
 const logger = require('../utils/logger');
-const { isoDate } = require('../utils/dates');
+const { isoDate, clampIsoDate } = require('../utils/dates');
 
 const router = Router();
 router.use(requireAuth);
@@ -75,8 +75,8 @@ router.get('/', canAccounting, async (req, res, next) => {
   try {
     const params = { tenantId: req.user.tenantId };
     let where = 'i.tenant_id = :tenantId AND i.deleted_at IS NULL';
-    const from = typeof req.query.from === 'string' ? req.query.from : '';
-    const to = typeof req.query.to === 'string' ? req.query.to : '';
+    const from = clampIsoDate(req.query.from);
+    const to = clampIsoDate(req.query.to);
     if (/^\d{4}-\d{2}-\d{2}$/.test(from)) { where += ' AND i.income_date >= :from'; params.from = from; }
     if (/^\d{4}-\d{2}-\d{2}$/.test(to)) { where += ' AND i.income_date <= :to'; params.to = to; }
     const category = typeof req.query.category === 'string' ? req.query.category : '';

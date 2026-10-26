@@ -135,3 +135,10 @@ gunzip -c backups/lyko_system-AAAA-MM-JJ_HHMMSS.sql.gz \
 | Front chargé mais appels API en erreur réseau/CORS | `PUBLIC_API_URL` ≠ `API_DOMAIN`, ou `web` pas rebuild après changement. `CORS_ORIGIN` (= `PUBLIC_APP_URL`) doit être exactement l'origine du front. |
 | Logos/cachets cassés (403/CORP) | Vérifier que l'API répond bien sur `API_DOMAIN` et que `Cross-Origin-Resource-Policy: cross-origin` est présent sur `/uploads/...`. |
 | 502 sur un domaine | Le conteneur cible n'est pas *healthy* : `docker compose -f compose.prod.yml ps`. |
+
+## Vérifications de compatibilité (avant mise en production)
+
+- **MySQL 8.0** : la suite de tests complète (651 tests) passe sur MySQL 8.0 réel et sur MariaDB 10.11. MySQL 8 est plus strict (`ONLY_FULL_GROUP_BY`, dates impossibles refusées) : les filtres de dates côté API sont normalisés (`clampIsoDate`), et le front utilise `monthEnd()` pour les fins de mois.
+- **Envoi de photos** : Caddy accepte jusqu'à 25 Mo par requête sur l'API (photos d'états des lieux).
+- **Logo des PDF** : le dossier `backend/assets` est inclus dans l'image de l'API.
+- Le build du front (`next build`) télécharge la police Inter depuis Google Fonts : il nécessite un accès Internet (normal sur le VPS).

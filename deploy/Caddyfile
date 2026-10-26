@@ -36,9 +36,11 @@
 {$API_DOMAIN} {
 	import security_headers
 
-	# Corps de requête borné (l'API borne déjà à 1 Mo ; upload de logo 2 Mo).
+	# Corps de requête borné. Le JSON est limité à 1 Mo par l'API ; les envois de photos le sont
+	# fichier par fichier (3 à 5 Mo, jusqu'à 6 photos par envoi) : 25 Mo couvrent le pire cas
+	# légitime avec la marge multipart, sans laisser passer d'envois démesurés.
 	request_body {
-		max_size 3MB
+		max_size 25MB
 	}
 
 	reverse_proxy api:4000

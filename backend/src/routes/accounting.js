@@ -47,7 +47,7 @@ const accountingClosing = require('../services/accountingClosing');
 
 const { getMonthBilan, getStoredBilan, MONTH_RE } = require('../services/monthBilan');
 const { requireChargesEnabled } = require('../middleware/chargesModule');
-const { isoDate } = require('../utils/dates');
+const { isoDate, clampIsoDate } = require('../utils/dates');
 const router = Router();
 router.use(requireAuth);
 // Module strictement financier : réservé à la comptabilité (le DG passe
@@ -158,8 +158,8 @@ router.get('/expenses', canAccounting, async (req, res, next) => {
   try {
     const propertyId = Number(req.query.propertyId);
     const rows = await expensesService.listExpenses(req.user.tenantId, {
-      from: typeof req.query.from === 'string' ? req.query.from : '',
-      to: typeof req.query.to === 'string' ? req.query.to : '',
+      from: clampIsoDate(req.query.from),
+      to: clampIsoDate(req.query.to),
       category: typeof req.query.category === 'string' ? req.query.category : '',
       q: typeof req.query.q === 'string' ? req.query.q.trim() : '',
       propertyId,

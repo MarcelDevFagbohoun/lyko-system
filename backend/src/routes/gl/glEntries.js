@@ -24,7 +24,7 @@ const { logGlAudit } = require('../../services/gl/glAuditService');
 const { notifyDg } = require('../../services/gl/glNotificationService');
 const { toActor } = require('../../utils/actor');
 const logger = require('../../utils/logger');
-const { isoDate } = require('../../utils/dates');
+const { isoDate, clampIsoDate } = require('../../utils/dates');
 
 const router = Router();
 router.use(requireAuth);
@@ -58,8 +58,8 @@ router.get('/', canAdvanced, async (req, res, next) => {
     const params = { tenantId: req.user.tenantId };
     let where = 'e.tenant_id = :tenantId';
 
-    const from = typeof req.query.from === 'string' ? req.query.from : '';
-    const to = typeof req.query.to === 'string' ? req.query.to : '';
+    const from = clampIsoDate(req.query.from);
+    const to = clampIsoDate(req.query.to);
     if (from) { where += ' AND e.entry_date >= :from'; params.from = from; }
     if (to) { where += ' AND e.entry_date <= :to'; params.to = to; }
 

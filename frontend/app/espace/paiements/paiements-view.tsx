@@ -18,6 +18,7 @@ import {
 import { deletePayslip, listStaff, updateBaseSalary, type StaffMember } from "@/lib/api/payslips";
 import { listOwners, type OwnerListItem } from "@/lib/api/owners";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { monthEnd } from "@/lib/dates";
 import { formatFcfa } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,7 +72,7 @@ function PaiementsContent() {
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
-    const range = month ? { from: `${month}-01`, to: `${month}-31` } : {};
+    const range = month ? { from: `${month}-01`, to: monthEnd(month) } : {};
     Promise.all([getPaymentSummary(accessToken), getPaymentHistory(accessToken, { kind: kind || undefined, ...range })])
       .then(([s, h]) => {
         setSummary(s);
