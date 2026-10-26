@@ -1,22 +1,21 @@
 "use client";
 
+
+
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Copy, Check, MessageCircle, FileDown } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/client";
 import {
   createRenter,
-  entryReceiptPdfPath,
   RENT_TIMING_LABELS,
   type PaymentMethod,
   type RentTiming,
   type AdditionalDepositType,
-  type AdditionalDeposit,
-  type EntryReceiptRef,
 } from "@/lib/api/renters";
 import type { Unit } from "@/lib/api/properties";
-import { normalizeBeninPhone, buildWhatsAppHref } from "@/lib/validation/auth";
+import { normalizeBeninPhone } from "@/lib/validation/auth";
 import { formatFcfa, previewEntryProrata } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
@@ -25,80 +24,18 @@ import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { useTenantRhythm } from "@/lib/hooks/use-tenant-rhythm";
 import { RentDueField, buildRentDuePayload, validateRentDue } from "@/components/renters/rent-due-field";
 import { Field, Input } from "@/components/ui/input";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from "@/components/ui/card";
 import { todayIso } from "@/lib/dates";
-
-type FormState = {
-  firstName: string;
-  lastName: string;
-  phone: string;
-  email: string;
-  profession: string;
-  monthlyRent: string;
-  depositAmount: string;
-  depositPaymentMethod: string;
-  depositPaidAt: string;
-  entryFeeAmount: string;
-  entryFeePaymentMethod: string;
-  entryFeePaidAt: string;
-  entryProration: "aucun" | "prorata";
-  entryProrataPaymentMethod: string;
-  entryProrataPaidAt: string;
-  additionalDeposits: Record<AdditionalDepositType, { amount: string; paymentMethod: string; paidAt: string }>;
-  rentDueDay: string;
-  rentTiming: RentTiming;
-  startDate: string;
-  openingDebtAmount: string;
-  upToDateAtOnboarding: boolean;
-};
-
-const INITIAL: FormState = {
-  firstName: "",
-  lastName: "",
-  phone: "",
-  email: "",
-  profession: "",
-  monthlyRent: "",
-  depositAmount: "",
-  depositPaymentMethod: "",
-  depositPaidAt: todayIso(),
-  entryFeeAmount: "",
-  entryFeePaymentMethod: "",
-  entryFeePaidAt: todayIso(),
-  entryProration: "aucun",
-  entryProrataPaymentMethod: "",
-  entryProrataPaidAt: todayIso(),
-  additionalDeposits: {
-    sbee: { amount: "", paymentMethod: "", paidAt: todayIso() },
-    soneb: { amount: "", paymentMethod: "", paidAt: todayIso() },
-    peinture: { amount: "", paymentMethod: "", paidAt: todayIso() },
-  },
-  rentDueDay: "5",
-  rentTiming: "avance",
-  startDate: todayIso(),
-  openingDebtAmount: "",
-  upToDateAtOnboarding: false,
-};
-
-const DEPOSIT_PAYMENT_METHODS: { value: string; label: string }[] = [
-  { value: "especes", label: "Espèces" },
-  { value: "mobile_money", label: "Mobile Money" },
-  { value: "virement", label: "Virement" },
-  { value: "cheque", label: "Chèque" },
-];
-
-// Cautions supplémentaires (étape 43) — même catalogue que constants/leaseDeposits.js (backend).
-const ADDITIONAL_DEPOSIT_TYPES: {
-  key: AdditionalDepositType;
-  label: string;
-  enabledKey: "depositSbeeEnabled" | "depositSonebEnabled" | "depositPeintureEnabled";
-}[] = [
-  { key: "sbee", label: "Caution SBEE (électricité)", enabledKey: "depositSbeeEnabled" },
-  { key: "soneb", label: "Caution SONEB (eau)", enabledKey: "depositSonebEnabled" },
-  { key: "peinture", label: "Caution peinture", enabledKey: "depositPeintureEnabled" },
-];
+import { ADDITIONAL_DEPOSIT_TYPES, DEPOSIT_PAYMENT_METHODS, FormState, INITIAL } from "./sections/form-state";
+import { PortalLinkSuccessPanel } from "./sections/portal-link-success-panel";
+import { CreatedRenter } from "./sections/types";
 
 export function NouveauView() {
   return (
@@ -107,17 +44,6 @@ export function NouveauView() {
     </RequireAuth>
   );
 }
-
-type CreatedRenter = {
-  renterId: number;
-  leaseId: number;
-  firstName: string;
-  phone: string;
-  portalUrl: string;
-  entryProrata: { proration: "aucun" | "prorata"; amount: number; days: number; dueDate: string };
-  additionalDeposits: AdditionalDeposit[];
-  entryReceipt: EntryReceiptRef;
-};
 
 function NouveauContent() {
   const { accessToken, tenant } = useAuth();
@@ -732,96 +658,3 @@ function NouveauContent() {
  * employé (`app/espace/employes/nouveau`). Si perdu, on repasse par
  * « Régénérer le lien » sur la fiche du locataire.
  */
-function PortalLinkSuccessPanel({ renter, accessToken }: { renter: CreatedRenter; accessToken: string | null }) {
-  const [copied, setCopied] = React.useState(false);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(renter.portalUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Presse-papiers indisponible : le lien reste visible pour une copie manuelle.
-    }
-  }
-
-  const message = [
-    `Bonjour ${renter.firstName},`,
-    `Bienvenue ! Voici votre espace personnel pour suivre vos paiements de loyer, télécharger vos quittances et signaler un problème :`,
-    renter.portalUrl,
-    `Ce lien est personnel, ne le partagez pas.`,
-  ].join("\n");
-  const whatsappHref = buildWhatsAppHref(renter.phone, message);
-
-  return (
-    <Card className="max-w-2xl">
-      <CardHeader>
-        <Badge variant="success" className="mb-2 w-fit">
-          Locataire créé
-        </Badge>
-        <CardTitle>{renter.firstName} peut déjà suivre ses paiements</CardTitle>
-        <CardDescription>
-          Un lien personnel, sans mot de passe, a été généré automatiquement — il donne accès aux paiements,
-          quittances, contrat de bail et au signalement d&apos;incidents de ce locataire uniquement. Il ne sera
-          plus affiché ensuite (une régénération reste possible depuis sa fiche).
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {renter.entryProrata.proration === "prorata" && renter.entryProrata.amount > 0 && (
-          <div className="rounded-lg border border-primary-border bg-primary-bg px-4 py-3 text-body-sm text-ink">
-            Prorata d&apos;entrée de <strong>{formatFcfa(renter.entryProrata.amount)}</strong> ({renter.entryProrata.days} jour
-            {renter.entryProrata.days > 1 ? "s" : ""}) ajouté au compte séquestre du propriétaire de ce Bien.
-          </div>
-        )}
-        {renter.additionalDeposits.length > 0 && (
-          <div className="rounded-lg border border-primary-border bg-primary-bg px-4 py-3 text-body-sm text-ink">
-            Cautions supplémentaires enregistrées :{" "}
-            {renter.additionalDeposits.map((d) => `${d.typeLabel} (${formatFcfa(d.amount)})`).join(", ")}.
-          </div>
-        )}
-        {renter.entryReceipt && (
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-success-border bg-success-bg px-4 py-3">
-            <span className="text-body-sm text-ink">
-              Reçu d&apos;entrée <strong>{renter.entryReceipt.number}</strong> généré (caution, frais d&apos;agence, cautions
-              supplémentaires et prorata payés à la signature).
-            </span>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => accessToken && openAuthenticatedPdf(entryReceiptPdfPath(renter.leaseId), accessToken)}
-            >
-              <FileDown size={16} />
-              Télécharger
-            </Button>
-          </div>
-        )}
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface-muted px-4 py-3">
-          <code className="truncate text-body-sm text-ink">{renter.portalUrl}</code>
-          <Button type="button" variant="ghost" size="sm" onClick={copy}>
-            {copied ? <Check size={16} /> : <Copy size={16} />}
-            {copied ? "Copié" : "Copier"}
-          </Button>
-        </div>
-
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <a
-            href={whatsappHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={buttonVariants({ variant: "whatsapp", className: "flex-1" })}
-          >
-            <MessageCircle size={18} />
-            Envoyer par WhatsApp
-          </a>
-          <Link
-            href={`/espace/locataires/${renter.renterId}`}
-            className={buttonVariants({ variant: "secondary", className: "flex-1" })}
-          >
-            Voir la fiche du locataire
-          </Link>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
