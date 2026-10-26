@@ -225,3 +225,20 @@ test('historique : chaque tentative a son résultat (succès, échec, à complé
   assert.equal(require('../src/services/billing').paymentOutcome('refunded'), 'success');
   assert.equal(require('../src/services/billing').paymentOutcome('anomaly'), 'failed');
 });
+
+test('abonnement offert (0 FCFA) : activé mais ni « succès » de paiement, ni numéro de reçu, ni quittance', async () => {
+  const billing = require('../src/services/billing');
+  assert.equal(billing.paymentOutcome('paid', 0), 'granted');
+  assert.equal(billing.paymentOutcome('paid', 65000), 'success');
+  const [ins] = await pool.query(
+    "INSERT INTO subscription_payments (tenant_id, reference, plan_key, months, kind, amount, is_first_purchase) VALUES (:t, :r, 'demarrage', 1, 'purchase', 0, 0)",
+    { t: fx.tenantId, r: `AIM-GRANT-${Date.now()}` },
+  );
+  assert.equal(await billing.activatePayment(ins.insertId), true);
+  const [[row]] = await pool.query('SELECT status, invoice_number FROM subscription_payments WHERE id = :id', { id: ins.insertId });
+  assert.equal(row.status, 'paid');
+  assert.equal(row.invoice_number, null);
+  const list = (await (await api('GET', '/api/billing/payments')).json()).payments;
+  assert.equal(list.find((x) => x.id === ins.insertId).outcome, 'granted');
+  assert.equal((await api('GET', `/api/billing/payments/${ins.insertId}/invoice.pdf`)).status, 404);
+});

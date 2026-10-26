@@ -102,7 +102,7 @@ router.get('/payments', async (req, res, next) => {
     );
     const labels = {};
     for (const k of new Set(rows.map((r) => r.plan_key))) labels[k] = (await getPlanAsync(k)).label;
-    res.json({ payments: rows.map((r) => ({ id: r.id, planKey: r.plan_key, planLabel: labels[r.plan_key], months: r.months, kind: r.kind, amount: r.amount, creditApplied: r.credit_applied, upgradedFromPlan: r.upgraded_from_plan, founderPrice: !!r.founder_price, status: r.status, outcome: paymentOutcome(r.status), createdAt: r.created_at, invoiceNumber: r.invoice_number, paidAt: r.paid_at, periodEnd: r.period_end })) });
+    res.json({ payments: rows.map((r) => ({ id: r.id, planKey: r.plan_key, planLabel: labels[r.plan_key], months: r.months, kind: r.kind, amount: r.amount, creditApplied: r.credit_applied, upgradedFromPlan: r.upgraded_from_plan, founderPrice: !!r.founder_price, status: r.status, outcome: paymentOutcome(r.status, r.amount), createdAt: r.created_at, invoiceNumber: r.invoice_number, paidAt: r.paid_at, periodEnd: r.period_end })) });
   } catch (err) { next(err); }
 });
 
@@ -112,6 +112,7 @@ router.get('/payments/:id/invoice.pdf', async (req, res, next) => {
     if (!Number.isInteger(id)) throw new ApiError(400, 'Identifiant invalide');
     const [[p]] = await pool.query("SELECT * FROM subscription_payments WHERE id = :id AND tenant_id = :t AND status IN ('paid','refunded')", { id, t: req.user.tenantId });
     if (!p) throw new ApiError(404, 'Facture introuvable');
+    if (!(Number(p.amount) > 0)) throw new ApiError(404, 'Aucun reçu : cet abonnement a été offert, rien n\'a été payé.');
     const [[client]] = await pool.query('SELECT company_name, rccm, ifu FROM tenants WHERE id = :t', { t: req.user.tenantId });
     const issuance = await getOrCreateIssuance(req.user.tenantId, 'recu_abonnement', p.id); // pas de limite de téléchargements
     streamSubscriptionInvoicePdf(res, { client, payment: p, planLabel: (await getPlanAsync(p.plan_key)).label, fromPlanLabel: p.upgraded_from_plan ? (await getPlanAsync(p.upgraded_from_plan)).label : null, verificationCode: issuance.verification_code });

@@ -65,8 +65,9 @@ export function offerPricing(
 }
 
 /** Libellé et couleur du résultat d'une tentative de paiement d'abonnement. */
-export const PAYMENT_OUTCOME: Record<"success" | "failed" | "incomplete", { label: string; variant: "success" | "danger" | "warning" }> = {
+export const PAYMENT_OUTCOME: Record<"success" | "failed" | "incomplete" | "granted", { label: string; variant: "success" | "danger" | "warning" | "neutral" }> = {
   success: { label: "Succès", variant: "success" },
   failed: { label: "Échec", variant: "danger" },
   incomplete: { label: "À compléter", variant: "warning" },
+  granted: { label: "Offert", variant: "neutral" },
 };

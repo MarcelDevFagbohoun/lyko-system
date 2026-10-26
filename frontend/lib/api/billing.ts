@@ -30,7 +30,7 @@ export type Subscription = {
   usage?: { units: number; owners: number; users: number } | null;
 };
 
-export type PaymentOutcome = "success" | "failed" | "incomplete";
+export type PaymentOutcome = "success" | "failed" | "incomplete" | "granted";
 export type SubscriptionPayment = {
   id: number;
   planKey: PlanKey;

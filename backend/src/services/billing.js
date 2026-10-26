@@ -218,7 +218,8 @@ async function activatePayment(paymentId) {
       { plan: p.plan_key, months: p.months, extend: extend ? 1 : 0, first: p.is_first_purchase, founder: p.founder_price, t: p.tenant_id },
     );
     const [[after]] = await conn.query('SELECT started_at, current_period_end FROM tenant_subscriptions WHERE tenant_id = :t', { t: p.tenant_id });
-    const invoice = `AIM-${new Date().getUTCFullYear()}-${String(p.id).padStart(6, '0')}`;
+    // Abonnement offert (attribution manuelle, 0 FCFA) : rien n'a été payé, donc ni numéro de reçu ni quittance.
+    const invoice = Number(p.amount) > 0 ? `AIM-${new Date().getUTCFullYear()}-${String(p.id).padStart(6, '0')}` : null;
     await conn.query(
       "UPDATE subscription_payments SET status = 'paid', paid_at = NOW(), invoice_number = :invoice, period_start = :ps, period_end = :pe WHERE id = :id",
       { invoice, ps: extend ? null : after.started_at, pe: after.current_period_end, id: p.id },
@@ -415,8 +416,12 @@ async function describe(tenantId) {
   };
 }
 
-/** Résultat d'une tentative de paiement d'abonnement : 'success' (payé ou remboursé), 'failed', 'incomplete' (démarré, pas terminé). */
-function paymentOutcome(status) {
+/**
+ * Résultat d'une tentative de paiement d'abonnement : 'success' (payé ou remboursé), 'failed', 'incomplete' (démarré,
+ * pas terminé), 'granted' (abonnement offert par l'équipe : activé, mais 0 FCFA encaissé, donc ni succès de paiement ni reçu).
+ */
+function paymentOutcome(status, amount = 1) {
+  if (status === 'paid' && !(Number(amount) > 0)) return 'granted';
   if (status === 'paid' || status === 'refunded') return 'success';
   if (status === 'pending') return 'incomplete';
   return 'failed'; // failed, anomaly

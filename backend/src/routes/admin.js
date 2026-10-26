@@ -122,6 +122,7 @@ router.get('/tenants', async (_req, res, next) => {
               (s.current_period_end IS NOT NULL AND s.current_period_end > NOW()) AS running,
               (SELECT COALESCE(SUM(amount),0) FROM subscription_payments p WHERE p.tenant_id = t.id AND p.status = 'paid') AS total_paid,
               (SELECT p2.status FROM subscription_payments p2 WHERE p2.tenant_id = t.id ORDER BY p2.id DESC LIMIT 1) AS last_payment_status,
+              (SELECT p3.amount FROM subscription_payments p3 WHERE p3.tenant_id = t.id ORDER BY p3.id DESC LIMIT 1) AS last_payment_amount,
               (SELECT COUNT(*) FROM property_units pu WHERE pu.tenant_id = t.id) AS n_units,
               (SELECT COUNT(*) FROM owners o WHERE o.tenant_id = t.id AND o.mandate_ended_at IS NULL) AS n_owners,
               (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id AND u.status = 'active') AS n_users
@@ -135,7 +136,7 @@ router.get('/tenants', async (_req, res, next) => {
         .filter(([k, c]) => lim[k] !== null && lim[k] !== undefined && Number(r[c]) > lim[k])
         .map(([k, c, label]) => `${r[c]} ${label} (max ${lim[k]})`);
     };
-    res.json({ tenants: rows.map((r) => ({ overLimits: over(r), id: r.id, companyName: r.company_name, createdAt: r.created_at, planKey: r.plan_key, status: r.status === 'active' && r.plan_key !== 'interne' && !Number(r.running) ? 'expired' : r.status, currentPeriodEnd: r.current_period_end, founderPrice: !!r.founder_price, totalPaid: Number(r.total_paid), lastPayment: r.last_payment_status ? paymentOutcome(r.last_payment_status) : null })) });
+    res.json({ tenants: rows.map((r) => ({ overLimits: over(r), id: r.id, companyName: r.company_name, createdAt: r.created_at, planKey: r.plan_key, status: r.status === 'active' && r.plan_key !== 'interne' && !Number(r.running) ? 'expired' : r.status, currentPeriodEnd: r.current_period_end, founderPrice: !!r.founder_price, totalPaid: Number(r.total_paid), lastPayment: r.last_payment_status ? paymentOutcome(r.last_payment_status, r.last_payment_amount) : null })) });
   } catch (err) { next(err); }
 });
 
