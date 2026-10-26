@@ -3,6 +3,7 @@
 import * as React from "react";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import { directionsUrl } from "@/lib/maps";
 import { createPinIcon } from "@/lib/map-icon";
 import type { PropertyListItem } from "@/lib/api/properties";
 
@@ -78,6 +79,14 @@ export default function PortfolioMap({ properties }: { properties: PropertyListI
       link.textContent = "Voir le détail";
       link.className = "mt-1 text-primary hover:underline";
       popup.appendChild(link);
+
+      const route = document.createElement("a");
+      route.href = directionsUrl({ lat: p.latitude, lng: p.longitude });
+      route.target = "_blank";
+      route.rel = "noopener noreferrer";
+      route.textContent = "Itinéraire (Google Maps)";
+      route.className = "text-primary hover:underline";
+      popup.appendChild(route);
 
       L.marker([p.latitude, p.longitude], { icon: pinIcon }).bindPopup(popup).addTo(group);
     });

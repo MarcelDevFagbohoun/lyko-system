@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { MapPin } from "lucide-react";
+import { Copy, MapPin, MessageCircle, Navigation, Share2 } from "lucide-react";
+import { directionsUrl, shareText, whatsappShareUrl } from "@/lib/maps";
 import { ApiError } from "@/lib/api/client";
 import { updateProperty, type Property } from "@/lib/api/properties";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,30 @@ export function LocationCard({
 
   const toast = useToast();
 
+  const located = property.latitude != null && property.longitude != null;
+  const here = located ? { lat: property.latitude as number, lng: property.longitude as number } : null;
+  const text = here ? shareText({ code: property.code, address: property.address }, here) : "";
+
+  // Menu natif de partage du téléphone (WhatsApp, SMS, Messenger…) quand il existe ; sinon WhatsApp et copie ci-dessous.
+  const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+  async function nativeShare() {
+    if (!here) return;
+    try {
+      await navigator.share({ title: `Bien ${property.code}`, text });
+    } catch {
+      /* partage annulé par l'utilisateur */
+    }
+  }
+  async function copyLink() {
+    if (!here) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Lien copié.");
+    } catch {
+      toast.error("Copie impossible. Utilisez WhatsApp ou partagez depuis le navigateur.");
+    }
+  }
+
   async function handleSave() {
     if (!accessToken || !coords) return;
     setSaving(true);
@@ -78,7 +103,7 @@ export function LocationCard({
             </Button>
           )}
         </div>
-        <CardDescription>Repère utilisé par la carte du portefeuille (« Nos biens » → Carte).</CardDescription>
+        <CardDescription>Repère utilisé par la carte du portefeuille. Le lien d&apos;itinéraire s&apos;ouvre dans Google Maps depuis la position de la personne qui le reçoit.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {error && <p className="text-body-sm text-danger-fg">{error}</p>}
@@ -96,6 +121,35 @@ export function LocationCard({
                 <p className="text-body-xs text-ink-faint">
                   Repère placé le {new Date(property.locationSetAt).toLocaleDateString("fr-FR")}
                 </p>
+              )}
+              {here && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a
+                    href={directionsUrl(here)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-body-sm font-label-md text-primary-fg hover:opacity-90"
+                  >
+                    <Navigation size={14} /> Itinéraire
+                  </a>
+                  {canNativeShare ? (
+                    <Button size="sm" variant="secondary" onClick={nativeShare}>
+                      <Share2 size={14} /> Partager la position
+                    </Button>
+                  ) : (
+                    <a
+                      href={whatsappShareUrl(text)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border-strong px-3 text-body-sm text-ink hover:bg-surface-muted"
+                    >
+                      <MessageCircle size={14} /> Envoyer par WhatsApp
+                    </a>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={copyLink}>
+                    <Copy size={14} /> Copier le lien
+                  </Button>
+                </div>
               )}
             </div>
           ) : (
