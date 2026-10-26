@@ -17,7 +17,12 @@ const { resolveOwnerFromLease } = require('./gl/glAccountResolver');
 const { notifyRentPaymentsRecorded } = require('./payments/notify');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { getOrCreateIssuance, ensureShareToken } = require('./documentIssuance');
+const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { loadLease, recordRentPayment } = require('./rentPayments');
+
+// Un lien de paiement expire par défaut sous 48h — assez pour laisser le
+// temps au locataire de le recevoir et payer, sans rester valide indéfiniment.
+const PAYMENT_LINK_TTL_HOURS = 48;
 
 /** Termine un bail (libère l'unité) — refusé tant qu'une caution est à régulariser. */
 async function endLease(tenantId, leaseId, scopeAgentId, endDate) {
@@ -595,8 +600,38 @@ async function getReceiptShareToken(tenantId, leaseId, paymentId, scopeAgentId) 
   return token;
 }
 
+/** Génère un lien de paiement FedaPay (loyer) ; seule l'empreinte du token est conservée. */
+async function createRentPaymentLink(tenantId, userId, leaseId, scopeAgentId, requestedAmount) {
+  const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé');
+
+  const [[tenant]] = await pool.query('SELECT fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {
+    id: tenantId,
+  });
+  if (!tenant?.fedapay_collect_enabled) {
+    throw new ApiError(400, 'Le paiement en ligne (FedaPay) n\'est pas activé pour votre entreprise (Réglages).');
+  }
+
+  // Montant : celui fourni, sinon un mois de loyer (le cas d'usage courant
+  // — envoyer un lien pour l'échéance du mois, pas nécessairement tout le
+  // retard accumulé, que le personnel ajuste au besoin).
+  let amount = Number(requestedAmount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    amount = Number(lease.monthly_rent);
+  }
+
+  const token = generatePortalToken();
+  const [result] = await pool.query(
+    `INSERT INTO payment_links (tenant_id, kind, lease_id, amount, token_hash, created_by, expires_at)
+     VALUES (:tenantId, 'loyer', :leaseId, :amount, :hash, :by, DATE_ADD(NOW(), INTERVAL :ttl HOUR))`,
+    { tenantId, leaseId, amount, hash: hashToken(token), by: userId, ttl: PAYMENT_LINK_TTL_HOURS },
+  );
+  return { token, amount, linkId: result.insertId };
+}
+
 module.exports = {
   endLease,
+  createRentPaymentLink,
   listLeasePayments,
   cancelPayment,
   createPayment,

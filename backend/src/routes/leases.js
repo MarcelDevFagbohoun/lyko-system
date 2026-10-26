@@ -24,7 +24,8 @@ const {
 } = require('../validators/inspections');
 const { computeArrears, allocateRentPayment, computeRentOwed } = require('../services/rentTracking');
 const { streamReceiptPdf, streamEntryReceiptPdf, streamMoveOutPdf, streamMoveInPdf, streamLeaseContractPdf } = require('../services/pdf');
-const { buildContractData, loadContractRow, toPublicContract } = require('../services/leaseContract');
+const { toPublicContract } = require('../services/leaseContract');
+const leaseContractActions = require('../services/leaseContractActions');
 const { assertPeriodOpen, assertPeriodOpenLocked } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
 const { getOrCreateIssuance } = require('../services/documentIssuance');
@@ -51,14 +52,10 @@ const {
   diffInspectionReport,
 } = require('../services/inspection');
 const { assertUploadType, randomFileName, toProtectedFileUrl, stripFileUrlPrefix } = require('../utils/uploads');
-const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
 const { loadLease } = require('../services/rentPayments');
 const leasePayments = require('../services/leasePayments');
 
-// Un lien de paiement expire par défaut sous 48h — assez pour laisser le
-// temps au locataire de le recevoir et payer, sans rester valide indéfiniment.
-const PAYMENT_LINK_TTL_HOURS = 48;
 
 const router = Router();
 router.use(requireAuth);
@@ -1544,11 +1541,7 @@ router.get('/:leaseId/contract', canPayments, async (req, res, next) => {
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-    const row = await loadContractRow(req.user.tenantId, leaseId);
-    const preview = await buildContractData(req.user.tenantId, leaseId, {
-      particularConditions: row?.particular_conditions ?? null,
-    });
+    const { row, preview } = await leaseContractActions.getContract(req.user.tenantId, leaseId, scopeAgentId);
     res.json({ contract: toPublicContract(row), preview });
   } catch (err) {
     next(err);
@@ -1563,21 +1556,8 @@ router.post('/:leaseId/contract', canLocataires, async (req, res, next) => {
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-
-    const [existing] = await pool.query('SELECT id FROM lease_contracts WHERE lease_id = :leaseId LIMIT 1', {
-      leaseId,
-    });
-    if (existing[0]) throw new ApiError(409, 'Un contrat existe déjà pour ce bail');
-
-    await pool.query(
-      `INSERT INTO lease_contracts (tenant_id, lease_id, status, created_by) VALUES (:tenantId, :leaseId, 'draft', :by)`,
-      { tenantId: req.user.tenantId, leaseId, by: req.user.id },
-    );
-
+    const { row, preview } = await leaseContractActions.startContract(req.user.tenantId, req.user.id, leaseId, scopeAgentId);
     logger.info('Contrat de bail démarré (brouillon)', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
-    const row = await loadContractRow(req.user.tenantId, leaseId);
-    const preview = await buildContractData(req.user.tenantId, leaseId, { particularConditions: null });
     res.status(201).json({ contract: toPublicContract(row), preview });
   } catch (err) {
     next(err);
@@ -1597,19 +1577,12 @@ router.patch('/:leaseId/contract', canLocataires, async (req, res, next) => {
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-    const contract = await loadContractRow(req.user.tenantId, leaseId);
-    assertDraft(contract, 'contrat de bail');
-
-    await pool.query('UPDATE lease_contracts SET particular_conditions = :text WHERE lease_id = :leaseId', {
-      text: parsed.data.particularConditions,
+    const { row, preview } = await leaseContractActions.updateContractConditions(
+      req.user.tenantId,
       leaseId,
-    });
-
-    const row = await loadContractRow(req.user.tenantId, leaseId);
-    const preview = await buildContractData(req.user.tenantId, leaseId, {
-      particularConditions: row.particular_conditions,
-    });
+      scopeAgentId,
+      parsed.data.particularConditions,
+    );
     res.json({ contract: toPublicContract(row), preview });
   } catch (err) {
     next(err);
@@ -1638,33 +1611,18 @@ router.post(
 
     try {
       const scopeAgentId = await resolvePropertyScope(req.user);
-      await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-      const contract = await loadContractRow(req.user.tenantId, leaseId);
-      assertDraft(contract, 'contrat de bail');
-
-      const snapshot = await buildContractData(req.user.tenantId, leaseId, {
-        particularConditions: contract.particular_conditions,
-      });
-
-      const tenantSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature');
-      const agentSignaturePath = await saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature');
-
-      await pool.query(
-        `UPDATE lease_contracts
-         SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
-             tenant_signature_path = :tenantSig, agent_signature_path = :agentSig, snapshot = :snapshot
-         WHERE lease_id = :leaseId`,
-        {
-          by: req.user.id,
-          tenantSig: tenantSignaturePath,
-          agentSig: agentSignaturePath,
-          snapshot: JSON.stringify(snapshot),
-          leaseId,
-        },
+      const { row, snapshot } = await leaseContractActions.finalizeContract(
+        req.user.tenantId,
+        req.user.id,
+        leaseId,
+        scopeAgentId,
+        (kind) =>
+          kind === 'tenant'
+            ? saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature')
+            : saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature'),
       );
 
       logger.info('Contrat de bail finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
-      const row = await loadContractRow(req.user.tenantId, leaseId);
       res.json({ contract: toPublicContract(row), preview: snapshot });
     } catch (err) {
       next(err);
@@ -1680,23 +1638,7 @@ router.get('/:leaseId/contract.pdf', canPayments, async (req, res, next) => {
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-    const contract = await loadContractRow(req.user.tenantId, leaseId);
-    if (!contract) throw new ApiError(404, 'Aucun contrat pour ce bail');
-
-    const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
-    const [[dg]] = await pool.query(
-      "SELECT first_name, last_name, role, stamp_path, signature_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
-      { tenantId: req.user.tenantId },
-    );
-
-    // `snapshot` est une colonne JSON — le pilote mysql2 la relit déjà comme un objet JS natif, jamais
-    // une chaîne à parser (contrairement à un champ TEXT contenant du JSON) : `JSON.parse` planterait ici
-    // ("[object Object]" n'est pas un JSON valide).
-    const data =
-      contract.status === 'finalized'
-        ? contract.snapshot
-        : await buildContractData(req.user.tenantId, leaseId, { particularConditions: contract.particular_conditions });
+    const { lease, contract, tenant, dg, data } = await leaseContractActions.getContractPdfData(req.user.tenantId, leaseId, scopeAgentId);
 
     streamLeaseContractPdf(res, {
       tenant,
@@ -1720,35 +1662,18 @@ router.post('/:leaseId/payment-links', canPayments, async (req, res, next) => {
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-    if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé');
-
-    const [[tenant]] = await pool.query('SELECT fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {
-      id: req.user.tenantId,
-    });
-    if (!tenant?.fedapay_collect_enabled) {
-      throw new ApiError(400, 'Le paiement en ligne (FedaPay) n\'est pas activé pour votre entreprise (Réglages).');
-    }
-
-    // Montant : celui fourni, sinon un mois de loyer (le cas d'usage courant
-    // — envoyer un lien pour l'échéance du mois, pas nécessairement tout le
-    // retard accumulé, que le personnel ajuste au besoin).
-    let amount = Number(req.body?.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      amount = Number(lease.monthly_rent);
-    }
-
-    const token = generatePortalToken();
-    const [result] = await pool.query(
-      `INSERT INTO payment_links (tenant_id, kind, lease_id, amount, token_hash, created_by, expires_at)
-       VALUES (:tenantId, 'loyer', :leaseId, :amount, :hash, :by, DATE_ADD(NOW(), INTERVAL :ttl HOUR))`,
-      { tenantId: req.user.tenantId, leaseId, amount, hash: hashToken(token), by: req.user.id, ttl: PAYMENT_LINK_TTL_HOURS },
+    const { token, amount, linkId } = await leasePayments.createRentPaymentLink(
+      req.user.tenantId,
+      req.user.id,
+      leaseId,
+      scopeAgentId,
+      req.body?.amount,
     );
 
     logger.info('Lien de paiement (loyer) généré', {
       tenantId: req.user.tenantId,
       leaseId,
-      linkId: result.insertId,
+      linkId,
       amount,
       by: req.user.id,
     });
