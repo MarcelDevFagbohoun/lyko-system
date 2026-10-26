@@ -163,9 +163,9 @@ async function bilanComptableDuMois(ctx, input) {
   const [y, m] = mois.split('-').map(Number);
   const from = `${mois}-01`;
   const to = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-  // Même calcul que l'écran Comptabilité (`routes/accounting.js`, jamais dupliqué) — nécessite un objet
+  // Même calcul que l'écran Comptabilité (`services/accountingDashboard.js`, jamais dupliqué) — nécessite un objet
   // `user` complet (id, role, tenantId) : `resolvePropertyScope` en dépend en interne.
-  const { computeAccountingDashboard } = require('../../routes/accounting');
+  const { computeAccountingDashboard } = require('../accountingDashboard');
   const dashboard = await computeAccountingDashboard({ id: ctx.userId, role: ctx.role, tenantId: ctx.tenantId }, { from, to });
   return {
     mois,

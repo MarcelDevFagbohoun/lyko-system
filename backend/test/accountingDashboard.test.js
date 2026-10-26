@@ -12,7 +12,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { pool, closePool } = require('../src/config/db');
-const { computeAccountingDashboard } = require('./../src/routes/accounting');
+const { computeAccountingDashboard } = require('./../src/services/accountingDashboard');
 const { createBareFixture, teardown } = require('./gl/fixtures');
 
 let fx;
