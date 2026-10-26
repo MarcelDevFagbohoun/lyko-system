@@ -100,6 +100,8 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      # Adresse secrète du back-office (lue au démarrage, pas de rebuild nécessaire). Vide = /admin.
+      ADMIN_PATH: ${ADMIN_PATH:-}
     networks:
       - edge
     depends_on:

@@ -82,3 +82,25 @@ test("monthEnd : dernier jour réel du mois", () => {
   assert.equal(monthEnd("2028-02"), "2028-02-29");
   assert.equal(monthEnd("2026-12"), "2026-12-31");
 });
+
+import { adminRouting, parseAdminSlug } from "../lib/admin-path.ts";
+
+test("adresse secrète du back-office", () => {
+  assert.equal(parseAdminSlug(undefined), null);
+  assert.equal(parseAdminSlug(""), null);
+  assert.equal(parseAdminSlug("court"), null); // trop court
+  assert.equal(parseAdminSlug("Mauvais_Caractères"), null);
+  assert.equal(parseAdminSlug("/gestion-x7k2q9m4/"), "gestion-x7k2q9m4");
+  // sans configuration : tout passe, /admin reste accessible
+  assert.equal(adminRouting("/admin", null), "pass");
+  const s = "gestion-x7k2q9m4";
+  assert.equal(adminRouting(`/${s}`, s), "serve-admin");
+  assert.equal(adminRouting(`/${s}/`, s), "serve-admin");
+  assert.equal(adminRouting("/admin", s), "hide");
+  assert.equal(adminRouting("/admin/", s), "hide");
+  assert.equal(adminRouting("/admin/tenants", s), "hide");
+  assert.equal(adminRouting("/admin", s, s), "pass"); // réécriture interne du middleware
+  assert.equal(adminRouting("/admin", s, "devine"), "hide"); // un faux jeton ne passe pas
+  assert.equal(adminRouting("/administration", s), "pass"); // ne pas confondre avec un autre chemin
+  assert.equal(adminRouting("/espace", s), "pass");
+});

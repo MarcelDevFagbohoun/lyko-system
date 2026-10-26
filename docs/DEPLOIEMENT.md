@@ -142,3 +142,8 @@ gunzip -c backups/lyko_system-AAAA-MM-JJ_HHMMSS.sql.gz \
 - **Envoi de photos** : Caddy accepte jusqu'à 25 Mo par requête sur l'API (photos d'états des lieux).
 - **Logo des PDF** : le dossier `backend/assets` est inclus dans l'image de l'API.
 - Le build du front (`next build`) télécharge la police Inter depuis Google Fonts : il nécessite un accès Internet (normal sur le VPS).
+
+## Adresse secrète du back-office
+
+Par défaut le back-office est à `/admin`. En production, définissez `ADMIN_PATH` dans `.env` (ex. `ADMIN_PATH=gestion-3f9a1c7e2b4d`, généré avec `openssl rand -hex 8`) : il n'est alors joignable qu'à `https://<APP_DOMAIN>/gestion-3f9a1c7e2b4d`, et `/admin` répond « page introuvable ». Changer l'adresse demande seulement `docker compose -f compose.prod.yml up -d web` (pas de rebuild).
+C'est une discrétion en plus, pas une protection : le mot de passe et la double authentification (TOTP) du back-office restent obligatoires.
