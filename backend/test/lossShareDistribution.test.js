@@ -11,7 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { distributeLossShares } = require('../src/routes/utilityReadings');
+const { distributeLossShares } = require('../src/services/utilityReadings');
 
 function sum(map) {
   return [...map.values()].reduce((s, v) => s + v, 0);
