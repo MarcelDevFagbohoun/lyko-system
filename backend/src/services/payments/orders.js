@@ -253,7 +253,7 @@ async function applyOrder(tenantId, orderId, { req = null } = {}) {
       await assertPeriodOpenLocked(conn, tenantId, paidAt);
       // Chargés ici pour éviter une dépendance circulaire au chargement des modules de routes.
       if (order.purpose === 'reversement_proprietaire') {
-        const { recordOwnerPayout } = require('../../routes/owners');
+        const { recordOwnerPayout } = require('../owners');
         const [[owner]] = await conn.query('SELECT * FROM owners WHERE id = :id AND tenant_id = :tenantId', { id: context.ownerId, tenantId });
         const payoutId = await recordOwnerPayout(conn, {
           tenantId, ownerId: context.ownerId, owner,
