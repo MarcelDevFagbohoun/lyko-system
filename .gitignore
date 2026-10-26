@@ -7,10 +7,57 @@ frontend/.next/
 frontend/out/
 dist/
 
-# Env
+# Env — tout fichier d'environnement réel (seuls les *.example sont versionnés)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.prod.example
+!**/.env.example
+!**/.env.prod.example
+**/.env
+**/.env.*
+
+# Clés, certificats, identifiants
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+service-account*.json
+credentials*.json
+secrets/
+.secrets/
+
+# Fichiers téléversés par les utilisateurs (pièces d'identité, contrats, photos, justificatifs)
+uploads/**
+!uploads/.gitkeep
+**/uploads/**
+!**/uploads/.gitkeep
+storage/
+
+# Données et sauvegardes de base (jamais de données réelles dans git)
+*.sql.gz
+*.dump
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+dump*.sql
+backup*.sql
+mysql-data/
+db_data/
+caddy_data/
+caddy_config/
+
+# Exports générés (relevés, rapports, PDF de test)
+exports/
+tmp/
+.tmp/
+*.tsbuildinfo
 
 # Logs & divers
 *.log
