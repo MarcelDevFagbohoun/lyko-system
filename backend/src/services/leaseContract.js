@@ -17,6 +17,7 @@ const { toProtectedFileUrl } = require('../utils/uploads');
 const { RENT_TIMINGS } = require('../constants/rentTiming');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
+const { isoDate } = require('../utils/dates');
 
 const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
 const PROPERTY_TYPE_LABELS = Object.fromEntries(PROPERTY_TYPES.map((t) => [t.key, t.label]));
@@ -24,11 +25,6 @@ const RENT_TIMING_LABELS = Object.fromEntries(RENT_TIMINGS.map((t) => [t.key, t.
 
 function unitDesignationLabel(row) {
   return row.designation === 'autre' ? row.designation_custom : DESIGNATION_LABELS[row.designation];
-}
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
 }
 
 /**

@@ -76,6 +76,7 @@ const logger = require('../utils/logger');
 
 const { getMonthBilan, storeBilanSnapshot, getStoredBilan, MONTH_RE } = require('../services/monthBilan');
 const { requireChargesEnabled } = require('../middleware/chargesModule');
+const { isoDate } = require('../utils/dates');
 const router = Router();
 router.use(requireAuth);
 // Module strictement financier : réservé à la comptabilité (le DG passe
@@ -111,11 +112,6 @@ const PAYMENT_METHOD_LABELS = {
   cheque: 'Chèque',
   caution: 'Prélevé sur la caution',
 };
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function toPublicExpense(row) {
   return {

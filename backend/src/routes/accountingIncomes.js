@@ -24,6 +24,7 @@ const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { toActor } = require('../utils/actor');
 const logger = require('../utils/logger');
+const { isoDate } = require('../utils/dates');
 
 const router = Router();
 router.use(requireAuth);
@@ -42,11 +43,6 @@ const upload = multer({
 });
 
 const PAYMENT_METHOD_LABELS = { especes: 'Espèces', mobile_money: 'Mobile Money', virement: 'Virement bancaire', cheque: 'Chèque' };
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function toPublicIncome(row) {
   return {

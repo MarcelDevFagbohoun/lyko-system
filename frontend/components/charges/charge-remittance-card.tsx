@@ -15,11 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Field, Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AccountLine } from "@/components/charges/utility-point-panel";
-
-function todayIso() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+import { todayIso } from "@/lib/dates";
 
 /**
  * Reversement au propriétaire des charges SONEB/SBEE encaissées (étape 31) :

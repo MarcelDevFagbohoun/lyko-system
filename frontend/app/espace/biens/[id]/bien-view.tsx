@@ -42,6 +42,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
+import { useCan } from "@/lib/auth/use-can";
 
 const LocationPicker = dynamic(() => import("@/components/properties/location-picker"), {
   ssr: false,
@@ -90,7 +91,7 @@ function BienContent() {
   // Créer une dépense : strictement réservé à comptabilite (même règle que
   // côté serveur, `requirePermission('comptabilite')`) — proprietaires seul
   // peut lire la recette mais pas ajouter une écriture financière.
-  const canManageExpenses = user?.role === "dg" || (user?.permissions.includes("comptabilite") ?? false);
+  const canManageExpenses = useCan("comptabilite");
 
   const [property, setProperty] = React.useState<Property | null>(null);
   const [units, setUnits] = React.useState<Unit[] | null>(null);

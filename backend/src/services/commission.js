@@ -19,11 +19,7 @@
 
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
+const { isoDate } = require('../utils/dates');
 
 /** Dernier jour calendaire d'un mois 'AAAA-MM', au format 'AAAA-MM-JJ'. */
 function lastDayOfMonth(yearMonth) {

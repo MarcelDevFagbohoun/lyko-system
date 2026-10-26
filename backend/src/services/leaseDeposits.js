@@ -19,15 +19,14 @@
 
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-const { assertPeriodOpen, assertPeriodOpenLocked } = require('./accountingPeriods');
+const { assertPeriodOpenLocked } = require('./accountingPeriods');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { ADDITIONAL_DEPOSIT_TYPES, ADDITIONAL_DEPOSIT_LABELS, enabledAdditionalDepositTypes } = require('../constants/leaseDeposits');
 const { UTILITY_TYPES } = require('../constants/charges');
 const { recordUtilityPayment } = require('../routes/charges');
+const { isoDate } = require('../utils/dates');
 
 const UTILITY_TYPE_LABELS = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, t.label]));
-
-const isoDate = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ? String(d).slice(0, 10) : null);
 
 function toPublic(row) {
   return {

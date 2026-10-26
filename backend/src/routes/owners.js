@@ -28,6 +28,7 @@ const { generatePortalToken, hashToken } = require('../utils/tokens');
 const logger = require('../utils/logger');
 const { extourneEcriture } = require('../services/gl/glReversalService');
 const { assertManualPaymentAllowed } = require('../services/payments/manualGuard');
+const { isoDate } = require('../utils/dates');
 
 /**
  * Un même numéro de téléphone ne doit jamais être utilisé par deux
@@ -88,11 +89,6 @@ const PAYMENT_METHOD_LABELS = {
   cheque: 'Chèque',
   caution: 'Prélevé sur la caution',
 };
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function toPublicOwner(row, extra = {}) {
   return {

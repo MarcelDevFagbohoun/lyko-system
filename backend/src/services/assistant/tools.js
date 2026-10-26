@@ -17,15 +17,14 @@
  */
 
 const { pool } = require('../../config/db');
-const { resolvePropertyScope } = require('../scope');
 const { listPortfolioArrears } = require('../rentTracking');
 const { getEscrowBalances, getOwnersWithoutCommissionRate } = require('../commission');
 const { getUtilityPoint } = require('../utilityPoint');
 const { UTILITY_TYPES } = require('../../constants/charges');
 const { COMPLAINT_STATUS_LABELS, COMPLAINT_PRIORITY_LABELS } = require('../../constants/complaints');
+const { isoDate } = require('../../utils/dates');
 
 const UTILITY_TYPE_LABELS = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, t.label]));
-const isoDate = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ? String(d).slice(0, 10) : null);
 const currentMonth = () => new Date().toISOString().slice(0, 7);
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 

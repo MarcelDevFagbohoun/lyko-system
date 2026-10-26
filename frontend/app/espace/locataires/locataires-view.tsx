@@ -13,6 +13,7 @@ import { RentStrip } from "@/components/renters/rent-strip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { useCan } from "@/lib/auth/use-can";
 
 export function LocatairesView() {
   return (
@@ -40,7 +41,7 @@ function StatutBadge({ renter }: { renter: RenterListItem }) {
 
 function LocatairesContent() {
   const { accessToken, user } = useAuth();
-  const canManage = user?.role === "dg" || (user?.permissions.includes("locataires") ?? false);
+  const canManage = useCan("locataires");
   const [renters, setRenters] = React.useState<RenterListItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   // Archive des locataires (étape du 2026-10-18, demande utilisateur) : un locataire sans bail actif

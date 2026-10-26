@@ -20,10 +20,10 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, Input } from "@/components/ui/input";
 import { useToast } from "@/lib/toast/toast-context";
+import { todayIso } from "@/lib/dates";
 
 const selectCls = "h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink";
 const digits = (v: string) => v.replace(/\D/g, "");
-const today = () => new Date().toISOString().slice(0, 10);
 
 /** Ce que l'opération mouvemente en comptabilité — affiché dans le récapitulatif avant toute validation manuelle. */
 const ACCOUNTING_EFFECT: Record<string, string> = {
@@ -77,7 +77,7 @@ export function NewPaymentForm({
   const [saveNumber, setSaveNumber] = React.useState(true);
   const [password, setPassword] = React.useState("");
   const [method, setMethod] = React.useState<PayslipPaymentMethod>("especes");
-  const [paidAt, setPaidAt] = React.useState(today());
+  const [paidAt, setPaidAt] = React.useState(todayIso());
   const [notes, setNotes] = React.useState("");
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);

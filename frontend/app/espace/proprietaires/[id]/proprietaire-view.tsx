@@ -44,6 +44,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmo
 import { useToast } from "@/lib/toast/toast-context";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { FedapayNotice, useFedapayEnabled } from "@/components/payments/fedapay-notice";
+import { useCan } from "@/lib/auth/use-can";
 
 const UNIT_STATUS_BADGE = {
   libre: { variant: "success" as const, label: "Libre" },
@@ -73,7 +74,7 @@ function ProprietaireContent() {
   // Enregistrer un versement est une action financière : ouverte au
   // comptable aussi (même logique que le registre des paiements locataires).
   const fedapayOn = useFedapayEnabled();
-  const canPayout = user?.role === "dg" || (user?.permissions.includes("reversements_proprietaires") ?? false);
+  const canPayout = useCan("reversements_proprietaires");
   // Modifier la fiche : même périmètre que la création (propriétaires, ou
   // locataires qui gère aussi les Biens/propriétaires à la volée).
   const canManage = user?.role === "dg" || (user?.permissions.includes("proprietaires") ?? false) || (user?.permissions.includes("locataires") ?? false);

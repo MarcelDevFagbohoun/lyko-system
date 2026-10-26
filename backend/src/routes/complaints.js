@@ -24,6 +24,7 @@ const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../uti
 const { resolvePropertyScope } = require('../services/scope');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
 const logger = require('../utils/logger');
+const { isoDate } = require('../utils/dates');
 
 const router = Router();
 router.use(requireAuth, requirePermission('plaintes'));
@@ -42,11 +43,6 @@ const upload = multer({
 });
 
 const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function unitDesignationLabel(row) {
   return row.designation === 'autre' ? row.designation_custom : DESIGNATION_LABELS[row.designation];

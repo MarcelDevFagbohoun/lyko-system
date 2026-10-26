@@ -19,6 +19,7 @@ import { Field, Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { todayIso } from "@/lib/dates";
 
 const CATEGORIES: { value: IncomeCategory; label: string }[] = [
   { value: "prestation", label: "Honoraires / prestation de service" },
@@ -36,8 +37,6 @@ const METHODS: { value: OtherIncome["paymentMethod"]; label: string }[] = [
 ];
 const SELECT_CLASS =
   "h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
 
 /**
  * « Autres entrées » : tout argent encaissé par l'entreprise qui n'est ni un loyer, ni des frais d'agence, ni une

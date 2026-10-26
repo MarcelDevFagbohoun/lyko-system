@@ -11,6 +11,7 @@ import { useToast } from "@/lib/toast/toast-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { todayIso } from "@/lib/dates";
 
 const METHODS: { value: MainPaymentMethod; label: string }[] = [
   { value: "especes", label: "Espèces" },
@@ -30,11 +31,6 @@ const POINT_STATUS: Record<string, { label: string; variant: "neutral" | "warnin
 const digits = (v: string) => v.replace(/\D/g, "");
 const inputCls =
   "rounded border border-border-strong bg-surface px-2 py-1.5 text-body-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
-
-function todayIso() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 /**
  * Paiement de la facture mère (étape 30) : le propriétaire règle lui-même la

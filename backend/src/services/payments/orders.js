@@ -12,6 +12,7 @@ const { notifyOrderSent } = require('./notify');
 const { getEscrowBalances, getReservedOwnerPayouts } = require('../commission');
 const { assertPeriodOpenLocked } = require('../accountingPeriods');
 const { isModuleActive, genererEcriture } = require('../gl/glPostingService');
+const { todayIso } = require('../../utils/dates');
 
 /**
  * Ordres de paiement sortants (salaires, reversements propriétaires, paiements libres) via FedaPay.
@@ -28,10 +29,6 @@ function newReference() {
   let out = 'LYK-';
   for (const b of bytes) out += REFERENCE_ALPHABET[b % REFERENCE_ALPHABET.length];
   return out; // 4 + 14 = 18 caractères
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 /** Vue publique d'un ordre : numéro masqué, jamais la clé d'idempotence ni le contexte interne brut. */

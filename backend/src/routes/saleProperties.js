@@ -30,6 +30,7 @@ const { genererEcriture, isModuleActive } = require('../services/gl/glPostingSer
 const logger = require('../utils/logger');
 
 const { requireFeature } = require('../services/entitlements');
+const { isoDate } = require('../utils/dates');
 const router = Router();
 router.use(requireAuth, requirePermission('biens_a_vendre'), requireFeature('sale_properties'));
 
@@ -39,11 +40,6 @@ const TYPE_LABELS = Object.fromEntries(SALE_PROPERTY_TYPES.map((t) => [t.key, t.
 // angles sans en faire une galerie professionnelle à gérer.
 const MAX_PHOTOS = 6;
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024, files: MAX_PHOTOS } });
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function toPublic(row) {
   return {

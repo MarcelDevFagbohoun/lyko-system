@@ -219,7 +219,6 @@ const L = { RULE: '#E2E8F0', PANEL: '#F1F5F9', PANEL_SOFT: '#F8FAFC', ACCENT: '#
 
 /** Bandeau clair : logo + société à gauche, grand titre sombre, carte de références grise à droite, filet fin dessous. */
 function drawLightBanner(doc, tenant, { title, subtitle, meta }) {
-  const w = doc.page.width;
   const acts = layoutActivityList(doc, parseActivities(tenant.activities), (meta.length > 0 ? 300 : WIDTH) - (imageIfExists(tenant.logo_path) ? 52 : 0));
   const extra = acts.height > 0 ? acts.height + 4 : 0;
   const bannerH = BANNER_H + extra;

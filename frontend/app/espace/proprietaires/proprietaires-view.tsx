@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { useCan } from "@/lib/auth/use-can";
 
 export function ProprietairesView() {
   return (
@@ -22,8 +23,8 @@ export function ProprietairesView() {
 }
 
 function ProprietairesContent() {
-  const { accessToken, user } = useAuth();
-  const canManage = user?.role === "dg" || (user?.permissions.includes("proprietaires") ?? false);
+  const { accessToken } = useAuth();
+  const canManage = useCan("proprietaires");
   const [query, setQuery] = React.useState("");
   const [owners, setOwners] = React.useState<OwnerListItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);

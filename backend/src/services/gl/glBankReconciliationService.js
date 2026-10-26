@@ -21,14 +21,10 @@
  */
 
 const { ApiError } = require('../../middleware/error');
+const { isoDate } = require('../../utils/dates');
 
 const BANK_JOURNAL_CODE = 'BQ';
 const BANK_ACCOUNT_CODE = '521';
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function lastDayOfPeriod(period) {
   const [y, m] = period.split('-').map(Number);

@@ -13,11 +13,7 @@ const { pool } = require('../config/db');
 const { toActor } = require('../utils/actor');
 const { EXPENSE_CATEGORIES } = require('../constants/expenses');
 const { resolveRoleLabels } = require('../constants/roles');
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
+const { isoDate } = require('../utils/dates');
 
 /** Libellés de rôles personnalisés de l'entreprise (Réglages) — un aller
  * simple en base, réutilisé pour toutes les attributions `toActor` d'un

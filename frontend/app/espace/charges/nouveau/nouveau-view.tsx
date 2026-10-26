@@ -19,8 +19,7 @@ import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { useToast } from "@/lib/toast/toast-context";
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
+import { todayIso } from "@/lib/dates";
 
 export function NouveauView() {
   return (

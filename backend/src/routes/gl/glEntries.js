@@ -24,6 +24,7 @@ const { logGlAudit } = require('../../services/gl/glAuditService');
 const { notifyDg } = require('../../services/gl/glNotificationService');
 const { toActor } = require('../../utils/actor');
 const logger = require('../../utils/logger');
+const { isoDate } = require('../../utils/dates');
 
 const router = Router();
 router.use(requireAuth);
@@ -32,11 +33,6 @@ const canAdvanced = requirePermission('comptabilite_avancee');
 // mysql2 renvoie une colonne DATE comme un objet Date JS, sérialisé en JSON
 // avec l'heure (ex. "2026-03-10T00:00:00.000Z") — jamais souhaité pour une
 // date SANS heure ; voir le même besoin dans routes/accounting.js `isoDate`.
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
-
 function toPublicEntry(row) {
   return {
     id: row.id,

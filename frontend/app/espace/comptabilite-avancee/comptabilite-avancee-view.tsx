@@ -114,10 +114,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
+import { todayIso } from "@/lib/dates";
 
 const SELECT_CLASS =
   "h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";

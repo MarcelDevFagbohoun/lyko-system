@@ -22,10 +22,9 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { getChargeAccount, listRemittances } = require('./utilityRemittance');
+const { isoDate } = require('../utils/dates');
 
 const num = (v) => (v == null ? null : Number(v));
-const isoDate = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ? String(d).slice(0, 10) : null);
-
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /**

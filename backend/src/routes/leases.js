@@ -6,7 +6,7 @@ const multer = require('multer');
 const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-const { requireAuth, requireRole, requirePermission, requireAnyPermission } = require('../middleware/auth');
+const { requireAuth, requireRole, requirePermission } = require('../middleware/auth');
 const {
   createPaymentSchema,
   deletePaymentReasonSchema,
@@ -1171,7 +1171,7 @@ router.post('/:leaseId/move-in-report', canEtatsDesLieux, async (req, res, next)
     if (existing[0]) throw new ApiError(409, 'Un état des lieux existe déjà pour ce bail');
 
     const zones = cloneMasterZones();
-    const [result] = await pool.query(
+    await pool.query(
       `INSERT INTO move_in_reports (tenant_id, lease_id, conducted_at, items, status, conducted_by)
        VALUES (:tenantId, :leaseId, :conductedAt, :items, 'draft', :by)`,
       {
@@ -1529,7 +1529,7 @@ router.post('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, next
     const zones = moveInRow ? cloneZonesFrom(normalizeStoredItems(moveInRow.items)) : cloneMasterZones();
     const depositAmount = Number(lease.deposit_amount);
 
-    const [result] = await pool.query(
+    await pool.query(
       `INSERT INTO move_out_reports
          (tenant_id, lease_id, conducted_at, items, status, deposit_amount, total_deductions, net_refund, conducted_by)
        VALUES (:tenantId, :leaseId, :conductedAt, :items, 'draft', :depositAmount, 0, :depositAmount, :by)`,

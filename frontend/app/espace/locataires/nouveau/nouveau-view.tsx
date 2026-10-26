@@ -28,6 +28,7 @@ import { Field, Input } from "@/components/ui/input";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { todayIso } from "@/lib/dates";
 
 type FormState = {
   firstName: string;
@@ -52,8 +53,6 @@ type FormState = {
   openingDebtAmount: string;
   upToDateAtOnboarding: boolean;
 };
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
 
 const INITIAL: FormState = {
   firstName: "",

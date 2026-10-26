@@ -25,15 +25,12 @@
 const { pool } = require('../config/db');
 const commission = require('./commission');
 const { listPortfolioArrears } = require('./rentTracking');
+const { todayIso } = require('../utils/dates');
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 function firstDayOf(month) {
   return `${month}-01`;
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function dayBefore(iso) {

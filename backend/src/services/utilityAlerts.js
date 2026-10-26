@@ -20,12 +20,12 @@
 const { pool } = require('../config/db');
 const { UTILITY_TYPES, UTILITY_TYPE_KEYS, UTILITY_ALERT_RULES: RULES, DIFFERENCE_ALERT_PCT } = require('../constants/charges');
 const { getChargeAccounts, getOldestUnremittedDates } = require('./utilityRemittance');
+const { isoDate } = require('../utils/dates');
 
 const UTILITY_LABEL = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, t.label.split(' ')[0]]));
 const MONTHS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const SEVERITY_ORDER = { danger: 0, warning: 1, info: 2 };
 
-const isoDate = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ? String(d).slice(0, 10) : null);
 const formatFcfa = (n) => `${Math.round(Number(n)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} FCFA`;
 const monthLabel = (ym) => {
   const [y, m] = ym.split('-').map(Number);

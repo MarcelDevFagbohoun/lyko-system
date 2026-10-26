@@ -25,6 +25,7 @@ const { recordAdditionalDeposits, listLeaseDeposits, toPublic: toPublicLeaseDepo
 const { ADDITIONAL_DEPOSIT_TYPE_KEYS } = require('../constants/leaseDeposits');
 const { createEntryReceiptIfAnyPayment } = require('../services/leaseEntryReceipt');
 const logger = require('../utils/logger');
+const { isoDate } = require('../utils/dates');
 
 const router = Router();
 router.use(requireAuth);
@@ -273,11 +274,6 @@ const canManage = requirePermission('locataires');
 
 const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
 const PROPERTY_TYPE_LABELS = Object.fromEntries(PROPERTY_TYPES.map((t) => [t.key, t.label]));
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function unitDesignationLabel(row) {
   return row.designation === 'autre' ? row.designation_custom : DESIGNATION_LABELS[row.designation];

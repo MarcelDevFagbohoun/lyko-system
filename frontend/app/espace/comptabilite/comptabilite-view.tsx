@@ -59,6 +59,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { CardDetailDialog } from "@/components/accounting/card-detail-dialog";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
+import { todayIso } from "@/lib/dates";
 
 const CATEGORIES = Object.entries(EXPENSE_CATEGORY_LABELS) as [ExpenseCategory, string][];
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
@@ -76,10 +77,6 @@ function currentYearMonth() {
 // ouvert (aujourd'hui), jamais sur le mois historique en cours de
 // consultation via le sélecteur de période — sinon une dépense créée en
 // consultant un ancien mois clôturé se verrait systématiquement refusée.
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function monthRange(yearMonth: string) {
   const [y, m] = yearMonth.split("-").map(Number);
   const from = `${yearMonth}-01`;

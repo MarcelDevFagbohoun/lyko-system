@@ -7,7 +7,6 @@
 const { Router } = require('express');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/db');
-const { ApiError } = require('../middleware/error');
 const fedapay = require('../services/payments/fedapay');
 const { confirmByReference, confirmByTransaction } = require('../services/onlinePayments');
 const logger = require('../utils/logger');

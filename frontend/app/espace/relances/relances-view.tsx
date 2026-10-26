@@ -30,6 +30,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
 import { useToast } from "@/lib/toast/toast-context";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
+import { todayIso } from "@/lib/dates";
 
 /**
  * Centre de relance groupée (étape 10) : tous les locataires en retard sur
@@ -299,8 +300,6 @@ function RelancesContent() {
     </div>
   );
 }
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
 
 function ArrearsRow({
   arrears: a,

@@ -19,8 +19,7 @@
  */
 
 const { ApiError } = require('../middleware/error');
-
-const isoDate = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ? String(d).slice(0, 10) : null);
+const { isoDate } = require('../utils/dates');
 
 /** Encaissé et reversé, par propriétaire (un seul si `ownerId`). Map<ownerId, { collected, remitted, balance }>. */
 async function getChargeAccounts(db, tenantId, { ownerId = null } = {}) {

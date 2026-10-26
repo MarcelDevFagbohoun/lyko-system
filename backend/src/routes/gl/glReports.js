@@ -15,6 +15,7 @@ const { requireAuth, requirePermission } = require('../../middleware/auth');
 const { computeIncomeStatement, computeBalanceSheet, computeCashFlow } = require('../../services/gl/glFinancialStatements');
 const { computeMandantsCabinetIndicator } = require('../../services/gl/glMandantsCabinetService');
 const { streamFinancialStatementsPdf } = require('../../services/pdf');
+const { isoDate } = require('../../utils/dates');
 
 const router = Router();
 router.use(requireAuth);
@@ -23,11 +24,6 @@ const canAdvanced = requirePermission('comptabilite_avancee');
 // mysql2 renvoie une colonne DATE comme un objet Date JS, sérialisé en JSON
 // avec l'heure (ex. "2026-03-10T00:00:00.000Z") — jamais souhaité pour une
 // date SANS heure ; voir le même besoin dans routes/accounting.js `isoDate`.
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
-
 // GET /api/gl/reports/trial-balance?fiscalYearId= — balance générale : un
 // total débit/crédit par compte, sur tout l'exercice.
 router.get('/trial-balance', canAdvanced, async (req, res, next) => {

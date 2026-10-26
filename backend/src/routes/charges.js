@@ -4,7 +4,7 @@ const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { claimIdempotencyKey, DUPLICATE_MESSAGE } = require('../services/paymentGuards');
-const { requireAuth, requirePermission, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePermission } = require('../middleware/auth');
 const { createChargeSchema, updateChargeSchema, createUtilityPaymentSchema, deleteReasonSchema } = require('../validators/charges');
 const { UTILITY_TYPES, UTILITY_TYPE_KEYS, CHARGE_STATUSES } = require('../constants/charges');
 const { toActor } = require('../utils/actor');
@@ -16,6 +16,7 @@ const logger = require('../utils/logger');
 const { notifyUtilityPaymentRecorded } = require('../services/payments/notify');
 
 const { requireChargesEnabled } = require('../middleware/chargesModule');
+const { isoDate } = require('../utils/dates');
 const router = Router();
 // Un lien de paiement expire par défaut sous 48h — même valeur que leases.js.
 const PAYMENT_LINK_TTL_HOURS = 48;
@@ -33,11 +34,6 @@ const PAYMENT_METHOD_LABELS = {
   cheque: 'Chèque',
   caution: 'Prélevé sur la caution',
 };
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function toPublicCharge(row) {
   const amount = Number(row.amount);

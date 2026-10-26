@@ -56,6 +56,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableAmount } from "@/components/ui/table";
+import { useCan } from "@/lib/auth/use-can";
 
 export function LocataireView() {
   return (
@@ -73,16 +74,16 @@ function LocataireContent() {
   // (section 5), mais ne gère pas la fiche/le bail/l'état des lieux : ça reste
   // le domaine de l'agent (ou du DG).
   const isDg = user?.role === "dg";
-  const canManage = user?.role === "dg" || (user?.permissions.includes("locataires") ?? false);
+  const canManage = useCan("locataires");
   // Enregistrer un versement (loyer, pénalité, dette d'ouverture, lien de paiement) : permission dédiée.
-  const canPay = user?.role === "dg" || (user?.permissions.includes("loyers_encaisser") ?? false);
+  const canPay = useCan("loyers_encaisser");
   // Documents financiers (contrat de bail) : réservés à qui gère la relation
   // locataire ou à la comptabilité — la fiche elle-même est désormais
   // consultable par tout employé, mais pas la génération de documents.
   const canReadDocs = canManage || (user?.permissions.includes("comptabilite") ?? false);
   // PV de sortie : document généré par le module États des lieux, réservé à
   // sa propre permission (le serveur le refuse sinon).
-  const canReadMoveOutPdf = user?.role === "dg" || (user?.permissions.includes("etats_des_lieux") ?? false);
+  const canReadMoveOutPdf = useCan("etats_des_lieux");
 
   const [renter, setRenter] = React.useState<Renter | null>(null);
   const [leases, setLeases] = React.useState<Lease[] | null>(null);
@@ -916,7 +917,7 @@ function ComplaintsSection({
   accessToken: string | null;
 }) {
   const { user } = useAuth();
-  const canView = user?.role === "dg" || (user?.permissions.includes("plaintes") ?? false);
+  const canView = useCan("plaintes");
   const [complaints, setComplaints] = React.useState<Complaint[] | null>(null);
 
   React.useEffect(() => {
@@ -983,7 +984,7 @@ function ChargesSection({
   accessToken: string | null;
 }) {
   const { user } = useAuth();
-  const canView = user?.role === "dg" || (user?.permissions.includes("charges") ?? false);
+  const canView = useCan("charges");
   const [charges, setCharges] = React.useState<UtilityCharge[] | null>(null);
 
   React.useEffect(() => {

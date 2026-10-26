@@ -15,6 +15,7 @@ const { pool } = require('../config/db');
 const { getOpenPeriodStart, getPeriodClosability, getAccountingStartDate } = require('./accountingPeriods');
 const { computeRentMonthSummary } = require('./rentTracking');
 const { findEarliestOperationDate } = require('./gl/glActivationService');
+const { isoDate } = require('../utils/dates');
 
 /** 'AAAA-MM' décalé de `n` mois. */
 function shiftMonth(yearMonth, n) {
@@ -26,11 +27,6 @@ function shiftMonth(yearMonth, n) {
 function lastDayOf(yearMonth) {
   const [y, m] = yearMonth.split('-').map(Number);
   return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-}
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
 }
 
 /**

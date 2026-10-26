@@ -32,11 +32,7 @@ const {
 const { logGlAudit } = require('./glAuditService');
 const { ADDITIONAL_DEPOSIT_LABELS } = require('../../constants/leaseDeposits');
 const { paymentPeriodKey } = require('../rentTracking');
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
+const { isoDate } = require('../../utils/dates');
 
 /** Le plan comptable a-t-il déjà été créé au moins une fois (indépendant de `gl_module_enabled`) ? */
 async function isInitialized(conn, tenantId) {

@@ -25,6 +25,7 @@ const { getOrCreateIssuance, registerDownload } = require('../services/documentI
 const { startCheckout } = require('../services/onlinePayments');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
 const logger = require('../utils/logger');
+const { isoDate } = require('../utils/dates');
 
 const router = Router();
 
@@ -45,11 +46,6 @@ const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.ke
 function unitDesignationLabel(row) {
   return row.designation === 'autre' ? row.designation_custom : DESIGNATION_LABELS[row.designation];
 }
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
-
 /**
  * Charge le bail ACTIF du locataire authentifié par son token (ou lève 404).
  * Le portail ne donne accès qu'à la situation en cours, jamais à l'historique

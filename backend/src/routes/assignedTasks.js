@@ -14,14 +14,10 @@ const { ApiError } = require('../middleware/error');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { createTaskSchema, updateTaskSchema } = require('../validators/assignedTasks');
 const logger = require('../utils/logger');
+const { isoDate } = require('../utils/dates');
 
 const router = Router();
 router.use(requireAuth);
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
-}
 
 function toPublicTask(row) {
   return {

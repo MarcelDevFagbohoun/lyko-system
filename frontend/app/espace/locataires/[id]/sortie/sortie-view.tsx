@@ -43,6 +43,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/lib/toast/toast-context";
+import { useCan } from "@/lib/auth/use-can";
 
 const REFUND_PAYMENT_METHODS: { value: string; label: string }[] = [
   { value: "especes", label: "Espèces" },
@@ -605,7 +606,7 @@ function FinalizedView({
 }) {
   const { user } = useAuth();
   const [regularizing, setRegularizing] = React.useState(false);
-  const canRegularize = user?.role === "dg" || (user?.permissions.includes("comptabilite") ?? false);
+  const canRegularize = useCan("comptabilite");
 
   async function handleReopen(reason: string) {
     if (!accessToken) return;

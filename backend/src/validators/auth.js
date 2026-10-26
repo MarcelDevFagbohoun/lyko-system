@@ -15,7 +15,7 @@ const PHONE_LOCAL_RE = /^0\d{9}$/;
 
 function normalizeBeninPhone(raw) {
   if (typeof raw !== 'string') return null;
-  let s = raw.replace(/[\s.\-]/g, '');
+  let s = raw.replace(/[\s.-]/g, '');
   if (s.startsWith('+229')) s = s.slice(4);
   else if (s.startsWith('00229')) s = s.slice(5);
   else if (s.startsWith('229') && s.length === 12) s = s.slice(3);

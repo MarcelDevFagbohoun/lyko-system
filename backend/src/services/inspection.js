@@ -4,6 +4,7 @@ const { INSPECTION_ZONES, LEGACY_CONDITION_TO_NEW, INSPECTION_CONDITION_RANK } =
 const { toActor } = require('../utils/actor');
 const { pool } = require('../config/db');
 const { toProtectedFileUrl } = require('../utils/uploads');
+const { isoDate } = require('../utils/dates');
 
 /** Élément vide (nouvelle zone/nouvel élément, ou remise à zéro pour la sortie). */
 function emptyItem(key, label, custom = false) {
@@ -232,11 +233,6 @@ function diffInspectionReport(before, after) {
   if ((before.tenantReserves ?? '') !== (after.tenantReserves ?? '')) changes.push('Réserves du locataire modifiées');
 
   return changes;
-}
-
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
 }
 
 function isoDateTime(d) {

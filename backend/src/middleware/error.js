@@ -29,7 +29,6 @@ function notFoundHandler(req, res, _next) {
 const TRANSIENT_LOCK_CODES = new Set(['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT']);
 
 /** Gestionnaire d'erreurs terminal (doit garder les 4 arguments). */
-// eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, _next) {
   if (TRANSIENT_LOCK_CODES.has(err.code)) {
     logger.warn('Conflit de verrou transitoire (nouvel essai attendu côté client)', { code: err.code, path: req.originalUrl });

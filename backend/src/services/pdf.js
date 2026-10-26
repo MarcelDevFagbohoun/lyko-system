@@ -8,7 +8,6 @@ const PDFDocument = require('pdfkit');
 const { EXPENSE_CATEGORIES } = require('../constants/expenses');
 const { UTILITY_TYPES } = require('../constants/charges');
 const { resolveRoleLabels } = require('../constants/roles');
-const { compareCondition } = require('./inspection');
 const { paymentPeriodKey, periodEndOf } = require('./rentTracking');
 const config = require('../config/env');
 const D = require('./pdfDesign');
@@ -181,33 +180,6 @@ function drawFooter(doc, { verificationCode } = {}) {
     verificationCode,
     frontendHost: config.frontendUrl.replace(/^https?:\/\//, ''),
     downloadDate: formatDateSlash(new Date().toISOString().slice(0, 10)),
-  });
-}
-
-// Retourne la hauteur réellement occupée (la valeur peut passer sur plusieurs
-// lignes, ex. bien loué + adresse) afin que l'appelant avance correctement.
-// `mono` : la valeur est un CHIFFRE (date, montant, référence, téléphone) —
-// rendue en Courier plutôt qu'en Helvetica, comme le reste de la refonte.
-function drawRow(doc, label, value, y, { mono = false } = {}) {
-  const valueFont = mono ? FONT_MONO_BOLD : FONT_SANS_BOLD;
-  const valueHeight = doc.font(valueFont).fontSize(10).heightOfString(value, { width: 315 });
-  doc.font(FONT_SANS).fontSize(10).fillColor(MUTED).text(label, 50, y, { width: 180 });
-  doc.font(valueFont).fontSize(10).fillColor(INK).text(value, 230, y, { width: 315 });
-  return Math.max(valueHeight, 14) + 8;
-}
-
-/**
- * Ligne de méta-données sous un titre (« N° QT-2026-0042 · émise le … ») :
- * alterne libellés discrets (Helvetica, gris) et valeurs-chiffres (Courier,
- * plus soutenues) sur une même ligne, via l'API « continued » de PDFKit.
- */
-function drawMetaLine(doc, parts) {
-  doc.fontSize(9);
-  parts.forEach((part, i) => {
-    doc
-      .font(part.mono ? FONT_MONO_BOLD : FONT_SANS)
-      .fillColor(part.mono ? INK_SOFT : MUTED)
-      .text(part.text, { continued: i < parts.length - 1 });
   });
 }
 

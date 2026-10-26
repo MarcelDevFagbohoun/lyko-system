@@ -25,6 +25,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { formatFcfa } from "@/lib/utils";
 import { useToast } from "@/lib/toast/toast-context";
+import { useCan } from "@/lib/auth/use-can";
 
 export function ContratView() {
   return (
@@ -41,7 +42,7 @@ function ContratContent() {
   const leaseId = Number(searchParams.get("leaseId"));
   const router = useRouter();
   const { accessToken, user } = useAuth();
-  const canManage = user?.role === "dg" || (user?.permissions.includes("locataires") ?? false);
+  const canManage = useCan("locataires");
 
   const [lease, setLease] = React.useState<Lease | null>(null);
   const [renterName, setRenterName] = React.useState("");

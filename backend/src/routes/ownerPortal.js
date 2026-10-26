@@ -15,13 +15,13 @@
 const { Router } = require('express');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/db');
-const { ApiError } = require('../middleware/error');
 const { requireOwnerPortalToken } = require('../middleware/portalAuth');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { getRecetteProprietaire } = require('../services/commission');
 const { streamOwnerStatementPdf, streamUtilityCarnetPdf } = require('../services/pdf');
 const { getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
+const { isoDate } = require('../utils/dates');
 
 const router = Router();
 
@@ -42,10 +42,6 @@ const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.ke
 const PROPERTY_TYPE_LABELS = Object.fromEntries(PROPERTY_TYPES.map((t) => [t.key, t.label]));
 function unitDesignationLabel(row) {
   return row.designation === 'autre' ? row.designation_custom : DESIGNATION_LABELS[row.designation];
-}
-function isoDate(d) {
-  if (!d) return null;
-  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
 }
 function currentYearMonth() {
   return new Date().toISOString().slice(0, 7);

@@ -5,11 +5,8 @@ const { pool } = require('../config/db');
 const { recordRentPayment } = require('../routes/leases');
 const { recordUtilityPayment, loadCharge } = require('../routes/charges');
 const { notifyRentPaymentsRecorded, notifyUtilityPaymentRecorded } = require('./payments/notify');
-const { assertPeriodOpen, assertPeriodOpenLocked } = require('./accountingPeriods');
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
+const { assertPeriodOpenLocked } = require('./accountingPeriods');
+const { todayIso } = require('../utils/dates');
 
 async function loadActiveLeaseForPayment(conn, tenantId, leaseId) {
   const [rows] = await conn.query('SELECT * FROM leases WHERE id = :id AND tenant_id = :t LIMIT 1', {
