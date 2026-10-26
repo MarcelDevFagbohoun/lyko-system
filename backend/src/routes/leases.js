@@ -23,12 +23,11 @@ const {
   reopenInspectionReportSchema,
 } = require('../validators/inspections');
 const { computeArrears, allocateRentPayment, computeRentOwed } = require('../services/rentTracking');
-const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { streamReceiptPdf, streamEntryReceiptPdf, streamMoveOutPdf, streamMoveInPdf, streamLeaseContractPdf } = require('../services/pdf');
 const { buildContractData, loadContractRow, toPublicContract } = require('../services/leaseContract');
 const { assertPeriodOpen, assertPeriodOpenLocked } = require('../services/accountingPeriods');
 const { resolvePropertyScope } = require('../services/scope');
-const { getOrCreateIssuance, ensureShareToken } = require('../services/documentIssuance');
+const { getOrCreateIssuance } = require('../services/documentIssuance');
 const { genererEcriture, isModuleActive } = require('../services/gl/glPostingService');
 const { extourneEcriture } = require('../services/gl/glReversalService');
 const { computeMoveOutStatement } = require('../services/moveOutStatement');
@@ -274,23 +273,7 @@ router.get('/:leaseId/late-fees', canPayments, async (req, res, next) => {
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-    const [rows] = await pool.query(
-      `SELECT lf.*, u.first_name, u.last_name, u.role
-       FROM late_fees lf LEFT JOIN users u ON u.id = lf.applied_by
-       WHERE lf.lease_id = :leaseId ORDER BY lf.applied_at DESC, lf.id DESC`,
-      { leaseId },
-    );
-    const lateFeeIds = rows.map((r) => r.id);
-    let paidById = new Map();
-    if (lateFeeIds.length > 0) {
-      const placeholders = lateFeeIds.map(() => '?').join(',');
-      const [paidRows] = await pool.query(
-        `SELECT late_fee_id, SUM(amount) AS paid FROM late_fee_payments WHERE late_fee_id IN (${placeholders}) GROUP BY late_fee_id`,
-        lateFeeIds,
-      );
-      paidById = new Map(paidRows.map((p) => [p.late_fee_id, Number(p.paid)]));
-    }
+    const { rows, paidById } = await leasePayments.listLateFees(req.user.tenantId, leaseId, scopeAgentId);
     res.json({
       lateFees: rows.map((r) => {
         const amount = Number(r.amount);
@@ -314,15 +297,6 @@ router.get('/:leaseId/late-fees', canPayments, async (req, res, next) => {
   }
 });
 
-/** Solde restant d'UNE pénalité (un bail peut en avoir plusieurs, réglées indépendamment). */
-async function getLateFeeRemaining(conn, tenantId, lateFee) {
-  const [rows] = await conn.query(
-    'SELECT COALESCE(SUM(amount), 0) AS paid FROM late_fee_payments WHERE late_fee_id = :lateFeeId AND tenant_id = :tenantId',
-    { lateFeeId: lateFee.id, tenantId },
-  );
-  return Number(lateFee.amount) - Number(rows[0].paid);
-}
-
 // POST /api/leases/:leaseId/late-fees/:lateFeeId/payments — régler (totalement ou partiellement) une
 // pénalité déjà appliquée (étape 44bis, demande directe de l'utilisateur : « revenons sur les
 // pénalités » — jusqu'ici aucun suivi de règlement n'existait, une créance appliquée restait affichée
@@ -340,79 +314,13 @@ router.post('/:leaseId/late-fees/:lateFeeId/payments', canPayments, async (req, 
   }
   const data = parsed.data;
 
-  const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
-    await assertPeriodOpen(req.user.tenantId, data.paidAt);
-
-    const [lateFeeRows] = await conn.query(
-      'SELECT * FROM late_fees WHERE id = :lateFeeId AND lease_id = :leaseId AND tenant_id = :tenantId LIMIT 1',
-      { lateFeeId, leaseId, tenantId: req.user.tenantId },
-    );
-    if (!lateFeeRows[0]) throw new ApiError(404, 'Pénalité introuvable');
-
-    const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id', {
-      id: lease.renter_id,
-    });
-    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
-
-    await conn.beginTransaction();
-    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
-    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
-    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
-
-    // Verrouille la pénalité : deux règlements simultanés ne doivent jamais pouvoir dépasser ensemble
-    // le solde restant (même principe que le règlement de la dette initiale ci-dessus).
-    await conn.query('SELECT id FROM late_fees WHERE id = :lateFeeId FOR UPDATE', { lateFeeId });
-    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'late_fee_payment', data.idempotencyKey);
-
-    const remaining = await getLateFeeRemaining(conn, req.user.tenantId, lateFeeRows[0]);
-    if (remaining <= 0) {
-      throw new ApiError(409, 'Cette pénalité est déjà intégralement réglée');
-    }
-    if (data.amount > remaining) {
-      throw new ApiError(400, `Le montant dépasse le solde restant (${remaining} FCFA)`);
-    }
-
-    const [result] = await conn.query(
-      `INSERT INTO late_fee_payments (tenant_id, late_fee_id, amount, payment_method, paid_at, notes, recorded_by)
-       VALUES (:tenantId, :lateFeeId, :amount, :method, :paidAt, :notes, :recordedBy)`,
-      {
-        tenantId: req.user.tenantId,
-        lateFeeId,
-        amount: data.amount,
-        method: data.paymentMethod,
-        paidAt: data.paidAt,
-        notes: data.notes,
-        recordedBy: req.user.id,
-      },
-    );
-    const paymentId = result.insertId;
-
-    if (await isModuleActive(conn, req.user.tenantId)) {
-      await genererEcriture(conn, {
-        tenantId: req.user.tenantId,
-        operationType: 'penalite_retard_encaissee',
-        entryDate: data.paidAt,
-        amount: data.amount,
-        paymentMethod: data.paymentMethod,
-        narrationVars: { locataire: renterName },
-        sourceTable: 'late_fee_payments',
-        sourceId: paymentId,
-        createdBy: req.user.id,
-        context: { leaseId },
-      });
-    }
-
-    await conn.commit();
+    const { paymentId, remaining } = await leasePayments.payLateFee(req.user.tenantId, req.user.id, leaseId, lateFeeId, scopeAgentId, data);
     logger.info('Pénalité de retard réglée', { tenantId: req.user.tenantId, leaseId, lateFeeId, paymentId, amount: data.amount, by: req.user.id });
-    res.status(201).json({ paymentId, remaining: remaining - data.amount });
+    res.status(201).json({ paymentId, remaining });
   } catch (err) {
-    await conn.rollback().catch(() => {});
     next(err);
-  } finally {
-    conn.release();
   }
 });
 
@@ -432,57 +340,13 @@ router.post('/:leaseId/late-fees', canPayments, async (req, res, next) => {
   }
   const data = parsed.data;
 
-  const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
-    if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé, impossible d\'appliquer une pénalité');
-
-    const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id', {
-      id: lease.renter_id,
-    });
-    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
-
-    await conn.beginTransaction();
-    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
-    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'late_fee', data.idempotencyKey);
-
-    const [result] = await conn.query(
-      `INSERT INTO late_fees (tenant_id, lease_id, amount, applied_at, reason, applied_by)
-       VALUES (:tenantId, :leaseId, :amount, :appliedAt, :reason, :by)`,
-      {
-        tenantId: req.user.tenantId,
-        leaseId,
-        amount: data.amount,
-        appliedAt: data.appliedAt,
-        reason: data.reason,
-        by: req.user.id,
-      },
-    );
-    const lateFeeId = result.insertId;
-
-    if (await isModuleActive(conn, req.user.tenantId)) {
-      await genererEcriture(conn, {
-        tenantId: req.user.tenantId,
-        operationType: 'penalite_retard',
-        entryDate: data.appliedAt,
-        amount: data.amount,
-        narrationVars: { locataire: renterName },
-        sourceTable: 'late_fees',
-        sourceId: lateFeeId,
-        createdBy: req.user.id,
-        context: { leaseId },
-      });
-    }
-
-    await conn.commit();
+    const lateFeeId = await leasePayments.createLateFee(req.user.tenantId, req.user.id, leaseId, scopeAgentId, data);
     logger.info('Pénalité de retard appliquée', { tenantId: req.user.tenantId, leaseId, lateFeeId, amount: data.amount, by: req.user.id });
     res.status(201).json({ lateFeeId });
   } catch (err) {
-    await conn.rollback().catch(() => {});
     next(err);
-  } finally {
-    conn.release();
   }
 });
 
@@ -494,11 +358,7 @@ router.get('/:leaseId/balance-snapshots', canPayments, async (req, res, next) =>
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-    const [rows] = await pool.query(
-      'SELECT period, amount_due, created_at FROM lease_balance_snapshots WHERE lease_id = :leaseId ORDER BY period DESC',
-      { leaseId },
-    );
+    const rows = await leasePayments.listBalanceSnapshots(req.user.tenantId, leaseId, scopeAgentId);
     res.json({
       snapshots: rows.map((r) => ({ period: r.period, amountDue: Number(r.amount_due), createdAt: r.created_at })),
     });
@@ -506,15 +366,6 @@ router.get('/:leaseId/balance-snapshots', canPayments, async (req, res, next) =>
     next(err);
   }
 });
-
-/** Solde restant de la dette initiale d'un bail (montant déclaré − paiements déjà enregistrés). */
-async function getOpeningDebtRemaining(conn, tenantId, lease) {
-  const [rows] = await conn.query(
-    'SELECT COALESCE(SUM(amount), 0) AS paid FROM lease_opening_debt_payments WHERE lease_id = :leaseId AND tenant_id = :tenantId',
-    { leaseId: lease.id, tenantId },
-  );
-  return Number(lease.opening_debt_amount) - Number(rows[0].paid);
-}
 
 // POST /api/leases/:leaseId/opening-debt/payments — régler (totalement ou
 // partiellement) la dette initiale déclarée à la création du bail. Table
@@ -535,75 +386,13 @@ router.post('/:leaseId/opening-debt/payments', canPayments, async (req, res, nex
   }
   const data = parsed.data;
 
-  const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const lease = await loadLease(conn, req.user.tenantId, leaseId, scopeAgentId);
-    await assertPeriodOpen(req.user.tenantId, data.paidAt);
-
-    const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id', {
-      id: lease.renter_id,
-    });
-    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
-
-    await conn.beginTransaction();
-    // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
-    // transaction — voir le commentaire détaillé sur `assertPeriodOpenLocked`.
-    await assertPeriodOpenLocked(conn, req.user.tenantId, data.paidAt);
-
-    // Verrouille le bail : deux règlements simultanés ne doivent jamais
-    // pouvoir dépasser ensemble le solde restant (même principe que le
-    // verrou sur le paiement de loyer ci-dessus).
-    await conn.query('SELECT id FROM leases WHERE id = :leaseId FOR UPDATE', { leaseId });
-    // Clé d'idempotence (étape 36) : un envoi en double n'enregistre rien de plus.
-    if (data.idempotencyKey) await claimIdempotencyKey(conn, req.user.tenantId, 'opening_debt_payment', data.idempotencyKey);
-
-    const remaining = await getOpeningDebtRemaining(conn, req.user.tenantId, lease);
-    if (remaining <= 0) {
-      throw new ApiError(409, 'Aucun impayé restant à l\'entrée pour ce bail');
-    }
-    if (data.amount > remaining) {
-      throw new ApiError(400, `Le montant dépasse le solde restant (${remaining} FCFA)`);
-    }
-
-    const [result] = await conn.query(
-      `INSERT INTO lease_opening_debt_payments (tenant_id, lease_id, amount, payment_method, paid_at, notes, recorded_by)
-       VALUES (:tenantId, :leaseId, :amount, :method, :paidAt, :notes, :recordedBy)`,
-      {
-        tenantId: req.user.tenantId,
-        leaseId,
-        amount: data.amount,
-        method: data.paymentMethod,
-        paidAt: data.paidAt,
-        notes: data.notes,
-        recordedBy: req.user.id,
-      },
-    );
-    const paymentId = result.insertId;
-
-    if (await isModuleActive(conn, req.user.tenantId)) {
-      await genererEcriture(conn, {
-        tenantId: req.user.tenantId,
-        operationType: 'dette_initiale_encaissee',
-        entryDate: data.paidAt,
-        amount: data.amount,
-        paymentMethod: data.paymentMethod,
-        narrationVars: { locataire: renterName },
-        sourceTable: 'lease_opening_debt_payments',
-        sourceId: paymentId,
-        createdBy: req.user.id,
-        context: { leaseId },
-      });
-    }
-
-    await conn.commit();
+    const { paymentId, remaining } = await leasePayments.payOpeningDebt(req.user.tenantId, req.user.id, leaseId, scopeAgentId, data);
     logger.info('Dette initiale réglée', { tenantId: req.user.tenantId, leaseId, paymentId, amount: data.amount, by: req.user.id });
-    res.status(201).json({ paymentId, remaining: remaining - data.amount });
+    res.status(201).json({ paymentId, remaining });
   } catch (err) {
-    await conn.rollback().catch(() => {});
     next(err);
-  } finally {
-    conn.release();
   }
 });
 
@@ -617,39 +406,21 @@ router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req,
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-
-    const [paymentRows] = await pool.query(
-      'SELECT * FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId AND deleted_at IS NULL LIMIT 1',
-      { paymentId, leaseId },
-    );
-    if (!paymentRows[0]) throw new ApiError(404, 'Paiement introuvable');
-
-    const [receiptRows] = await pool.query('SELECT * FROM receipts WHERE payment_id = :paymentId LIMIT 1', {
+    const { lease, payment, receipt, renter, tenant, issuer } = await leasePayments.getRentReceiptData(
+      req.user.tenantId,
+      leaseId,
       paymentId,
-    });
-    if (!receiptRows[0]) throw new ApiError(404, 'Quittance introuvable');
-
-    const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', {
-      id: lease.renter_id,
-    });
-    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', {
-      id: req.user.tenantId,
-    });
-    // Cachet/signature de l'employé qui a réellement encaissé ce paiement
-    // (pas forcément celui qui télécharge la quittance aujourd'hui).
-    const [issuerRows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', {
-      id: paymentRows[0].recorded_by,
-    });
+      scopeAgentId,
+    );
 
     streamReceiptPdf(res, {
-      tenant: tenantRows[0],
-      renter: renterRows[0],
+      tenant,
+      renter,
       property: lease,
       lease,
-      payment: paymentRows[0],
-      receipt: receiptRows[0],
-      issuer: issuerRows[0] || null,
+      payment,
+      receipt,
+      issuer,
     });
   } catch (err) {
     next(err);
@@ -666,29 +437,19 @@ router.get('/:leaseId/entry-receipt.pdf', canPayments, async (req, res, next) =>
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const lease = await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-
-    const [entryReceiptRows] = await pool.query('SELECT * FROM lease_entry_receipts WHERE lease_id = :leaseId LIMIT 1', {
+    const { lease, entryReceipt, renter, tenant, issuer, issuance } = await leasePayments.getEntryReceiptData(
+      req.user.tenantId,
       leaseId,
-    });
-    if (!entryReceiptRows[0]) {
-      throw new ApiError(404, "Aucun reçu d'entrée pour ce bail : rien n'a été payé à la signature.");
-    }
-
-    const [renterRows] = await pool.query('SELECT * FROM renters WHERE id = :id LIMIT 1', { id: lease.renter_id });
-    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
-    const [issuerRows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', {
-      id: entryReceiptRows[0].created_by,
-    });
-    const issuance = await getOrCreateIssuance(req.user.tenantId, 'recu_entree', entryReceiptRows[0].id);
+      scopeAgentId,
+    );
 
     streamEntryReceiptPdf(res, {
-      tenant: tenantRows[0],
-      renter: renterRows[0],
+      tenant,
+      renter,
       property: lease,
       lease,
-      entryReceipt: entryReceiptRows[0],
-      issuer: issuerRows[0] || null,
+      entryReceipt,
+      issuer,
       verificationCode: issuance.verification_code,
     });
   } catch (err) {
@@ -709,16 +470,7 @@ router.post('/:leaseId/payments/:paymentId/receipt-link', canPayments, async (re
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadLease(pool, req.user.tenantId, leaseId, scopeAgentId);
-
-    const [paymentRows] = await pool.query(
-      'SELECT id FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId AND deleted_at IS NULL LIMIT 1',
-      { paymentId, leaseId },
-    );
-    if (!paymentRows[0]) throw new ApiError(404, 'Paiement introuvable');
-
-    const issuance = await getOrCreateIssuance(req.user.tenantId, 'quittance', paymentId);
-    const token = await ensureShareToken(issuance);
+    const token = await leasePayments.getReceiptShareToken(req.user.tenantId, leaseId, paymentId, scopeAgentId);
     // Pas un chemin de page frontend (contrairement aux liens de portail/de
     // paiement) : ce token pointe directement sur le flux PDF du backend
     // (`GET /api/recu/:token`), sans page Next.js intermédiaire.
