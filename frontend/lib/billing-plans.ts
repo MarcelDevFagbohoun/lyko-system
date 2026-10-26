@@ -48,3 +48,18 @@ export function limitsSummary(limits: { units: number | null; owners: number | n
     part(limits.users, "utilisateur", "utilisateurs", "Utilisateurs illimités"),
   ].join(" · ");
 }
+
+/**
+ * Prix affiché d'une durée : le montant réellement payé et, s'il est plus bas que le prix catalogue, ce dernier à barrer.
+ * Même règle que le serveur : le tarif fondateur ne s'applique que s'il est inférieur au prix promotionnel (pas de cumul).
+ */
+export function offerPricing(
+  offer: { price: number; listPrice?: number },
+  founderPrice: number | null,
+): { price: number; strike: number | null; isFounder: boolean; isPromo: boolean } {
+  const list = offer.listPrice ?? offer.price;
+  if (founderPrice !== null && founderPrice < offer.price) {
+    return { price: founderPrice, strike: list, isFounder: true, isPromo: false };
+  }
+  return { price: offer.price, strike: offer.price < list ? list : null, isFounder: false, isPromo: offer.price < list };
+}

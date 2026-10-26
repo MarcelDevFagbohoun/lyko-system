@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Check, Minus } from "lucide-react";
 import { FEATURE_LABELS, offerLabel, type Catalog, type PlanKey, type PublicPlan } from "@/lib/api/billing";
-import { limitsSummary } from "@/lib/billing-plans";
+import { limitsSummary, offerPricing } from "@/lib/billing-plans";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,7 +30,14 @@ export function PlanCards({
   currentPlan?: string | null;
 }) {
   const f = catalog.founder;
+  const promo = catalog.promo?.enabled ? catalog.promo.percent : 0;
   return (
+    <div className="flex flex-col gap-4">
+    {promo > 0 && (
+      <p className="rounded-lg border border-success-border bg-success-bg px-4 py-2 text-center text-body-sm font-label-md text-success-fg">
+        Offre promotionnelle : −{promo} % sur toutes les offres
+      </p>
+    )}
     <div className="grid gap-4 lg:grid-cols-3">
       {catalog.plans.map((plan) => (
         <Card key={plan.key} className={cn("flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-xl", plan.featured && "border-primary ring-1 ring-primary")}>
@@ -46,13 +53,13 @@ export function PlanCards({
           <CardContent className="flex flex-1 flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               {plan.offers.map((o) => {
-                const isFounder = f.remaining > 0 && plan.key === f.planKey && o.months === f.months;
+                const { price, strike } = offerPricing(o, f.remaining > 0 && plan.key === f.planKey && o.months === f.months ? f.price : null);
                 return (
                   <div key={o.months} className="flex items-baseline justify-between gap-2">
                     <span className="text-body-sm text-ink-muted">{offerLabel(o.months)}</span>
                     <span className="text-right">
-                      {isFounder && <span className="mr-2 text-body-xs text-ink-faint line-through">{formatFcfa(o.price)}</span>}
-                      <span className="font-display text-headline-sm text-ink">{formatFcfa(isFounder ? f.price : o.price)}</span>
+                      {strike !== null && <span className="mr-2 text-body-xs text-ink-faint line-through">{formatFcfa(strike)}</span>}
+                      <span className="font-display text-headline-sm text-ink">{formatFcfa(price)}</span>
                     </span>
                   </div>
                 );
@@ -95,6 +102,7 @@ export function PlanCards({
           </CardContent>
         </Card>
       ))}
+    </div>
     </div>
   );
 }

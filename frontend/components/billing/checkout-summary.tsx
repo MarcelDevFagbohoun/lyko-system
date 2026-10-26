@@ -30,12 +30,12 @@ export function CheckoutSummary({
         <dl className="flex flex-col gap-1.5 text-body-sm">
           <div className="flex justify-between gap-3">
             <dt className="text-ink-soft">Prix de l&apos;offre</dt>
-            <dd className="text-ink">{formatFcfa(quote.kind === "upgrade" ? quote.fullPrice : quote.normalPrice)}</dd>
+            <dd className="text-ink">{formatFcfa(quote.normalPrice)}</dd>
           </div>
-          {quote.kind !== "upgrade" && quote.founder && (
+          {quote.fullPrice < quote.normalPrice && (
             <div className="flex justify-between gap-3 text-success-fg">
-              <dt>Tarif fondateur</dt>
-              <dd>−{formatFcfa(quote.normalPrice - quote.price)}</dd>
+              <dt>{quote.founder ? "Tarif fondateur" : "Offre promotionnelle"}</dt>
+              <dd>−{formatFcfa(quote.normalPrice - quote.fullPrice)}</dd>
             </div>
           )}
           {quote.kind === "upgrade" && (

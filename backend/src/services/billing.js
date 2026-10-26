@@ -7,7 +7,7 @@ const { ApiError } = require('../middleware/error');
 const logger = require('../utils/logger');
 const fedapay = require('./payments/fedapay');
 const { encryptSecret } = require('../utils/encryption');
-const { getCatalog, getPlanAsync } = require('./planCatalog');
+const { getCatalog, getPlanAsync, promoPrice } = require('./planCatalog');
 const { computeUnusedValue } = require('./subscriptionCredit');
 
 const PLAN_RANK = { demarrage: 1, pro: 2, entreprise: 3 };
@@ -87,10 +87,11 @@ async function quote(tenantId, planKey, months, conn = pool) {
   }
   const [[paid]] = await conn.query("SELECT COUNT(*) AS n FROM subscription_payments WHERE tenant_id = :tenantId AND status IN ('paid','refunded')", { tenantId });
   const isFirst = Number(paid.n) === 0;
-  let price = found.offer.price;
+  const catalogNow = await getCatalog();
+  let price = promoPrice(catalogNow, found.offer.price); // promotion de l'administrateur : c'est ce montant qui est payé
   let founder = false;
-  const { founder: FOUNDER_OFFER } = await getCatalog();
-  if (FOUNDER_OFFER.enabled && isFirst && kind === 'purchase' && planKey === FOUNDER_OFFER.planKey && months === FOUNDER_OFFER.months) {
+  const FOUNDER_OFFER = catalogNow.founder;
+  if (FOUNDER_OFFER.enabled && FOUNDER_OFFER.price < price && isFirst && kind === 'purchase' && planKey === FOUNDER_OFFER.planKey && months === FOUNDER_OFFER.months) {
     const [[mine]] = await conn.query("SELECT COUNT(*) AS n FROM subscription_payments WHERE tenant_id = :tenantId AND founder_price = 1 AND status = 'pending' AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)", { tenantId });
     const taken = (await founderTaken(conn)) - (Number(mine.n) > 0 ? 1 : 0);
     if (taken < FOUNDER_OFFER.maxCompanies) {
@@ -137,8 +138,10 @@ async function publicCatalog() {
   const catalog = await getCatalog();
   const FOUNDER_OFFER = catalog.founder;
   return {
+    // `price` = montant réellement payé (promotion déduite) ; `listPrice` = prix catalogue, barré à l'affichage s'il diffère.
     plans: Object.values(catalog.plans)
-      .map((p) => ({ key: p.key, label: p.label, featured: !!p.featured, limits: p.limits, features: p.features, offers: p.offers })),
+      .map((p) => ({ key: p.key, label: p.label, featured: !!p.featured, limits: p.limits, features: p.features, offers: p.offers.map((o) => ({ months: o.months, price: promoPrice(catalog, o.price), listPrice: o.price })) })),
+    promo: catalog.promo?.enabled ? { enabled: true, percent: catalog.promo.percent } : { enabled: false, percent: 0 },
     founder: { ...FOUNDER_OFFER, remaining: FOUNDER_OFFER.enabled ? Math.max(0, FOUNDER_OFFER.maxCompanies - taken) : 0 },
     refundWindowDays: catalog.refundWindowDays,
   };

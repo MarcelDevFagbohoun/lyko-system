@@ -1,12 +1,14 @@
 import { apiFetch } from "./client";
 
 export type PlanKey = "demarrage" | "pro" | "entreprise";
-export type PlanOffer = { months: number; price: number };
+/** `price` = montant réellement payé (promotion déduite) ; `listPrice` = prix catalogue, présent côté public. */
+export type PlanOffer = { months: number; price: number; listPrice?: number };
 export type PlanLimits = { units: number | null; owners: number | null; users: number | null };
 export type PublicPlan = { key: PlanKey; label: string; featured: boolean; limits: PlanLimits; features: string[]; offers: PlanOffer[] };
 export type Catalog = {
   plans: PublicPlan[];
   founder: { planKey: PlanKey; months: number; price: number; maxCompanies: number; remaining: number };
+  promo?: { enabled: boolean; percent: number };
   refundWindowDays: number;
 };
 

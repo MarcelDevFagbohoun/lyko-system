@@ -93,6 +93,50 @@ test('changer les prix : appliqué aux achats futurs, tarif fondateur désactiva
   assert.ok(hist.changes.length >= 2);
 });
 
+test('promotion : un pourcentage appliqué à toutes les offres, c’est le montant promotionnel qui est payé', async () => {
+  const c0 = await current();
+  const withPromo = (promo, founderOn = true) => {
+    const c = JSON.parse(JSON.stringify(c0));
+    c.founder = { ...c.founder, enabled: founderOn, planKey: 'pro', months: 4, price: 49000, maxCompanies: 100000 };
+    c.plans.pro.offers = c.plans.pro.offers.map((o) => (o.months === 4 ? { ...o, price: 65000 } : o));
+    c.plans.demarrage.offers = c.plans.demarrage.offers.map((o) => (o.months === 3 ? { ...o, price: 30000 } : o));
+    c.promo = promo;
+    return c;
+  };
+  // validation du pourcentage
+  assert.equal((await put(withPromo({ enabled: true, percent: 0 }))).status, 400);
+  assert.equal((await put(withPromo({ enabled: true, percent: 95 }))).status, 400);
+  assert.equal((await put(withPromo({ enabled: true, percent: 12.5 }))).status, 400);
+
+  // 20 % : s'applique à toutes les offres ; le prix catalogue reste visible comme « prix normal »
+  assert.equal((await put(withPromo({ enabled: true, percent: 20 }, false))).status, 200);
+  let q = await quote(fx.tenantId, 'demarrage', 3);
+  assert.equal(q.price, 24000);
+  assert.equal(q.normalPrice, 30000);
+  assert.equal(q.founder, false);
+  assert.equal((await quote(fx.tenantId, 'pro', 4)).price, 52000);
+  const pub = await require('../src/services/billing').publicCatalog();
+  assert.deepEqual(pub.promo, { enabled: true, percent: 20 });
+  const o = pub.plans.find((p) => p.key === 'demarrage').offers.find((x) => x.months === 3);
+  assert.equal(o.price, 24000);
+  assert.equal(o.listPrice, 30000);
+
+  // promotion + tarif fondateur : le client paie le plus bas des deux, sans cumul
+  assert.equal((await put(withPromo({ enabled: true, percent: 20 }, true))).status, 200);
+  q = await quote(fx.tenantId, 'pro', 4);
+  assert.equal(q.price, 49000); // fondateur (49 000) < promo (52 000)
+  assert.equal(q.founder, true);
+  assert.equal((await put(withPromo({ enabled: true, percent: 30 }, true))).status, 200);
+  q = await quote(fx.tenantId, 'pro', 4);
+  assert.equal(q.price, 45500); // promo (45 500) < fondateur (49 000)
+  assert.equal(q.founder, false);
+
+  // désactivée : retour aux prix catalogue
+  assert.equal((await put(withPromo({ enabled: false, percent: 50 }, false))).status, 200);
+  assert.equal((await quote(fx.tenantId, 'demarrage', 3)).price, 30000);
+  assert.deepEqual((await require('../src/services/billing').publicCatalog()).promo, { enabled: false, percent: 0 });
+});
+
 test('changer limites et fonctions : effet immédiat sur les entreprises de l’offre', async () => {
   await pool.query("INSERT INTO tenant_subscriptions (tenant_id, plan_key, status, current_period_end) VALUES (:t, 'demarrage', 'active', DATE_ADD(NOW(), INTERVAL 30 DAY)) ON DUPLICATE KEY UPDATE plan_key='demarrage', status='active', current_period_end=VALUES(current_period_end)", { t: fx.tenantId });
   await assert.rejects(() => assertFeature(fx.tenantId, 'payroll'), (e) => e.status === 403);

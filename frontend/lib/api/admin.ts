@@ -52,6 +52,7 @@ export type AdminPlan = {
 export type AdminCatalog = {
   plans: Record<PlanKey, AdminPlan>;
   founder: { enabled: boolean; planKey: PlanKey; months: number; price: number; maxCompanies: number };
+  promo: { enabled: boolean; percent: number };
   refundWindowDays: number;
 };
 export const adminCatalog = (t: string) =>

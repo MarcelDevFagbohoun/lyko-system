@@ -6,7 +6,7 @@ import {
   FEATURE_LABELS, FEATURE_ORDER, offerLabel, pricePerMonth,
   type Catalog, type PlanKey, type PublicPlan, type Subscription, type UpgradeOption,
 } from "@/lib/api/billing";
-import { limitsSummary, planActionLabel, planRelation } from "@/lib/billing-plans";
+import { limitsSummary, offerPricing, planActionLabel, planRelation } from "@/lib/billing-plans";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -80,8 +80,9 @@ function PlanCard({
 }) {
   const offer = plan.offers.find((o) => o.months === months) ?? plan.offers[0];
   const f = catalog.founder;
-  const isFounder = firstPurchase && f.remaining > 0 && plan.key === f.planKey && offer.months === f.months;
-  const price = isFounder ? f.price : offer.price;
+  const founderEligible = firstPurchase && f.remaining > 0 && plan.key === f.planKey && offer.months === f.months;
+  const { price, strike, isFounder, isPromo } = offerPricing(offer, founderEligible ? f.price : null);
+  const promoPercent = catalog.promo?.enabled ? catalog.promo.percent : 0;
   const upgrade = relation === "upgrade" ? upgrades.find((u) => u.planKey === plan.key && u.months === offer.months) : undefined;
   const disabled = busy || relation === "downgrade";
 
@@ -116,10 +117,13 @@ function PlanCard({
         <div className="flex flex-col gap-0.5">
           <p className="flex flex-wrap items-baseline gap-x-2">
             <span className="font-display text-headline-md text-ink">{formatFcfa(price)}</span>
-            {isFounder && <span className="text-body-sm text-ink-faint line-through">{formatFcfa(offer.price)}</span>}
+            {strike !== null && <span className="text-body-sm text-ink-faint line-through">{formatFcfa(strike)}</span>}
             <span className="text-body-sm text-ink-muted">pour {offerLabel(offer.months)}</span>
           </p>
           <p className="text-body-xs text-ink-faint">soit environ {formatFcfa(pricePerMonth({ months: offer.months, price }))} par mois</p>
+          {isPromo && promoPercent > 0 && (
+            <p className="text-body-xs text-success-fg">Offre promotionnelle : −{promoPercent} %</p>
+          )}
           {isFounder && (
             <p className="text-body-xs text-success-fg">Tarif fondateur : plus que {f.remaining} place{f.remaining > 1 ? "s" : ""}.</p>
           )}

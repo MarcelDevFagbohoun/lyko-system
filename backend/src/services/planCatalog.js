@@ -26,7 +26,7 @@ function defaults() {
     const p = PLANS[k];
     plans[k] = { key: k, label: p.label, featured: !!p.featured, limits: clone(p.limits), features: [...p.features], offers: clone(p.offers) };
   }
-  return { plans, founder: { enabled: true, ...clone(FOUNDER_OFFER) }, refundWindowDays: REFUND_WINDOW_DAYS };
+  return { plans, founder: { enabled: true, ...clone(FOUNDER_OFFER) }, promo: { enabled: false, percent: 0 }, refundWindowDays: REFUND_WINDOW_DAYS };
 }
 
 function merge(base, over) {
@@ -38,6 +38,7 @@ function merge(base, over) {
     for (const f of ['label', 'featured', 'limits', 'features', 'offers']) if (o[f] !== undefined) out.plans[k][f] = clone(o[f]);
   }
   if (over.founder) out.founder = { ...out.founder, ...over.founder };
+  if (over.promo) out.promo = { ...out.promo, ...over.promo };
   if (over.refundWindowDays !== undefined) out.refundWindowDays = over.refundWindowDays;
   return out;
 }
@@ -63,6 +64,13 @@ async function getPlanAsync(key) {
   return c.plans[key] ?? null;
 }
 
+/** Prix à payer après la promotion en cours (arrondi au franc). Sans promotion active, le prix catalogue. */
+function promoPrice(catalog, listPrice) {
+  const p = catalog?.promo;
+  if (!p?.enabled || !(p.percent > 0)) return listPrice;
+  return Math.round((listPrice * (100 - p.percent)) / 100);
+}
+
 function intIn(v, min, max, label) {
   if (!Number.isInteger(v) || v < min || v > max) throw new ApiError(400, `${label} invalide`);
   return v;
@@ -71,7 +79,7 @@ function intIn(v, min, max, label) {
 /** Valide un catalogue COMPLET (le back-office envoie toujours l'ensemble). */
 function validate(input) {
   if (!input || typeof input !== 'object') throw new ApiError(400, 'Catalogue invalide');
-  const out = { plans: {}, founder: null, refundWindowDays: 0 };
+  const out = { plans: {}, founder: null, promo: { enabled: false, percent: 0 }, refundWindowDays: 0 };
   for (const k of EDITABLE) {
     const p = input.plans?.[k];
     if (!p) throw new ApiError(400, `Offre « ${k} » manquante`);
@@ -108,6 +116,9 @@ function validate(input) {
   } else {
     out.founder = { ...defaults().founder, ...(f.planKey ? { planKey: f.planKey } : {}), enabled: false };
   }
+  // Promotion : un pourcentage de réduction appliqué à TOUTES les offres et durées, tant qu'elle est activée.
+  const pr = input.promo ?? {};
+  out.promo = pr.enabled ? { enabled: true, percent: intIn(pr.percent, 1, 90, 'Pourcentage de la promotion') } : { enabled: false, percent: 0 };
   out.refundWindowDays = intIn(input.refundWindowDays, 0, 90, 'Délai de remboursement');
   return out;
 }
@@ -155,4 +166,4 @@ async function listChanges() {
   return rows.map((r) => ({ id: r.id, adminName: r.admin_name, createdAt: r.created_at }));
 }
 
-module.exports = { getCatalog, getPlanAsync, saveCatalog, resetCatalog, listChanges, invalidate, FEATURES };
+module.exports = { promoPrice, getCatalog, getPlanAsync, saveCatalog, resetCatalog, listChanges, invalidate, FEATURES };

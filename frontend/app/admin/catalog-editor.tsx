@@ -7,7 +7,7 @@ import { FEATURE_LABELS, type PlanKey } from "@/lib/api/billing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
-import { formatDateLabel } from "@/lib/utils";
+import { formatDateLabel, formatFcfa } from "@/lib/utils";
 
 const ALWAYS_ON = ["core", "tenant_collect"];
 const PLAN_ORDER: PlanKey[] = ["demarrage", "pro", "entreprise"];
@@ -131,6 +131,34 @@ export function CatalogEditor({ token }: { token: string }) {
           );
         })}
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Offre promotionnelle</CardTitle>
+          <CardDescription>Un pourcentage de réduction appliqué à toutes les offres et à toutes les durées. Dès l&apos;enregistrement, le montant réduit est celui que les clients paient. Si le tarif fondateur est encore plus bas, c&apos;est lui qui s&apos;applique (pas de cumul).</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <label className="flex items-center gap-2 text-body-sm text-ink-soft">
+            <input type="checkbox" checked={draft.promo.enabled} onChange={(e) => setDraft({ ...draft, promo: { enabled: e.target.checked, percent: draft.promo.percent || 10 } })} />
+            Promotion active
+          </label>
+          {draft.promo.enabled && (
+            <>
+              <Field label="Réduction (%)" htmlFor="pp" hint="Entre 1 et 90.">
+                <Input id="pp" inputMode="numeric" className="max-w-[160px]" value={draft.promo.percent} onChange={(e) => setDraft({ ...draft, promo: { enabled: true, percent: Number(e.target.value.replace(/\D/g, "")) || 0 } })} />
+              </Field>
+              <ul className="grid gap-1 text-body-sm text-ink-muted sm:grid-cols-2 lg:grid-cols-3">
+                {PLAN_ORDER.flatMap((k) => draft.plans[k].offers.map((o) => (
+                  <li key={`${k}-${o.months}`}>
+                    {draft.plans[k].label}, {o.months} mois : <span className="line-through">{formatFcfa(o.price)}</span>{" "}
+                    <strong className="text-ink">{formatFcfa(Math.round((o.price * (100 - draft.promo.percent)) / 100))}</strong>
+                  </li>
+                )))}
+              </ul>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

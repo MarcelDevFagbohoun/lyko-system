@@ -40,3 +40,18 @@ test("limitsSummary : pluriel, singulier et limites absentes", () => {
   assert.equal(limitsSummary({ units: 1, owners: 1, users: 1 }), "1 unité · 1 propriétaire · 1 utilisateur");
   assert.equal(limitsSummary({ units: null, owners: null, users: 20 }), "Unités illimitées · Propriétaires illimités · 20 utilisateurs");
 });
+
+import { offerPricing } from "../lib/billing-plans.ts";
+
+test("offerPricing : promotion, tarif fondateur et absence de cumul", () => {
+  // sans promotion ni fondateur
+  assert.deepEqual(offerPricing({ price: 65000, listPrice: 65000 }, null), { price: 65000, strike: null, isFounder: false, isPromo: false });
+  // promotion seule : le prix catalogue est barré
+  assert.deepEqual(offerPricing({ price: 52000, listPrice: 65000 }, null), { price: 52000, strike: 65000, isFounder: false, isPromo: true });
+  // fondateur plus bas que la promotion : il l'emporte
+  assert.deepEqual(offerPricing({ price: 52000, listPrice: 65000 }, 49000), { price: 49000, strike: 65000, isFounder: true, isPromo: false });
+  // fondateur plus haut que la promotion : la promotion l'emporte
+  assert.deepEqual(offerPricing({ price: 45500, listPrice: 65000 }, 49000), { price: 45500, strike: 65000, isFounder: false, isPromo: true });
+  // ancien format (sans listPrice)
+  assert.deepEqual(offerPricing({ price: 65000 }, 49000), { price: 49000, strike: 65000, isFounder: true, isPromo: false });
+});
