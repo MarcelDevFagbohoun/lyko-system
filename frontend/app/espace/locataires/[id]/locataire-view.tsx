@@ -916,7 +916,6 @@ function ComplaintsSection({
   renterId: number;
   accessToken: string | null;
 }) {
-  const { user } = useAuth();
   const canView = useCan("plaintes");
   const [complaints, setComplaints] = React.useState<Complaint[] | null>(null);
 
@@ -983,7 +982,6 @@ function ChargesSection({
   renterId: number;
   accessToken: string | null;
 }) {
-  const { user } = useAuth();
   const canView = useCan("charges");
   const [charges, setCharges] = React.useState<UtilityCharge[] | null>(null);
 

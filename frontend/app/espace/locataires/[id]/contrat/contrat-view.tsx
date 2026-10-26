@@ -41,7 +41,7 @@ function ContratContent() {
   const searchParams = useSearchParams();
   const leaseId = Number(searchParams.get("leaseId"));
   const router = useRouter();
-  const { accessToken, user } = useAuth();
+  const { accessToken } = useAuth();
   const canManage = useCan("locataires");
 
   const [lease, setLease] = React.useState<Lease | null>(null);

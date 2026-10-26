@@ -40,7 +40,7 @@ function StatutBadge({ renter }: { renter: RenterListItem }) {
 }
 
 function LocatairesContent() {
-  const { accessToken, user } = useAuth();
+  const { accessToken } = useAuth();
   const canManage = useCan("locataires");
   const [renters, setRenters] = React.useState<RenterListItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
