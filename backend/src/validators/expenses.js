@@ -31,12 +31,12 @@ const amountSchema = z.coerce
 // l'inverse. Jamais les deux définis en même temps — cf. `superRefine`.
 const createExpenseSchema = z
   .object({
-    category: z.enum(EXPENSE_CATEGORY_KEYS, { error: 'Catégorie invalide' }),
+    category: z.enum(EXPENSE_CATEGORY_KEYS, { errorMap: () => ({ message: 'Catégorie invalide' }) }),
     label: z.string().trim().min(2, 'Libellé requis').max(150, 'Trop long'),
     amount: amountSchema,
     expenseDate: dateSchema,
     paymentStatus: z.enum(['paid', 'unpaid']).default('paid'),
-    paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS, { error: 'Mode de règlement invalide' }).optional(),
+    paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
     supplierName: z.string().trim().min(2, 'Nom du fournisseur requis').max(150, 'Trop long').optional(),
     notes: optionalText(255),
     propertyId: z.coerce.number().int().positive().optional(),
@@ -58,16 +58,16 @@ const createExpenseSchema = z
   });
 
 const paySupplierExpenseSchema = z.object({
-  paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS, { error: 'Mode de règlement invalide' }),
+  paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
   paidAt: dateSchema,
 });
 
 const updateExpenseSchema = z.object({
-  category: z.enum(EXPENSE_CATEGORY_KEYS, { error: 'Catégorie invalide' }).optional(),
+  category: z.enum(EXPENSE_CATEGORY_KEYS, { errorMap: () => ({ message: 'Catégorie invalide' }) }).optional(),
   label: z.string().trim().min(2, 'Libellé requis').max(150, 'Trop long').optional(),
   amount: amountSchema.optional(),
   expenseDate: dateSchema.optional(),
-  paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS, { error: 'Mode de règlement invalide' }).optional(),
+  paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
   notes: optionalText(255).optional(),
 });
 
@@ -103,7 +103,7 @@ const startDateSchema = z.object({
 // d'erreur clair avant même d'atteindre la base.
 const rhythmSchema = z
   .object({
-    mode: z.enum(['calendaire', 'jour_fixe', 'libre'], { error: 'Rythme invalide' }),
+    mode: z.enum(['calendaire', 'jour_fixe', 'libre'], { errorMap: () => ({ message: 'Rythme invalide' }) }),
     startDay: z.coerce.number().int().min(1).max(28).nullable().optional(),
   })
   .refine((d) => d.mode !== 'jour_fixe' || (d.startDay != null && d.startDay >= 1 && d.startDay <= 28), {

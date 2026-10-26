@@ -13,13 +13,13 @@ const optionalText = (max) =>
     .or(z.literal(''))
     .transform((v) => (v ? v : null));
 
-const typeSchema = z.enum(SALE_PROPERTY_TYPE_KEYS, { error: 'Type de bien invalide' });
+const typeSchema = z.enum(SALE_PROPERTY_TYPE_KEYS, { errorMap: () => ({ message: 'Type de bien invalide' }) });
 // « vendu » n'est JAMAIS réglable via ce statut générique (demande utilisateur, 2026-10-18) : il exige
 // le prix final, le pourcentage perçu et le mode de règlement — seul `POST /:id/mark-sold` (bouton
 // « Vendu » dédié) peut faire cette transition, jamais un simple changement de statut.
 const patchableStatusSchema = z.enum(
   SALE_PROPERTY_STATUS_KEYS.filter((s) => s !== 'vendu'),
-  { error: "Statut invalide (passez par le bouton « Vendu » pour marquer une vente)" },
+  { errorMap: () => ({ message: "Statut invalide (passez par le bouton « Vendu » pour marquer une vente)" }) },
 );
 
 const createSalePropertySchema = z.object({
@@ -61,7 +61,7 @@ const markSoldSchema = z.object({
     .min(0, 'Le pourcentage doit être compris entre 0 et 100')
     .max(100, 'Le pourcentage doit être compris entre 0 et 100'),
   paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque'], {
-    error: 'Mode de règlement invalide',
+    errorMap: () => ({ message: 'Mode de règlement invalide' }),
   }),
   soldAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)').optional(),
   idempotencyKey: idempotencyKeySchema,

@@ -16,10 +16,10 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-
 
 const createComplaintSchema = z.object({
   leaseId: z.coerce.number().int('Bail requis').positive('Bail requis'),
-  category: z.enum(COMPLAINT_CATEGORY_KEYS, { error: 'Catégorie invalide' }),
+  category: z.enum(COMPLAINT_CATEGORY_KEYS, { errorMap: () => ({ message: 'Catégorie invalide' }) }),
   title: z.string().trim().min(3, 'Titre requis (3 caractères min.)').max(150, 'Trop long'),
   description: optionalText(2000),
-  priority: z.enum(COMPLAINT_PRIORITIES, { error: 'Priorité invalide' }).default('normale'),
+  priority: z.enum(COMPLAINT_PRIORITIES, { errorMap: () => ({ message: 'Priorité invalide' }) }).default('normale'),
   reportedAt: dateSchema.optional(),
   // Clé d'idempotence (même principe que les enregistrements d'argent, étape
   // 36) : un envoi en double (reconnexion instable, rejeu de la file
@@ -29,15 +29,15 @@ const createComplaintSchema = z.object({
 });
 
 const updateComplaintSchema = z.object({
-  category: z.enum(COMPLAINT_CATEGORY_KEYS, { error: 'Catégorie invalide' }).optional(),
+  category: z.enum(COMPLAINT_CATEGORY_KEYS, { errorMap: () => ({ message: 'Catégorie invalide' }) }).optional(),
   title: z.string().trim().min(3, 'Titre requis (3 caractères min.)').max(150, 'Trop long').optional(),
   description: optionalText(2000).optional(),
-  priority: z.enum(COMPLAINT_PRIORITIES, { error: 'Priorité invalide' }).optional(),
+  priority: z.enum(COMPLAINT_PRIORITIES, { errorMap: () => ({ message: 'Priorité invalide' }) }).optional(),
 });
 
 const updateComplaintStatusSchema = z
   .object({
-    status: z.enum(COMPLAINT_STATUSES, { error: 'Statut invalide' }),
+    status: z.enum(COMPLAINT_STATUSES, { errorMap: () => ({ message: 'Statut invalide' }) }),
     resolutionNote: optionalText(2000),
   })
   .refine((data) => data.status !== 'resolue' || !!data.resolutionNote, {

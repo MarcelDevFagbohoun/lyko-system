@@ -17,7 +17,7 @@ const amountSchema = z.coerce
 const manualEntryLineSchema = z.object({
   accountId: z.coerce.number().int().positive('Compte requis'),
   thirdPartyId: z.coerce.number().int().positive().optional(),
-  side: z.enum(['debit', 'credit'], { error: 'Sens invalide' }),
+  side: z.enum(['debit', 'credit'], { errorMap: () => ({ message: 'Sens invalide' }) }),
   amount: amountSchema,
 });
 

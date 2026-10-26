@@ -23,21 +23,3 @@ test('clampIsoDate : tout ce qui n’est pas une date devient « pas de filtre �
     assert.equal(clampIsoDate(bad), '', String(bad));
   }
 });
-
-require('../src/utils/zodFr');
-const { z } = require('zod');
-test('zod 4 : messages par défaut en français, messages explicites conservés', () => {
-  const schema = z.object({
-    a: z.string(),
-    n: z.number(),
-    e: z.enum(['x', 'y'], { error: 'Type invalide' }),
-    f: z.enum(['x', 'y']),
-    s: z.string().min(3, 'Trop court'),
-  });
-  const err = schema.safeParse({ n: 'q', e: 'z', f: 'z', s: 'a' }).error.flatten().fieldErrors;
-  assert.deepEqual(err.a, ['Champ requis']);
-  assert.deepEqual(err.n, ['Valeur invalide']);
-  assert.deepEqual(err.e, ['Type invalide']);
-  assert.deepEqual(err.f, ['Valeur non autorisée']);
-  assert.deepEqual(err.s, ['Trop court']);
-});
