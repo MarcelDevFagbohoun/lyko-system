@@ -111,6 +111,7 @@ test('paiement approuvé : abonnement actif 4 mois, garantie 15 jours, facture ;
   assert.equal(new Date((await sub()).current_period_end).getTime(), end1);
   const pays = await (await api('GET', '/api/billing/payments')).json();
   assert.equal(pays.payments.length, 1);
+  assert.equal(pays.payments[0].outcome, 'success');
   assert.match(pays.payments[0].invoiceNumber, /^AIM-\d{4}-\d{6}$/);
   const pdf = await api('GET', `/api/billing/payments/${pays.payments[0].id}/invoice.pdf`);
   assert.equal(pdf.status, 200);
@@ -206,4 +207,21 @@ test('réconciliation : un paiement approuvé mais jamais confirmé est rattrap�
   await runSubscriptionReconciliation(); // rejouer ne prolonge pas une 2e fois
   const [[n]] = await pool.query("SELECT COUNT(*) n FROM subscription_payments WHERE tenant_id = :t AND status = 'paid'", { t: fx.tenantId });
   assert.ok(Number(n.n) >= 2);
+});
+
+test('historique : chaque tentative a son résultat (succès, échec, à compléter) ; seules les réussies ont un reçu', async () => {
+  const mk = (ref, status) => pool.query(
+    "INSERT INTO subscription_payments (tenant_id, reference, plan_key, months, kind, amount, status) VALUES (:t, :r, 'demarrage', 1, 'purchase', 10000, :s)",
+    { t: fx.tenantId, r: ref, s: status },
+  );
+  await mk(`AIM-OUT-F-${Date.now()}`, 'failed');
+  await mk(`AIM-OUT-P-${Date.now()}`, 'pending');
+  const list = (await (await api('GET', '/api/billing/payments')).json()).payments;
+  const byStatus = (st) => list.find((x) => x.status === st);
+  assert.equal(byStatus('failed').outcome, 'failed');
+  assert.equal(byStatus('pending').outcome, 'incomplete');
+  assert.equal(list.find((x) => x.status === 'paid').outcome, 'success');
+  assert.equal((await api('GET', `/api/billing/payments/${byStatus('failed').id}/invoice.pdf`)).status, 404); // pas de reçu sans paiement réussi
+  assert.equal(require('../src/services/billing').paymentOutcome('refunded'), 'success');
+  assert.equal(require('../src/services/billing').paymentOutcome('anomaly'), 'failed');
 });

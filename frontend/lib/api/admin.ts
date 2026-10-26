@@ -11,7 +11,7 @@ export function setAdminToken(token: string | null) {
   try { if (token) sessionStorage.setItem(KEY, token); else sessionStorage.removeItem(KEY); } catch { /* stockage indisponible : session limitée à la page */ }
 }
 
-export type AdminTenant = { id: number; companyName: string; createdAt: string; planKey: string | null; status: string; currentPeriodEnd: string | null; founderPrice: boolean; totalPaid: number; overLimits: string[] };
+export type AdminTenant = { id: number; companyName: string; createdAt: string; planKey: string | null; status: string; currentPeriodEnd: string | null; founderPrice: boolean; totalPaid: number; overLimits: string[]; lastPayment: "success" | "failed" | "incomplete" | null };
 
 export const adminLogin = (email: string, password: string, code?: string) =>
   apiFetch<{ token: string; name: string }>("/api/admin/login", { method: "POST", headers: json, body: JSON.stringify({ email, password, code: code || undefined }) });

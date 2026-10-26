@@ -211,7 +211,7 @@ function AbonnementContent() {
                   : "Aucun prélèvement automatique : vous renouvelez quand vous le décidez."}
               </p>
             </div>
-            <PlanPicker catalog={catalog} sub={sub} upgrades={upgrades} firstPurchase={payments.length === 0} busyKey={busy} onChoose={choose} />
+            <PlanPicker catalog={catalog} sub={sub} upgrades={upgrades} firstPurchase={!payments.some((p) => p.outcome === "success")} busyKey={busy} onChoose={choose} />
           </section>
         )}
 

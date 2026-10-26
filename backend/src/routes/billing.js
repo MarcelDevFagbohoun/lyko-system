@@ -12,6 +12,7 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const billing = require('../services/billing');
+const { paymentOutcome } = billing;
 const refunds = require('../services/refunds');
 const { streamSubscriptionInvoicePdf } = require('../services/pdf');
 const { getOrCreateIssuance } = require('../services/documentIssuance');
@@ -96,12 +97,12 @@ router.post('/checkout', checkoutLimiter, async (req, res, next) => {
 router.get('/payments', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, plan_key, months, kind, amount, credit_applied, credit_days, upgraded_from_plan, founder_price, status, invoice_number, paid_at, period_end FROM subscription_payments WHERE tenant_id = :t AND status IN ('paid','refunded') ORDER BY id DESC LIMIT 100",
+      "SELECT id, plan_key, months, kind, amount, credit_applied, credit_days, upgraded_from_plan, founder_price, status, invoice_number, paid_at, period_end, created_at FROM subscription_payments WHERE tenant_id = :t AND status IN ('paid','refunded','failed','pending','anomaly') ORDER BY id DESC LIMIT 100",
       { t: req.user.tenantId },
     );
     const labels = {};
     for (const k of new Set(rows.map((r) => r.plan_key))) labels[k] = (await getPlanAsync(k)).label;
-    res.json({ payments: rows.map((r) => ({ id: r.id, planKey: r.plan_key, planLabel: labels[r.plan_key], months: r.months, kind: r.kind, amount: r.amount, creditApplied: r.credit_applied, upgradedFromPlan: r.upgraded_from_plan, founderPrice: !!r.founder_price, status: r.status, invoiceNumber: r.invoice_number, paidAt: r.paid_at, periodEnd: r.period_end })) });
+    res.json({ payments: rows.map((r) => ({ id: r.id, planKey: r.plan_key, planLabel: labels[r.plan_key], months: r.months, kind: r.kind, amount: r.amount, creditApplied: r.credit_applied, upgradedFromPlan: r.upgraded_from_plan, founderPrice: !!r.founder_price, status: r.status, outcome: paymentOutcome(r.status), createdAt: r.created_at, invoiceNumber: r.invoice_number, paidAt: r.paid_at, periodEnd: r.period_end })) });
   } catch (err) { next(err); }
 });
 

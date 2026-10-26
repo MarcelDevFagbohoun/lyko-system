@@ -30,6 +30,7 @@ export type Subscription = {
   usage?: { units: number; owners: number; users: number } | null;
 };
 
+export type PaymentOutcome = "success" | "failed" | "incomplete";
 export type SubscriptionPayment = {
   id: number;
   planKey: PlanKey;
@@ -40,7 +41,10 @@ export type SubscriptionPayment = {
   upgradedFromPlan: PlanKey | null;
   amount: number;
   founderPrice: boolean;
-  status: "paid" | "refunded";
+  status: "paid" | "refunded" | "failed" | "pending" | "anomaly";
+  /** Résultat de la tentative : réussie, échouée ou démarrée sans être terminée. */
+  outcome: PaymentOutcome;
+  createdAt: string;
   invoiceNumber: string | null;
   paidAt: string | null;
   periodEnd: string | null;

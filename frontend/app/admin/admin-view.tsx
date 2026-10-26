@@ -12,6 +12,7 @@ import { ACCOUNT_TYPE_LABELS, type PlanKey, type Refund } from "@/lib/api/billin
 import type { PaymentIssue } from "@/lib/api/admin";
 import { offerLabel } from "@/lib/api/billing";
 import { CatalogEditor } from "./catalog-editor";
+import { PAYMENT_OUTCOME } from "@/lib/billing-plans";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -242,7 +243,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Entreprise</TableHead><TableHead>Offre</TableHead><TableHead>Statut</TableHead><TableHead>Échéance</TableHead><TableHead>Payé</TableHead><TableHead />
+                    <TableHead>Entreprise</TableHead><TableHead>Offre</TableHead><TableHead>Statut</TableHead><TableHead>Échéance</TableHead><TableHead>Payé</TableHead><TableHead>Dernier paiement</TableHead><TableHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -256,6 +257,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                       <TableCell>{t.status}</TableCell>
                       <TableCell>{t.currentPeriodEnd ? formatDateLabel(t.currentPeriodEnd.slice(0, 10)) : "—"}</TableCell>
                       <TableCell>{formatFcfa(t.totalPaid)}</TableCell>
+                      <TableCell>{t.lastPayment ? <Badge variant={PAYMENT_OUTCOME[t.lastPayment].variant}>{PAYMENT_OUTCOME[t.lastPayment].label}</Badge> : "—"}</TableCell>
                       <TableCell className="whitespace-nowrap">
                         <Button variant="ghost" size="sm" onClick={() => setDialog({ kind: "grant", tenant: t })}>Attribuer une offre</Button>
                         {t.planKey !== "interne" && (

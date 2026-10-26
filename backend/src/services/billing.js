@@ -415,4 +415,11 @@ async function describe(tenantId) {
   };
 }
 
-module.exports = { notifyPaymentFailure, alertAdmin, upgradeOptions, confirmRow, platformAccount, verifyPlatformWebhook, findOffer, quote, publicCatalog, startCheckout, activatePayment, confirmByReference, confirmByTransaction, describe, founderTaken };
+/** Résultat d'une tentative de paiement d'abonnement : 'success' (payé ou remboursé), 'failed', 'incomplete' (démarré, pas terminé). */
+function paymentOutcome(status) {
+  if (status === 'paid' || status === 'refunded') return 'success';
+  if (status === 'pending') return 'incomplete';
+  return 'failed'; // failed, anomaly
+}
+
+module.exports = { paymentOutcome, notifyPaymentFailure, alertAdmin, upgradeOptions, confirmRow, platformAccount, verifyPlatformWebhook, findOffer, quote, publicCatalog, startCheckout, activatePayment, confirmByReference, confirmByTransaction, describe, founderTaken };

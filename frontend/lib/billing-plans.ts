@@ -63,3 +63,10 @@ export function offerPricing(
   }
   return { price: offer.price, strike: offer.price < list ? list : null, isFounder: false, isPromo: offer.price < list };
 }
+
+/** Libellé et couleur du résultat d'une tentative de paiement d'abonnement. */
+export const PAYMENT_OUTCOME: Record<"success" | "failed" | "incomplete", { label: string; variant: "success" | "danger" | "warning" }> = {
+  success: { label: "Succès", variant: "success" },
+  failed: { label: "Échec", variant: "danger" },
+  incomplete: { label: "À compléter", variant: "warning" },
+};
