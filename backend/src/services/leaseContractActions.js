@@ -10,13 +10,7 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { loadLease } = require('./rentPayments');
 const { buildContractData, loadContractRow } = require('./leaseContract');
-
-function assertDraft(report, label) {
-  if (!report) throw new ApiError(404, `Aucun ${label} pour ce bail`);
-  if (report.status !== 'draft') {
-    throw new ApiError(409, `Cette fiche est déjà finalisée et ne peut plus être modifiée.`);
-  }
-}
+const { assertDraft } = require('./inspectionReports');
 
 /** Contrat (ligne brute, ou null) + aperçu LIVE des données du bail. */
 async function getContract(tenantId, leaseId, scopeAgentId) {
