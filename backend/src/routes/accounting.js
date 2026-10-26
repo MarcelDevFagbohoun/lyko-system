@@ -75,6 +75,7 @@ const { getCardDetail } = require('../services/accountingCardDetail');
 const logger = require('../utils/logger');
 
 const { getMonthBilan, storeBilanSnapshot, getStoredBilan, MONTH_RE } = require('../services/monthBilan');
+const { requireChargesEnabled } = require('../middleware/chargesModule');
 const router = Router();
 router.use(requireAuth);
 // Module strictement financier : réservé à la comptabilité (le DG passe
@@ -85,6 +86,8 @@ router.use(requireAuth);
 // clôture d'un mois bloque aussi les charges SONEB/SBEE, qui doivent
 // pouvoir en connaître le statut.
 const canAccounting = requirePermission('comptabilite');
+// Écritures de dépenses/immobilisations : permission dédiée, distincte de la simple consultation.
+const canRecordExpense = requirePermission('depenses_enregistrer');
 
 const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
 // Un justificatif de dépense est souvent une facture PDF, contrairement aux
@@ -261,7 +264,7 @@ router.get('/expenses', canAccounting, async (req, res, next) => {
 });
 
 // POST /api/accounting/expenses — enregistrer une dépense (+ justificatif optionnel).
-router.post('/expenses', canAccounting, upload.single('receipt'), async (req, res, next) => {
+router.post('/expenses', canAccounting, canRecordExpense, upload.single('receipt'), async (req, res, next) => {
   const parsed = createExpenseSchema.safeParse(req.body);
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
@@ -420,7 +423,7 @@ router.post('/expenses', canAccounting, upload.single('receipt'), async (req, re
 });
 
 // PATCH /api/accounting/expenses/:id — corriger une dépense.
-router.patch('/expenses/:id', canAccounting, async (req, res, next) => {
+router.patch('/expenses/:id', canAccounting, canRecordExpense, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -484,7 +487,7 @@ router.patch('/expenses/:id', canAccounting, async (req, res, next) => {
 // POST /api/accounting/expenses/:id/pay — régler une dépense "à crédit".
 // Solde la dette envers le fournisseur (401) et sort la trésorerie —
 // jamais une nouvelle charge (déjà comptabilisée à l'engagement).
-router.post('/expenses/:id/pay', canAccounting, async (req, res, next) => {
+router.post('/expenses/:id/pay', canAccounting, canRecordExpense, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -617,7 +620,7 @@ router.get('/fixed-assets', canAccounting, async (req, res, next) => {
 // POST /api/accounting/fixed-assets — enregistrer une immobilisation. Même
 // schéma "à crédit" que POST /expenses (get-or-create fournisseur par nom
 // exact — voir le commentaire détaillé là-bas).
-router.post('/fixed-assets', canAccounting, async (req, res, next) => {
+router.post('/fixed-assets', canAccounting, canRecordExpense, async (req, res, next) => {
   const parsed = createFixedAssetSchema.safeParse(req.body);
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
@@ -749,7 +752,7 @@ router.get('/fixed-assets/:id', canAccounting, async (req, res, next) => {
 // crédit". Solde la dette envers le fournisseur (481, jamais 401 — voir
 // `reglement_fournisseur_investissement`) et sort la trésorerie, jamais une
 // nouvelle charge (déjà comptabilisée à l'acquisition).
-router.post('/fixed-assets/:id/pay', canAccounting, async (req, res, next) => {
+router.post('/fixed-assets/:id/pay', canAccounting, canRecordExpense, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -825,7 +828,7 @@ router.post('/fixed-assets/:id/pay', canAccounting, async (req, res, next) => {
 // LINÉAIRE simple (coût ÷ durée ÷ 12) ; le prorata temporis du mois
 // d'acquisition est configurable par entreprise (Comptabilité avancée →
 // Règles comptables), voir services/gl/glDepreciationService.js.
-router.post('/fixed-assets/:id/depreciate', canAccounting, async (req, res, next) => {
+router.post('/fixed-assets/:id/depreciate', canAccounting, canRecordExpense, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -934,7 +937,7 @@ router.post('/fixed-assets/:id/depreciate', canAccounting, async (req, res, next
 // le bilan. Acte DÉFINITIF (comme une clôture de mois) : jamais de
 // réouverture, une justification est exigée comme pour toute suppression
 // de donnée comptable dans ce projet.
-router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) => {
+router.post('/fixed-assets/:id/dispose', canAccounting, canRecordExpense, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -1056,7 +1059,7 @@ router.post('/fixed-assets/:id/dispose', canAccounting, async (req, res, next) =
 // DELETE /api/accounting/expenses/:id — suppression logique d'une dépense mal
 // saisie : la trace reste en base (visible du DG via /deleted-entries) avec
 // une justification obligatoire, mais le montant sort des totaux/recettes.
-router.delete('/expenses/:id', canAccounting, async (req, res, next) => {
+router.delete('/expenses/:id', canAccounting, canRecordExpense, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -1858,7 +1861,7 @@ router.get('/predictive-alerts', requireAnyPermission('locataires', 'comptabilit
 // jamais un simple retard « recalculé », toujours basé sur une date déjà
 // enregistrée. Permission : `charges` (module propriétaire de la donnée) OU
 // `comptabilite`, même logique que `/arrears` avec `locataires`/`comptabilite`.
-router.get('/utility-arrears', requireAnyPermission('charges', 'comptabilite'), async (req, res, next) => {
+router.get('/utility-arrears', requireChargesEnabled, requireAnyPermission('charges', 'comptabilite'), async (req, res, next) => {
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const params = { tenantId: req.user.tenantId };

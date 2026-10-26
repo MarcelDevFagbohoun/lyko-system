@@ -61,7 +61,7 @@ export function OwnerPortalCharges({ token, charges }: { token: string; charges:
                 { label: "Factures payées à la SONEB/SBEE", amount: t.mainPaidTotal, tone: "default", of: t.mainPaidTotal },
                 { label: "Encaissé chez vos locataires", amount: t.collectedTotal, tone: "info", of: t.mainPaidTotal },
                 { label: "Reste à votre charge", amount: t.gapTotal, tone: t.gapTotal > 0 ? "danger" : "success", of: t.mainPaidTotal },
-                ...(acc ? [{ label: "Reste à vous reverser", amount: acc.balance, tone: (acc.balance > 0 ? "warning" : "success") as "warning" | "success", of: t.mainPaidTotal, total: true }] : []),
+                ...(acc ? [{ label: "Reste à vous reverser", amount: acc.balance, tone: (acc.balance > 0 ? "warning" : "success") as "warning" | "success", of: t.mainPaidTotal, total: true, polarity: "neutral" as const }] : []),
               ]}
             />
 

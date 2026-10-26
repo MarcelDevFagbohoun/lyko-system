@@ -13,6 +13,7 @@ import {
 import { formatFcfa, formatDateHeading } from "@/lib/utils";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { useToast } from "@/lib/toast/toast-context";
+import { useCan } from "@/lib/auth/use-can";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -56,6 +57,7 @@ export function OtherIncomesCard({
   isClosed: boolean;
   onChanged: () => void;
 }) {
+  const canRecord = useCan("depenses_enregistrer");
   const [incomes, setIncomes] = React.useState<OtherIncome[] | null>(null);
   const [total, setTotal] = React.useState(0);
   const [open, setOpen] = React.useState(false);
@@ -96,7 +98,7 @@ export function OtherIncomesCard({
           <p className="flex items-center gap-2 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm text-ink-muted">
             <Lock size={14} /> Mois clôturé, aucune nouvelle entrée ne peut être ajoutée.
           </p>
-        ) : (
+        ) : !canRecord ? null : (
           <div className="flex items-center justify-between">
             <span className="font-label-sm uppercase tracking-wider text-ink-muted">Nouvelle entrée</span>
             <Button variant="info" size="sm" onClick={() => setOpen((v) => !v)}>
@@ -284,6 +286,7 @@ function IncomeRow({
   locked: boolean;
   onChanged: () => void;
 }) {
+  const canRecord = useCan("depenses_enregistrer");
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [reason, setReason] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
@@ -349,7 +352,7 @@ function IncomeRow({
               <FileText size={14} />
             </a>
           )}
-          {!locked && (
+          {!locked && canRecord && (
             <button type="button" aria-label="Supprimer" onClick={() => setConfirmDelete(true)} className="rounded p-1.5 text-ink-muted hover:bg-danger/10 hover:text-danger-fg">
               <Trash2 size={14} />
             </button>

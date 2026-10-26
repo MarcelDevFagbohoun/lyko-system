@@ -177,6 +177,8 @@ function toPublicTenant(tenant) {
     depositSbeeEnabled: !!tenant.deposit_sbee_enabled,
     depositSonebEnabled: !!tenant.deposit_soneb_enabled,
     depositPeintureEnabled: !!tenant.deposit_peinture_enabled,
+    // Module Charges (SONEB/SBEE) activé pour l'entreprise ? Défini dans Paramètres ; masque menus et écrans si non.
+    chargesEnabled: tenant.charges_enabled === undefined ? true : !!tenant.charges_enabled,
   };
 }
 
@@ -205,6 +207,7 @@ async function respondWithSession(res, row) {
       deposit_sbee_enabled: row.deposit_sbee_enabled,
       deposit_soneb_enabled: row.deposit_soneb_enabled,
       deposit_peinture_enabled: row.deposit_peinture_enabled,
+      charges_enabled: row.charges_enabled,
     }),
     accessToken,
   });
@@ -322,7 +325,7 @@ router.post('/verify-email', verifyEmailLimiter, async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
               t.dg_title, t.comptable_title, t.agent_title, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
-              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled,
+              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled, t.charges_enabled,
               (u.email_verification_expires_at IS NULL OR u.email_verification_expires_at < NOW()) AS is_expired
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.email = :email AND u.role = 'dg' AND u.email_verified_at IS NULL LIMIT 1`,
@@ -498,7 +501,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
               t.dg_title, t.comptable_title, t.agent_title, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
-              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
+              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled, t.charges_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE ${byEmail ? "u.email = :phone AND u.role = 'dg'" : 'u.phone = :phone'} LIMIT 1`,
       { phone },
@@ -552,7 +555,7 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
               t.dg_title, t.comptable_title, t.agent_title, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
-              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
+              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled, t.charges_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.identifier = :identifier LIMIT 1`,
       { identifier },
@@ -666,7 +669,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
               t.dg_title, t.comptable_title, t.agent_title, t.fedapay_collect_enabled, t.default_rent_timing, t.default_entry_proration,
-              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled
+              t.deposit_sbee_enabled, t.deposit_soneb_enabled, t.deposit_peinture_enabled, t.charges_enabled
        FROM users u JOIN tenants t ON t.id = u.tenant_id
        WHERE u.id = :id LIMIT 1`,
       { id: req.user.id },
@@ -692,6 +695,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
         deposit_sbee_enabled: row.deposit_sbee_enabled,
         deposit_soneb_enabled: row.deposit_soneb_enabled,
         deposit_peinture_enabled: row.deposit_peinture_enabled,
+      charges_enabled: row.charges_enabled,
       }),
     });
   } catch (err) {

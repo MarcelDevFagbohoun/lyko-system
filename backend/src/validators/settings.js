@@ -63,6 +63,12 @@ const updateSettingsSchema = z.object({
   // à la création d'un bail, ajustable bail par bail. Défaut 'aucun' (comportement historique inchangé).
   defaultEntryProration: z.enum(['aucun', 'prorata'], { errorMap: () => ({ message: "Choix du prorata d'entrée par défaut invalide" }) }).optional(),
 
+  // Module Charges (SONEB/SBEE) activé ou non pour l'entreprise.
+  chargesEnabled: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+
   // Charges SONEB/SBEE : part répercutée au locataire (le reste est gardé par l'entreprise comme frais de gestion).
   utilityPassThroughPercent: z.coerce.number().int().min(0).max(100).optional(),
   // Moment où la commission de l'entreprise est constatée : à l'encaissement du loyer ou au reversement au propriétaire.

@@ -10,7 +10,11 @@ export type PermissionKey =
   | "documents_juridiques"
   | "comptabilite_avancee"
   | "assistant"
-  | "biens_a_vendre";
+  | "biens_a_vendre"
+  | "loyers_encaisser"
+  | "reversements_proprietaires"
+  | "charges_enregistrer"
+  | "depenses_enregistrer";
 
 export type EmployeeRole = "comptable" | "agent";
 
@@ -31,7 +35,7 @@ export type Employee = {
   createdAt: string;
 };
 
-export type PermissionCatalogEntry = { key: PermissionKey; label: string };
+export type PermissionCatalogEntry = { key: PermissionKey; label: string; group?: "operations" };
 
 /** Bien géré par un agent (étape 14), tel qu'affiché sur sa fiche. */
 export type ManagedProperty = {

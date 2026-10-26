@@ -32,6 +32,23 @@ function AccessDenied() {
   );
 }
 
+function ModuleDisabled({ isDg }: { isDg: boolean }) {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-canvas px-4 text-center">
+      <Badge variant="neutral">Module désactivé</Badge>
+      <h1 className="font-display text-headline-lg text-ink">Le module Charges n&apos;est pas activé</h1>
+      <p className="max-w-sm text-body-md text-ink-soft">
+        {isDg
+          ? "Votre entreprise n'utilise pas le suivi des charges SONEB/SBEE. Vous pouvez l'activer à tout moment dans Paramètres ; rien n'a été supprimé."
+          : "Votre entreprise n'utilise pas ce module pour le moment. Contactez votre direction si besoin."}
+      </p>
+      <Link href={isDg ? "/espace/parametres" : "/espace"} className={buttonVariants({ variant: "secondary" })}>
+        {isDg ? "Ouvrir les paramètres" : "Retour à mon espace"}
+      </Link>
+    </div>
+  );
+}
+
 /**
  * Protège une page cliente :
  * - redirige vers /connexion si la session n'est pas authentifiée ;
@@ -52,7 +69,7 @@ export function RequireAuth({
   roles?: AuthUser["role"][];
   permission?: string | string[];
 }) {
-  const { status, user } = useAuth();
+  const { status, user, tenant } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -68,6 +85,11 @@ export function RequireAuth({
 
   if (status === "loading" || status === "unauthenticated" || mustChangePassword) {
     return <LoadingScreen />;
+  }
+
+  // Pages du module Charges (permission « charges » seule) : désactivées par l'entreprise dans Paramètres.
+  if (permission && tenant?.chargesEnabled === false && (Array.isArray(permission) ? permission : [permission]).every((p) => p === "charges")) {
+    return <ModuleDisabled isDg={user?.role === "dg"} />;
   }
 
   if (roles && user && !roles.includes(user.role)) {

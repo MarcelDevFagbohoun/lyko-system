@@ -32,15 +32,23 @@ const PERMISSIONS = [
   // cabinet est chargé de vendre — jamais pré-cochée à la création d'un employé (accès volontairement
   // restreint, accordé au cas par cas par le DG).
   { key: 'biens_a_vendre', label: 'Biens à vendre' },
+  // Actions sensibles (demande utilisateur, 2026-10-26) : avoir accès à une fiche ne permet PAS de
+  // faire circuler de l'argent. Chaque opération financière a sa propre permission, à accorder une à une.
+  { key: 'loyers_encaisser', label: 'Enregistrer des versements de locataires (loyers, cautions, pénalités)', group: 'operations' },
+  { key: 'reversements_proprietaires', label: 'Enregistrer des versements aux propriétaires', group: 'operations' },
+  { key: 'charges_enregistrer', label: 'Enregistrer et régler des charges (SONEB/SBEE)', group: 'operations' },
+  { key: 'depenses_enregistrer', label: 'Enregistrer des dépenses, des recettes et des immobilisations', group: 'operations' },
 ];
 
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 
 // Pré-cochées à la création selon le rôle choisi (section 5, exemples donnés) —
 // le DG peut les ajuster librement avant de valider.
+// Le « profil d'accès » n'existe plus à la création (2026-10-26) : le DG coche lui-même, rien n'est
+// pré-coché. Ces valeurs ne servent plus qu'aux anciens clients qui enverraient encore un rôle.
 const DEFAULT_PERMISSIONS_BY_ROLE = {
-  agent: ['locataires', 'plaintes', 'etats_des_lieux'],
-  comptable: ['comptabilite', 'charges', 'comptabilite_avancee'],
+  agent: [],
+  comptable: [],
 };
 
 module.exports = { PERMISSIONS, PERMISSION_KEYS, DEFAULT_PERMISSIONS_BY_ROLE };

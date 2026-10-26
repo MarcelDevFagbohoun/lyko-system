@@ -29,7 +29,7 @@ function EspaceContent() {
   if (user && !isDg) return <EmployeeHome />;
   const canLocataires = isDg || (user?.permissions.includes("locataires") ?? false);
   const canPayments = canLocataires || (user?.permissions.includes("comptabilite") ?? false);
-  const canCharges = isDg || (user?.permissions.includes("charges") ?? false);
+  const canCharges = tenant?.chargesEnabled !== false && (isDg || (user?.permissions.includes("charges") ?? false));
 
   return (
     <div className="min-h-screen bg-canvas">

@@ -75,7 +75,8 @@ const canReopenInspection = requireRole('dg');
 // jamais un agent restreint aux locataires (n'a rien à voir avec le journal).
 const canRegularizeGl = requirePermission('comptabilite');
 // Paiements et quittances : agent (locataires) ET comptable (paiements/factures, section 5).
-const canPayments = requireAnyPermission('locataires', 'comptabilite');
+// Enregistrer un versement de locataire : permission dédiée (la simple fiche locataire ne suffit plus).
+const canPayments = requirePermission('loyers_encaisser');
 
 const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
 

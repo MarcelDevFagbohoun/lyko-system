@@ -51,6 +51,8 @@ export type AuthTenant = {
   depositSbeeEnabled: boolean;
   depositSonebEnabled: boolean;
   depositPeintureEnabled: boolean;
+  // Module Charges (SONEB/SBEE) activé pour cette entreprise (Paramètres) : sinon menus et écrans masqués.
+  chargesEnabled: boolean;
 };
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";

@@ -28,6 +28,7 @@ const logger = require('../utils/logger');
 const router = Router();
 router.use(requireAuth);
 const canAccounting = requirePermission('comptabilite');
+const canRecordIncome = requirePermission('depenses_enregistrer');
 
 const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
 const EXT_BY_MIME = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'application/pdf': 'pdf' };
@@ -101,7 +102,7 @@ router.get('/', canAccounting, async (req, res, next) => {
 });
 
 // POST /api/accounting/incomes — enregistrer une entrée (+ justificatif optionnel).
-router.post('/', canAccounting, upload.single('receipt'), async (req, res, next) => {
+router.post('/', canAccounting, canRecordIncome, upload.single('receipt'), async (req, res, next) => {
   const parsed = createIncomeSchema.safeParse(req.body);
   if (!parsed.success) return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   const data = parsed.data;
@@ -172,7 +173,7 @@ router.post('/', canAccounting, upload.single('receipt'), async (req, res, next)
 });
 
 // DELETE /api/accounting/incomes/:id — suppression logique (justification obligatoire) + extourne GL.
-router.delete('/:id', canAccounting, async (req, res, next) => {
+router.delete('/:id', canAccounting, canRecordIncome, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return next(new ApiError(400, 'Identifiant invalide'));
   const parsed = deleteReasonSchema.safeParse(req.body);

@@ -16,6 +16,7 @@ import {
 import { normalizeBeninPhone, toE164Benin } from "@/lib/validation/auth";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { PermissionPicker } from "@/components/employees/permission-picker";
+import { ScopeToggle } from "@/components/employees/scope-toggle";
 import { OfflineNotice } from "@/components/system/offline-notice";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { Field, Input } from "@/components/ui/input";
@@ -49,8 +50,6 @@ const INITIAL_FORM: FormState = {
   jobTitle: "",
 };
 
-const ROLE_LABELS: Record<EmployeeRole, string> = { agent: "Agent", comptable: "Comptable" };
-
 type CreatedEmployee = {
   name: string;
   identifier: string;
@@ -62,10 +61,9 @@ type CreatedEmployee = {
 };
 
 function NouvelEmployeContent() {
-  const { accessToken, tenant } = useAuth();
+  const { accessToken } = useAuth();
   const online = useOnlineStatus();
   const [catalog, setCatalog] = React.useState<PermissionCatalogEntry[]>([]);
-  const [defaults, setDefaults] = React.useState<Record<string, PermissionKey[]>>({});
   const [form, setForm] = React.useState<FormState>(INITIAL_FORM);
   const [permissions, setPermissions] = React.useState<PermissionKey[]>([]);
   const [touched, setTouched] = React.useState<Partial<Record<keyof FormState, boolean>>>({});
@@ -78,25 +76,18 @@ function NouvelEmployeContent() {
     if (!accessToken) return;
     fetchPermissionCatalog(accessToken).then((res) => {
       setCatalog(res.permissions);
-      setDefaults(res.defaultsByRole);
-      setPermissions(res.defaultsByRole.agent ?? []);
     });
   }, [accessToken]);
 
   React.useEffect(() => {
     if (!accessToken) return;
     fetchJobTitles(accessToken)
-      .then((r) => setJobTitles([...r.defaults, ...r.custom]))
+      .then((r) => setJobTitles(r.custom))
       .catch(() => {});
   }, [accessToken]);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
-  }
-
-  function handleRoleChange(role: EmployeeRole) {
-    set("role", role);
-    setPermissions(defaults[role] ?? []);
   }
 
   const errors = React.useMemo(() => {
@@ -240,7 +231,7 @@ function NouvelEmployeContent() {
                   label="Poste de l'employé"
                   htmlFor="jobTitle"
                   required
-                  hint="Choisissez dans la liste, ou tapez un nouveau poste : il sera proposé la prochaine fois et transmis à l'employé."
+                  hint="Le nom que vous donnez à ce poste : il sera proposé la prochaine fois."
                   error={touched.jobTitle ? errors.jobTitle : undefined}
                 >
                   <Input
@@ -260,24 +251,7 @@ function NouvelEmployeContent() {
                   </datalist>
                 </Field>
 
-                <Field label="Profil d'accès" htmlFor="role" required hint="Détermine les écrans de départ ; ajustez ensuite les accès ci-dessous.">
-                  <div className="flex gap-2">
-                    {(["agent", "comptable"] as const).map((r) => (
-                      <button
-                        key={r}
-                        type="button"
-                        onClick={() => handleRoleChange(r)}
-                        className={`flex-1 rounded-lg border px-3 py-2 font-label-md transition-colors ${
-                          form.role === r
-                            ? "border-primary bg-surface-muted text-ink"
-                            : "border-border text-ink-soft hover:bg-surface-hover"
-                        }`}
-                      >
-                        {tenant?.roleTitles?.[r] ?? ROLE_LABELS[r]}
-                      </button>
-                    ))}
-                  </div>
-                </Field>
+                <ScopeToggle role={form.role} onChange={(r) => set("role", r)} />
 
                 <div className="flex flex-col gap-2">
                   <span className="font-label-sm text-ink-soft">Accès autorisés</span>
@@ -303,7 +277,7 @@ function buildCredentialsMessage(employee: CreatedEmployee) {
     `Identifiant : ${employee.identifier}`,
     `Mot de passe temporaire : ${employee.temporaryPassword}`,
     `Poste : ${employee.jobTitle}`,
-    `Connectez-vous avec le profil « ${employee.role === "agent" ? "Agent" : "Comptable"} » (menu Poste de la page de connexion) puis choisissez immédiatement un nouveau mot de passe : le mot de passe temporaire ne fonctionne que pour la première connexion.`,
+    `Connectez-vous avec cet identifiant, puis choisissez immédiatement un nouveau mot de passe : le mot de passe temporaire ne fonctionne que pour la première connexion.`,
   ].join("\n");
 }
 

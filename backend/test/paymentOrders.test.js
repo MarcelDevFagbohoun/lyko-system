@@ -85,6 +85,8 @@ before(async () => {
     { t: A.tenantId, phone: `06${Math.floor(Math.random() * 100000000)}` },
   );
   comptableId = r.insertId;
+  // L'historique des paiements se lit désormais par permission (plus par rôle « comptable »).
+  await pool.query("INSERT INTO user_permissions (user_id, permission_key) VALUES (:id, 'reversements_proprietaires')", { id: comptableId });
   server = createApp().listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;

@@ -20,6 +20,7 @@ import { UTILITY_TYPE_LABELS, CHARGE_STATUS_LABELS } from "@/lib/constants/charg
 import { ApiError } from "@/lib/api/client";
 import { formatFcfa, cn, newIdempotencyKey } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { useCan } from "@/lib/auth/use-can";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
 import { ChargeMonthCard } from "@/components/charges/charge-month-card";
 import { PaymentLinkCard } from "@/components/payments/payment-link-card";
@@ -65,6 +66,7 @@ export function ChargesView() {
 
 function ChargesContent() {
   const { accessToken } = useAuth();
+  const canRecord = useCan("charges_enregistrer");
   const [tab, setTab] = React.useState<ChargeStatus | "all">("all");
   const [utilityType, setUtilityType] = React.useState<UtilityType | "all">("all");
   const [query, setQuery] = React.useState("");
@@ -131,12 +133,14 @@ function ChargesContent() {
                 Relevés par immeuble
               </Button>
             </Link>
-            <Link href="/espace/charges/nouveau">
-              <Button>
-                <Plus size={18} />
-                Nouvelle charge
-              </Button>
-            </Link>
+            {canRecord && (
+              <Link href="/espace/charges/nouveau">
+                <Button>
+                  <Plus size={18} />
+                  Nouvelle charge
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
 
@@ -204,9 +208,11 @@ function ChargesContent() {
             <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
               <Droplets size={28} className="text-ink-muted" />
               <p className="font-label-md text-ink">Aucune charge pour le moment</p>
-              <Link href="/espace/charges/nouveau">
-                <Button variant="info">Enregistrer la première facture</Button>
-              </Link>
+              {canRecord && (
+                <Link href="/espace/charges/nouveau">
+                  <Button variant="info">Enregistrer la première facture</Button>
+                </Link>
+              )}
             </CardContent>
           </Card>
         ) : charges ? (
@@ -255,6 +261,7 @@ function ChargesContent() {
                           key={c.id}
                           charge={c}
                           accessToken={accessToken}
+                          canRecord={canRecord}
                           locked={closedPeriods.some((p) => c.billedAt.slice(0, 10) >= p.periodStart && c.billedAt.slice(0, 10) <= p.periodEnd)}
                           onChanged={load}
                         />
@@ -274,11 +281,14 @@ function ChargeRow({
   charge,
   accessToken,
   locked,
+  canRecord,
   onChanged,
 }: {
   charge: UtilityCharge;
   accessToken: string | null;
   locked: boolean;
+  // Enregistrer/régler/modifier/supprimer une charge : permission « charges_enregistrer » (voir la fiche ne suffit pas).
+  canRecord: boolean;
   onChanged: () => void;
 }) {
   const { tenant } = useAuth();
@@ -565,7 +575,7 @@ function ChargeRow({
           <Badge variant="neutral">
             <Lock size={11} /> Clôturé
           </Badge>
-        ) : (
+        ) : !canRecord ? null : (
           <div className="flex items-center justify-end gap-1">
             {charge.status !== "payee" && (
               <Button

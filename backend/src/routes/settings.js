@@ -62,6 +62,8 @@ function toPublicSettings(tenant) {
     depositSbeeEnabled: !!tenant.deposit_sbee_enabled,
     depositSonebEnabled: !!tenant.deposit_soneb_enabled,
     depositPeintureEnabled: !!tenant.deposit_peinture_enabled,
+    // Module Charges (SONEB/SBEE) : activable selon le besoin de l'entreprise.
+    chargesEnabled: tenant.charges_enabled === undefined ? true : !!tenant.charges_enabled,
     // Réglages comptables à effet sur les soldes, valables avec ou sans comptabilité avancée.
     utilityPassThroughPercent: Number(tenant.gl_utility_passthrough_percent ?? 100),
     commissionTiming: tenant.gl_commission_timing ?? 'encaissement',
@@ -158,6 +160,11 @@ router.patch(
       if (data.defaultRentTiming !== undefined) {
         fields.push('default_rent_timing = :defaultRentTiming');
         params.defaultRentTiming = data.defaultRentTiming;
+      }
+
+      if (data.chargesEnabled !== undefined) {
+        fields.push('charges_enabled = :chargesEnabled');
+        params.chargesEnabled = data.chargesEnabled ? 1 : 0;
       }
 
       if (data.defaultEntryProration !== undefined) {

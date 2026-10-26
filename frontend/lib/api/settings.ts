@@ -28,6 +28,8 @@ export type TenantSettings = {
   depositSbeeEnabled: boolean;
   depositSonebEnabled: boolean;
   depositPeintureEnabled: boolean;
+  /** Module Charges (SONEB/SBEE) activé ou non pour cette entreprise. */
+  chargesEnabled: boolean;
   /** Part des charges SONEB/SBEE répercutée au locataire (le reste est gardé comme frais de gestion). */
   utilityPassThroughPercent: number;
   /** Moment où la commission de l'entreprise est constatée. */
@@ -61,6 +63,7 @@ export function updateSettings(
     depositSbeeEnabled?: boolean;
     depositSonebEnabled?: boolean;
     depositPeintureEnabled?: boolean;
+    chargesEnabled?: boolean;
     utilityPassThroughPercent?: number;
     commissionTiming?: "encaissement" | "reversement";
     /** null = supprimer le seuil. */
@@ -89,6 +92,7 @@ export function updateSettings(
   if (input.depositSbeeEnabled !== undefined) fd.append("depositSbeeEnabled", String(input.depositSbeeEnabled));
   if (input.depositSonebEnabled !== undefined) fd.append("depositSonebEnabled", String(input.depositSonebEnabled));
   if (input.depositPeintureEnabled !== undefined) fd.append("depositPeintureEnabled", String(input.depositPeintureEnabled));
+  if (input.chargesEnabled !== undefined) fd.append("chargesEnabled", String(input.chargesEnabled));
   if (input.utilityPassThroughPercent !== undefined) fd.append("utilityPassThroughPercent", String(input.utilityPassThroughPercent));
   if (input.commissionTiming !== undefined) fd.append("commissionTiming", input.commissionTiming);
   if (input.expenseAlertThreshold !== undefined) fd.append("expenseAlertThreshold", input.expenseAlertThreshold === null ? "" : String(input.expenseAlertThreshold));

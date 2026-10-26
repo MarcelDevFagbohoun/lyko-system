@@ -135,7 +135,8 @@ test('FedaPay inactif : le salaire manuel reste possible et apparaît dans l\'hi
   assert.equal(sal.channel, 'manuel');
   assert.match(sal.receiptUrl, /^\/api\/payslips\/\d+\/pdf$/);
   assert.equal(h.total, 100000);
-  // Un comptable ne voit pas les salaires (confidentiels).
+  // Un comptable ne voit pas les salaires (confidentiels). L'accès à l'historique se donne par permission.
+  await pool.query("INSERT IGNORE INTO user_permissions (user_id, permission_key) VALUES (:id, 'reversements_proprietaires')", { id: B.dg });
   const hc = await (await call(B, 'GET', '/api/payments/history', null, 'comptable')).json();
   assert.equal(hc.items.filter((i) => i.kind === 'salaire').length, 0);
 });

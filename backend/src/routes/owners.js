@@ -3,7 +3,7 @@
 const { Router } = require('express');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-const { requireAuth, requireAnyPermission, requireRole } = require('../middleware/auth');
+const { requireAuth, requirePermission, requireAnyPermission, requireRole } = require('../middleware/auth');
 const {
   createOwnerSchema,
   updateOwnerSchema,
@@ -50,6 +50,7 @@ async function assertOwnerPhoneAvailable(tenantId, phone, excludeOwnerId) {
 const { assertWithinLimit, requireFeature } = require('../services/entitlements');
 const depositTransfers = require('../services/depositTransfers');
 const { createDepositTransferSchema } = require('../validators/owners');
+const { requireChargesEnabled } = require('../middleware/chargesModule');
 const router = Router();
 router.use(requireAuth);
 
@@ -68,7 +69,8 @@ const canManage = requireAnyPermission('proprietaires', 'locataires');
 // Enregistrer un versement : action financière (relation propriétaire),
 // réservée à proprietaires/comptabilite — pas locataires, qui gère les
 // Biens mais pas les flux d'argent vers les bailleurs.
-const canPayout = requireAnyPermission('proprietaires', 'comptabilite');
+// Permission dédiée (2026-10-26) : voir/gérer la fiche propriétaire ne permet pas de verser de l'argent.
+const canPayout = requirePermission('reversements_proprietaires');
 // Modifier le taux de commission : DG uniquement (cahier des charges), pas
 // même le comptable — c'est une décision de gérance, pas une saisie.
 const canCommission = requireRole('dg');
@@ -614,7 +616,7 @@ router.post('/:id/deposit-transfers', canPayout, async (req, res, next) => {
 // est réévalué DANS la transaction, sous verrou de la fiche propriétaire :
 // deux reversements simultanés ne peuvent pas dépasser ensemble ce qui a été
 // encaissé. Aucune écriture comptable automatique — voir migration 063.
-router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
+router.post('/:id/charge-remittances', requireChargesEnabled, canPayout, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -698,7 +700,7 @@ router.post('/:id/charge-remittances', canPayout, async (req, res, next) => {
 
 // DELETE /api/owners/:id/charge-remittances/:remittanceId  { reason } — annulation
 // logique d'un reversement mal saisi : la trace reste, le montant redevient « à reverser ».
-router.delete('/:id/charge-remittances/:remittanceId', canPayout, async (req, res, next) => {
+router.delete('/:id/charge-remittances/:remittanceId', requireChargesEnabled, canPayout, async (req, res, next) => {
   const id = Number(req.params.id);
   const remittanceId = Number(req.params.remittanceId);
   if (!Number.isInteger(id) || !Number.isInteger(remittanceId)) return next(new ApiError(400, 'Identifiant invalide'));
@@ -840,7 +842,7 @@ router.put('/:id/commission-rate', canCommission, async (req, res, next) => {
 // GET /api/owners/:id/carnet-charges.pdf?from=AAAA-MM&to=AAAA-MM — carnet des
 // charges SONEB/SBEE (point par relevé, entrées, reversements). Employé :
 // téléchargements illimités, sans code de vérification (comme le relevé).
-router.get('/:id/carnet-charges.pdf', requireAnyPermission('charges', 'proprietaires', 'comptabilite'), async (req, res, next) => {
+router.get('/:id/carnet-charges.pdf', requireChargesEnabled, requireAnyPermission('charges', 'proprietaires', 'comptabilite'), async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 

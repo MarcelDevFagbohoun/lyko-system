@@ -38,7 +38,8 @@ export function EmployeeHome() {
   if (!user) return null;
 
   const has = (p: string) => user.permissions.includes(p);
-  const isComptable = user.role === "comptable";
+  const chargesOn = tenant?.chargesEnabled !== false;
+  const canSeePayments = has("reversements_proprietaires") || has("depenses_enregistrer");
   const jobTitle = user.jobTitle || tenant?.roleTitles?.[user.role] || ROLE_LABELS[user.role] || user.role;
   const initials = `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`.toUpperCase();
   const dateLabel = now?.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -57,12 +58,12 @@ export function EmployeeHome() {
     { href: "/espace/plaintes", label: "Plaintes", description: "Suivre et traiter les réclamations", icon: MessageSquareWarning, cadre: "operations", show: has("plaintes") },
     // `charges` manquait ici (audit du 2026-10-23) : un employé charges-only pouvait ouvrir
     // /espace/relances par URL (la page l'autorise) mais n'avait aucun lien pour la trouver.
-    { href: "/espace/relances", label: "Relances", description: "Loyers en retard à relancer", icon: BellRing, cadre: "operations", show: has("locataires") || has("comptabilite") || has("charges") },
+    { href: "/espace/relances", label: "Relances", description: "Loyers en retard à relancer", icon: BellRing, cadre: "operations", show: has("locataires") || has("comptabilite") || (chargesOn && has("charges")) },
     { href: "/espace/taches", label: "Mes tâches", description: "Ce qui vous est confié", icon: ListTodo, cadre: "operations", show: true },
     { href: "/espace/comptabilite", label: "Trésorerie & recettes", description: "Encaissements et solde de caisse", icon: Wallet, cadre: "finances", show: has("comptabilite") },
-    { href: "/espace/charges", label: "Charges locatives", description: "Factures SONEB / SBEE", icon: Receipt, cadre: "finances", show: has("charges") },
+    { href: "/espace/charges", label: "Charges locatives", description: "Factures SONEB / SBEE", icon: Receipt, cadre: "finances", show: chargesOn && has("charges") },
     { href: "/espace/comptabilite-avancee", label: "Comptabilité générale", description: "Journaux, grand livre, balance", icon: Calculator, cadre: "finances", show: has("comptabilite_avancee") },
-    { href: "/espace/paiements", label: "Paiements", description: "Salaires, reversements, reçus", icon: Send, cadre: "finances", show: isComptable },
+    { href: "/espace/paiements", label: "Paiements", description: "Salaires, reversements, reçus", icon: Send, cadre: "finances", show: canSeePayments },
     { href: "/espace/historique", label: "Mon historique", description: "Vos opérations récentes", icon: ClipboardList, cadre: "administration", show: true },
     { href: "/espace/mon-compte", label: "Mon compte", description: "Cachet, signature et mot de passe", icon: Stamp, cadre: "administration", show: true },
   ];
@@ -145,7 +146,7 @@ export function EmployeeHome() {
         <div className="animate-fade-up [animation-delay:300ms]">
           <MyTasksCard />
         </div>
-        {has("charges") && <UtilityAlertsCard hideWhenEmpty />}
+        {chargesOn && has("charges") && <UtilityAlertsCard hideWhenEmpty />}
 
         {/* Restauré après l'audit du 2026-10-23 (disparu silencieusement lors de l'ajout de cet
             accueil) : les modules accordés à cet employé par le DG, pour qu'il sache lui-même ce

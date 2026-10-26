@@ -15,13 +15,16 @@ const { genererEcriture, isModuleActive } = require('../services/gl/glPostingSer
 const logger = require('../utils/logger');
 const { notifyUtilityPaymentRecorded } = require('../services/payments/notify');
 
+const { requireChargesEnabled } = require('../middleware/chargesModule');
 const router = Router();
 // Un lien de paiement expire par défaut sous 48h — même valeur que leases.js.
 const PAYMENT_LINK_TTL_HOURS = 48;
 // Catalogue de permissions dédié depuis l'étape 3 (`charges`, par défaut
 // comptable) — module financier propre aux fluides, distinct de locataires
 // ET de comptabilite.
-router.use(requireAuth, requirePermission('charges'));
+router.use(requireAuth, requireChargesEnabled, requirePermission('charges'));
+// Consulter les fiches de charges ne suffit pas à enregistrer quoi que ce soit (2026-10-26).
+router.use((req, res, next) => (['GET', 'HEAD', 'OPTIONS'].includes(req.method) ? next() : requirePermission('charges_enregistrer')(req, res, next)));
 
 const PAYMENT_METHOD_LABELS = {
   especes: 'Espèces',

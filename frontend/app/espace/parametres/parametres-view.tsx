@@ -88,6 +88,7 @@ function ParametresContent() {
   const [paymentsDailyLimit, setPaymentsDailyLimit] = React.useState("2000000");
   const [defaultRentTiming, setDefaultRentTiming] = React.useState<RentTiming>("avance");
   const [defaultEntryProration, setDefaultEntryProration] = React.useState<"aucun" | "prorata">("aucun");
+  const [chargesEnabled, setChargesEnabled] = React.useState(true);
   const [depositSbeeEnabled, setDepositSbeeEnabled] = React.useState(false);
   const [depositSonebEnabled, setDepositSonebEnabled] = React.useState(false);
   const [depositPeintureEnabled, setDepositPeintureEnabled] = React.useState(false);
@@ -115,6 +116,7 @@ function ParametresContent() {
         setPaymentsDailyLimit(String(res.settings.paymentsDailyLimit));
         setDefaultRentTiming(res.settings.defaultRentTiming);
         setDefaultEntryProration(res.settings.defaultEntryProration);
+        setChargesEnabled(res.settings.chargesEnabled !== false);
         setDepositSbeeEnabled(res.settings.depositSbeeEnabled);
         setDepositSonebEnabled(res.settings.depositSonebEnabled);
         setDepositPeintureEnabled(res.settings.depositPeintureEnabled);
@@ -167,6 +169,7 @@ function ParametresContent() {
         paymentsDailyLimit: Number(paymentsDailyLimit) || undefined,
         defaultRentTiming,
         defaultEntryProration,
+        chargesEnabled,
         depositSbeeEnabled,
         depositSonebEnabled,
         depositPeintureEnabled,
@@ -426,7 +429,22 @@ function ParametresContent() {
                 comme frais de gestion. 100 % = tout est reversé, rien n&apos;est gardé.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col gap-4">
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={chargesEnabled}
+                  onChange={(e) => setChargesEnabled(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                />
+                <span>
+                  <span className="font-label-md text-ink">Activer le suivi des charges SONEB / SBEE</span>
+                  <span className="block text-body-xs text-ink-muted">
+                    Décoché : le menu Charges, les relevés et les crédits de charges aux propriétaires disparaissent pour toute l&apos;équipe.
+                    Rien n&apos;est supprimé, vous pouvez le réactiver quand vous voulez.
+                  </span>
+                </span>
+              </label>
               <Field label="Part reversée au propriétaire (%)" htmlFor="utilityPassThroughPercent">
                 <Input
                   id="utilityPassThroughPercent"

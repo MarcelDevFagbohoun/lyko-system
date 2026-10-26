@@ -280,10 +280,10 @@ export function AccountLine({ account }: { account: ChargeAccount }) {
         rows={[
           { label: "Charges encaissées", hint: "Reçues des locataires", amount: total, tone: "default", of: total },
           ...(kept > 0
-            ? [{ label: "Gardé par l'entreprise", hint: `Frais de gestion (${100 - (account.ownerSharePercent ?? 100)} %)`, amount: kept, tone: "warning" as const, of: total }]
+            ? [{ label: "Gardé par l'entreprise", hint: `Frais de gestion (${100 - (account.ownerSharePercent ?? 100)} %)`, amount: kept, tone: "warning" as const, of: total, polarity: "neutral" as const }]
             : []),
           { label: "Déjà créditées", hint: "Au solde du propriétaire", amount: account.remitted, tone: "success", of: total },
-          { label: "Reste à créditer", hint: "Part du propriétaire", amount: account.balance, tone: account.balance > 0 ? "info" : "success", of: total, total: true },
+          { label: "Reste à créditer", hint: "Part du propriétaire", amount: account.balance, tone: account.balance > 0 ? "info" : "success", of: total, total: true, polarity: "neutral" },
         ]}
       />
     </div>

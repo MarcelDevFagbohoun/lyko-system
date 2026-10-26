@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Wallet, TrendingUp, TrendingDown, Scale, Droplets, Zap, AlertTriangle, Lock, Plus, FileDown, FileSpreadsheet, Trash2, Pencil, History, ChevronDown, ChevronUp, Landmark, UserPlus, Percent, LogOut, Tag, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useCan } from "@/lib/auth/use-can";
 import { getGlSettings } from "@/lib/api/gl";
 import { ApiError, openAuthenticatedPdf, downloadAuthenticatedFile } from "@/lib/api/client";
 import {
@@ -101,6 +102,7 @@ const rentPaymentMonth = (p: RentPaymentEntry) => p.coversMonth;
 const ownerPayoutMonth = (p: OwnerPayoutEntry) => p.paidAt;
 
 function ComptabiliteContent() {
+  const canRecordExpense = useCan("depenses_enregistrer");
   const { accessToken, user } = useAuth();
   const isDg = user?.role === "dg";
   const [yearMonth, setYearMonth] = React.useState(currentYearMonth());
@@ -503,9 +505,9 @@ function ComptabiliteContent() {
               <p className="flex items-center gap-2 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm text-ink-muted">
                 <Lock size={14} /> Mois clôturé, aucune nouvelle dépense ne peut être ajoutée.
               </p>
-            ) : (
+            ) : canRecordExpense ? (
               <ExpenseForm accessToken={accessToken} onCreated={load} />
-            )}
+            ) : null}
 
             {expenses === null ? (
               <p className="text-body-sm text-ink-muted">Chargement…</p>
@@ -996,6 +998,7 @@ function ExpenseRow({
   locked: boolean;
   onChanged: () => void;
 }) {
+  const canRecord = useCan("depenses_enregistrer");
   const [editing, setEditing] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [deleteReason, setDeleteReason] = React.useState("");
@@ -1200,7 +1203,7 @@ function ExpenseRow({
           <Badge variant="neutral">
             <Lock size={11} /> Clôturé
           </Badge>
-        ) : (
+        ) : !canRecord ? null : (
           <div className="flex items-center justify-end gap-1">
             {expense.paymentStatus === "unpaid" && (
               <Button variant="warning" size="sm" onClick={() => setSettling(true)}>
@@ -1236,6 +1239,7 @@ function ExpenseRow({
 // haut de page : une immobilisation vit sur plusieurs années, elle reste donc
 // toujours visible en entier, comme le journal des suppressions.
 function FixedAssetsSection({ accessToken }: { accessToken: string | null }) {
+  const canRecordExpense = useCan("depenses_enregistrer");
   const [assets, setAssets] = React.useState<FixedAsset[] | null>(null);
   const [categories, setCategories] = React.useState<{ key: FixedAssetCategory; label: string }[]>([]);
   const [error, setError] = React.useState<string | null>(null);
@@ -1266,7 +1270,7 @@ function FixedAssetsSection({ accessToken }: { accessToken: string | null }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {error && <p className="text-body-sm text-danger-fg">{error}</p>}
-        <FixedAssetForm accessToken={accessToken} categories={categories} onCreated={load} />
+        {canRecordExpense && <FixedAssetForm accessToken={accessToken} categories={categories} onCreated={load} />}
 
         {assets === null ? (
           <p className="text-body-sm text-ink-muted">Chargement…</p>
@@ -1486,6 +1490,7 @@ function FixedAssetRow({
   accessToken: string | null;
   onChanged: () => void;
 }) {
+  const canRecord = useCan("depenses_enregistrer");
   const [settling, setSettling] = React.useState(false);
   const [settleMethod, setSettleMethod] = React.useState<PaymentMethod>("especes");
   const [settlePaidAt, setSettlePaidAt] = React.useState(todayIso());
@@ -1728,7 +1733,7 @@ function FixedAssetRow({
           )}
         </TableCell>
         <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-1">
+          {canRecord && <div className="flex items-center justify-end gap-1">
             {asset.paymentStatus === "unpaid" && (
               <Button variant="warning" size="sm" onClick={() => setSettling(true)}>
                 Régler
@@ -1744,7 +1749,7 @@ function FixedAssetRow({
                 <LogOut size={14} className="text-danger-fg" />
               </Button>
             )}
-          </div>
+          </div>}
         </TableCell>
       </TableRow>
       {expanded && (

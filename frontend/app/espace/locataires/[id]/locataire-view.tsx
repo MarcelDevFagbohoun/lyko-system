@@ -74,6 +74,8 @@ function LocataireContent() {
   // le domaine de l'agent (ou du DG).
   const isDg = user?.role === "dg";
   const canManage = user?.role === "dg" || (user?.permissions.includes("locataires") ?? false);
+  // Enregistrer un versement (loyer, pénalité, dette d'ouverture, lien de paiement) : permission dédiée.
+  const canPay = user?.role === "dg" || (user?.permissions.includes("loyers_encaisser") ?? false);
   // Documents financiers (contrat de bail) : réservés à qui gère la relation
   // locataire ou à la comptabilité — la fiche elle-même est désormais
   // consultable par tout employé, mais pas la génération de documents.
@@ -212,7 +214,7 @@ function LocataireContent() {
 
         {canManage && <PortalLinkCard renter={renter} accessToken={accessToken} onGenerated={load} />}
 
-        {canManage && tenant?.onlinePaymentEnabled && activeLease && accessToken && (
+        {canPay && tenant?.onlinePaymentEnabled && activeLease && accessToken && (
           <PaymentLinkCard
             title="Lien de paiement en ligne"
             description={`Pour un règlement immédiat sans portail actif — ${renter.firstName} pourra payer par Mobile Money ou carte.`}
@@ -230,7 +232,7 @@ function LocataireContent() {
         )}
 
         {activeLease ? (
-          <LeaseCard lease={activeLease} renterId={renter.id} renterFirstName={renter.firstName} renterPhone={renter.phone} accessToken={accessToken} canManage={canManage} canReadDocs={canReadDocs} isDg={isDg} onChanged={load} />
+          <LeaseCard lease={activeLease} renterId={renter.id} renterFirstName={renter.firstName} renterPhone={renter.phone} accessToken={accessToken} canManage={canManage} canPay={canPay} canReadDocs={canReadDocs} isDg={isDg} onChanged={load} />
         ) : canManage ? (
           <NewLeaseCard renterId={renter.id} accessToken={accessToken} onCreated={load} />
         ) : (
@@ -688,6 +690,7 @@ function LeaseCard({
   renterPhone,
   accessToken,
   canManage,
+  canPay,
   canReadDocs,
   isDg,
   onChanged,
@@ -699,6 +702,7 @@ function LeaseCard({
   accessToken: string | null;
   isDg: boolean;
   canManage: boolean;
+  canPay: boolean;
   // Paiements/quittances : locataires OU comptabilite (plus large que
   // `canManage`, qui ne couvre que locataires).
   canReadDocs: boolean;
@@ -856,9 +860,9 @@ function LeaseCard({
 
         <ChargesSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} />
 
-        {canManage && <LateFeesSection leaseId={lease.id} accessToken={accessToken} canManage={canManage} />}
+        {canPay && <LateFeesSection leaseId={lease.id} accessToken={accessToken} canManage={canPay} />}
 
-        {canManage && <OpeningDebtSection lease={lease} accessToken={accessToken} onSettled={onChanged} />}
+        {canPay && <OpeningDebtSection lease={lease} accessToken={accessToken} onSettled={onChanged} />}
 
         {canManage && <BalanceSnapshotsSection leaseId={lease.id} accessToken={accessToken} />}
 
@@ -868,6 +872,7 @@ function LeaseCard({
           renterPhone={renterPhone}
           accessToken={accessToken}
           canManage={canReadDocs}
+          canRecord={canPay}
           isDg={isDg}
           onRecorded={onChanged}
         />
@@ -1389,6 +1394,7 @@ function PaymentRegister({
   renterPhone,
   accessToken,
   canManage,
+  canRecord,
   isDg,
   onRecorded,
 }: {
@@ -1400,6 +1406,8 @@ function PaymentRegister({
   // locataires OU comptabilite côté serveur — la fiche est désormais
   // consultable par tout employé, mais pas ces actions financières.
   canManage: boolean;
+  // Enregistrer un paiement : permission « loyers_encaisser » (consulter l'historique ne suffit pas).
+  canRecord: boolean;
   isDg: boolean;
   onRecorded: () => void;
 }) {
@@ -1496,7 +1504,7 @@ function PaymentRegister({
     <div className="flex flex-col gap-3 border-t border-border pt-4">
       <div className="flex items-center justify-between">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Registre des paiements</span>
-        {canManage && (
+        {canRecord && (
           <Button
             variant="success"
             size="sm"
@@ -1515,7 +1523,7 @@ function PaymentRegister({
             {formatFcfa(alreadyPaid)} sur {formatFcfa(lease.monthlyRent)} — il reste{" "}
             <span className="font-label-md">{formatFcfa(partialRemaining)}</span>.
           </p>
-          {canManage && !open && (
+          {canRecord && !open && (
             <Button variant="success" onClick={() => openPaymentForm(partialRemaining)}>
               <Receipt size={14} />
               Payer le reste ({formatFcfa(partialRemaining)})
@@ -1559,7 +1567,7 @@ function PaymentRegister({
         </div>
       )}
 
-      {open && canManage && (
+      {open && canRecord && (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-4">
           {error && <p className="text-body-sm text-danger-fg">{error}</p>}
           <Field

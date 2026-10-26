@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, AlertTriangle, Lock, RotateCcw, Trash2, Check } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useCan } from "@/lib/auth/use-can";
 import { ApiError } from "@/lib/api/client";
 import {
   getUtilityBatch,
@@ -40,6 +41,7 @@ function ReleveContent() {
   const { id } = useParams<{ id: string }>();
   const batchId = Number(id);
   const { accessToken } = useAuth();
+  const canRecord = useCan("charges_enregistrer");
   const router = useRouter();
   const toast = useToast();
 
@@ -385,7 +387,9 @@ function ReleveContent() {
 
         <MainPaymentCard data={data} onChange={setData} />
 
-        {draft ? (
+        {!canRecord ? (
+          <p className="text-body-sm text-ink-muted">Consultation seule : l&apos;enregistrement des charges demande la permission « Enregistrer et régler des charges ».</p>
+        ) : draft ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={handleSave} disabled={busy !== null} variant="info">
               {busy === "save" ? "Enregistrement…" : "Enregistrer le brouillon"}

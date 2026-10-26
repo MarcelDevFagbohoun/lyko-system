@@ -24,7 +24,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export function NouveauView() {
   return (
-    <RequireAuth permission="charges">
+    <RequireAuth permission="charges_enregistrer">
       <NouveauContent />
     </RequireAuth>
   );

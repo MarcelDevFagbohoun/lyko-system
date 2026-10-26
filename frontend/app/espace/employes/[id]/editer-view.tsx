@@ -22,6 +22,7 @@ import {
 import { listProperties, type PropertyListItem } from "@/lib/api/properties";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { PermissionPicker } from "@/components/employees/permission-picker";
+import { ScopeToggle } from "@/components/employees/scope-toggle";
 import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
@@ -187,24 +188,7 @@ function EditerEmployeContent() {
                 <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
               </Field>
 
-              <Field label="Rôle" htmlFor="role" required>
-                <div className="flex gap-2">
-                  {(["agent", "comptable"] as const).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setRole(r)}
-                      className={`flex-1 rounded-lg border px-3 py-2 font-label-md transition-colors ${
-                        role === r
-                          ? "border-primary bg-surface-muted text-ink"
-                          : "border-border text-ink-soft hover:bg-surface-hover"
-                      }`}
-                    >
-                      {r === "agent" ? "Agent" : "Comptable"}
-                    </button>
-                  ))}
-                </div>
-              </Field>
+              <ScopeToggle role={role} onChange={setRole} />
 
               <Field label="Statut du compte" htmlFor="status" required>
                 <div className="flex gap-2">
@@ -272,7 +256,7 @@ function EditerEmployeContent() {
           </CardFooter>
         </Card>
 
-        {employee.role === "agent" && (
+        {role === "agent" && (
           <ManagedPropertiesCard
             employeeId={employeeId}
             properties={managedProperties}

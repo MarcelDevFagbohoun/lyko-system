@@ -69,11 +69,11 @@ export function ProprietaireView() {
 function ProprietaireContent() {
   const { id } = useParams<{ id: string }>();
   const ownerId = Number(id);
-  const { accessToken, user } = useAuth();
+  const { accessToken, user, tenant } = useAuth();
   // Enregistrer un versement est une action financière : ouverte au
   // comptable aussi (même logique que le registre des paiements locataires).
   const fedapayOn = useFedapayEnabled();
-  const canPayout = user?.role === "dg" || (user?.permissions.includes("proprietaires") ?? false) || (user?.permissions.includes("comptabilite") ?? false);
+  const canPayout = user?.role === "dg" || (user?.permissions.includes("reversements_proprietaires") ?? false);
   // Modifier la fiche : même périmètre que la création (propriétaires, ou
   // locataires qui gère aussi les Biens/propriétaires à la volée).
   const canManage = user?.role === "dg" || (user?.permissions.includes("proprietaires") ?? false) || (user?.permissions.includes("locataires") ?? false);
@@ -87,7 +87,7 @@ function ProprietaireContent() {
     (user?.permissions.includes("locataires") ?? false);
 
   // Le carnet des charges relève du module Charges : même garde que côté serveur.
-  const canSeeCharges = user?.role === "dg" || (user?.permissions.includes("charges") ?? false);
+  const canSeeCharges = tenant?.chargesEnabled !== false && (user?.role === "dg" || (user?.permissions.includes("charges") ?? false));
 
   const [owner, setOwner] = React.useState<Owner | null>(null);
   // Faux pour un employé sans permission `proprietaires`/`comptabilite`/`locataires` (ex. seulement

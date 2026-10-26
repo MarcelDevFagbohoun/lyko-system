@@ -100,7 +100,9 @@ export function EspaceSidebar() {
   const canPlaintes = isDg || user.permissions.includes("plaintes");
   const canAccounting = isDg || user.permissions.includes("comptabilite");
   const canAccountingAdvanced = isDg || user.permissions.includes("comptabilite_avancee");
-  const canCharges = isDg || user.permissions.includes("charges");
+  const chargesOn = tenant?.chargesEnabled !== false;
+  const canCharges = chargesOn && (isDg || user.permissions.includes("charges"));
+  const canSeePayments = isDg || user.permissions.includes("reversements_proprietaires") || user.permissions.includes("depenses_enregistrer");
   // Biens à vendre (demande utilisateur, 2026-10-18) — jamais accordée par défaut, le DG décide au cas
   // par cas (voir constants/permissions.js) : accès volontairement restreint, pas "tout comptable/agent".
   const canSaleProperties = isDg || user.permissions.includes("biens_a_vendre");
@@ -147,7 +149,7 @@ export function EspaceSidebar() {
         // permission — la rémunération du personnel reste une donnée sensible (même principe que
         // `/espace/employes`).
         // Paiements sortants FedaPay : lecture DG + comptable, envoi DG uniquement (contrôlé par le serveur).
-        (isDg || user?.role === "comptable") && { href: "/espace/paiements", label: "Paiements", icon: Send, hint: "Salaires, reversements aux propriétaires, dépenses et restitutions de caution, avec reçus." },
+        canSeePayments && { href: "/espace/paiements", label: "Paiements", icon: Send, hint: "Salaires, reversements aux propriétaires, dépenses et restitutions de caution, avec reçus." },
       ],
     },
     {

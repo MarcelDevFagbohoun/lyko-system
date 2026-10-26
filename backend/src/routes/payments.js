@@ -10,7 +10,10 @@ const { Router } = require('express');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, requireAnyPermission } = require('../middleware/auth');
+// Consultation de l'historique des paiements : réservée à qui peut verser ou enregistrer des dépenses
+// (avant : rôle « comptable », supprimé à la création des employés le 2026-10-26).
+const canSeePayments = requireAnyPermission('reversements_proprietaires', 'depenses_enregistrer');
 const { z } = require('zod');
 const { createOrderSchema, listOrdersQuery, listHistoryQuery } = require('../validators/payments');
 const { createOrder, refreshOrder, applyOrder, loadOrder, toPublicOrder } = require('../services/payments/orders');
@@ -50,7 +53,7 @@ async function loadOwnedOrder(req) {
   return order;
 }
 
-router.get('/summary', requireRole('dg', 'comptable'), async (req, res, next) => {
+router.get('/summary', canSeePayments, async (req, res, next) => {
   try {
     const [[t]] = await pool.query(
       'SELECT fedapay_enabled, fedapay_sandbox, payments_per_order_limit, payments_daily_limit FROM tenants WHERE id = :id',
@@ -73,7 +76,7 @@ router.get('/summary', requireRole('dg', 'comptable'), async (req, res, next) =>
   }
 });
 
-router.get('/orders', requireRole('dg', 'comptable'), async (req, res, next) => {
+router.get('/orders', canSeePayments, async (req, res, next) => {
   try {
     const q = parseOrThrow(listOrdersQuery, req.query);
     const where = ['tenant_id = :tenantId'];
@@ -92,7 +95,7 @@ router.get('/orders', requireRole('dg', 'comptable'), async (req, res, next) => 
   }
 });
 
-router.get('/orders/:id', requireRole('dg', 'comptable'), async (req, res, next) => {
+router.get('/orders/:id', canSeePayments, async (req, res, next) => {
   try {
     const order = await loadOwnedOrder(req);
     const [events] = await pool.query(
@@ -119,7 +122,7 @@ router.post('/orders', requireRole('dg'), sendLimiter, async (req, res, next) =>
   }
 });
 
-router.post('/orders/:id/refresh', requireRole('dg', 'comptable'), async (req, res, next) => {
+router.post('/orders/:id/refresh', canSeePayments, async (req, res, next) => {
   try {
     const order = await loadOwnedOrder(req);
     res.json({ order: toPublicOrder(await refreshOrder(req.user.tenantId, order.id, { req })) });
@@ -147,7 +150,7 @@ router.get('/audit/verify', requireRole('dg'), async (req, res, next) => {
   }
 });
 
-router.get('/orders/:id/advice.pdf', requireRole('dg', 'comptable'), async (req, res, next) => {
+router.get('/orders/:id/advice.pdf', canSeePayments, async (req, res, next) => {
   try {
     const order = await loadOwnedOrder(req);
     if (order.status !== 'sent') throw new ApiError(409, "L'avis n'est disponible qu'après confirmation de l'envoi.");
@@ -162,7 +165,7 @@ const { listPaymentHistory, KIND_LABELS } = require('../services/paymentHistory'
 const { streamOperationReceiptPdf } = require('../services/pdf');
 
 // Historique unifié (salaires visibles du seul DG : confidentiel).
-router.get('/history', requireRole('dg', 'comptable'), async (req, res, next) => {
+router.get('/history', canSeePayments, async (req, res, next) => {
   try {
     const q = listHistoryQuery.parse(req.query);
     const kinds = q.kind ? [q.kind] : null;
@@ -176,7 +179,7 @@ router.get('/history', requireRole('dg', 'comptable'), async (req, res, next) =>
 });
 
 // Reçu d'une opération saisie manuellement (reversement, reversement de charges, dépense, restitution de caution).
-router.get('/receipts/:kind/:id.pdf', requireRole('dg', 'comptable'), async (req, res, next) => {
+router.get('/receipts/:kind/:id.pdf', canSeePayments, async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     const kind = req.params.kind;

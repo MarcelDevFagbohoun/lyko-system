@@ -25,8 +25,11 @@ const { getChargeAccounts } = require('../services/utilityRemittance');
 const { listUtilityAlerts } = require('../services/utilityAlerts');
 const logger = require('../utils/logger');
 
+const { requireChargesEnabled } = require('../middleware/chargesModule');
 const router = Router();
-router.use(requireAuth, requirePermission('charges'));
+router.use(requireAuth, requireChargesEnabled, requirePermission('charges'));
+// Consulter les fiches de charges ne suffit pas à enregistrer quoi que ce soit (2026-10-26).
+router.use((req, res, next) => (['GET', 'HEAD', 'OPTIONS'].includes(req.method) ? next() : requirePermission('charges_enregistrer')(req, res, next)));
 
 const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
 const isoDate = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d ? String(d).slice(0, 10) : null);

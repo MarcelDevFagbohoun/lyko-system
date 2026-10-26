@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Gauge, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useCan } from "@/lib/auth/use-can";
 import { ApiError } from "@/lib/api/client";
 import { listProperties, type PropertyListItem } from "@/lib/api/properties";
 import {
@@ -40,6 +41,7 @@ function submeteredTypes(p: PropertyListItem): UtilityType[] {
 
 function RelevesContent() {
   const { accessToken, user } = useAuth();
+  const canRecord = useCan("charges_enregistrer");
   // /espace/biens exige `locataires` ou `proprietaires` — un employé charges-only (cette page
   // n'exige que `charges`) n'y a pas accès : lien mort sinon (audit du 2026-10-23).
   const canManageBiens = user?.role === "dg" || (user?.permissions.includes("locataires") ?? false) || (user?.permissions.includes("proprietaires") ?? false);
@@ -140,10 +142,12 @@ function RelevesContent() {
                   ))}
                 </select>
               </Field>
-              <Button onClick={() => setShowForm((v) => !v)}>
-                <Plus size={16} />
-                {showForm ? "Fermer" : "Nouveau relevé"}
-              </Button>
+              {canRecord && (
+                <Button onClick={() => setShowForm((v) => !v)}>
+                  <Plus size={16} />
+                  {showForm ? "Fermer" : "Nouveau relevé"}
+                </Button>
+              )}
             </div>
 
             {showForm && (
