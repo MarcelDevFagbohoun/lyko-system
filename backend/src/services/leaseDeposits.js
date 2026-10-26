@@ -23,7 +23,7 @@ const { assertPeriodOpenLocked } = require('./accountingPeriods');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { ADDITIONAL_DEPOSIT_TYPES, ADDITIONAL_DEPOSIT_LABELS, enabledAdditionalDepositTypes } = require('../constants/leaseDeposits');
 const { UTILITY_TYPES } = require('../constants/charges');
-const { recordUtilityPayment } = require('../routes/charges');
+const { recordUtilityPayment } = require('./utilityCharges');
 const { isoDate } = require('../utils/dates');
 
 const UTILITY_TYPE_LABELS = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, t.label]));

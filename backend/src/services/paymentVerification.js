@@ -3,7 +3,7 @@
 const { ApiError } = require('../middleware/error');
 const { pool } = require('../config/db');
 const { recordRentPayment } = require('../routes/leases');
-const { recordUtilityPayment, loadCharge } = require('../routes/charges');
+const { recordUtilityPayment, loadCharge } = require('./utilityCharges');
 const { notifyRentPaymentsRecorded, notifyUtilityPaymentRecorded } = require('./payments/notify');
 const { assertPeriodOpenLocked } = require('./accountingPeriods');
 const { todayIso } = require('../utils/dates');
