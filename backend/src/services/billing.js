@@ -393,8 +393,10 @@ async function describe(tenantId) {
     { tenantId },
   );
   const overLimits = active && plan && !interne ? await require('./entitlements').listOverLimits(tenantId, plan.limits) : [];
+  const usage = active && plan && !interne ? await require('./entitlements').getUsage(tenantId) : null;
   return {
     overLimits,
+    usage,
     planKey: s.plan_key,
     planLabel: s.plan_key ? (await getPlanAsync(s.plan_key))?.label : null,
     status: active ? 'active' : s.status === 'active' ? 'expired' : s.status,

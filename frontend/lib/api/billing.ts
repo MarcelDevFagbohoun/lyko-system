@@ -24,6 +24,8 @@ export type Subscription = {
   founderPrice: boolean;
   lastFailure?: { reference: string; planKey: PlanKey; months: number; amount: number; reason: string; anomaly: boolean; at: string } | null;
   overLimits?: { kind: string; label: string; count: number; max: number }[];
+  /** Consommation actuelle (offres payantes actives) — jauges de la page Abonnement. */
+  usage?: { units: number; owners: number; users: number } | null;
 };
 
 export type SubscriptionPayment = {
@@ -120,6 +122,13 @@ export const INACTIVE_EVENT = "aim:subscription-inactive";
 
 export function limitLabel(v: number | null) {
   return v === null ? "illimité" : String(v);
+}
+/** Fonctions listées dans les cartes d'offres, dans l'ordre d'affichage. */
+export const FEATURE_ORDER = ["core", "tenant_collect", "payroll", "payouts", "owner_portal", "sale_properties", "advanced_accounting", "audit_full"];
+
+/** Prix moyen par mois d'une offre (arrondi) — aide à comparer 4 mois et 12 mois. */
+export function pricePerMonth(offer: PlanOffer) {
+  return Math.round(offer.price / offer.months);
 }
 export function offerLabel(months: number) {
   return months === 12 ? "1 an" : `${months} mois`;

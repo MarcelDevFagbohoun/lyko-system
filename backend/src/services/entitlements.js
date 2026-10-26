@@ -123,6 +123,16 @@ async function listOverLimits(tenantId, limits) {
   return out;
 }
 
+/** Consommation actuelle de l'entreprise : { units, owners, users } (mêmes compteurs que les limites de l'offre). */
+async function getUsage(tenantId) {
+  const usage = {};
+  for (const kind of Object.keys(COUNTERS)) {
+    const [[row]] = await pool.query(COUNTERS[kind], { tenantId });
+    usage[kind] = Number(row.n);
+  }
+  return usage;
+}
+
 /** Ids des entreprises dont l'abonnement est actif (toutes si les abonnements ne sont pas appliqués). */
 async function listActiveTenantIds() {
   if (!config.features.subscriptionsEnforced) {
@@ -145,4 +155,4 @@ async function createInitialSubscription(conn, tenantId) {
   }
 }
 
-module.exports = { listOverLimits, listActiveTenantIds, enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };
+module.exports = { listOverLimits, getUsage, listActiveTenantIds, enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };

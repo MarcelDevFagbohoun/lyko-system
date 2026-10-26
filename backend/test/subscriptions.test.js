@@ -204,4 +204,7 @@ test('dépassement de limites (baisse d’offre) : détecté et affiché dans la
   await setSub('pro');
   const d = await call('GET', '/api/billing/subscription');
   assert.ok(Array.isArray(d.body.overLimits));
+  // Consommation actuelle exposée pour la page Abonnement (jauges unités / propriétaires / utilisateurs).
+  assert.deepEqual(Object.keys(d.body.usage).sort(), ['owners', 'units', 'users']);
+  for (const v of Object.values(d.body.usage)) assert.ok(Number.isInteger(v) && v >= 0);
 });

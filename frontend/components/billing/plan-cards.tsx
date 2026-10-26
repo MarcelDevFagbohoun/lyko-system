@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { Check, Minus } from "lucide-react";
-import { FEATURE_LABELS, limitLabel, offerLabel, type Catalog, type PlanKey, type PublicPlan } from "@/lib/api/billing";
+import { FEATURE_LABELS, offerLabel, type Catalog, type PlanKey, type PublicPlan } from "@/lib/api/billing";
+import { limitsSummary } from "@/lib/billing-plans";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -64,7 +65,7 @@ export function PlanCards({
             </div>
             <ul className="flex flex-col gap-1.5 text-body-sm text-ink-soft">
               <li className="font-label-md text-ink">
-                {limitLabel(plan.limits.units)} unités · {limitLabel(plan.limits.owners)} propriétaires · {limitLabel(plan.limits.users)} utilisateurs
+                {limitsSummary(plan.limits)}
               </li>
               {ORDER_FEATURES.filter((k) => plan.features.includes(k)).map((k) => (
                 <li key={k} className="flex gap-2">
