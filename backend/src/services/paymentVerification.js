@@ -2,7 +2,7 @@
 
 const { ApiError } = require('../middleware/error');
 const { pool } = require('../config/db');
-const { recordRentPayment } = require('../routes/leases');
+const { recordRentPayment } = require('./rentPayments');
 const { recordUtilityPayment, loadCharge } = require('./utilityCharges');
 const { notifyRentPaymentsRecorded, notifyUtilityPaymentRecorded } = require('./payments/notify');
 const { assertPeriodOpenLocked } = require('./accountingPeriods');
