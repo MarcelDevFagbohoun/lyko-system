@@ -2,8 +2,6 @@
 
 const { Router } = require('express');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs/promises');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requireAnyPermission } = require('../middleware/auth');
@@ -22,38 +20,10 @@ const {
   MAX_PHOTOS_PER_PROPERTY,
 } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
-const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
+const { toProtectedFileUrl } = require('../utils/uploads');
 const logger = require('../utils/logger');
+const properties = require('../services/properties');
 
-/**
- * Un même numéro de compteur SONEB/SBEE ne doit jamais être attribué à deux
- * Unités différentes de la même entreprise (compteur physique réel, un seul
- * possesseur) — voir migration 059 pour la contrainte UNIQUE en base ;
- * ce contrôle applicatif existe seulement pour renvoyer un message clair
- * (409) plutôt que le `ER_DUP_ENTRY` brut de MySQL. `excludeUnitId` (édition)
- * exclut l'unité elle-même de la recherche — resaisir sa propre valeur
- * inchangée ne doit jamais se déclarer en conflit avec soi-même.
- */
-async function assertMeterNumbersAvailable(conn, tenantId, { sonebMeterNumber, sbeeMeterNumber }, excludeUnitId) {
-  if (sonebMeterNumber) {
-    const [rows] = await conn.query(
-      `SELECT id FROM property_units WHERE tenant_id = :tenantId AND soneb_meter_number = :value
-       ${excludeUnitId ? 'AND id != :excludeUnitId' : ''} LIMIT 1`,
-      { tenantId, value: sonebMeterNumber, excludeUnitId },
-    );
-    if (rows[0]) throw new ApiError(409, 'Ce numéro de compteur SONEB est déjà utilisé par une autre unité');
-  }
-  if (sbeeMeterNumber) {
-    const [rows] = await conn.query(
-      `SELECT id FROM property_units WHERE tenant_id = :tenantId AND sbee_meter_number = :value
-       ${excludeUnitId ? 'AND id != :excludeUnitId' : ''} LIMIT 1`,
-      { tenantId, value: sbeeMeterNumber, excludeUnitId },
-    );
-    if (rows[0]) throw new ApiError(409, 'Ce numéro de compteur SBEE est déjà utilisé par une autre unité');
-  }
-}
-
-const { assertWithinLimit } = require('../services/entitlements');
 const router = Router();
 // Les Biens/Unités sont le patrimoine des propriétaires ET le logement des
 // locataires : gérables par qui a `locataires` (formulaire historique,
@@ -63,7 +33,6 @@ const router = Router();
 // lui rattacher de bien ni d'unité.
 router.use(requireAuth, requireAnyPermission('locataires', 'proprietaires'));
 
-const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
 const EXT_BY_MIME = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 
 const upload = multer({
@@ -119,19 +88,6 @@ function toPublicProperty(row, extra = {}) {
   };
 }
 
-// Bien + son propriétaire joint (nom/téléphone) + son créateur (nom/rôle) :
-// réutilisé par la liste, la fiche et la création d'un Bien existant.
-const PROPERTY_WITH_OWNER_SELECT = `
-  p.*, o.name AS owner_name, o.phone AS owner_phone,
-  cu.first_name AS creator_first_name, cu.last_name AS creator_last_name, cu.role AS creator_role,
-  au.first_name AS agent_first_name, au.last_name AS agent_last_name
-`;
-const PROPERTY_WITH_OWNER_JOINS = `
-  JOIN owners o ON o.id = p.owner_id
-  LEFT JOIN users cu ON cu.id = p.created_by
-  LEFT JOIN users au ON au.id = p.agent_id
-`;
-
 function toPublicUnit(row, extra = {}) {
   return {
     id: row.id,
@@ -149,45 +105,9 @@ function toPublicUnit(row, extra = {}) {
   };
 }
 
-/**
- * Charge un Bien de l'entreprise courante (+ son propriétaire), ou lève 404.
- * `scopeAgentId` (voir services/scope.js) : si fourni (agent restreint à un
- * sous-ensemble du portefeuille), un Bien attribué à un AUTRE agent (ou à
- * personne) répond aussi 404 — jamais 403, pour ne jamais confirmer qu'un
- * Bien existe à un agent qui ne le gère pas.
- */
-async function loadProperty(conn, tenantId, propertyId, scopeAgentId = null) {
-  const [rows] = await conn.query(
-    `SELECT ${PROPERTY_WITH_OWNER_SELECT} FROM properties p ${PROPERTY_WITH_OWNER_JOINS}
-     WHERE p.id = :id AND p.tenant_id = :tenantId LIMIT 1`,
-    { id: propertyId, tenantId },
-  );
-  if (!rows[0]) throw new ApiError(404, 'Bien introuvable');
-  if (scopeAgentId != null && Number(rows[0].agent_id) !== Number(scopeAgentId)) {
-    throw new ApiError(404, 'Bien introuvable');
-  }
-  return rows[0];
-}
-
-/** Vérifie que le propriétaire appartient à l'entreprise courante, ou lève 404. */
-async function assertOwnerExists(conn, tenantId, ownerId) {
-  const [rows] = await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
-    id: ownerId,
-    tenantId,
-  });
-  if (!rows[0]) throw new ApiError(404, 'Propriétaire introuvable');
-}
-
-async function nextPropertyCode(conn, tenantId) {
-  const [rows] = await conn.query('SELECT COUNT(*) AS n FROM properties WHERE tenant_id = :tenantId', { tenantId });
-  return `BIEN-${String(Number(rows[0].n) + 1).padStart(3, '0')}`;
-}
-
-async function nextUnitCode(conn, propertyCode, propertyId) {
-  const [rows] = await conn.query('SELECT COUNT(*) AS n FROM property_units WHERE property_id = :propertyId', {
-    propertyId,
-  });
-  return `${propertyCode}-U${String(Number(rows[0].n) + 1).padStart(2, '0')}`;
+function parseId(value) {
+  const id = Number(value);
+  return Number.isInteger(id) ? id : null;
 }
 
 // GET /api/properties/meta — catalogues pour construire les formulaires.
@@ -200,33 +120,8 @@ router.get('/meta', (_req, res) => {
 router.get('/', async (req, res, next) => {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const params = { tenantId: req.user.tenantId };
-    let where = 'p.tenant_id = :tenantId';
-    if (q) {
-      where += ' AND (o.name LIKE :q OR p.code LIKE :q)';
-      params.q = `%${q}%`;
-    }
-    // Portée « Biens gérés » (étape 14) : un agent restreint ne voit que ses
-    // propres Biens attribués — voir services/scope.js.
     const scopeAgentId = await resolvePropertyScope(req.user);
-    if (scopeAgentId != null) {
-      where += ' AND p.agent_id = :scopeAgentId';
-      params.scopeAgentId = scopeAgentId;
-    }
-
-    const [rows] = await pool.query(
-      `SELECT ${PROPERTY_WITH_OWNER_SELECT},
-              COUNT(u.id) AS units_count,
-              SUM(CASE WHEN u.status = 'libre' THEN 1 ELSE 0 END) AS units_free
-       FROM properties p
-       ${PROPERTY_WITH_OWNER_JOINS}
-       LEFT JOIN property_units u ON u.property_id = p.id
-       WHERE ${where}
-       GROUP BY p.id
-       ORDER BY p.created_at DESC`,
-      params,
-    );
-
+    const rows = await properties.listProperties(req.user.tenantId, scopeAgentId, q);
     res.json({
       properties: rows.map((r) =>
         toPublicProperty(r, { unitsCount: Number(r.units_count), unitsFree: Number(r.units_free) }),
@@ -239,24 +134,12 @@ router.get('/', async (req, res, next) => {
 
 // GET /api/properties/:id — fiche du Bien + tableau de ses unités.
 router.get('/:id', async (req, res, next) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+  const id = parseId(req.params.id);
+  if (id === null) return next(new ApiError(400, 'Identifiant invalide'));
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const property = await loadProperty(pool, req.user.tenantId, id, scopeAgentId);
-
-    const [units] = await pool.query(
-      `SELECT u.*, l.id AS active_lease_id, r.id AS renter_id, r.first_name, r.last_name,
-              cu.first_name AS creator_first_name, cu.last_name AS creator_last_name, cu.role AS creator_role
-       FROM property_units u
-       LEFT JOIN leases l ON l.unit_id = u.id AND l.status = 'active'
-       LEFT JOIN renters r ON r.id = l.renter_id
-       LEFT JOIN users cu ON cu.id = u.created_by
-       WHERE u.property_id = :id
-       ORDER BY u.code`,
-      { id },
-    );
-
+    const property = await properties.loadProperty(pool, req.user.tenantId, id, scopeAgentId);
+    const units = await properties.listPropertyUnits(id);
     res.json({
       property: toPublicProperty(property),
       units: units.map((u) =>
@@ -276,229 +159,61 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_PROPERTY), async (req, re
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
-  const data = parsed.data;
 
-  const conn = await pool.getConnection();
   try {
-    await assertOwnerExists(conn, req.user.tenantId, data.ownerId);
-
-    // Un agent déjà restreint à un sous-ensemble du portefeuille (étape 14)
-    // qui crée un nouveau Bien doit pouvoir le retrouver ensuite — sinon il
-    // disparaîtrait aussitôt de sa propre vue (non attribué = hors de sa
-    // portée). Auto-attribution à lui-même ; le DG (ou un agent encore sans
-    // aucune attribution, donc en accès complet) crée toujours un Bien non
-    // attribué, à répartir ensuite depuis la fiche de l'employé.
     const scopeAgentId = await resolvePropertyScope(req.user);
-
-    await conn.beginTransaction();
-
-    const code = await nextPropertyCode(conn, req.user.tenantId);
-    const hasCoords = data.latitude != null && data.longitude != null;
-    const [result] = await conn.query(
-      `INSERT INTO properties
-         (tenant_id, code, owner_id, agent_id, agent_assigned_at, address, latitude, longitude, location_set_at, property_type, levels, created_by)
-       VALUES (:tenantId, :code, :ownerId, :agentId, ${scopeAgentId != null ? 'NOW()' : 'NULL'},
-               :address, :latitude, :longitude, ${hasCoords ? 'NOW()' : 'NULL'}, :type, :levels, :createdBy)`,
-      {
-        tenantId: req.user.tenantId,
-        code,
-        ownerId: data.ownerId,
-        agentId: scopeAgentId,
-        address: data.address,
-        latitude: data.latitude ?? null,
-        longitude: data.longitude ?? null,
-        type: data.propertyType,
-        levels: data.levels ?? null,
-        createdBy: req.user.id,
-      },
-    );
-    const propertyId = result.insertId;
-
-    // Étape 51bis : ouvre la première période de `property_owner_history` (migration 078) — sans cette
-    // ligne, un Bien créé après la migration n'aurait AUCUNE période, et toute requête comptable qui
-    // résout le propriétaire en vigueur à une date donnée (`getEscrowBalances`, `getRecetteProprietaire`)
-    // ne trouverait jamais personne pour lui.
-    await conn.query(
-      'INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on, set_by) VALUES (:tenantId, :propertyId, :ownerId, CURDATE(), :setBy)',
-      { tenantId: req.user.tenantId, propertyId, ownerId: data.ownerId, setBy: req.user.id },
-    );
-
-    let photoPaths = [];
-    if (req.files && req.files.length > 0) {
-      const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}/properties/${propertyId}`);
-      await fs.mkdir(dir, { recursive: true });
-      photoPaths = await Promise.all(
-        req.files.map(async (file, i) => {
-          const ext = assertUploadType(file, { label: 'Photo' });
-          const rel = `tenants/${req.user.tenantId}/properties/${propertyId}/${randomFileName(`photo-${i + 1}`, ext)}`;
-          await fs.writeFile(path.join(UPLOADS_ROOT, rel), file.buffer);
-          return rel;
-        }),
-      );
-      await conn.query('UPDATE properties SET photo_paths = :paths WHERE id = :id', {
-        paths: JSON.stringify(photoPaths),
-        id: propertyId,
-      });
-    }
-
-    await conn.commit();
+    const { propertyId, code } = await properties.createProperty(req.user.tenantId, req.user.id, scopeAgentId, parsed.data, req.files);
     logger.info('Bien créé', { tenantId: req.user.tenantId, propertyId, code, by: req.user.id });
     res.status(201).json({ propertyId, code });
   } catch (err) {
-    await conn.rollback().catch(() => {});
     next(err);
-  } finally {
-    conn.release();
   }
 });
 
 // PATCH /api/properties/:id — modifier un Bien (+ ajout de photos).
 router.patch('/:id', upload.array('photos', MAX_PHOTOS_PER_PROPERTY), async (req, res, next) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+  const id = parseId(req.params.id);
+  if (id === null) return next(new ApiError(400, 'Identifiant invalide'));
 
   const parsed = updatePropertySchema.safeParse(req.body);
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
-  const data = parsed.data;
 
-  const conn = await pool.getConnection();
-  let ownerChanging = false;
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const property = await loadProperty(conn, req.user.tenantId, id, scopeAgentId);
-
-    ownerChanging = data.ownerId !== undefined && Number(data.ownerId) !== Number(property.owner_id);
-    if (data.ownerId !== undefined) {
-      await assertOwnerExists(conn, req.user.tenantId, data.ownerId);
-    }
-
-    const fields = [];
-    const params = { id };
-    if (data.ownerId !== undefined) { fields.push('owner_id = :ownerId'); params.ownerId = data.ownerId; }
-    if (data.address !== undefined) { fields.push('address = :address'); params.address = data.address; }
-    if (data.latitude !== undefined) { fields.push('latitude = :latitude'); params.latitude = data.latitude; }
-    if (data.longitude !== undefined) { fields.push('longitude = :longitude'); params.longitude = data.longitude; }
-    if (data.latitude !== undefined || data.longitude !== undefined) {
-      fields.push(data.latitude != null ? 'location_set_at = NOW()' : 'location_set_at = NULL');
-    }
-    if (data.propertyType !== undefined) { fields.push('property_type = :type'); params.type = data.propertyType; }
-    if (data.levels !== undefined) { fields.push('levels = :levels'); params.levels = data.levels; }
-
-    let existingPhotos = property.photo_paths || [];
-    if (req.files && req.files.length > 0) {
-      const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}/properties/${id}`);
-      await fs.mkdir(dir, { recursive: true });
-      const startIndex = existingPhotos.length;
-      const newPaths = await Promise.all(
-        req.files.slice(0, Math.max(0, MAX_PHOTOS_PER_PROPERTY - existingPhotos.length)).map(async (file, i) => {
-          const ext = assertUploadType(file, { label: 'Photo' });
-          const rel = `tenants/${req.user.tenantId}/properties/${id}/${randomFileName(`photo-${startIndex + i + 1}`, ext)}`;
-          await fs.writeFile(path.join(UPLOADS_ROOT, rel), file.buffer);
-          return rel;
-        }),
-      );
-      existingPhotos = [...existingPhotos, ...newPaths];
-      fields.push('photo_paths = :photos');
-      params.photos = JSON.stringify(existingPhotos);
-    }
-
-    if (ownerChanging) {
-      // Audit comptable (étape 51bis) : réattribuer le propriétaire d'un Bien réécrivait auparavant
-      // silencieusement tout son historique financier (voir `property_owner_history`, migration 078) —
-      // la comptabilité ne regarde QUE `properties.owner_id`, jamais quand il a changé. Clôture la
-      // période en vigueur et en ouvre une nouvelle à la date d'aujourd'hui : tout ce qui a déjà été
-      // réellement perçu/dépensé reste attribué à l'ANCIEN propriétaire, seul l'avenir appartient au
-      // nouveau. `FOR UPDATE` sérialise deux réattributions concurrentes du même Bien.
-      await conn.beginTransaction();
-      const [[openPeriod]] = await conn.query(
-        'SELECT id FROM property_owner_history WHERE property_id = :id AND ends_on IS NULL FOR UPDATE',
-        { id },
-      );
-      if (openPeriod) {
-        await conn.query('UPDATE property_owner_history SET ends_on = CURDATE() WHERE id = :id', { id: openPeriod.id });
-      }
-      await conn.query(
-        `INSERT INTO property_owner_history (tenant_id, property_id, owner_id, starts_on, set_by)
-         VALUES (:tenantId, :propertyId, :ownerId, CURDATE(), :setBy)`,
-        { tenantId: req.user.tenantId, propertyId: id, ownerId: data.ownerId, setBy: req.user.id },
-      );
-    }
-
-    if (fields.length > 0) {
-      await conn.query(`UPDATE properties SET ${fields.join(', ')} WHERE id = :id`, params);
-    }
-
-    if (ownerChanging) await conn.commit();
-
-    const updated = await loadProperty(pool, req.user.tenantId, id);
+    const updated = await properties.updateProperty(req.user.tenantId, req.user.id, id, scopeAgentId, parsed.data, req.files);
     res.json({ property: toPublicProperty(updated) });
   } catch (err) {
-    if (ownerChanging) await conn.rollback().catch(() => {});
     next(err);
-  } finally {
-    conn.release();
   }
 });
 
 // POST /api/properties/:id/units — ajouter une Unité locative à un Bien.
 router.post('/:id/units', async (req, res, next) => {
-  const propertyId = Number(req.params.id);
-  if (!Number.isInteger(propertyId)) return next(new ApiError(400, 'Identifiant invalide'));
+  const propertyId = parseId(req.params.id);
+  if (propertyId === null) return next(new ApiError(400, 'Identifiant invalide'));
 
   const parsed = createUnitSchema.safeParse(req.body);
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
-  const data = parsed.data;
 
-  const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const property = await loadProperty(conn, req.user.tenantId, propertyId, scopeAgentId);
-    await assertMeterNumbersAvailable(conn, req.user.tenantId, data);
-    const code = await nextUnitCode(conn, property.code, propertyId);
-
-    await conn.beginTransaction();
-    await assertWithinLimit(req.user.tenantId, 'units', conn);
-    const [result] = await conn.query(
-      `INSERT INTO property_units
-         (tenant_id, property_id, code, designation, designation_custom, monthly_rent,
-          soneb_meter_number, sbee_meter_number, furnished, created_by)
-       VALUES (:tenantId, :propertyId, :code, :designation, :designationCustom, :rent,
-               :sonebMeterNumber, :sbeeMeterNumber, :furnished, :createdBy)`,
-      {
-        tenantId: req.user.tenantId,
-        propertyId,
-        code,
-        designation: data.designation,
-        designationCustom: data.designationCustom,
-        rent: data.monthlyRent,
-        sonebMeterNumber: data.sonebMeterNumber,
-        sbeeMeterNumber: data.sbeeMeterNumber,
-        furnished: data.furnished ? 1 : 0,
-        createdBy: req.user.id,
-      },
-    );
-
-    await conn.commit();
-
-    logger.info('Unité créée', { tenantId: req.user.tenantId, propertyId, unitId: result.insertId, code, by: req.user.id });
-    res.status(201).json({ unitId: result.insertId, code });
+    const { unitId, code } = await properties.createUnit(req.user.tenantId, req.user.id, propertyId, scopeAgentId, parsed.data);
+    logger.info('Unité créée', { tenantId: req.user.tenantId, propertyId, unitId, code, by: req.user.id });
+    res.status(201).json({ unitId, code });
   } catch (err) {
-    await conn.rollback().catch(() => {});
     next(err);
-  } finally {
-    conn.release();
   }
 });
 
 // PATCH /api/properties/:id/units/:unitId — modifier une Unité (loyer, compteurs, statut manuel).
 router.patch('/:id/units/:unitId', async (req, res, next) => {
-  const propertyId = Number(req.params.id);
-  const unitId = Number(req.params.unitId);
-  if (!Number.isInteger(propertyId) || !Number.isInteger(unitId)) {
+  const propertyId = parseId(req.params.id);
+  const unitId = parseId(req.params.unitId);
+  if (propertyId === null || unitId === null) {
     return next(new ApiError(400, 'Identifiant invalide'));
   }
 
@@ -506,49 +221,11 @@ router.patch('/:id/units/:unitId', async (req, res, next) => {
   if (!parsed.success) {
     return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
   }
-  const data = parsed.data;
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadProperty(pool, req.user.tenantId, propertyId, scopeAgentId);
-    const [unitRows] = await pool.query(
-      'SELECT * FROM property_units WHERE id = :unitId AND property_id = :propertyId LIMIT 1',
-      { unitId, propertyId },
-    );
-    if (!unitRows[0]) throw new ApiError(404, 'Unité introuvable');
-
-    await assertMeterNumbersAvailable(pool, req.user.tenantId, data, unitId);
-
-    if (data.status === 'loue') {
-      const [activeLease] = await pool.query(
-        "SELECT id FROM leases WHERE unit_id = :unitId AND status = 'active' LIMIT 1",
-        { unitId },
-      );
-      if (!activeLease[0]) {
-        throw new ApiError(400, "Impossible de marquer « Loué » sans bail actif : créez un locataire pour cette unité.");
-      }
-    }
-
-    const fields = [];
-    const params = { unitId };
-    if (data.designation !== undefined) { fields.push('designation = :designation'); params.designation = data.designation; }
-    if (data.designationCustom !== undefined) { fields.push('designation_custom = :designationCustom'); params.designationCustom = data.designationCustom; }
-    if (data.monthlyRent !== undefined) { fields.push('monthly_rent = :rent'); params.rent = data.monthlyRent; }
-    if (data.sonebMeterNumber !== undefined) { fields.push('soneb_meter_number = :soneb'); params.soneb = data.sonebMeterNumber; }
-    if (data.sbeeMeterNumber !== undefined) { fields.push('sbee_meter_number = :sbee'); params.sbee = data.sbeeMeterNumber; }
-    if (data.furnished !== undefined) { fields.push('furnished = :furnished'); params.furnished = data.furnished ? 1 : 0; }
-    if (data.status !== undefined) { fields.push('status = :status'); params.status = data.status; }
-
-    if (fields.length > 0) {
-      await pool.query(`UPDATE property_units SET ${fields.join(', ')} WHERE id = :unitId`, params);
-    }
-
-    const [updated] = await pool.query(
-      `SELECT u.*, cu.first_name AS creator_first_name, cu.last_name AS creator_last_name, cu.role AS creator_role
-       FROM property_units u LEFT JOIN users cu ON cu.id = u.created_by WHERE u.id = :unitId`,
-      { unitId },
-    );
-    res.json({ unit: toPublicUnit(updated[0]) });
+    const unit = await properties.updateUnit(req.user.tenantId, propertyId, unitId, scopeAgentId, parsed.data);
+    res.json({ unit: toPublicUnit(unit) });
   } catch (err) {
     next(err);
   }
@@ -559,42 +236,15 @@ router.patch('/:id/units/:unitId', async (req, res, next) => {
 // unique, déclenchable directement depuis la fiche du bien (pas besoin de
 // retrouver le locataire).
 router.post('/:id/units/:unitId/release', async (req, res, next) => {
-  const propertyId = Number(req.params.id);
-  const unitId = Number(req.params.unitId);
-  if (!Number.isInteger(propertyId) || !Number.isInteger(unitId)) {
+  const propertyId = parseId(req.params.id);
+  const unitId = parseId(req.params.unitId);
+  if (propertyId === null || unitId === null) {
     return next(new ApiError(400, 'Identifiant invalide'));
   }
 
-  const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadProperty(conn, req.user.tenantId, propertyId, scopeAgentId);
-    const [unitRows] = await conn.query(
-      'SELECT * FROM property_units WHERE id = :unitId AND property_id = :propertyId LIMIT 1',
-      { unitId, propertyId },
-    );
-    if (!unitRows[0]) throw new ApiError(404, 'Unité introuvable');
-    if (unitRows[0].status === 'libre') {
-      throw new ApiError(400, 'Cette unité est déjà libre.');
-    }
-
-    const [activeLeaseRows] = await conn.query(
-      "SELECT id FROM leases WHERE unit_id = :unitId AND tenant_id = :tenantId AND status = 'active' LIMIT 1",
-      { unitId, tenantId: req.user.tenantId },
-    );
-
-    await conn.beginTransaction();
-    let releasedLeaseId = null;
-    if (activeLeaseRows[0]) {
-      releasedLeaseId = activeLeaseRows[0].id;
-      await conn.query(
-        "UPDATE leases SET status = 'ended', end_date = :endDate WHERE id = :id",
-        { endDate: new Date().toISOString().slice(0, 10), id: releasedLeaseId },
-      );
-    }
-    await conn.query("UPDATE property_units SET status = 'libre' WHERE id = :unitId", { unitId });
-    await conn.commit();
-
+    const { unit, releasedLeaseId } = await properties.releaseUnit(req.user.tenantId, propertyId, unitId, scopeAgentId);
     logger.info('Unité libérée', {
       tenantId: req.user.tenantId,
       propertyId,
@@ -602,14 +252,9 @@ router.post('/:id/units/:unitId/release', async (req, res, next) => {
       releasedLeaseId,
       by: req.user.id,
     });
-
-    const [updated] = await pool.query('SELECT * FROM property_units WHERE id = :unitId', { unitId });
-    res.json({ unit: toPublicUnit(updated[0]), releasedLeaseId });
+    res.json({ unit: toPublicUnit(unit), releasedLeaseId });
   } catch (err) {
-    await conn.rollback().catch(() => {});
     next(err);
-  } finally {
-    conn.release();
   }
 });
 
@@ -619,8 +264,8 @@ router.post('/:id/units/:unitId/release', async (req, res, next) => {
 // proprietaires/comptabilite (le routeur autorise déjà `locataires` en plus
 // pour le reste du module — pas pour cette écran-ci, plus sensible).
 router.get('/:id/recette', requireAnyPermission('proprietaires', 'comptabilite'), async (req, res, next) => {
-  const propertyId = Number(req.params.id);
-  if (!Number.isInteger(propertyId)) return next(new ApiError(400, 'Identifiant invalide'));
+  const propertyId = parseId(req.params.id);
+  if (propertyId === null) return next(new ApiError(400, 'Identifiant invalide'));
 
   const parsed = recetteQuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -629,7 +274,7 @@ router.get('/:id/recette', requireAnyPermission('proprietaires', 'comptabilite')
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadProperty(pool, req.user.tenantId, propertyId, scopeAgentId); // 404 si hors tenant/portée
+    await properties.loadProperty(pool, req.user.tenantId, propertyId, scopeAgentId); // 404 si hors tenant/portée
     const recette = await getRecetteProprietaire(req.user.tenantId, propertyId, parsed.data.mois);
     res.json({ recette });
   } catch (err) {
