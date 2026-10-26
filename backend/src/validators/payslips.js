@@ -34,7 +34,7 @@ const createPayslipSchema = z
     bonusLabel: optionalText(150),
     deductionAmount: amountSchema('Retenue').optional().default(0),
     deductionLabel: optionalText(150),
-    paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
+    paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de règlement invalide' }),
     paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)'),
     idempotencyKey: idempotencyKeySchema,
   })

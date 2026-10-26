@@ -29,7 +29,7 @@ const inspectionItemSchema = z.object({
   label: z.string().trim().min(1).max(150),
   custom: z.boolean().default(false),
   condition: z
-    .enum(INSPECTION_CONDITIONS, { errorMap: () => ({ message: 'État invalide (BE/ME/SR)' }) })
+    .enum(INSPECTION_CONDITIONS, { error: 'État invalide (BE/ME/SR)' })
     .nullable()
     .default(null),
   comment: optionalText(500),

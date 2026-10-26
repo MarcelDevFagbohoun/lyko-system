@@ -64,7 +64,7 @@ const createPayoutSchema = z.object({
   periodLabel: z.string().trim().min(1, 'Requis').max(50, 'Trop long'),
   paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide'),
   paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque'], {
-    errorMap: () => ({ message: 'Mode de règlement invalide' }),
+    error: 'Mode de règlement invalide',
   }),
   notes: optionalText(255),
   idempotencyKey: idempotencyKeySchema,
@@ -93,7 +93,7 @@ const createDepositTransferSchema = z.object({
   direction: z.enum(['to_owner', 'from_owner']).default('to_owner'),
   amount: z.coerce.number().int('Montant entier requis').positive('Le montant doit être supérieur à 0').max(1_000_000_000, 'Montant hors limite'),
   paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide'),
-  paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque'], { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
+  paymentMethod: z.enum(['especes', 'mobile_money', 'virement', 'cheque'], { error: 'Mode de règlement invalide' }),
   motive: z.string().trim().min(5, 'Motif requis (5 caractères minimum)').max(255, 'Trop long'),
   requestedByOwner: z.coerce.boolean().default(true),
   // Manquante jusqu'à l'audit du 2026-10-23 (contrairement à `createChargeRemittanceSchema`,

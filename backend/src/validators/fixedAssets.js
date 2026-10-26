@@ -14,14 +14,14 @@ const PAYMENT_METHODS = ['especes', 'mobile_money', 'virement', 'cheque'];
 const createFixedAssetSchema = z
   .object({
     label: z.string().trim().min(2, 'Libellé requis').max(150, 'Trop long'),
-    category: z.enum(FIXED_ASSET_CATEGORY_KEYS, { errorMap: () => ({ message: 'Catégorie invalide' }) }),
+    category: z.enum(FIXED_ASSET_CATEGORY_KEYS, { error: 'Catégorie invalide' }),
     acquisitionDate: dateSchema,
     acquisitionCost: amountSchema,
     // Durée d'amortissement linéaire — bornes larges mais raisonnables pour
     // du matériel (jamais 0, jamais un siècle).
     usefulLifeYears: z.coerce.number().int().min(1).max(30),
     paymentStatus: z.enum(['paid', 'unpaid']).default('paid'),
-    paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
+    paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de règlement invalide' }).optional(),
     supplierName: z.string().trim().min(2, 'Nom du fournisseur requis').max(150, 'Trop long').optional(),
     idempotencyKey: idempotencyKeySchema,
   })
@@ -35,7 +35,7 @@ const createFixedAssetSchema = z
   });
 
 const payFixedAssetSchema = z.object({
-  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
+  paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de règlement invalide' }),
   paidAt: dateSchema,
 });
 

@@ -28,7 +28,7 @@ const PAYMENT_METHODS = ['especes', 'mobile_money', 'virement', 'cheque'];
 const createChargeSchema = z
   .object({
     leaseId: z.coerce.number().int('Bail requis').positive('Bail requis'),
-    utilityType: z.enum(UTILITY_TYPE_KEYS, { errorMap: () => ({ message: 'Type de fluide invalide' }) }),
+    utilityType: z.enum(UTILITY_TYPE_KEYS, { error: 'Type de fluide invalide' }),
     periodStart: dateSchema,
     periodEnd: dateSchema,
     readingStart: readingSchema,
@@ -49,7 +49,7 @@ const createChargeSchema = z
 
 const updateChargeSchema = z
   .object({
-    utilityType: z.enum(UTILITY_TYPE_KEYS, { errorMap: () => ({ message: 'Type de fluide invalide' }) }).optional(),
+    utilityType: z.enum(UTILITY_TYPE_KEYS, { error: 'Type de fluide invalide' }).optional(),
     periodStart: dateSchema.optional(),
     periodEnd: dateSchema.optional(),
     readingStart: readingSchema.optional(),
@@ -72,7 +72,7 @@ const updateChargeSchema = z
 const amountSchema = z.coerce.number().int('Montant entier requis').positive('Montant invalide').max(1_000_000_000, 'Montant hors limite');
 const createUtilityPaymentSchema = z.object({
   amount: amountSchema,
-  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
+  paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de règlement invalide' }),
   paidAt: dateSchema,
   notes: optionalText(255),
   // Clé d'idempotence de CET envoi (étape 36) : même clé = un seul règlement. Facultative (ancien
@@ -86,7 +86,7 @@ const createUtilityPaymentSchema = z.object({
 const mainPaymentSchema = z.object({
   amount: amountSchema,
   paidAt: dateSchema,
-  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
+  paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de règlement invalide' }).optional(),
   notes: optionalText(255),
 });
 
@@ -100,7 +100,7 @@ const deleteReasonSchema = z.object({
 
 const nullablePrice = unitPriceSchema.nullable().optional();
 
-const lossAllocationSchema = z.enum(LOSS_ALLOCATION_MODES, { errorMap: () => ({ message: 'Répartition invalide' }) }).optional();
+const lossAllocationSchema = z.enum(LOSS_ALLOCATION_MODES, { error: 'Répartition invalide' }).optional();
 
 /** Config sous-comptage d'un Bien (PATCH partiel). */
 const utilityConfigSchema = z.object({
@@ -119,7 +119,7 @@ const utilityConfigSchema = z.object({
 /** Création d'un relevé : fluide + période. Le tarif et les décompteurs sont dérivés du Bien. */
 const createBatchSchema = z
   .object({
-    utilityType: z.enum(UTILITY_TYPE_KEYS, { errorMap: () => ({ message: 'Type de fluide invalide' }) }),
+    utilityType: z.enum(UTILITY_TYPE_KEYS, { error: 'Type de fluide invalide' }),
     periodStart: dateSchema,
     periodEnd: dateSchema,
   })

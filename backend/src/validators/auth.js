@@ -70,7 +70,7 @@ function normalizeRegistrationPhone(country, raw) {
   return parsePhoneNumber(candidate, country).number;
 }
 
-const countrySchema = z.enum(REGISTRATION_COUNTRY_CODES, { errorMap: () => ({ message: 'Pays invalide' }) });
+const countrySchema = z.enum(REGISTRATION_COUNTRY_CODES, { error: 'Pays invalide' });
 
 // Email de l'inscription (demande utilisateur, 2026-10-18) : OBLIGATOIRE, contrairement à celui
 // (facultatif) d'un employé (`validators/employee.js`) — c'est lui qui reçoit le code de
@@ -121,7 +121,7 @@ const registerSchema = z
     password: passwordSchema,
     confirmPassword: z.string(),
     // Case « J'accepte les conditions » : obligatoire (formulaire multipart => chaîne « true »).
-    acceptTerms: z.preprocess((v) => v === true || v === 'true', z.literal(true, { errorMap: () => ({ message: 'Vous devez accepter les conditions d’utilisation' }) })),
+    acceptTerms: z.preprocess((v) => v === true || v === 'true', z.literal(true, { error: 'Vous devez accepter les conditions d’utilisation' })),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: 'Les mots de passe ne correspondent pas',
@@ -175,7 +175,7 @@ const employeeLoginSchema = z.object({
     .toUpperCase()
     .min(4, 'Identifiant requis'),
   // Le poste n'est plus saisi à la connexion : il vient du compte. S'il est fourni (anciens clients), il doit correspondre.
-  role: z.enum(['comptable', 'agent'], { errorMap: () => ({ message: 'Poste invalide' }) }).optional(),
+  role: z.enum(['comptable', 'agent'], { error: 'Poste invalide' }).optional(),
   password: z.string().min(1, 'Mot de passe requis'),
 });
 

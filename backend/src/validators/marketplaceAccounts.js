@@ -6,7 +6,7 @@ const { optionalText } = require('./renters');
 
 const registerAccountSchema = z.object({
   tenantId: z.coerce.number().int().positive(),
-  role: z.enum(['chercheur', 'proprietaire'], { errorMap: () => ({ message: 'Type de compte invalide' }) }),
+  role: z.enum(['chercheur', 'proprietaire'], { error: 'Type de compte invalide' }),
   firstName: nameSchema,
   lastName: nameSchema,
   phone: phoneSchema,
@@ -20,13 +20,13 @@ const loginAccountSchema = z.object({
 });
 
 const createRequestSchema = z.object({
-  requestType: z.enum(['louer', 'vendre'], { errorMap: () => ({ message: 'Type de demande invalide' }) }),
+  requestType: z.enum(['louer', 'vendre'], { error: 'Type de demande invalide' }),
   address: z.string().trim().min(3, 'Adresse requise').max(255),
   description: optionalText(2000),
 });
 
 const updateRequestStatusSchema = z.object({
-  status: z.enum(['contactee', 'acceptee', 'refusee'], { errorMap: () => ({ message: 'Statut invalide' }) }),
+  status: z.enum(['contactee', 'acceptee', 'refusee'], { error: 'Statut invalide' }),
 });
 
 module.exports = {

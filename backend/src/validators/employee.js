@@ -25,7 +25,7 @@ const emailSchema = z
 
 // Rôle attribuable à un employé (le DG ne se crée pas via cet écran : voir étape 2).
 const employeeRoleSchema = z.enum(['comptable', 'agent'], {
-  errorMap: () => ({ message: "Rôle invalide (comptable ou agent)" }),
+  error: "Rôle invalide (comptable ou agent)",
 });
 
 // Poste obligatoire à la création (ex. « Secrétaire ») : choisi dans les suggestions ou saisi librement.

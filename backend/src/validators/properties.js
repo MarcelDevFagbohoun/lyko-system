@@ -13,7 +13,7 @@ const optionalText = (max) =>
     .transform((v) => (v ? v : null));
 
 const propertyTypeSchema = z.enum(PROPERTY_TYPE_KEYS, {
-  errorMap: () => ({ message: 'Type de bien invalide' }),
+  error: 'Type de bien invalide',
 });
 
 // Numéro de compteur SONEB/SBEE — format béninois réel : 14 caractères en
@@ -61,7 +61,7 @@ const updatePropertySchema = z
   .refine(coordinatesTogether, coordinatesTogetherRefinement);
 
 const unitDesignationSchema = z.enum(UNIT_DESIGNATION_KEYS, {
-  errorMap: () => ({ message: 'Désignation invalide' }),
+  error: 'Désignation invalide',
 });
 
 const createUnitSchema = z
@@ -85,7 +85,7 @@ const updateUnitSchema = z.object({
   sonebMeterNumber: meterNumberSchema.optional(),
   sbeeMeterNumber: meterNumberSchema.optional(),
   furnished: z.coerce.boolean().optional(),
-  status: z.enum(UNIT_STATUSES, { errorMap: () => ({ message: 'Statut invalide' }) }).optional(),
+  status: z.enum(UNIT_STATUSES, { error: 'Statut invalide' }).optional(),
 });
 
 module.exports = {

@@ -44,7 +44,7 @@ const PAYMENT_METHODS = ['especes', 'mobile_money', 'virement', 'cheque'];
 // sa date par défaut est celle du bail si non précisée.
 const depositFields = {
   depositAmount: amountSchema.default(0),
-  depositPaymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement de la caution invalide' }) }).optional(),
+  depositPaymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de règlement de la caution invalide' }).optional(),
   depositPaidAt: dateSchema.optional(),
 };
 
@@ -65,7 +65,7 @@ function requireDepositMethodWhenDepositPositive(data, ctx) {
 // défaut est celle du bail si non précisée.
 const entryFeeFields = {
   entryFeeAmount: amountSchema.default(0),
-  entryFeePaymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: "Mode de règlement des frais d'agence invalide" }) }).optional(),
+  entryFeePaymentMethod: z.enum(PAYMENT_METHODS, { error: "Mode de règlement des frais d'agence invalide" }).optional(),
   entryFeePaidAt: dateSchema.optional(),
 };
 
@@ -84,8 +84,8 @@ function requireEntryFeeMethodWhenPositive(data, ctx) {
 // `startDate`/`rentDueDay` déjà soumis dans la même requête), jamais transmis ni fait confiance côté
 // client. `entryProration` omis → retombe sur le réglage par défaut de l'entreprise (voir la route).
 const entryProrationFields = {
-  entryProration: z.enum(['aucun', 'prorata'], { errorMap: () => ({ message: "Choix du prorata d'entrée invalide" }) }).optional(),
-  entryProrataPaymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: "Mode de règlement du prorata d'entrée invalide" }) }).optional(),
+  entryProration: z.enum(['aucun', 'prorata'], { error: "Choix du prorata d'entrée invalide" }).optional(),
+  entryProrataPaymentMethod: z.enum(PAYMENT_METHODS, { error: "Mode de règlement du prorata d'entrée invalide" }).optional(),
   entryProrataPaidAt: dateSchema.optional(),
 };
 
@@ -96,7 +96,7 @@ const entryProrationFields = {
 // la liste des types activés peut varier, ce n'est pas au client de la connaître à l'octet près.
 const additionalDepositEntrySchema = z.object({
   amount: amountSchema,
-  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
+  paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de règlement invalide' }).optional(),
   paidAt: dateSchema.optional(),
 });
 const additionalDepositsFields = {
@@ -145,7 +145,7 @@ const createRenterSchema = z
     // Convention de paiement (avance/terme échu, demande directe de
     // l'utilisateur, 2026-09-24) : optionnel — si omis, la route retombe
     // sur le réglage par défaut de l'entreprise (tenants.default_rent_timing).
-    rentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),
+    rentTiming: z.enum(RENT_TIMING_KEYS, { error: 'Convention de paiement invalide' }).optional(),
     startDate: dateSchema,
     // Impayés existants à l'entrée (onboarding d'un locataire déjà en place
     // avant l'utilisation de Africa Immo Management) : montant déclaré une fois,
@@ -179,7 +179,7 @@ const createLeaseSchema = z
     // Convention de paiement (avance/terme échu, demande directe de
     // l'utilisateur, 2026-09-24) : optionnel — si omis, la route retombe
     // sur le réglage par défaut de l'entreprise (tenants.default_rent_timing).
-    rentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),
+    rentTiming: z.enum(RENT_TIMING_KEYS, { error: 'Convention de paiement invalide' }).optional(),
     startDate: dateSchema,
     openingDebtAmount: amountSchema.default(0),
     upToDateAtOnboarding: z.coerce.boolean().default(false),
@@ -213,7 +213,7 @@ const createPaymentSchema = z.object({
   // Peut dépasser un mois de loyer : le serveur répartit sur des mois
   // consécutifs (mois entiers + reste en paiement partiel), une quittance par mois.
   amount: amountSchema.refine((v) => v > 0, 'Le montant doit être supérieur à 0'),
-  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de paiement invalide' }) }),
+  paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de paiement invalide' }),
   paidAt: dateSchema,
   notes: optionalText(255),
   // Clé d'idempotence (étape 36) : générée par le navigateur pour CET envoi ; deux envois de même
@@ -248,7 +248,7 @@ const createLateFeeSchema = z.object({
 // vérifie que le montant ne dépasse jamais le solde restant (routes/leases.js).
 const createOpeningDebtPaymentSchema = z.object({
   amount: amountSchema.refine((v) => v > 0, 'Le montant doit être supérieur à 0'),
-  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de paiement invalide' }) }),
+  paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de paiement invalide' }),
   paidAt: dateSchema,
   notes: optionalText(255),
   idempotencyKey: idempotencyKeySchema,
@@ -258,7 +258,7 @@ const createOpeningDebtPaymentSchema = z.object({
 // que la dette initiale ci-dessus, le serveur vérifie que le montant ne dépasse jamais le solde restant.
 const createLateFeePaymentSchema = z.object({
   amount: amountSchema.refine((v) => v > 0, 'Le montant doit être supérieur à 0'),
-  paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de paiement invalide' }) }),
+  paymentMethod: z.enum(PAYMENT_METHODS, { error: 'Mode de paiement invalide' }),
   paidAt: dateSchema,
   notes: optionalText(255),
   idempotencyKey: idempotencyKeySchema,

@@ -11,7 +11,7 @@ const createAccountSchema = z.object({
   label: z.string().trim().min(2, 'Libellé requis').max(150, 'Trop long'),
   class: z.coerce.number().int().min(1).max(9),
   accountType: z.enum(['actif', 'passif', 'charge', 'produit', 'autre'], {
-    errorMap: () => ({ message: 'Type de compte invalide' }),
+    error: 'Type de compte invalide',
   }),
   isControlAccount: z.coerce.boolean().optional().default(false),
   parentAccountId: z.coerce.number().int().positive().optional(),

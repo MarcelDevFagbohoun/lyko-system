@@ -14,7 +14,7 @@ const email = z.string().trim().toLowerCase().email('E-mail invalide').max(190).
 // Champs communs à tout envoi d'argent. `.strict()` partout : un champ inattendu est une erreur, jamais ignoré en silence.
 const common = {
   phone: z.string().trim().min(8, 'Numéro invalide').max(20, 'Numéro invalide'),
-  operator: z.enum(['mtn', 'moov'], { errorMap: () => ({ message: 'Opérateur invalide' }) }),
+  operator: z.enum(['mtn', 'moov'], { error: 'Opérateur invalide' }),
   beneficiaryEmail: email,
   password: z.string().min(1, 'Mot de passe requis').max(200),
   // OBLIGATOIRE pour un envoi d'argent : un double-clic ou un rejeu réseau ne doit jamais payer deux fois.

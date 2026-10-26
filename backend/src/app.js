@@ -5,6 +5,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
 
+require('./utils/zodFr'); // messages de validation en français (zod 4)
 const config = require('./config/env');
 const { corsMiddleware, globalRateLimiter, helmetMiddleware } = require('./middleware/security');
 const { notFoundHandler, errorHandler } = require('./middleware/error');
@@ -48,7 +49,7 @@ function createApp() {
   app.use(
     config.isProd
       ? morgan('combined', { stream: { write: (line) => logger.info('http', { line: line.trim() }) } })
-      : morgan('dev'),
+      : morgan('dev', { skip: () => process.env.NODE_ENV === 'test' }), // en test, ces lignes se mêlent aux événements du lanceur node:test et corrompent des fichiers au hasard
   );
 
   app.get('/', (_req, res) => {
