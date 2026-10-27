@@ -8,6 +8,7 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { claimIdempotencyKey } = require('./paymentGuards');
+const complaintEvents = require('./complaintEvents');
 
 /**
  * Charge le bail ACTIF du locataire authentifié par son token (ou lève 404).
@@ -280,8 +281,10 @@ async function createPortalComplaint(tenantId, renterId, data) {
         priority: data.priority,
       },
     );
+    await complaintEvents.recordReported(conn, { tenantId, complaintId: result.insertId, renterId });
+    const trackingToken = await complaintEvents.ensureTrackingToken(conn, result.insertId);
     await conn.commit();
-    return { complaintId: result.insertId, code, leaseId: lease.id };
+    return { complaintId: result.insertId, code, leaseId: lease.id, trackingPath: `/suivi/${trackingToken}` };
   } catch (err) {
     await conn.rollback().catch(() => {});
     throw err;

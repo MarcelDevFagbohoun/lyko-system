@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { cn, formatDateLabel } from "@/lib/utils";
+import { cn, formatDateLabel, formatDateTimeLabel } from "@/lib/utils";
 
 const TABS: { key: ComplaintStatus | "all"; label: string }[] = [
   { key: "all", label: "Toutes" },
@@ -136,9 +136,13 @@ function PlaintesContent() {
               {complaints.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <div className="font-label-md text-ink">{c.code}</div>
+                    <Link href={`/espace/plaintes/${c.id}`} className="font-label-md text-ink hover:text-primary hover:underline">{c.code}</Link>
                     <div className="text-body-xs text-ink-muted">{c.title}</div>
                     <div className="text-body-xs text-ink-faint">Signalée le {formatDateLabel(c.reportedAt)}</div>
+                    <div className="text-body-xs text-ink-faint">Mise à jour le {formatDateTimeLabel(c.lastActivityAt)}</div>
+                    {c.lastByTenant && c.status !== "fermee" && (
+                      <Badge variant="warning" className="mt-1">Réponse du locataire</Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-ink-soft">{c.renter.firstName} {c.renter.lastName}</TableCell>
                   <TableCell className="text-ink-soft">

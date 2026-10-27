@@ -11,7 +11,10 @@ const {
   createComplaintSchema,
   updateComplaintSchema,
   updateComplaintStatusSchema,
+  complaintEventSchema,
 } = require('../validators/complaints');
+const events = require('../services/complaintEvents');
+const { resolveRoleLabels } = require('../constants/roles');
 const {
   COMPLAINT_CATEGORIES,
   COMPLAINT_PRIORITIES,
@@ -68,6 +71,8 @@ function toPublicComplaint(row) {
     createdBy: toActor(row.declarer_first_name, row.declarer_last_name, row.declarer_role),
     reportedViaPortal: !!row.reported_via_portal,
     createdAt: row.created_at,
+    lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).toISOString() : row.created_at,
+    lastByTenant: !!row.last_by_tenant,
     lease: {
       id: row.lease_id,
       status: row.lease_status,
@@ -95,6 +100,8 @@ function toPublicComplaint(row) {
 // (déclarant, résolveur).
 const COMPLAINT_SELECT = `
   c.*,
+  (SELECT MAX(ev.created_at) FROM complaint_events ev WHERE ev.complaint_id = c.id) AS last_activity_at,
+  (SELECT ev.author_renter_id IS NOT NULL FROM complaint_events ev WHERE ev.complaint_id = c.id ORDER BY ev.id DESC LIMIT 1) AS last_by_tenant,
   l.status AS lease_status,
   r.id AS renter_id, r.first_name AS renter_first_name, r.last_name AS renter_last_name, r.phone AS renter_phone,
   u.id AS unit_id, u.code AS unit_code, u.designation, u.designation_custom,
@@ -111,6 +118,11 @@ const COMPLAINT_JOINS = `
   LEFT JOIN users du ON du.id = c.created_by
   LEFT JOIN users su ON su.id = c.resolved_by
 `;
+
+async function tenantRoleLabels(tenantId) {
+  const [[tenant]] = await pool.query('SELECT dg_title, comptable_title, agent_title FROM tenants WHERE id = :id', { id: tenantId });
+  return resolveRoleLabels(tenant);
+}
 
 async function nextComplaintCode(conn, tenantId) {
   const year = new Date().getFullYear();
@@ -223,7 +235,8 @@ router.get('/:id', async (req, res, next) => {
       params,
     );
     if (!rows[0]) throw new ApiError(404, 'Plainte introuvable');
-    res.json({ complaint: toPublicComplaint(rows[0]) });
+    const timeline = await events.listEvents(req.user.tenantId, id, 'staff', await tenantRoleLabels(req.user.tenantId));
+    res.json({ complaint: toPublicComplaint(rows[0]), events: timeline, dates: events.summarizeDates(rows[0], timeline) });
   } catch (err) {
     next(err);
   }
@@ -264,6 +277,7 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_COMPLAINT), async (req, r
       },
     );
     const complaintId = result.insertId;
+    await events.recordReported(conn, { tenantId: req.user.tenantId, complaintId, userId: req.user.id });
 
     if (req.files && req.files.length > 0) {
       const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}/complaints/${complaintId}`);
@@ -366,20 +380,13 @@ router.patch('/:id/status', async (req, res, next) => {
     const scopeAgentId = await resolvePropertyScope(req.user);
     await loadComplaint(pool, req.user.tenantId, id, scopeAgentId);
 
-    const fields = ['status = :status'];
-    const params = { id, status: data.status };
-    if (data.resolutionNote !== undefined) {
-      fields.push('resolution_note = :note');
-      params.note = data.resolutionNote;
-    }
-    if (data.status === 'resolue') {
-      fields.push('resolved_at = :resolvedAt', 'resolved_by = :resolvedBy');
-      params.resolvedAt = new Date().toISOString().slice(0, 10);
-      params.resolvedBy = req.user.id;
-    }
-
-    await pool.query(`UPDATE complaints SET ${fields.join(', ')} WHERE id = :id`, params);
-
+    await events.applyStaffUpdate({
+      tenantId: req.user.tenantId,
+      complaintId: id,
+      user: req.user,
+      status: data.status,
+      resolutionNote: data.resolutionNote ?? undefined,
+    });
     logger.info('Statut de plainte modifié', { tenantId: req.user.tenantId, complaintId: id, status: data.status, by: req.user.id });
 
     const [rows] = await pool.query(
@@ -387,6 +394,59 @@ router.patch('/:id/status', async (req, res, next) => {
       { id },
     );
     res.json({ complaint: toPublicComplaint(rows[0]) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/complaints/:id/events — suivi du dossier : commentaire (interne par défaut) et/ou changement de statut.
+router.post('/:id/events', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = complaintEventSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadComplaint(pool, req.user.tenantId, id, scopeAgentId);
+
+    await events.applyStaffUpdate({
+      tenantId: req.user.tenantId,
+      complaintId: id,
+      user: req.user,
+      status: data.status,
+      comment: data.comment || undefined,
+      visibility: data.visibility,
+      resolutionNote: data.resolutionNote ?? undefined,
+    });
+    logger.info('Suivi de plainte mis à jour', {
+      tenantId: req.user.tenantId, complaintId: id, status: data.status ?? null, visibility: data.visibility, by: req.user.id,
+    });
+
+    const [rows] = await pool.query(
+      `SELECT ${COMPLAINT_SELECT} ${COMPLAINT_JOINS} WHERE c.id = :id LIMIT 1`,
+      { id },
+    );
+    const timeline = await events.listEvents(req.user.tenantId, id, 'staff', await tenantRoleLabels(req.user.tenantId));
+    res.status(201).json({ complaint: toPublicComplaint(rows[0]), events: timeline, dates: events.summarizeDates(rows[0], timeline) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/complaints/:id/tracking-link — lien de suivi du locataire (créé au premier appel, identique ensuite).
+router.post('/:id/tracking-link', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    await loadComplaint(pool, req.user.tenantId, id, scopeAgentId);
+    const token = await events.ensureTrackingToken(pool, id);
+    res.json({ path: `/suivi/${token}` });
   } catch (err) {
     next(err);
   }

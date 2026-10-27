@@ -1,6 +1,6 @@
 import { apiFetch, API_URL } from "./client";
 import type { PaymentMethod, RentStripMonth } from "./renters";
-import type { ComplaintCategory, ComplaintPriority } from "./complaints";
+import type { ComplaintCategory, ComplaintPriority, ComplaintStatus } from "./complaints";
 
 /**
  * Client du portail locataire (étape 12, idée n°2) : aucun `accessToken`
@@ -132,9 +132,22 @@ export type PortalComplaintInput = {
 };
 
 export function submitPortalComplaint(token: string, input: PortalComplaintInput) {
-  return apiFetch<{ complaintId: number; code: string }>(`/api/portal/${token}/complaints`, {
+  return apiFetch<{ complaintId: number; code: string; trackingPath: string }>(`/api/portal/${token}/complaints`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+export type PortalComplaintSummary = {
+  code: string;
+  title: string;
+  status: ComplaintStatus;
+  reportedAt: string;
+  lastActivityAt: string;
+  trackingPath: string;
+};
+
+export function getPortalComplaints(token: string) {
+  return apiFetch<{ complaints: PortalComplaintSummary[] }>(`/api/portal/${token}/complaints`);
 }

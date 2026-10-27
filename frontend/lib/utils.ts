@@ -301,6 +301,14 @@ export function formatTimeOfDay(isoTimestamp: string): string {
   return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
 }
 
+/** Date et heure d'un horodatage serveur — « 27 octobre 2026 à 14:35 » (lu en UTC, voir `formatTimeOfDay`). */
+export function formatDateTimeLabel(isoTimestamp: string): string {
+  const d = new Date(isoTimestamp);
+  if (Number.isNaN(d.getTime())) return "";
+  const day = d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+  return `${day} à ${formatTimeOfDay(isoTimestamp)}`;
+}
+
 /**
  * Formate un montant en francs CFA selon la charte :
  * séparateur de milliers par espace insécable, suffixe « FCFA ».

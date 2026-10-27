@@ -24,7 +24,27 @@ export type Complaint = {
   renter: { id: number; firstName: string; lastName: string; phone: string };
   unit: { id: number; code: string; designationLabel: string };
   property: { id: number; code: string; address: string | null };
+  /** Dernier événement du journal (signalement, statut ou commentaire). */
+  lastActivityAt: string;
+  /** Le dernier message vient du locataire : l'équipe doit lui répondre. */
+  lastByTenant: boolean;
 };
+
+export type ComplaintEvent = {
+  id: number;
+  type: "reported" | "status_changed" | "comment";
+  fromStatus: ComplaintStatus | null;
+  toStatus: ComplaintStatus | null;
+  body: string | null;
+  /** "internal" : réservé à l'équipe ; "tenant" : visible du locataire sur sa page de suivi. */
+  visibility: "tenant" | "internal";
+  /** Reconstitué pour une plainte antérieure au journal : la date est approximative. */
+  isEstimated: boolean;
+  createdAt: string;
+  author: { name: string; role: string; roleLabel: string } | null;
+};
+
+export type ComplaintDates = { reportedAt: string; lastActivityAt: string; resolvedAt: string | null };
 
 export function getComplaintsMeta(accessToken: string) {
   return apiFetch<{
@@ -47,7 +67,34 @@ export function listComplaints(
 }
 
 export function getComplaint(accessToken: string, id: number) {
-  return apiFetch<{ complaint: Complaint }>(`/api/complaints/${id}`, { accessToken });
+  return apiFetch<{ complaint: Complaint; events: ComplaintEvent[]; dates: ComplaintDates }>(`/api/complaints/${id}`, { accessToken });
+}
+
+export type ComplaintEventInput = {
+  comment?: string;
+  visibility?: "tenant" | "internal";
+  status?: ComplaintStatus;
+  resolutionNote?: string;
+};
+
+/** Commentaire (interne par défaut) et/ou changement de statut. */
+export function addComplaintEvent(accessToken: string, id: number, input: ComplaintEventInput) {
+  return apiFetch<{ complaint: Complaint; events: ComplaintEvent[]; dates: ComplaintDates }>(`/api/complaints/${id}/events`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Chemin (`/suivi/…`) de la page de suivi du locataire ; identique à chaque appel. */
+export function getComplaintTrackingLink(accessToken: string, id: number) {
+  return apiFetch<{ path: string }>(`/api/complaints/${id}/tracking-link`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
 }
 
 export type CreateComplaintInput = {

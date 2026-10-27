@@ -7,6 +7,8 @@ import { API_URL, ApiError } from "@/lib/api/client";
 import {
   getPortalDashboard,
   submitPortalComplaint,
+  getPortalComplaints,
+  type PortalComplaintSummary,
   portalReceiptPdfUrl,
   portalChargeReceiptPdfUrl,
   portalContractPdfUrl,
@@ -19,8 +21,8 @@ import {
 } from "@/lib/api/portal";
 import { PayNowButton } from "@/components/payments/pay-now-button";
 import type { ComplaintCategory } from "@/lib/api/complaints";
-import { COMPLAINT_CATEGORY_LABELS } from "@/lib/constants/complaints";
-import { formatFcfa, monthLabelFr, formatLateDuration } from "@/lib/utils";
+import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
+import { formatFcfa, monthLabelFr, formatLateDuration, formatDateTimeLabel } from "@/lib/utils";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { Badge } from "@/components/ui/badge";
 import { RentStrip } from "@/components/renters/rent-strip";
@@ -50,6 +52,7 @@ export function PortailView() {
   const { token } = useParams<{ token: string }>();
   const [dashboard, setDashboard] = React.useState<PortalDashboard | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [complaintsKey, setComplaintsKey] = React.useState(0);
 
   const load = React.useCallback(() => {
     if (!token) return;
@@ -322,13 +325,49 @@ export function PortailView() {
               </Card>
             )}
 
-            <ComplaintForm token={token} />
+            <ComplaintForm token={token} onSent={() => setComplaintsKey((k) => k + 1)} />
+            <MyComplaints token={token} refreshKey={complaintsKey} />
             </>
             )}
           </>
         )}
       </div>
     </PortailShell>
+  );
+}
+
+const COMPLAINT_BADGE = { ouverte: "warning", en_cours: "info", resolue: "success", fermee: "neutral" } as const;
+
+/** Ses réclamations, chacune menant à sa page de suivi (statut, dates, échanges avec l'agence). */
+function MyComplaints({ token, refreshKey }: { token: string; refreshKey: number }) {
+  const [items, setItems] = React.useState<PortalComplaintSummary[] | null>(null);
+  React.useEffect(() => {
+    getPortalComplaints(token).then((r) => setItems(r.complaints)).catch(() => setItems([]));
+  }, [token, refreshKey]);
+  if (!items || items.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Mes réclamations</CardTitle>
+        <CardDescription>Touchez une réclamation pour suivre son avancement et répondre à l&apos;agence.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {items.map((c) => (
+          <a
+            key={c.code}
+            href={c.trackingPath}
+            className="flex flex-col gap-1 rounded-lg border border-border p-3 transition-colors hover:bg-surface-hover sm:flex-row sm:items-center sm:justify-between"
+          >
+            <span className="min-w-0">
+              <span className="font-label-md text-ink">{c.code}</span>
+              <span className="block break-words text-body-sm text-ink-soft">{c.title}</span>
+              <span className="block text-body-xs text-ink-muted">Dernière mise à jour le {formatDateTimeLabel(c.lastActivityAt)}</span>
+            </span>
+            <Badge variant={COMPLAINT_BADGE[c.status]} className="w-fit">{COMPLAINT_STATUS_LABELS[c.status]}</Badge>
+          </a>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -344,7 +383,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 const CATEGORIES = Object.entries(COMPLAINT_CATEGORY_LABELS) as [ComplaintCategory, string][];
 
 /** Signalement d'incident directement par le locataire (idée n°2, action « essentielle »). */
-function ComplaintForm({ token }: { token: string }) {
+function ComplaintForm({ token, onSent }: { token: string; onSent?: () => void }) {
   const [category, setCategory] = React.useState<ComplaintCategory>("plomberie");
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
@@ -352,6 +391,7 @@ function ComplaintForm({ token }: { token: string }) {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [sent, setSent] = React.useState<string | null>(null);
+  const [sentPath, setSentPath] = React.useState<string | null>(null);
   // Même clé tant que l'envoi n'a pas réussi (un nouvel essai après une
   // coupure/erreur réutilise la même clé — si la première tentative avait en
   // fait été enregistrée côté serveur, le second envoi revient en « déjà
@@ -373,6 +413,8 @@ function ComplaintForm({ token }: { token: string }) {
       if (description.trim()) input.description = description.trim();
       const res = await submitPortalComplaint(token, input);
       setSent(res.code);
+      setSentPath(res.trackingPath);
+      onSent?.();
       setTitle("");
       setDescription("");
       setUrgent(false);
@@ -394,7 +436,10 @@ function ComplaintForm({ token }: { token: string }) {
         {sent ? (
           <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success-bg px-3 py-2.5 text-body-sm text-success-fg">
             <CheckCircle2 size={16} className="shrink-0" />
-            Signalement envoyé ({sent}). Votre agence va le traiter.
+            <span>
+              Signalement envoyé ({sent}). Votre agence va le traiter.
+              {sentPath && <> <a href={sentPath} className="font-label-md underline">Suivre l&apos;avancement</a></>}
+            </span>
             <Button type="button" variant="ghost" size="sm" className="ml-auto" onClick={() => setSent(null)}>
               Signaler autre chose
             </Button>

@@ -45,7 +45,30 @@ const updateComplaintStatusSchema = z
     path: ['resolutionNote'],
   });
 
+const complaintEventSchema = z
+  .object({
+    status: z.enum(COMPLAINT_STATUSES, { message: 'Statut invalide' }).optional(),
+    comment: z.string().trim().max(2000, 'Trop long (2000 caractères max.)').optional(),
+    // Par défaut interne : le locataire ne voit que ce que l'équipe choisit explicitement de lui montrer.
+    visibility: z.enum(['tenant', 'internal'], { message: 'Visibilité invalide' }).default('internal'),
+    resolutionNote: optionalText(2000),
+  })
+  .refine((d) => d.status !== undefined || !!d.comment, {
+    message: 'Écrivez un commentaire ou changez le statut',
+    path: ['comment'],
+  })
+  .refine((d) => d.status !== 'resolue' || !!d.resolutionNote, {
+    message: 'Une note de résolution est requise pour clore le dossier en « Résolue »',
+    path: ['resolutionNote'],
+  });
+
+const tenantCommentSchema = z.object({
+  message: z.string().trim().min(1, 'Écrivez votre message').max(1000, 'Trop long (1000 caractères max.)'),
+});
+
 module.exports = {
+  complaintEventSchema,
+  tenantCommentSchema,
   createComplaintSchema,
   updateComplaintSchema,
   updateComplaintStatusSchema,

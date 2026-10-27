@@ -7,7 +7,9 @@ import { ArrowLeft, Phone, Building2, Pencil, CheckCircle2, PlayCircle, Archive,
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import { AuthenticatedImage } from "@/components/ui/authenticated-image";
-import { getComplaint, updateComplaint, updateComplaintStatus, type Complaint, type ComplaintCategory, type ComplaintPriority } from "@/lib/api/complaints";
+import { formatDateLabel } from "@/lib/utils";
+import { getComplaint, updateComplaint, updateComplaintStatus, type Complaint, type ComplaintCategory, type ComplaintDates, type ComplaintEvent, type ComplaintPriority } from "@/lib/api/complaints";
+import { ComplaintDatesBanner, ComplaintJournalCard } from "@/components/complaints/complaint-journal";
 import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_PRIORITY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
@@ -38,13 +40,19 @@ function PlainteContent() {
   const { accessToken } = useAuth();
 
   const [complaint, setComplaint] = React.useState<Complaint | null>(null);
+  const [events, setEvents] = React.useState<ComplaintEvent[]>([]);
+  const [dates, setDates] = React.useState<ComplaintDates | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState(false);
 
   const load = React.useCallback(() => {
     if (!accessToken || !Number.isInteger(complaintId)) return;
     getComplaint(accessToken, complaintId)
-      .then((res) => setComplaint(res.complaint))
+      .then((res) => {
+        setComplaint(res.complaint);
+        setEvents(res.events);
+        setDates(res.dates);
+      })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Plainte introuvable."));
   }, [accessToken, complaintId]);
 
@@ -109,10 +117,12 @@ function PlainteContent() {
               </div>
             </div>
 
+            {dates && <ComplaintDatesBanner dates={dates} />}
+
             <Card>
               <CardHeader>
                 <CardTitle>Contexte</CardTitle>
-                <CardDescription>{COMPLAINT_CATEGORY_LABELS[complaint.category]} · signalé le {complaint.reportedAt}</CardDescription>
+                <CardDescription>{COMPLAINT_CATEGORY_LABELS[complaint.category]} · signalé le {formatDateLabel(complaint.reportedAt)}</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -173,6 +183,17 @@ function PlainteContent() {
             </Card>
 
             <StatusActions complaint={complaint} accessToken={accessToken} onChanged={load} />
+
+            <ComplaintJournalCard
+              complaint={complaint}
+              events={events}
+              accessToken={accessToken}
+              onUpdated={(u) => {
+                setComplaint(u.complaint);
+                setEvents(u.events);
+                setDates(u.dates);
+              }}
+            />
           </>
         )}
       </div>

@@ -33,6 +33,7 @@ const documentVerificationRoutes = require('./documentVerification');
 const paymentLinkRoutes = require('./paymentLinks');
 const fedapayCollectRoutes = require('./fedapayCollect');
 const receiptShareRoutes = require('./receiptShare');
+const complaintTrackingRoutes = require('./complaintTracking');
 const glAccountsRoutes = require('./gl/glAccounts');
 const glJournalsRoutes = require('./gl/glJournals');
 const glFiscalYearsRoutes = require('./gl/glFiscalYears');
@@ -121,6 +122,8 @@ router.use(fedapayCollectRoutes);
 // Préfixe dédié `/recu` (pas `/documents/share`) pour ne jamais dépendre de
 // l'ordre de montage par rapport à `documentRoutes` ci-dessus (authentifié).
 router.use('/recu', receiptShareRoutes);
+// Suivi d'une plainte par le locataire (jeton propre à la plainte) : PUBLIQUE, même piège de montage.
+router.use('/complaint-tracking', complaintTrackingRoutes);
 // Relevé de compteurs par immeuble (étape 9bis) : routes /properties/:id/utility-*
 // et /utility-batches/* — montées à la racine de /api (permission `charges`).
 // Paiements sortants FedaPay (authentifié) — monté avant `utilityReadingRoutes`, même piège que ci-dessus.

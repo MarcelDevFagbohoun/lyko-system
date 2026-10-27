@@ -23,6 +23,7 @@ const {
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 const { startCheckout } = require('../services/onlinePayments');
 const portal = require('../services/portal');
+const complaintEvents = require('../services/complaintEvents');
 const logger = require('../utils/logger');
 const { isoDate } = require('../utils/dates');
 
@@ -293,7 +294,7 @@ router.post('/:token/complaints', async (req, res, next) => {
 
   try {
     const { id: renterId, tenantId } = req.portalRenter;
-    const { complaintId, code, leaseId } = await portal.createPortalComplaint(tenantId, renterId, parsed.data);
+    const { complaintId, code, leaseId, trackingPath } = await portal.createPortalComplaint(tenantId, renterId, parsed.data);
 
     logger.info('Plainte signalée depuis le portail locataire', {
       tenantId,
@@ -302,7 +303,17 @@ router.post('/:token/complaints', async (req, res, next) => {
       complaintId,
       code,
     });
-    res.status(201).json({ complaintId, code });
+    res.status(201).json({ complaintId, code, trackingPath });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/portal/:token/complaints — SES réclamations, avec le lien de suivi de chacune.
+router.get('/:token/complaints', async (req, res, next) => {
+  try {
+    const { id: renterId, tenantId } = req.portalRenter;
+    res.json({ complaints: await complaintEvents.listForRenter(tenantId, renterId) });
   } catch (err) {
     next(err);
   }
