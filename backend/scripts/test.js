@@ -14,7 +14,9 @@ const mysql = require('mysql2/promise');
 const root = path.resolve(__dirname, '..');
 const base = process.env.DB_NAME || 'lyko_system';
 const testDb = base.endsWith('_test') ? base : `${base}_test`;
-const env = { ...process.env, DB_NAME: testDb, NODE_ENV: 'test' };
+// Les tests supposent l'abonnement non imposé (les fichiers qui testent l'abonnement l'activent eux-mêmes) :
+// un SUBSCRIPTIONS_ENFORCED=true dans le .env local ferait échouer des dizaines de tests en 402.
+const env = { ...process.env, DB_NAME: testDb, NODE_ENV: 'test', SUBSCRIPTIONS_ENFORCED: 'false' };
 
 (async () => {
   const conn = await mysql.createConnection({
