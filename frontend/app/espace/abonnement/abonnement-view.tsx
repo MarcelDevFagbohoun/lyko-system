@@ -13,6 +13,7 @@ import {
 import { RequireAuth } from "@/components/auth/require-auth";
 import { PlanPicker } from "@/components/billing/plan-picker";
 import { SubscriptionSummary } from "@/components/billing/subscription-summary";
+import { PartnerSummary } from "@/components/billing/partner-summary";
 import { CheckoutSummary } from "@/components/billing/checkout-summary";
 import { PaymentHistory } from "@/components/billing/payment-history";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -113,7 +114,8 @@ function AbonnementContent() {
 
   const noPlan = !!sub && !sub.active && sub.planKey !== "interne";
   const isInterne = sub?.planKey === "interne";
-  const currentPlan = sub?.active && !isInterne ? catalog?.plans.find((p) => p.key === sub.planKey) ?? null : null;
+  const isPartner = !!sub?.isPartner && sub.active;
+  const currentPlan = sub?.active && !isInterne && !isPartner ? catalog?.plans.find((p) => p.key === sub.planKey) ?? null : null;
   const reviewing = refunds.some((r) => ["requested", "approved", "details_received", "processing", "failed"].includes(r.status));
   const lastRejected = refunds.find((r) => r.status === "rejected");
   const pendingFirst = sub?.status === "pending_payment";
@@ -191,6 +193,7 @@ function AbonnementContent() {
           </Card>
         )}
 
+        {isPartner && sub && <PartnerSummary sub={sub} />}
         {currentPlan && sub && <SubscriptionSummary plan={currentPlan} sub={sub} />}
 
         {quote && catalog && (
@@ -199,7 +202,7 @@ function AbonnementContent() {
           </div>
         )}
 
-        {catalog && !isInterne && (
+        {catalog && !isInterne && !isPartner && (
           <section aria-labelledby="offres-title" className="flex flex-col gap-4">
             <div>
               <h2 id="offres-title" className="font-display text-headline-md text-ink">

@@ -59,7 +59,7 @@ function invalidate() { cache = null; }
 
 /** Une offre du catalogue effectif ; « interne » vient toujours du code (accès complet, non modifiable). */
 async function getPlanAsync(key) {
-  if (key === 'interne') return PLANS.interne;
+  if (key === 'interne' || key === 'partenaire') return PLANS[key];
   const c = await getCatalog();
   return c.plans[key] ?? null;
 }

@@ -53,7 +53,7 @@ async function requestRefund({ tenantId, userId, reason }) {
       "SELECT status, plan_key, (current_period_end IS NOT NULL AND current_period_end > NOW()) AS running, (refund_eligible_until IS NOT NULL AND refund_eligible_until > NOW()) AS guarantee FROM tenant_subscriptions WHERE tenant_id = :t",
       { t: tenantId },
     );
-    if (!s || s.status !== 'active' || s.plan_key === 'interne' || Number(s.running) !== 1) throw new ApiError(400, "Aucun abonnement actif à annuler.");
+    if (!s || s.status !== 'active' || s.plan_key === 'interne' || s.plan_key === 'partenaire' || Number(s.running) !== 1) throw new ApiError(400, "Aucun abonnement actif à annuler.");
     const [[open]] = await conn.query(`SELECT id FROM subscription_refunds WHERE tenant_id = :t AND status IN (${OPEN_STATUSES.map((x) => `'${x}'`).join(',')}) LIMIT 1`, { t: tenantId });
     if (open) throw new ApiError(409, "Une demande d'annulation est déjà en cours d'examen.");
     const [[last]] = await conn.query("SELECT id FROM subscription_payments WHERE tenant_id = :t AND status = 'paid' AND consumed_at IS NULL ORDER BY id DESC LIMIT 1", { t: tenantId });

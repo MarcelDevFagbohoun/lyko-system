@@ -4,7 +4,7 @@ import * as React from "react";
 import QRCode from "qrcode";
 import { ApiError } from "@/lib/api/client";
 import {
-  adminLogin, adminMe, adminTenants, adminRefunds, adminPaymentIssues, adminApprove, adminReject, adminPay, adminMarkPaid, adminRefresh, adminGrant, adminSetInternal,
+  adminLogin, adminMe, adminTenants, adminRefunds, adminPaymentIssues, adminApprove, adminReject, adminPay, adminMarkPaid, adminRefresh, adminGrant, adminSetInternal, adminRevokePartner,
   admin2faSetup, admin2faEnable, admin2faDisable, adminAudit,
   getAdminToken, setAdminToken, type AdminTenant, type AuditEntry,
 } from "@/lib/api/admin";
@@ -12,6 +12,8 @@ import { ACCOUNT_TYPE_LABELS, type PlanKey, type Refund } from "@/lib/api/billin
 import type { PaymentIssue } from "@/lib/api/admin";
 import { offerLabel } from "@/lib/api/billing";
 import { CatalogEditor } from "./catalog-editor";
+import { PartnerDialog } from "./partner-dialog";
+import { PartnerBadge } from "@/components/billing/partner-badge";
 import { PAYMENT_OUTCOME } from "@/lib/billing-plans";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -109,6 +111,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [busy, setBusy] = React.useState<number | null>(null);
   const [search, setSearch] = React.useState("");
   const [dialog, setDialog] = React.useState<{ kind: "grant" | "internal"; tenant: AdminTenant } | null>(null);
+  const [partnerDialog, setPartnerDialog] = React.useState<AdminTenant | null>(null);
 
   const load = React.useCallback(() => {
     Promise.all([adminRefunds(token), adminTenants(token), adminPaymentIssues(token)])
@@ -253,16 +256,22 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
                         {t.companyName}{t.founderPrice ? " ★" : ""}
                         {t.overLimits?.length > 0 && <div className="text-body-xs text-warning-fg">Dépasse son offre : {t.overLimits.join(", ")}</div>}
                       </TableCell>
-                      <TableCell>{t.planKey === "interne" ? "interne (accès complet)" : t.planKey ?? "—"}</TableCell>
+                      <TableCell>
+                        {t.planKey === "interne" ? "interne (accès complet)" : t.planKey === "partenaire" ? <PartnerBadge /> : t.planKey ?? "—"}
+                        {t.partner && <div className="mt-1 max-w-[16rem] text-body-xs text-ink-muted">{t.partner.features.length - 1} fonction(s) en plus de la base{t.partner.note ? ` · ${t.partner.note}` : ""}</div>}
+                      </TableCell>
                       <TableCell>{t.status}</TableCell>
                       <TableCell>{t.currentPeriodEnd ? formatDateLabel(t.currentPeriodEnd.slice(0, 10)) : "—"}</TableCell>
                       <TableCell>{formatFcfa(t.totalPaid)}</TableCell>
                       <TableCell>{t.lastPayment ? <Badge variant={PAYMENT_OUTCOME[t.lastPayment].variant}>{PAYMENT_OUTCOME[t.lastPayment].label}</Badge> : "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap">
+                      <TableCell>
+                       <div className="flex flex-col items-start gap-1 lg:flex-row lg:items-center">
                         <Button variant="ghost" size="sm" onClick={() => setDialog({ kind: "grant", tenant: t })}>Attribuer une offre</Button>
+                        <Button variant="ghost" size="sm" onClick={() => setPartnerDialog(t)}>{t.planKey === "partenaire" && t.status === "active" ? "Modifier le partenariat" : "Abonnement partenaire"}</Button>
                         {t.planKey !== "interne" && (
                           <Button variant="ghost" size="sm" onClick={() => setDialog({ kind: "internal", tenant: t })}>Passer en interne</Button>
                         )}
+                       </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -272,6 +281,19 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
           </Card>
         )}
       </div>
+      {partnerDialog && (
+        <PartnerDialog
+          tenant={partnerDialog}
+          token={token}
+          onClose={() => setPartnerDialog(null)}
+          onDone={(ok) => { setPartnerDialog(null); setMessage(ok); load(); }}
+          onRevoke={(note) => {
+            const t = partnerDialog;
+            setPartnerDialog(null);
+            run(t.id, () => adminRevokePartner(token, t.id, note), `Partenariat terminé pour ${t.companyName}.`);
+          }}
+        />
+      )}
       {dialog && (
         <TenantDialog
           dialog={dialog}
@@ -352,7 +374,7 @@ function TenantDialog({ dialog, onClose, onSubmit, token }: {
 const ACTION_LABELS: Record<string, string> = {
   login: "Connexion", login_failed: "Connexion refusée", login_2fa_failed: "Code 2FA refusé", "2fa_enabled": "2FA activée", "2fa_disabled": "2FA désactivée",
   refund_approve: "Remboursement accepté", refund_reject: "Remboursement refusé", refund_pay: "Virement de remboursement",
-  tenant_grant: "Offre attribuée", tenant_set_internal: "Passage en interne", catalog_save: "Offres modifiées", catalog_reset: "Offres réinitialisées",
+  tenant_grant: "Offre attribuée", tenant_partner_grant: "Abonnement partenaire attribué", tenant_partner_extend: "Abonnement partenaire prolongé", tenant_partner_revoke: "Partenariat terminé", tenant_set_internal: "Passage en interne", catalog_save: "Offres modifiées", catalog_reset: "Offres réinitialisées",
 };
 
 function AuditPanel({ token }: { token: string }) {

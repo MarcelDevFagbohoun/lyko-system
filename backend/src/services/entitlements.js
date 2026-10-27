@@ -26,6 +26,23 @@ function q(conn) {
   return conn || pool;
 }
 
+const LIMIT_KEYS = ['units', 'owners', 'users'];
+
+/** Fonctions et limites d'un partenaire, relues de la base. Illisible => le minimum (core), jamais plus que ce qui est enregistré. */
+function parsePartnerRights(featuresJson, limitsJson) {
+  let features = ['core'];
+  try {
+    const f = JSON.parse(featuresJson);
+    if (Array.isArray(f)) features = [...new Set(['core', ...f.filter((x) => typeof x === 'string')])];
+  } catch (_e) { /* valeur absente ou illisible : fonctions de base seulement */ }
+  const limits = { units: null, owners: null, users: null };
+  try {
+    const l = JSON.parse(limitsJson);
+    for (const k of LIMIT_KEYS) if (Number.isInteger(l?.[k]) && l[k] >= 0) limits[k] = l[k];
+  } catch (_e) { /* illimité par défaut */ }
+  return { features, limits };
+}
+
 // L'échéance est comparée par MySQL (NOW()) : même horloge que celle qui l'a écrite, quel que soit le fuseau du serveur.
 /** Droits courants : { planKey, status, active, features:Set, limits }. Un abonnement expiré/absent => active=false. */
 async function getEntitlements(tenantId, conn) {
@@ -34,11 +51,13 @@ async function getEntitlements(tenantId, conn) {
     return { planKey: 'interne', status: 'active', active: true, features: new Set(p.features), limits: p.limits, enforced: false };
   }
   const [rows] = await q(conn).query(
-    'SELECT plan_key, status, (current_period_end IS NOT NULL AND current_period_end > NOW()) AS not_expired FROM tenant_subscriptions WHERE tenant_id = :tenantId',
+    'SELECT plan_key, status, partner_features, partner_limits, (current_period_end IS NOT NULL AND current_period_end > NOW()) AS not_expired FROM tenant_subscriptions WHERE tenant_id = :tenantId',
     { tenantId },
   );
   const s = rows[0];
-  const plan = s && s.plan_key ? await getPlanAsync(s.plan_key) : null;
+  let plan = s && s.plan_key ? await getPlanAsync(s.plan_key) : null;
+  // Partenaire : fonctions et limites propres à l'entreprise (cochées par l'administrateur), pas celles d'une offre du catalogue.
+  if (plan && s.plan_key === 'partenaire') plan = { ...plan, ...parsePartnerRights(s.partner_features, s.partner_limits) };
   const notExpired = s && (s.plan_key === 'interne' || Number(s.not_expired) === 1);
   const active = !!(plan && s.status === 'active' && notExpired);
   return {
@@ -155,4 +174,4 @@ async function createInitialSubscription(conn, tenantId) {
   }
 }
 
-module.exports = { listOverLimits, getUsage, listActiveTenantIds, enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };
+module.exports = { parsePartnerRights, listOverLimits, getUsage, listActiveTenantIds, enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };

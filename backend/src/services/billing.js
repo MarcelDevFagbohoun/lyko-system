@@ -67,6 +67,9 @@ async function quote(tenantId, planKey, months, conn = pool) {
     "SELECT plan_key, status, (current_period_end IS NOT NULL AND current_period_end > NOW()) AS running FROM tenant_subscriptions WHERE tenant_id = :tenantId",
     { tenantId },
   );
+  if (cur && cur.plan_key === 'partenaire' && cur.status === 'active' && Number(cur.running) === 1) {
+    throw new ApiError(409, "Votre abonnement partenaire est en cours : aucun paiement n'est nécessaire jusqu'à son terme.");
+  }
   const running = !!cur && cur.status === 'active' && Number(cur.running) === 1 && cur.plan_key !== 'interne';
   let kind = 'purchase';
   let credit = 0; let creditDays = 0; let fromPlan = null;
@@ -115,7 +118,7 @@ async function upgradeOptions(tenantId) {
     "SELECT plan_key, status, (current_period_end IS NOT NULL AND current_period_end > NOW()) AS running FROM tenant_subscriptions WHERE tenant_id = :tenantId",
     { tenantId },
   );
-  if (!cur || cur.status !== 'active' || Number(cur.running) !== 1 || cur.plan_key === 'interne') return { options: [] };
+  if (!cur || cur.status !== 'active' || Number(cur.running) !== 1 || cur.plan_key === 'interne' || cur.plan_key === 'partenaire') return { options: [] };
   const catalog = await getCatalog();
   const options = [];
   for (const plan of Object.values(catalog.plans)) {
@@ -377,6 +380,7 @@ async function confirmByTransaction(transactionId) {
 async function describe(tenantId) {
   const [[s]] = await pool.query(
     `SELECT plan_key, status, period_months, started_at, current_period_end, first_purchase_at, refund_eligible_until, founder_price,
+            partner_features, partner_limits, partner_note, partner_since,
             (current_period_end IS NOT NULL AND current_period_end > NOW()) AS running,
             (refund_eligible_until IS NOT NULL AND refund_eligible_until > NOW()) AS refund_open,
             DATEDIFF(current_period_end, NOW()) AS days_left
@@ -396,7 +400,9 @@ async function describe(tenantId) {
      ORDER BY f.id DESC LIMIT 1`,
     { tenantId },
   );
-  const overLimits = active && plan && !interne ? await require('./entitlements').listOverLimits(tenantId, plan.limits) : [];
+  const partner = s.plan_key === 'partenaire' ? require('./entitlements').parsePartnerRights(s.partner_features, s.partner_limits) : null;
+  const effectiveLimits = partner ? partner.limits : plan?.limits;
+  const overLimits = active && plan && !interne ? await require('./entitlements').listOverLimits(tenantId, effectiveLimits) : [];
   const usage = active && plan && !interne ? await require('./entitlements').getUsage(tenantId) : null;
   return {
     overLimits,
@@ -412,6 +418,9 @@ async function describe(tenantId) {
     refundOpen: Number(s.refund_open) === 1,
     refundEligibleUntil: s.refund_eligible_until,
     founderPrice: !!s.founder_price,
+    // Abonnement partenaire : badge côté entreprise + fonctions et limites accordées.
+    isPartner: !!partner,
+    partner: partner ? { features: partner.features, limits: partner.limits, since: s.partner_since } : null,
     lastFailure: fail ? { reference: fail.reference, planKey: fail.plan_key, months: fail.months, amount: fail.amount, reason: fail.failure_reason, anomaly: fail.status === 'anomaly', at: fail.created_at } : null,
   };
 }

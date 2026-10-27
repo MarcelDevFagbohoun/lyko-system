@@ -62,7 +62,19 @@ const PLANS = {
     features: [...FEATURES.filter((f) => f !== 'ai_assistant'), 'ai_assistant'],
     offers: [],
   },
+  // Abonnement partenaire : offert, durée et fonctions choisies une entreprise à la fois (colonnes partner_* de
+  // tenant_subscriptions). Ce gabarit ne sert qu'à l'intitulé et au repli : les droits réels viennent de la ligne d'abonnement.
+  partenaire: {
+    key: 'partenaire',
+    label: 'Partenaire',
+    limits: { units: null, owners: null, users: null },
+    features: ['core'],
+    offers: [],
+  },
 };
+
+// Fonctions qu'un administrateur peut cocher pour un partenaire (`core` toujours incluse ; l'assistant IA est reporté).
+const PARTNER_SELECTABLE_FEATURES = FEATURES.filter((f) => f !== 'core' && f !== 'ai_assistant');
 
 // Tarif fondateur : remise sur le PREMIER achat de l'offre Pro (4 mois) pour les N premières entreprises ; le prix
 // normal revient au renouvellement. Appliqué côté serveur à l'étape facturation.
@@ -77,4 +89,4 @@ function getPlan(key) {
   return PLANS[key] ?? null;
 }
 
-module.exports = { FEATURES, PLANS, PLAN_KEYS, FOUNDER_OFFER, REFUND_WINDOW_DAYS, getPlan };
+module.exports = { FEATURES, PARTNER_SELECTABLE_FEATURES, PLANS, PLAN_KEYS, FOUNDER_OFFER, REFUND_WINDOW_DAYS, getPlan };

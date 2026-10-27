@@ -16,6 +16,9 @@ const refunds = require('../services/refunds');
 const catalogService = require('../services/planCatalog');
 const { findOffer, paymentOutcome } = require('../services/billing');
 const { activatePayment } = require('../services/billing');
+const partners = require('../services/partnerSubscription');
+const { parsePartnerRights } = require('../services/entitlements');
+const { PARTNER_SELECTABLE_FEATURES } = require('../constants/plans');
 const logger = require('../utils/logger');
 const totp = require('../services/totp');
 const { encryptSecret, decryptSecret } = require('../utils/encryption');
@@ -119,6 +122,7 @@ router.get('/tenants', async (_req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT t.id, t.company_name, t.created_at, s.plan_key, s.status, s.current_period_end, s.founder_price,
+              s.partner_features, s.partner_limits, s.partner_note,
               (s.current_period_end IS NOT NULL AND s.current_period_end > NOW()) AS running,
               (SELECT COALESCE(SUM(amount),0) FROM subscription_payments p WHERE p.tenant_id = t.id AND p.status = 'paid') AS total_paid,
               (SELECT p2.status FROM subscription_payments p2 WHERE p2.tenant_id = t.id ORDER BY p2.id DESC LIMIT 1) AS last_payment_status,
@@ -130,13 +134,18 @@ router.get('/tenants', async (_req, res, next) => {
     );
     const catalog = await catalogService.getCatalog();
     const over = (r) => {
-      const lim = catalog.plans?.[r.plan_key]?.limits;
+      const lim = r.plan_key === 'partenaire' ? parsePartnerRights(r.partner_features, r.partner_limits).limits : catalog.plans?.[r.plan_key]?.limits;
       if (!lim || r.plan_key === 'interne') return [];
       return [['units', 'n_units', 'unités'], ['owners', 'n_owners', 'propriétaires'], ['users', 'n_users', 'utilisateurs']]
         .filter(([k, c]) => lim[k] !== null && lim[k] !== undefined && Number(r[c]) > lim[k])
         .map(([k, c, label]) => `${r[c]} ${label} (max ${lim[k]})`);
     };
-    res.json({ tenants: rows.map((r) => ({ overLimits: over(r), id: r.id, companyName: r.company_name, createdAt: r.created_at, planKey: r.plan_key, status: r.status === 'active' && r.plan_key !== 'interne' && !Number(r.running) ? 'expired' : r.status, currentPeriodEnd: r.current_period_end, founderPrice: !!r.founder_price, totalPaid: Number(r.total_paid), lastPayment: r.last_payment_status ? paymentOutcome(r.last_payment_status, r.last_payment_amount) : null })) });
+    const partnerOf = (r) => {
+      if (r.plan_key !== 'partenaire') return null;
+      const rights = parsePartnerRights(r.partner_features, r.partner_limits);
+      return { features: rights.features, limits: rights.limits, note: r.partner_note };
+    };
+    res.json({ tenants: rows.map((r) => ({ partner: partnerOf(r), overLimits: over(r), id: r.id, companyName: r.company_name, createdAt: r.created_at, planKey: r.plan_key, status: r.status === 'active' && r.plan_key !== 'interne' && !Number(r.running) ? 'expired' : r.status, currentPeriodEnd: r.current_period_end, founderPrice: !!r.founder_price, totalPaid: Number(r.total_paid), lastPayment: r.last_payment_status ? paymentOutcome(r.last_payment_status, r.last_payment_amount) : null })) });
   } catch (err) { next(err); }
 });
 
@@ -213,6 +222,39 @@ router.post('/tenants/:id/internal', async (req, res, next) => {
     );
     await pool.query('INSERT INTO subscription_events (tenant_id, event_type, actor, details) VALUES (:t, :e, :a, :d)', { t: tenantId, e: 'set_internal', a: `admin:${req.admin.id}`, d: JSON.stringify({ note }) });
     await audit(req, 'tenant_set_internal', `tenant:${tenantId}`, { note });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// Abonnement partenaire : offert pour N mois, fonctions cochées une à une (badge « Partenaire » côté entreprise).
+router.get('/partner-features', (_req, res) => res.json({ features: PARTNER_SELECTABLE_FEATURES, maxMonths: partners.MAX_MONTHS }));
+
+const limitSchema = z.number().int().min(0).max(1_000_000).nullable();
+const partnerSchema = z.object({
+  months: z.number().int().min(1).max(partners.MAX_MONTHS),
+  features: z.array(z.string().max(40)).max(20),
+  limits: z.object({ units: limitSchema, owners: limitSchema, users: limitSchema }).default({ units: null, owners: null, users: null }),
+  note: z.string().trim().min(3).max(300),
+  replacePaid: z.boolean().optional(),
+});
+router.post('/tenants/:id/partner', async (req, res, next) => {
+  try {
+    const tenantId = idOf(req);
+    const body = partnerSchema.safeParse(req.body);
+    if (!body.success) throw new ApiError(400, 'Formulaire invalide : durée de 1 à 60 mois, fonctions cochées et motif requis.');
+    const out = await partners.grantPartner({ tenantId, adminId: req.admin.id, ...body.data });
+    await audit(req, out.extended ? 'tenant_partner_extend' : 'tenant_partner_grant', `tenant:${tenantId}`, { months: body.data.months, features: out.features, limits: out.limits, note: body.data.note, replacedPlan: out.replacedPlan });
+    logger.info('Abonnement partenaire attribué', { tenantId, admin: req.admin.id });
+    res.json({ ok: true, extended: out.extended, currentPeriodEnd: out.currentPeriodEnd });
+  } catch (err) { next(err); }
+});
+router.post('/tenants/:id/partner/revoke', async (req, res, next) => {
+  try {
+    const tenantId = idOf(req);
+    const note = String(req.body?.note ?? '').trim();
+    if (note.length < 3 || note.length > 300) throw new ApiError(400, 'Indiquez le motif (3 à 300 caractères).');
+    await partners.revokePartner({ tenantId, adminId: req.admin.id, note });
+    await audit(req, 'tenant_partner_revoke', `tenant:${tenantId}`, { note });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

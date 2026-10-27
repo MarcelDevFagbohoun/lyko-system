@@ -24,6 +24,9 @@ export type Subscription = {
   refundOpen: boolean;
   refundEligibleUntil: string | null;
   founderPrice: boolean;
+  /** Abonnement partenaire offert : badge « Partenaire », fonctions et limites accordées. */
+  isPartner?: boolean;
+  partner?: { features: string[]; limits: PlanLimits; since: string | null } | null;
   lastFailure?: { reference: string; planKey: PlanKey; months: number; amount: number; reason: string; anomaly: boolean; at: string } | null;
   overLimits?: { kind: string; label: string; count: number; max: number }[];
   /** Consommation actuelle (offres payantes actives) — jauges de la page Abonnement. */
