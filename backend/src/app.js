@@ -48,7 +48,9 @@ function createApp() {
   app.use(
     config.isProd
       ? morgan('combined', { stream: { write: (line) => logger.info('http', { line: line.trim() }) } })
-      : morgan('dev'),
+      // En test, aucune ligne de journal : elles se mêlent à la sortie du lanceur de tests de Node et en
+      // corrompaient le canal de résultats (« Unable to deserialize cloned data »), faisant échouer un fichier au hasard.
+      : morgan('dev', { skip: () => process.env.NODE_ENV === 'test' }),
   );
 
   app.get('/', (_req, res) => {
