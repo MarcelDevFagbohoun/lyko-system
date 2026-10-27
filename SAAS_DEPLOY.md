@@ -32,6 +32,12 @@
    (ou passer leur `plan_key` en base).
 3. Les nouvelles inscriptions arrivent sur l'écran « choisir une offre » et paient avant d'accéder à leur espace.
 
+### Abonnement partenaire (migration 129)
+- **Avant d'activer** : appliquer la migration `129_partner_subscriptions.sql` (`npm run db:migrate` dans `backend`) puis redémarrer l'API. Sans elle, l'attribution et la lecture des abonnements échouent.
+- `/admin` → Entreprises → « Abonnement partenaire » : nombre de mois (1 à 60), fonctions cochées, limites facultatives, motif. Badge « Partenaire » sur la page Abonnement de l'entreprise.
+- Les fonctions cochées ne s'appliquent que si `SUBSCRIPTIONS_ENFORCED=true` ; sinon toutes les entreprises ont déjà l'accès complet.
+- Un partenaire ne peut ni payer ni changer d'offre tant que son partenariat court ; remplacer un abonnement payant en cours demande une confirmation (mois payés perdus).
+
 ## 4. Points restant ouverts (décisions à prendre)
 - **Export des données pendant la coupure** : non implémenté (l'entreprise expirée n'a plus accès à rien tant qu'elle ne renouvelle pas).
 - **Mentions légales, CGV, TVA** sur les factures : à fournir (la facture actuelle est acquittée, sans TVA).
