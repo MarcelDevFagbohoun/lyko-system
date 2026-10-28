@@ -19,7 +19,7 @@ export type DashboardOverview = {
       code: string;
       title: string;
       priority: "normale" | "urgente";
-      status: "ouverte" | "en_cours" | "resolue" | "fermee";
+      status: "non_resolue" | "resolue";
       statusLabel: string;
       reportedAt: string;
       renterName: string;

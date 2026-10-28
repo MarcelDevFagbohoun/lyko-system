@@ -245,7 +245,7 @@ async function listRecentActivity(tenantId, limit = 60, actorUserId = null, filt
     only('complaint_resolved', pool.query(
       `SELECT c.id, c.code, c.title, c.updated_at, u.first_name AS a_fn, u.last_name AS a_ln, u.role AS a_role
        FROM complaints c LEFT JOIN users u ON u.id = c.resolved_by
-       WHERE c.tenant_id = :tenantId AND c.status IN ('resolue', 'fermee') AND c.resolved_by IS NOT NULL
+       WHERE c.tenant_id = :tenantId AND c.status = 'resolue' AND c.resolved_by IS NOT NULL
        ${f('c.resolved_by')} ${d('c.updated_at')} ORDER BY c.updated_at DESC LIMIT :n`,
       p,
     )),

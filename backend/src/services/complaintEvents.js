@@ -43,7 +43,7 @@ async function recordEvent(conn, e) {
 /** Enregistre le signalement initial (visible du locataire). À appeler dans la transaction de création. */
 async function recordReported(conn, { tenantId, complaintId, userId = null, renterId = null }) {
   return recordEvent(conn, {
-    tenantId, complaintId, type: 'reported', toStatus: 'ouverte', visibility: 'tenant', userId, renterId,
+    tenantId, complaintId, type: 'reported', toStatus: 'non_resolue', visibility: 'tenant', userId, renterId,
   });
 }
 
@@ -203,14 +203,15 @@ async function getTrackingView(token) {
     complaint: {
       code: c.code,
       title: c.title,
-      category: c.category,
       priority: c.priority,
       status: c.status,
       // La description n'est montrée que si le locataire l'a écrite lui-même.
       description: c.reported_via_portal ? c.description : null,
       property: c.property_address,
       unit: c.unit_code,
-      canComment: c.status !== 'fermee',
+      // Plus de statut « fermée » verrouillant le dossier (deux statuts
+      // seulement) : le locataire peut toujours répondre.
+      canComment: true,
     },
     company: { name: c.company_name, phone: c.contact_phone || null },
     dates: summarizeDates(c, events),
@@ -223,7 +224,6 @@ async function getTrackingView(token) {
 async function addTenantComment(token, body) {
   const c = await findByTrackingToken(token);
   if (!c) throw new ApiError(404, 'Lien invalide ou expiré');
-  if (c.status === 'fermee') throw new ApiError(400, 'Ce dossier est fermé : vous ne pouvez plus y répondre');
   const [[recent]] = await pool.query(
     `SELECT COUNT(*) AS n FROM complaint_events
      WHERE complaint_id = :id AND author_renter_id IS NOT NULL AND created_at > (CURRENT_TIMESTAMP - INTERVAL 1 HOUR)`,

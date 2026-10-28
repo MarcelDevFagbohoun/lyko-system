@@ -30,7 +30,7 @@ function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
 }
 
-/** Plaintes ouvertes/en cours, dans la portée de l'agent restreint le cas échéant. */
+/** Plaintes non résolues, dans la portée de l'agent restreint le cas échéant. */
 async function listOpenComplaints(tenantId, scopeAgentId) {
   const params = { tenantId };
   let scopeClause = '';
@@ -45,7 +45,7 @@ async function listOpenComplaints(tenantId, scopeAgentId) {
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
      JOIN renters r ON r.id = l.renter_id
-     WHERE c.tenant_id = :tenantId AND c.status IN ('ouverte', 'en_cours') ${scopeClause}
+     WHERE c.tenant_id = :tenantId AND c.status = 'non_resolue' ${scopeClause}
      ORDER BY c.priority = 'urgente' DESC, c.reported_at ASC
      LIMIT 20`,
     params,

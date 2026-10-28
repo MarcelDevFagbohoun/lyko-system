@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { AlertTriangle, Plus } from "lucide-react";
 import { listComplaints, type Complaint } from "@/lib/api/complaints";
-import { COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
+import { COMPLAINT_STATUS_LABELS, COMPLAINT_STATUS_BADGE_VARIANT } from "@/lib/constants/complaints";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useCan } from "@/lib/auth/use-can";
@@ -65,7 +65,7 @@ export function ComplaintsSection({
                   <p className="text-body-xs text-ink-muted">Signalé le {c.reportedAt}</p>
                 </div>
               </div>
-              <Badge variant={c.status === "resolue" ? "success" : c.status === "en_cours" ? "info" : c.status === "fermee" ? "neutral" : "warning"}>
+              <Badge variant={COMPLAINT_STATUS_BADGE_VARIANT[c.status]}>
                 {COMPLAINT_STATUS_LABELS[c.status]}
               </Badge>
             </Link>

@@ -269,13 +269,12 @@ async function createPortalComplaint(tenantId, renterId, data) {
 
     const [result] = await conn.query(
       `INSERT INTO complaints
-         (tenant_id, lease_id, code, category, title, description, priority, reported_at, created_by, reported_via_portal)
-       VALUES (:tenantId, :leaseId, :code, :category, :title, :description, :priority, CURDATE(), NULL, 1)`,
+         (tenant_id, lease_id, code, title, description, priority, reported_at, created_by, reported_via_portal)
+       VALUES (:tenantId, :leaseId, :code, :title, :description, :priority, CURDATE(), NULL, 1)`,
       {
         tenantId,
         leaseId: lease.id,
         code,
-        category: data.category,
         title: data.title,
         description: data.description,
         priority: data.priority,

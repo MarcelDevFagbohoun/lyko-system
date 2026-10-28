@@ -23,10 +23,8 @@ function currentMonth() {
 }
 
 const COMPLAINT_STATUS_LABELS = {
-  ouverte: 'Ouverte',
-  en_cours: 'En cours',
+  non_resolue: 'Non résolue',
   resolue: 'Résolue',
-  fermee: 'Fermée',
 };
 
 // GET /api/dashboard/overview — occupation du parc + activité récente hors finances.
@@ -59,7 +57,7 @@ router.get('/overview', async (req, res, next) => {
       { tenantId },
     );
     const [[{ n: openComplaintsCount }]] = await pool.query(
-      "SELECT COUNT(*) AS n FROM complaints WHERE tenant_id = :tenantId AND status IN ('ouverte', 'en_cours')",
+      "SELECT COUNT(*) AS n FROM complaints WHERE tenant_id = :tenantId AND status = 'non_resolue'",
       { tenantId },
     );
     const [recentComplaints] = await pool.query(
@@ -68,7 +66,7 @@ router.get('/overview', async (req, res, next) => {
        FROM complaints c
        JOIN leases l ON l.id = c.lease_id
        JOIN renters r ON r.id = l.renter_id
-       WHERE c.tenant_id = :tenantId AND c.status IN ('ouverte', 'en_cours')
+       WHERE c.tenant_id = :tenantId AND c.status = 'non_resolue'
        ORDER BY c.priority = 'urgente' DESC, c.reported_at ASC
        LIMIT 5`,
       { tenantId },

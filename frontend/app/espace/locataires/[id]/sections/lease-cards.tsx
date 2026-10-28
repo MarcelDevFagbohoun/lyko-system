@@ -37,6 +37,7 @@ import { ComplaintsSection } from "./complaints-section";
 import { LateFeesSection } from "./late-fees-section";
 import { OpeningDebtSection, PAYMENT_METHODS } from "./opening-debt-section";
 import { PaymentRegister } from "./payment-register";
+import { RelancesSection } from "./relances-section";
 
 /**
  * Affiché quand un locataire n'a plus de bail actif (parti, ou jamais
@@ -362,6 +363,8 @@ export function LeaseCard({
         <ChargesSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} />
 
         {canPay && <LateFeesSection leaseId={lease.id} accessToken={accessToken} canManage={canPay} />}
+
+        <RelancesSection leaseId={lease.id} accessToken={accessToken} />
 
         {canPay && <OpeningDebtSection lease={lease} accessToken={accessToken} onSettled={onChanged} />}
 

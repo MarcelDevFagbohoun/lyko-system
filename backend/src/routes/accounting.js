@@ -187,8 +187,8 @@ router.post('/expenses', canAccounting, canRecordExpense, upload.single('receipt
   }
 });
 
-// PATCH /api/accounting/expenses/:id — corriger une dépense.
-router.patch('/expenses/:id', canAccounting, canRecordExpense, async (req, res, next) => {
+// PATCH /api/accounting/expenses/:id — corriger une dépense (+ ajouter/remplacer son justificatif).
+router.patch('/expenses/:id', canAccounting, canRecordExpense, upload.single('receipt'), async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
 
@@ -198,7 +198,7 @@ router.patch('/expenses/:id', canAccounting, canRecordExpense, async (req, res, 
   }
 
   try {
-    const row = await expensesService.updateExpense(req.user.tenantId, id, parsed.data);
+    const row = await expensesService.updateExpense(req.user.tenantId, id, parsed.data, req.file);
     res.json({ expense: toPublicExpense(row) });
   } catch (err) {
     next(err);
@@ -634,6 +634,7 @@ router.get('/utility-arrears', requireChargesEnabled, requireAnyPermission('char
         billedAt,
         daysLate,
         amountOwed: Number(r.amount) - Number(r.paid_total),
+        lastRelanceAt: r.last_relance_at ? isoDate(r.last_relance_at) : null,
       };
     });
 

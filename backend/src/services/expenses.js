@@ -230,9 +230,13 @@ async function createExpense(tenantId, userId, data, file) {
   }
 }
 
-/** Corrige une dépense ; renvoie la ligne mise à jour (avec auteur et fournisseur). */
-async function updateExpense(tenantId, id, data) {
+/** Corrige une dépense (+ ajoute/remplace son justificatif) ; renvoie la ligne mise à jour (avec auteur et fournisseur). */
+async function updateExpense(tenantId, id, data, file) {
   const conn = await pool.getConnection();
+  // Même précaution que `createExpense` : le fichier est écrit sur disque AVANT la validation SQL
+  // (voir plus bas) — nettoyé explicitement si la transaction ne va pas au bout, jamais annulé par
+  // un rollback puisqu'il vit hors de la base.
+  let writtenReceiptPath = null;
   try {
     const existing = await loadExpense(pool, tenantId, id);
     await assertPeriodOpen(tenantId, existing.expense_date);
@@ -255,6 +259,18 @@ async function updateExpense(tenantId, id, data) {
     if (data.paymentMethod !== undefined) { fields.push('payment_method = :paymentMethod'); params.paymentMethod = data.paymentMethod; }
     if (data.notes !== undefined) { fields.push('notes = :notes'); params.notes = data.notes; }
 
+    const previousReceiptPath = existing.receipt_path || null;
+    if (file) {
+      const ext = assertUploadType(file, { pdf: true, label: 'Justificatif' }); // image OU PDF
+      const dir = path.join(UPLOADS_ROOT, `tenants/${tenantId}/expenses`);
+      await fs.mkdir(dir, { recursive: true });
+      const rel = `tenants/${tenantId}/expenses/${randomFileName(String(id), ext)}`;
+      await fs.writeFile(path.join(UPLOADS_ROOT, rel), file.buffer);
+      writtenReceiptPath = rel;
+      fields.push('receipt_path = :receiptPath');
+      params.receiptPath = rel;
+    }
+
     if (fields.length > 0) {
       await conn.beginTransaction();
       // Bug corrigé (audit sécurité/logique) : re-vérifie SOUS VERROU, dans la
@@ -265,6 +281,10 @@ async function updateExpense(tenantId, id, data) {
       }
       await conn.query(`UPDATE expenses SET ${fields.join(', ')} WHERE id = :id`, params);
       await conn.commit();
+      // Nouveau justificatif accepté : l'ancien fichier (s'il y en avait un) est maintenant orphelin.
+      if (file && previousReceiptPath) {
+        await fs.unlink(path.join(UPLOADS_ROOT, previousReceiptPath)).catch(() => {});
+      }
     }
 
     const [rows] = await pool.query(
@@ -277,6 +297,7 @@ async function updateExpense(tenantId, id, data) {
     return rows[0];
   } catch (err) {
     await conn.rollback().catch(() => {});
+    if (writtenReceiptPath) await fs.unlink(path.join(UPLOADS_ROOT, writtenReceiptPath)).catch(() => {});
     throw err;
   } finally {
     conn.release();

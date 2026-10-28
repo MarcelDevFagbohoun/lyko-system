@@ -16,7 +16,6 @@ const {
 const events = require('../services/complaintEvents');
 const { resolveRoleLabels } = require('../constants/roles');
 const {
-  COMPLAINT_CATEGORIES,
   COMPLAINT_PRIORITIES,
   COMPLAINT_STATUSES,
   MAX_PHOTOS_PER_COMPLAINT,
@@ -55,7 +54,6 @@ function toPublicComplaint(row) {
   return {
     id: row.id,
     code: row.code,
-    category: row.category,
     title: row.title,
     description: row.description,
     priority: row.priority,
@@ -158,7 +156,7 @@ async function loadActiveLease(conn, tenantId, leaseId, scopeAgentId = null) {
 
 // GET /api/complaints/meta — catalogues pour construire les formulaires.
 router.get('/meta', (_req, res) => {
-  res.json({ categories: COMPLAINT_CATEGORIES, priorities: COMPLAINT_PRIORITIES, statuses: COMPLAINT_STATUSES });
+  res.json({ priorities: COMPLAINT_PRIORITIES, statuses: COMPLAINT_STATUSES });
 });
 
 // GET /api/complaints?status=&q=&leaseId= — registre des plaintes.
@@ -193,20 +191,18 @@ router.get('/', async (req, res, next) => {
       params.q = `%${q}%`;
     }
 
-    // Tri par urgence, pas par date : les dossiers ouverts/en cours et
-    // urgents remontent en tête, les résolues puis les fermées (les moins
-    // actionnables) descendent en bas — la date ne départage qu'à égalité.
+    // Tri par urgence, pas par date : les dossiers non résolus et urgents
+    // remontent en tête, les résolues (les moins actionnables) descendent en
+    // bas — la date ne départage qu'à égalité.
     const [rows] = await pool.query(
       `SELECT ${COMPLAINT_SELECT} ${COMPLAINT_JOINS}
        WHERE ${where}
        ORDER BY
          CASE
-           WHEN c.status = 'ouverte' AND c.priority = 'urgente' THEN 1
-           WHEN c.status = 'en_cours' AND c.priority = 'urgente' THEN 2
-           WHEN c.status = 'ouverte' THEN 3
-           WHEN c.status = 'en_cours' THEN 4
-           WHEN c.status = 'resolue' THEN 5
-           ELSE 6
+           WHEN c.status = 'non_resolue' AND c.priority = 'urgente' THEN 1
+           WHEN c.status = 'non_resolue' THEN 2
+           WHEN c.status = 'resolue' THEN 3
+           ELSE 4
          END,
          c.created_at DESC`,
       params,
@@ -262,13 +258,12 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_COMPLAINT), async (req, r
 
     const [result] = await conn.query(
       `INSERT INTO complaints
-         (tenant_id, lease_id, code, category, title, description, priority, reported_at, created_by)
-       VALUES (:tenantId, :leaseId, :code, :category, :title, :description, :priority, :reportedAt, :by)`,
+         (tenant_id, lease_id, code, title, description, priority, reported_at, created_by)
+       VALUES (:tenantId, :leaseId, :code, :title, :description, :priority, :reportedAt, :by)`,
       {
         tenantId: req.user.tenantId,
         leaseId: data.leaseId,
         code,
-        category: data.category,
         title: data.title,
         description: data.description,
         priority: data.priority,
@@ -329,7 +324,7 @@ async function loadComplaint(conn, tenantId, id, scopeAgentId = null) {
   return rows[0];
 }
 
-// PATCH /api/complaints/:id — corriger catégorie/titre/description/priorité.
+// PATCH /api/complaints/:id — corriger titre/description/priorité.
 router.patch('/:id', async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));
@@ -346,7 +341,6 @@ router.patch('/:id', async (req, res, next) => {
 
     const fields = [];
     const params = { id };
-    if (data.category !== undefined) { fields.push('category = :category'); params.category = data.category; }
     if (data.title !== undefined) { fields.push('title = :title'); params.title = data.title; }
     if (data.description !== undefined) { fields.push('description = :description'); params.description = data.description; }
     if (data.priority !== undefined) { fields.push('priority = :priority'); params.priority = data.priority; }
@@ -365,7 +359,7 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-// PATCH /api/complaints/:id/status — faire avancer le dossier (ouverte → en_cours → résolue → fermée).
+// PATCH /api/complaints/:id/status — basculer le dossier entre « Non résolue » et « Résolue ».
 router.patch('/:id/status', async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return next(new ApiError(400, 'Identifiant invalide'));

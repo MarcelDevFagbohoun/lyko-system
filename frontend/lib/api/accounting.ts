@@ -121,14 +121,32 @@ export function listSuppliers(accessToken: string) {
   return apiFetch<{ suppliers: Supplier[] }>("/api/accounting/suppliers", { accessToken });
 }
 
-export type UpdateExpenseInput = Partial<Omit<CreateExpenseInput, "receipt">>;
+export type UpdateExpenseInput = Partial<Omit<CreateExpenseInput, "idempotencyKey">>;
 
 export function updateExpense(accessToken: string, id: number, input: UpdateExpenseInput) {
+  const { receipt, ...rest } = input;
+  // Un justificatif à joindre exige `multipart/form-data` (comme à la création) : dès qu'il y en a
+  // un, on bascule tout le corps en FormData plutôt que du JSON.
+  if (receipt) {
+    const fd = new FormData();
+    if (rest.category) fd.append("category", rest.category);
+    if (rest.label !== undefined) fd.append("label", rest.label);
+    if (rest.amount !== undefined) fd.append("amount", String(rest.amount));
+    if (rest.expenseDate) fd.append("expenseDate", rest.expenseDate);
+    if (rest.paymentMethod) fd.append("paymentMethod", rest.paymentMethod);
+    if (rest.notes !== undefined) fd.append("notes", rest.notes);
+    fd.append("receipt", receipt);
+    return apiFetch<{ expense: Expense }>(`/api/accounting/expenses/${id}`, {
+      method: "PATCH",
+      accessToken,
+      body: fd,
+    });
+  }
   return apiFetch<{ expense: Expense }>(`/api/accounting/expenses/${id}`, {
     method: "PATCH",
     accessToken,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify(rest),
   });
 }
 
@@ -510,6 +528,8 @@ export type PortfolioArrearsEntry = {
   /** Pénalités de retard appliquées mais non réglées (étape 44bis) — distinct du loyer, voir `unpaidMonths`. */
   lateFeesRemaining: number;
   amountOwed: number;
+  /** Date de la dernière relance envoyée pour ce bail (loyer), `null` si jamais relancé. */
+  lastRelanceAt: string | null;
 };
 
 export function listPortfolioArrears(accessToken: string) {
@@ -531,6 +551,7 @@ export type PredictiveAlertEntry = {
   daysUntilDue: number;
   lateCount: number;
   recentPaymentsCount: number;
+  lastRelanceAt: string | null;
 };
 
 export function listPredictiveAlerts(accessToken: string) {
@@ -552,6 +573,7 @@ export type UtilityArrearsEntry = {
   billedAt: string;
   daysLate: number;
   amountOwed: number;
+  lastRelanceAt: string | null;
 };
 
 export function listUtilityArrears(accessToken: string) {

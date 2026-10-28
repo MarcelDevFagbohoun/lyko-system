@@ -1,14 +1,6 @@
-import type { ComplaintCategory, ComplaintPriority, ComplaintStatus } from "@/lib/api/complaints";
+import type { ComplaintPriority, ComplaintStatus } from "@/lib/api/complaints";
 
 /** Miroir de backend/src/constants/complaints.js pour l'affichage côté client. */
-export const COMPLAINT_CATEGORY_LABELS: Record<ComplaintCategory, string> = {
-  plomberie: "Plomberie",
-  electricite: "Électricité",
-  serrurerie: "Serrurerie",
-  climatisation: "Climatisation",
-  maconnerie: "Maçonnerie / structure",
-  autre: "Autre",
-};
 
 export const COMPLAINT_PRIORITY_LABELS: Record<ComplaintPriority, string> = {
   normale: "Normale",
@@ -16,8 +8,12 @@ export const COMPLAINT_PRIORITY_LABELS: Record<ComplaintPriority, string> = {
 };
 
 export const COMPLAINT_STATUS_LABELS: Record<ComplaintStatus, string> = {
-  ouverte: "Ouverte",
-  en_cours: "En cours",
+  non_resolue: "Non résolue",
   resolue: "Résolue",
-  fermee: "Fermée",
+};
+
+/** Deux statuts seulement : vert = résolue, rouge = non résolue. Utilisé par toutes les pages plaintes (registre, dossier, portails). */
+export const COMPLAINT_STATUS_BADGE_VARIANT: Record<ComplaintStatus, "success" | "danger"> = {
+  non_resolue: "danger",
+  resolue: "success",
 };

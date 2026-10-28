@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Lock,
   FileDown,
+  FileUp,
   Trash2,
   Pencil,
 } from "lucide-react";
@@ -45,6 +46,7 @@ export function ExpenseRow({
   const [label, setLabel] = React.useState(expense.label);
   const [amount, setAmount] = React.useState(String(expense.amount));
   const [category, setCategory] = React.useState<ExpenseCategory>(expense.category);
+  const [receipt, setReceipt] = React.useState<File | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [settling, setSettling] = React.useState(false);
@@ -77,8 +79,10 @@ export function ExpenseRow({
         label: label.trim(),
         amount: Number(amount),
         category,
+        ...(receipt ? { receipt } : {}),
       });
       setEditing(false);
+      setReceipt(null);
       onChanged();
       toast.success("Dépense modifiée.");
     } catch (err) {
@@ -121,9 +125,22 @@ export function ExpenseRow({
                 ))}
               </select>
             </div>
+            <Field
+              label={expense.receiptUrl ? "Remplacer le justificatif (optionnel)" : "Ajouter un justificatif (optionnel)"}
+              htmlFor={`receipt-${expense.id}`}
+              hint="Image ou PDF"
+            >
+              <input
+                id={`receipt-${expense.id}`}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,application/pdf"
+                onChange={(e) => setReceipt(e.target.files?.[0] ?? null)}
+                className="w-full text-body-sm text-ink-soft"
+              />
+            </Field>
             <div className="flex items-center gap-2">
-              <Button size="sm" onClick={handleSave} disabled={submitting}>Enregistrer</Button>
-              <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={submitting}>Annuler</Button>
+              <Button size="sm" onClick={handleSave} disabled={submitting}>{submitting ? "Enregistrement…" : "Enregistrer"}</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setReceipt(null); }} disabled={submitting}>Annuler</Button>
             </div>
           </div>
         </TableCell>
@@ -250,7 +267,7 @@ export function ExpenseRow({
                 Régler
               </Button>
             )}
-            {expense.receiptUrl && accessToken && (
+            {expense.receiptUrl && accessToken ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -258,6 +275,10 @@ export function ExpenseRow({
                 onClick={() => openAuthenticatedPdf(expense.receiptUrl!, accessToken)}
               >
                 <FileDown size={14} />
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label="Ajouter un justificatif">
+                <FileUp size={14} />
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label="Modifier">

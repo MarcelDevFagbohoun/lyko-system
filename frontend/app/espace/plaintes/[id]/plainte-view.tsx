@@ -3,14 +3,14 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Phone, Building2, Pencil, CheckCircle2, PlayCircle, Archive, RotateCcw } from "lucide-react";
+import { ArrowLeft, Phone, Building2, Pencil, CheckCircle2, RotateCcw } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import { formatDateLabel } from "@/lib/utils";
-import { getComplaint, updateComplaint, updateComplaintStatus, type Complaint, type ComplaintCategory, type ComplaintDates, type ComplaintEvent, type ComplaintPriority } from "@/lib/api/complaints";
+import { getComplaint, updateComplaint, updateComplaintStatus, type Complaint, type ComplaintDates, type ComplaintEvent, type ComplaintPriority } from "@/lib/api/complaints";
 import { ComplaintDatesBanner, ComplaintJournalCard } from "@/components/complaints/complaint-journal";
-import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_PRIORITY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
+import { COMPLAINT_PRIORITY_LABELS, COMPLAINT_STATUS_LABELS, COMPLAINT_STATUS_BADGE_VARIANT } from "@/lib/constants/complaints";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,13 +18,6 @@ import { Field, Input } from "@/components/ui/input";
 import { Attribution } from "@/components/ui/attribution";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { useToast } from "@/lib/toast/toast-context";
-
-const STATUS_BADGE = {
-  ouverte: "warning" as const,
-  en_cours: "info" as const,
-  resolue: "success" as const,
-  fermee: "neutral" as const,
-};
 
 export function PlainteView() {
   return (
@@ -99,7 +92,7 @@ function PlainteContent() {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="font-display text-headline-xl text-ink">{complaint.code}</h1>
-                  <Badge variant={STATUS_BADGE[complaint.status]}>{COMPLAINT_STATUS_LABELS[complaint.status]}</Badge>
+                  <Badge variant={COMPLAINT_STATUS_BADGE_VARIANT[complaint.status]}>{COMPLAINT_STATUS_LABELS[complaint.status]}</Badge>
                   <Badge variant={complaint.priority === "urgente" ? "danger" : "neutral"} dot={complaint.priority === "urgente"}>
                     {COMPLAINT_PRIORITY_LABELS[complaint.priority]}
                   </Badge>
@@ -122,7 +115,7 @@ function PlainteContent() {
             <Card>
               <CardHeader>
                 <CardTitle>Contexte</CardTitle>
-                <CardDescription>{COMPLAINT_CATEGORY_LABELS[complaint.category]} · signalé le {formatDateLabel(complaint.reportedAt)}</CardDescription>
+                <CardDescription>Signalé le {formatDateLabel(complaint.reportedAt)}</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -267,28 +260,16 @@ function StatusActions({
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {complaint.status === "ouverte" && (
-              <Button size="sm" onClick={() => setStatus("en_cours", undefined, "Dossier pris en charge.")} disabled={submitting}>
-                <PlayCircle size={16} />
-                Prendre en charge
-              </Button>
-            )}
-            {(complaint.status === "ouverte" || complaint.status === "en_cours") && (
+            {complaint.status === "non_resolue" && (
               <Button size="sm" variant="success" onClick={() => setResolving(true)} disabled={submitting}>
                 <CheckCircle2 size={16} />
                 Marquer comme résolue
               </Button>
             )}
             {complaint.status === "resolue" && (
-              <Button size="sm" onClick={() => setStatus("fermee", undefined, "Dossier clôturé.")} disabled={submitting}>
-                <Archive size={16} />
-                Clôturer le dossier
-              </Button>
-            )}
-            {(complaint.status === "resolue" || complaint.status === "fermee") && (
-              <Button size="sm" variant="ghost" onClick={() => setStatus("en_cours", undefined, "Dossier rouvert.")} disabled={submitting}>
+              <Button size="sm" variant="ghost" onClick={() => setStatus("non_resolue", undefined, "Dossier rouvert.")} disabled={submitting}>
                 <RotateCcw size={16} />
-                Rouvrir le dossier
+                Rouvrir le dossier (non résolue)
               </Button>
             )}
           </div>
@@ -309,7 +290,6 @@ function EditComplaintForm({
   onSaved: (c: Complaint) => void;
   onCancel: () => void;
 }) {
-  const [category, setCategory] = React.useState<ComplaintCategory>(complaint.category);
   const [title, setTitle] = React.useState(complaint.title);
   const [description, setDescription] = React.useState(complaint.description ?? "");
   const [priority, setPriority] = React.useState<ComplaintPriority>(complaint.priority);
@@ -325,7 +305,6 @@ function EditComplaintForm({
     setError(null);
     try {
       const res = await updateComplaint(accessToken, complaint.id, {
-        category,
         title: title.trim(),
         description: description.trim(),
         priority,
@@ -351,31 +330,17 @@ function EditComplaintForm({
               {error}
             </div>
           )}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Catégorie" htmlFor="editCategory" required>
-              <select
-                id="editCategory"
-                value={category}
-                onChange={(e) => setCategory(e.target.value as ComplaintCategory)}
-                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                {(Object.entries(COMPLAINT_CATEGORY_LABELS) as [ComplaintCategory, string][]).map(([key, label]) => (
-                  <option key={key} value={key}>{label}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Priorité" htmlFor="editPriority" required>
-              <select
-                id="editPriority"
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as ComplaintPriority)}
-                className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                <option value="normale">Normale</option>
-                <option value="urgente">Urgente</option>
-              </select>
-            </Field>
-          </div>
+          <Field label="Priorité" htmlFor="editPriority" required>
+            <select
+              id="editPriority"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as ComplaintPriority)}
+              className="h-[38px] w-full max-w-xs rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <option value="normale">Normale</option>
+              <option value="urgente">Urgente</option>
+            </select>
+          </Field>
           <Field label="Titre" htmlFor="editTitle" required>
             <Input id="editTitle" value={title} onChange={(e) => setTitle(e.target.value)} />
           </Field>

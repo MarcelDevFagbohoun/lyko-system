@@ -21,7 +21,8 @@ async function listUtilityArrearsRows(tenantId, scopeAgentId) {
             COALESCE(pt.paid_total, 0) AS paid_total,
             l.id AS lease_id,
             r.id AS renter_id, r.first_name, r.last_name, r.phone,
-            u.code AS unit_code, p.code AS property_code
+            u.code AS unit_code, p.code AS property_code,
+            (SELECT MAX(sent_at) FROM relance_log WHERE entity_type = 'charge' AND entity_id = uc.id) AS last_relance_at
      FROM utility_charges uc
      LEFT JOIN (SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id) pt
        ON pt.charge_id = uc.id

@@ -20,8 +20,7 @@ import {
   type PortalComplaintInput,
 } from "@/lib/api/portal";
 import { PayNowButton } from "@/components/payments/pay-now-button";
-import type { ComplaintCategory } from "@/lib/api/complaints";
-import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
+import { COMPLAINT_STATUS_LABELS, COMPLAINT_STATUS_BADGE_VARIANT } from "@/lib/constants/complaints";
 import { formatFcfa, monthLabelFr, formatLateDuration, formatDateTimeLabel } from "@/lib/utils";
 import { useIdempotencyKey } from "@/lib/use-idempotency-key";
 import { Badge } from "@/components/ui/badge";
@@ -336,7 +335,6 @@ export function PortailView() {
   );
 }
 
-const COMPLAINT_BADGE = { ouverte: "warning", en_cours: "info", resolue: "success", fermee: "neutral" } as const;
 
 /** Ses réclamations, chacune menant à sa page de suivi (statut, dates, échanges avec l'agence). */
 function MyComplaints({ token, refreshKey }: { token: string; refreshKey: number }) {
@@ -363,7 +361,7 @@ function MyComplaints({ token, refreshKey }: { token: string; refreshKey: number
               <span className="block break-words text-body-sm text-ink-soft">{c.title}</span>
               <span className="block text-body-xs text-ink-muted">Dernière mise à jour le {formatDateTimeLabel(c.lastActivityAt)}</span>
             </span>
-            <Badge variant={COMPLAINT_BADGE[c.status]} className="w-fit">{COMPLAINT_STATUS_LABELS[c.status]}</Badge>
+            <Badge variant={COMPLAINT_STATUS_BADGE_VARIANT[c.status]} className="w-fit">{COMPLAINT_STATUS_LABELS[c.status]}</Badge>
           </a>
         ))}
       </CardContent>
@@ -380,11 +378,8 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-const CATEGORIES = Object.entries(COMPLAINT_CATEGORY_LABELS) as [ComplaintCategory, string][];
-
 /** Signalement d'incident directement par le locataire (idée n°2, action « essentielle »). */
 function ComplaintForm({ token, onSent }: { token: string; onSent?: () => void }) {
-  const [category, setCategory] = React.useState<ComplaintCategory>("plomberie");
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [urgent, setUrgent] = React.useState(false);
@@ -405,7 +400,6 @@ function ComplaintForm({ token, onSent }: { token: string; onSent?: () => void }
     setError(null);
     try {
       const input: PortalComplaintInput = {
-        category,
         title: title.trim(),
         priority: urgent ? "urgente" : "normale",
         idempotencyKey,
@@ -447,23 +441,9 @@ function ComplaintForm({ token, onSent }: { token: string; onSent?: () => void }
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             {error && <p className="text-body-sm text-danger-fg">{error}</p>}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Catégorie" htmlFor="portalCategory" required>
-                <select
-                  id="portalCategory"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value as ComplaintCategory)}
-                  className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                >
-                  {CATEGORIES.map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Titre" htmlFor="portalTitle" required>
-                <Input id="portalTitle" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex. Fuite robinet cuisine" />
-              </Field>
-            </div>
+            <Field label="Titre" htmlFor="portalTitle" required>
+              <Input id="portalTitle" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex. Fuite robinet cuisine" />
+            </Field>
             <Field label="Détails (optionnel)" htmlFor="portalDescription">
               <Input id="portalDescription" value={description} onChange={(e) => setDescription(e.target.value)} />
             </Field>

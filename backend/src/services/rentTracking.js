@@ -610,6 +610,16 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null, asOfDate = nu
   const lateFeesAppliedByLease = new Map(lateFeesApplied.map((r) => [r.lease_id, Number(r.applied)]));
   const lateFeesPaidByLease = new Map(lateFeesPaid.map((r) => [r.lease_id, Number(r.paid)]));
 
+  // Dernière relance envoyée pour ce bail (demande utilisateur, 2026-10-28) : affichée dans le Centre
+  // de relance sans requête supplémentaire par ligne, même principe batché que les Map ci-dessus.
+  const [lastRelances] = await pool.query(
+    `SELECT entity_id AS lease_id, MAX(sent_at) AS last_sent
+     FROM relance_log WHERE entity_type = 'bail' AND entity_id IN (${placeholders})
+     GROUP BY entity_id`,
+    leaseIds,
+  );
+  const lastRelanceByLease = new Map(lastRelances.map((r) => [r.lease_id, toIsoDateString(r.last_sent)]));
+
   const results = [];
   for (const lease of activeLeases) {
     const { arrears, unpaidMonths, rentOwed } = computeRentOwed({
@@ -639,6 +649,7 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null, asOfDate = nu
         openingDebtRemaining,
         lateFeesRemaining,
         amountOwed: rentOwed + openingDebtRemaining + lateFeesRemaining,
+        lastRelanceAt: lastRelanceByLease.get(lease.id) ?? null,
       });
     }
   }
@@ -793,6 +804,15 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
     paymentsByLease.get(p.lease_id).push(p);
   }
 
+  // Même principe que `listPortfolioArrears` : dernière relance envoyée, batchée.
+  const [lastRelances] = await pool.query(
+    `SELECT entity_id AS lease_id, MAX(sent_at) AS last_sent
+     FROM relance_log WHERE entity_type = 'bail' AND entity_id IN (${placeholders})
+     GROUP BY entity_id`,
+    leaseIds,
+  );
+  const lastRelanceByLease = new Map(lastRelances.map((r) => [r.lease_id, toIsoDateString(r.last_sent)]));
+
   const today = new Date();
   const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
 
@@ -849,6 +869,7 @@ async function listPredictiveLateAlerts(tenantId, scopeAgentId = null, daysAhead
       daysUntilDue,
       lateCount,
       recentPaymentsCount: recentMonths.length,
+      lastRelanceAt: lastRelanceByLease.get(lease.id) ?? null,
     });
   }
   // Échéance la plus proche en premier — la plus urgente à relancer.

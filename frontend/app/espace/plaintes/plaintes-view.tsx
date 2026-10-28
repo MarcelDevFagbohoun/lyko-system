@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, Plus, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { listComplaints, type Complaint, type ComplaintStatus } from "@/lib/api/complaints";
-import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_PRIORITY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
+import { COMPLAINT_PRIORITY_LABELS, COMPLAINT_STATUS_LABELS, COMPLAINT_STATUS_BADGE_VARIANT } from "@/lib/constants/complaints";
 import { ApiError } from "@/lib/api/client";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
@@ -16,18 +16,9 @@ import { cn, formatDateLabel, formatDateTimeLabel } from "@/lib/utils";
 
 const TABS: { key: ComplaintStatus | "all"; label: string }[] = [
   { key: "all", label: "Toutes" },
-  { key: "ouverte", label: "Ouvertes" },
-  { key: "en_cours", label: "En cours" },
+  { key: "non_resolue", label: "Non résolues" },
   { key: "resolue", label: "Résolues" },
-  { key: "fermee", label: "Fermées" },
 ];
-
-const STATUS_BADGE: Record<ComplaintStatus, "warning" | "info" | "success" | "neutral"> = {
-  ouverte: "warning",
-  en_cours: "info",
-  resolue: "success",
-  fermee: "neutral",
-};
 
 export function PlaintesView() {
   return (
@@ -126,7 +117,6 @@ function PlaintesContent() {
                 <TableHead>Dossier</TableHead>
                 <TableHead>Locataire</TableHead>
                 <TableHead>Bien / unité</TableHead>
-                <TableHead>Catégorie</TableHead>
                 <TableHead>Priorité</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -140,7 +130,7 @@ function PlaintesContent() {
                     <div className="text-body-xs text-ink-muted">{c.title}</div>
                     <div className="text-body-xs text-ink-faint">Signalée le {formatDateLabel(c.reportedAt)}</div>
                     <div className="text-body-xs text-ink-faint">Mise à jour le {formatDateTimeLabel(c.lastActivityAt)}</div>
-                    {c.lastByTenant && c.status !== "fermee" && (
+                    {c.lastByTenant && (
                       <Badge variant="warning" className="mt-1">Réponse du locataire</Badge>
                     )}
                   </TableCell>
@@ -148,14 +138,13 @@ function PlaintesContent() {
                   <TableCell className="text-ink-soft">
                     {c.property.code} · {c.unit.code}
                   </TableCell>
-                  <TableCell className="text-ink-soft">{COMPLAINT_CATEGORY_LABELS[c.category]}</TableCell>
                   <TableCell>
                     <Badge variant={c.priority === "urgente" ? "danger" : "neutral"} dot={c.priority === "urgente"}>
                       {COMPLAINT_PRIORITY_LABELS[c.priority]}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_BADGE[c.status]}>{COMPLAINT_STATUS_LABELS[c.status]}</Badge>
+                    <Badge variant={COMPLAINT_STATUS_BADGE_VARIANT[c.status]}>{COMPLAINT_STATUS_LABELS[c.status]}</Badge>
                   </TableCell>
                   <TableCell className="text-right">
                     <Link href={`/espace/plaintes/${c.id}`}>

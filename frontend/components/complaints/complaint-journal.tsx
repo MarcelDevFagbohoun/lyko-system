@@ -57,6 +57,10 @@ function eventTitle(e: ComplaintEvent): string {
   if (e.type === "status_changed") {
     const from = e.fromStatus ? COMPLAINT_STATUS_LABELS[e.fromStatus] : null;
     const to = e.toStatus ? COMPLAINT_STATUS_LABELS[e.toStatus] : "";
+    // Historique d'avant la simplification à deux statuts (étape 2026-10-28) :
+    // un ancien changement ouverte→en_cours retombe désormais sur le même
+    // statut des deux côtés — on l'affiche comme une simple mise à jour.
+    if (from && from === to) return "Dossier mis à jour";
     return from ? `Statut : ${from} → ${to}` : `Statut : ${to}`;
   }
   return e.author?.role === "locataire" ? "Message du locataire" : "Commentaire";

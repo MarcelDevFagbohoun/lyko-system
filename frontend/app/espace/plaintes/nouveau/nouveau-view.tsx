@@ -8,8 +8,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import { getRenter, type Lease } from "@/lib/api/renters";
 import type { RenterListItem } from "@/lib/api/renters";
-import { createComplaint, type ComplaintCategory, type ComplaintPriority } from "@/lib/api/complaints";
-import { COMPLAINT_CATEGORY_LABELS } from "@/lib/constants/complaints";
+import { createComplaint, type ComplaintPriority } from "@/lib/api/complaints";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { RenterLeasePicker } from "@/components/complaints/renter-lease-picker";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
@@ -18,7 +17,6 @@ import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 
-const CATEGORIES = Object.entries(COMPLAINT_CATEGORY_LABELS) as [ComplaintCategory, string][];
 const MAX_PHOTOS = 4;
 
 export function NouveauView() {
@@ -57,7 +55,6 @@ function NouveauContent() {
   const [selectedRenter, setSelectedRenter] = React.useState<RenterListItem | null>(null);
   const leaseId = hasPrefill ? prefillRenter?.lease.id ?? null : selectedRenter?.activeLease?.id ?? null;
 
-  const [category, setCategory] = React.useState<ComplaintCategory>("plomberie");
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [priority, setPriority] = React.useState<ComplaintPriority>("normale");
@@ -91,7 +88,6 @@ function NouveauContent() {
     try {
       const res = await createComplaint(accessToken, {
         leaseId,
-        category,
         title: title.trim(),
         description: description.trim() || undefined,
         priority,
@@ -166,31 +162,17 @@ function NouveauContent() {
                 )}
               </div>
 
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Catégorie" htmlFor="category" required>
-                  <select
-                    id="category"
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value as ComplaintCategory)}
-                    className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  >
-                    {CATEGORIES.map(([key, label]) => (
-                      <option key={key} value={key}>{label}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Priorité" htmlFor="priority" required>
-                  <select
-                    id="priority"
-                    value={priority}
-                    onChange={(e) => setPriority(e.target.value as ComplaintPriority)}
-                    className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  >
-                    <option value="normale">Normale</option>
-                    <option value="urgente">Urgente</option>
-                  </select>
-                </Field>
-              </div>
+              <Field label="Priorité" htmlFor="priority" required>
+                <select
+                  id="priority"
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value as ComplaintPriority)}
+                  className="h-[38px] w-full max-w-xs rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <option value="normale">Normale</option>
+                  <option value="urgente">Urgente</option>
+                </select>
+              </Field>
 
               <Field label="Titre" htmlFor="title" required hint="Ex. Fuite robinet cuisine">
                 <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} />

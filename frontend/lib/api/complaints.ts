@@ -1,14 +1,12 @@
 import { apiFetch, type Actor } from "./client";
 import { newIdempotencyKey } from "@/lib/utils";
 
-export type ComplaintCategory = "plomberie" | "electricite" | "serrurerie" | "climatisation" | "maconnerie" | "autre";
 export type ComplaintPriority = "normale" | "urgente";
-export type ComplaintStatus = "ouverte" | "en_cours" | "resolue" | "fermee";
+export type ComplaintStatus = "non_resolue" | "resolue";
 
 export type Complaint = {
   id: number;
   code: string;
-  category: ComplaintCategory;
   title: string;
   description: string | null;
   priority: ComplaintPriority;
@@ -48,7 +46,6 @@ export type ComplaintDates = { reportedAt: string; lastActivityAt: string; resol
 
 export function getComplaintsMeta(accessToken: string) {
   return apiFetch<{
-    categories: { key: ComplaintCategory; label: string }[];
     priorities: ComplaintPriority[];
     statuses: ComplaintStatus[];
   }>("/api/complaints/meta", { accessToken });
@@ -99,7 +96,6 @@ export function getComplaintTrackingLink(accessToken: string, id: number) {
 
 export type CreateComplaintInput = {
   leaseId: number;
-  category: ComplaintCategory;
   title: string;
   description?: string;
   priority: ComplaintPriority;
@@ -132,7 +128,6 @@ export async function createComplaint(accessToken: string, input: CreateComplain
   try {
     const fd = new FormData();
     fd.append("leaseId", String(rest.leaseId));
-    fd.append("category", rest.category);
     fd.append("title", rest.title);
     if (rest.description) fd.append("description", rest.description);
     fd.append("priority", rest.priority);
@@ -154,7 +149,6 @@ export async function createComplaint(accessToken: string, input: CreateComplain
       // `description`/`reportedAt`, ce qui faisait échouer la synchro (400).
       const body: Record<string, unknown> = {
         leaseId: rest.leaseId,
-        category: rest.category,
         title: rest.title,
         priority: rest.priority,
         idempotencyKey,
@@ -175,7 +169,6 @@ export async function createComplaint(accessToken: string, input: CreateComplain
 }
 
 export type UpdateComplaintInput = Partial<{
-  category: ComplaintCategory;
   title: string;
   description: string;
   priority: ComplaintPriority;

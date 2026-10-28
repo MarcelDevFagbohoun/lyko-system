@@ -2,21 +2,18 @@
 
 import * as React from "react";
 import { useParams } from "next/navigation";
-import { CalendarClock, Flag, MessageSquare, Phone, Repeat } from "lucide-react";
+import { CalendarClock, Flag, MessageSquare, Repeat } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
 import { getComplaintTracking, sendTrackingComment, type TrackingView } from "@/lib/api/complaint-tracking";
-import { COMPLAINT_CATEGORY_LABELS, COMPLAINT_STATUS_LABELS } from "@/lib/constants/complaints";
+import { COMPLAINT_STATUS_LABELS, COMPLAINT_STATUS_BADGE_VARIANT } from "@/lib/constants/complaints";
 import { cn, formatDateLabel, formatDateTimeLabel } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-const STATUS_BADGE = { ouverte: "warning", en_cours: "info", resolue: "success", fermee: "neutral" } as const;
 const STATUS_HINT = {
-  ouverte: "Votre signalement a bien été reçu. Il va être pris en charge.",
-  en_cours: "Votre signalement est en cours de traitement.",
+  non_resolue: "Votre signalement est en cours de traitement.",
   resolue: "Votre signalement a été traité. Écrivez-nous si le problème persiste.",
-  fermee: "Ce dossier est clôturé.",
 } as const;
 const MAX = 1000;
 
@@ -73,15 +70,16 @@ export function SuiviView() {
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="font-display text-headline-lg text-ink">{view.complaint.code}</h1>
-                  <Badge variant={STATUS_BADGE[view.complaint.status]}>{COMPLAINT_STATUS_LABELS[view.complaint.status]}</Badge>
+                  <Badge variant={COMPLAINT_STATUS_BADGE_VARIANT[view.complaint.status]}>{COMPLAINT_STATUS_LABELS[view.complaint.status]}</Badge>
                 </div>
                 <p className="break-words text-body-lg text-ink">{view.complaint.title}</p>
                 <p className="text-body-sm text-ink-soft">{STATUS_HINT[view.complaint.status]}</p>
-                <p className="text-body-xs text-ink-muted">
-                  {COMPLAINT_CATEGORY_LABELS[view.complaint.category]}
-                  {view.complaint.property ? ` · ${view.complaint.property}` : ""}
-                  {view.complaint.unit ? ` · ${view.complaint.unit}` : ""}
-                </p>
+                {(view.complaint.property || view.complaint.unit) && (
+                  <p className="text-body-xs text-ink-muted">
+                    {view.complaint.property}
+                    {view.complaint.unit ? ` · ${view.complaint.unit}` : ""}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-1 gap-3 rounded-lg border border-border bg-surface p-4 sm:grid-cols-3">
@@ -149,39 +147,32 @@ export function SuiviView() {
                 </CardContent>
               </Card>
 
-              {view.complaint.canComment ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Répondre ou ajouter une précision</CardTitle>
-                    <CardDescription>Votre message est transmis à l&apos;équipe de gestion.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <form onSubmit={handleSend} className="flex flex-col gap-3">
-                      {error && <p className="text-body-sm text-danger-fg" role="alert">{error}</p>}
-                      {sent && !error && <p className="text-body-sm text-success-fg" role="status">Message envoyé. Merci !</p>}
-                      <label htmlFor="trackingMessage" className="sr-only">Votre message</label>
-                      <textarea
-                        id="trackingMessage"
-                        rows={4}
-                        value={message}
-                        maxLength={MAX}
-                        onChange={(e) => { setMessage(e.target.value); setSent(false); }}
-                        placeholder="Ex. : je suis disponible demain matin pour l'intervention."
-                        className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-md text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      />
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-body-xs text-ink-muted">{message.length}/{MAX}</span>
-                        <Button type="submit" disabled={sending || !message.trim()}>{sending ? "Envoi…" : "Envoyer"}</Button>
-                      </div>
-                    </form>
-                  </CardContent>
-                </Card>
-              ) : (
-                <p className="text-center text-body-sm text-ink-muted">
-                  Ce dossier est clôturé. Pour un nouveau problème, effectuez un nouveau signalement
-                  {view.company.phone ? <> ou appelez le <a className="inline-flex items-center gap-1 text-primary hover:underline" href={`tel:${view.company.phone}`}><Phone size={13} aria-hidden />{view.company.phone}</a></> : null}.
-                </p>
-              )}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Répondre ou ajouter une précision</CardTitle>
+                  <CardDescription>Votre message est transmis à l&apos;équipe de gestion.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSend} className="flex flex-col gap-3">
+                    {error && <p className="text-body-sm text-danger-fg" role="alert">{error}</p>}
+                    {sent && !error && <p className="text-body-sm text-success-fg" role="status">Message envoyé. Merci !</p>}
+                    <label htmlFor="trackingMessage" className="sr-only">Votre message</label>
+                    <textarea
+                      id="trackingMessage"
+                      rows={4}
+                      value={message}
+                      maxLength={MAX}
+                      onChange={(e) => { setMessage(e.target.value); setSent(false); }}
+                      placeholder="Ex. : je suis disponible demain matin pour l'intervention."
+                      className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-md text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    />
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-body-xs text-ink-muted">{message.length}/{MAX}</span>
+                      <Button type="submit" disabled={sending || !message.trim()}>{sending ? "Envoi…" : "Envoyer"}</Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
             </>
           )}
         </div>

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { MessageCircleWarning, Send, Radar, Droplets, Zap, Coins, ChevronDown, ChevronUp } from "lucide-react";
+import { MessageCircleWarning, Send, Radar, Droplets, Zap, Coins, History, ChevronDown, ChevronUp } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError } from "@/lib/api/client";
 import {
@@ -14,6 +14,8 @@ import {
   type UtilityArrearsEntry,
 } from "@/lib/api/accounting";
 import { applyLateFee } from "@/lib/api/renters";
+import { recordRelance, listRelances, type Relance } from "@/lib/api/relances";
+import { RelanceHistory } from "@/components/relances/relance-history";
 import { UTILITY_TYPE_LABELS } from "@/lib/constants/charges";
 import { buildWhatsAppHref } from "@/lib/validation/auth";
 import {
@@ -137,6 +139,7 @@ function RelancesContent() {
                 <TableHead className="text-right">Montant dû</TableHead>
                 <TableHead>Retard</TableHead>
                 <TableHead>Échéance</TableHead>
+                <TableHead>Dernière relance</TableHead>
                 <TableHead className="text-right">Action</TableHead>
               </tr>
             </TableHeader>
@@ -183,50 +186,14 @@ function RelancesContent() {
                   <TableHead>Fluide</TableHead>
                   <TableHead className="text-right">Montant dû</TableHead>
                   <TableHead>Retard</TableHead>
+                  <TableHead>Dernière relance</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
-                {utilityArrears.map((a) => {
-                  const message = buildUtilityReminderMessage({
-                    renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
-                    unitLabel: a.unitCode,
-                    utilityTypeLabel: UTILITY_TYPE_LABELS[a.utilityType],
-                    amountOwed: a.amountOwed,
-                    daysLate: a.daysLate,
-                    billedAt: formatDateLabel(a.billedAt),
-                    companyName: tenant?.companyName,
-                  });
-                  return (
-                    <TableRow key={a.chargeId}>
-                      <TableCell>
-                        <Link href={`/espace/locataires/${a.renterId}`} className="text-primary hover:underline">
-                          {a.renterName}
-                        </Link>
-                        <div className="text-body-xs text-ink-muted">{a.phone}</div>
-                      </TableCell>
-                      <TableCell className="text-ink-soft">
-                        {a.propertyCode} · {a.unitCode}
-                      </TableCell>
-                      <TableCell className="text-ink-soft">
-                        <span className="inline-flex items-center gap-1.5">
-                          {a.utilityType === "soneb" ? <Droplets size={14} /> : <Zap size={14} />}
-                          {UTILITY_TYPE_LABELS[a.utilityType]}
-                        </span>
-                      </TableCell>
-                      <TableAmount>{formatFcfa(a.amountOwed)}</TableAmount>
-                      <TableCell className="text-danger-fg">{a.daysLate} j</TableCell>
-                      <TableCell className="text-right">
-                        <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex">
-                          <span className={buttonVariants({ variant: "whatsapp", size: "sm" })}>
-                            <Send size={14} />
-                            Relancer
-                          </span>
-                        </a>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {utilityArrears.map((a) => (
+                  <UtilityArrearsRow key={a.chargeId} arrears={a} companyName={tenant?.companyName} accessToken={accessToken} />
+                ))}
               </TableBody>
             </Table>
           </div>
@@ -251,47 +218,14 @@ function RelancesContent() {
                   <TableHead>Bien / unité</TableHead>
                   <TableHead>Historique</TableHead>
                   <TableHead>Échéance</TableHead>
+                  <TableHead>Dernière relance</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </tr>
               </TableHeader>
               <TableBody>
-                {predictive.map((a) => {
-                  const message = buildPredictiveReminderMessage({
-                    renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
-                    unitLabel: a.unitCode,
-                    monthlyRent: a.monthlyRent,
-                    dueDate: formatDateLabel(a.dueDate),
-                    companyName: tenant?.companyName,
-                  });
-                  return (
-                    <TableRow key={a.leaseId}>
-                      <TableCell>
-                        <Link href={`/espace/locataires/${a.renterId}`} className="text-primary hover:underline">
-                          {a.renterName}
-                        </Link>
-                        <div className="text-body-xs text-ink-muted">{a.phone}</div>
-                      </TableCell>
-                      <TableCell className="text-ink-soft">
-                        {a.propertyCode} · {a.unitCode}
-                      </TableCell>
-                      <TableCell className="text-warning-fg">
-                        {a.lateCount}/{a.recentPaymentsCount} derniers paiements en retard
-                      </TableCell>
-                      <TableCell className="text-ink-soft">
-                        {formatDateLabel(a.dueDate)}
-                        {a.daysUntilDue >= 0 && ` (dans ${a.daysUntilDue} j)`}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex">
-                          <span className={buttonVariants({ variant: "warning", size: "sm" })}>
-                            <Send size={14} />
-                            Relancer
-                          </span>
-                        </a>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {predictive.map((a) => (
+                  <PredictiveAlertRow key={a.leaseId} alert={a} companyName={tenant?.companyName} accessToken={accessToken} />
+                ))}
               </TableBody>
             </Table>
           </div>
@@ -321,6 +255,26 @@ function ArrearsRow({
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
   const idem = useIdempotencyKey();
+
+  const [lastRelanceAt, setLastRelanceAt] = React.useState(a.lastRelanceAt);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [relances, setRelances] = React.useState<Relance[] | null>(null);
+
+  function loadHistory() {
+    if (!accessToken) return;
+    listRelances(accessToken, "bail", a.leaseId).then((res) => setRelances(res.relances));
+  }
+  function toggleHistory() {
+    const next = !historyOpen;
+    setHistoryOpen(next);
+    if (next) loadHistory();
+  }
+  function handleRelanceClick() {
+    if (!accessToken) return;
+    recordRelance(accessToken, "bail", a.leaseId)
+      .then(() => { setLastRelanceAt(todayIso()); if (historyOpen) loadHistory(); })
+      .catch(() => {});
+  }
 
   const message = buildRentReminderMessage({
     renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
@@ -387,6 +341,12 @@ function ArrearsRow({
           )}
         </TableCell>
         <TableCell className="text-ink-soft">{formatDateLabel(a.dueDate)}</TableCell>
+        <TableCell>
+          <button type="button" onClick={toggleHistory} className="inline-flex items-center gap-1 text-body-sm text-ink-soft hover:text-ink hover:underline">
+            <History size={13} />
+            {lastRelanceAt ? formatDateLabel(lastRelanceAt) : "Jamais"}
+          </button>
+        </TableCell>
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-1.5">
             <Button type="button" variant="ghost" size="sm" onClick={onTogglePenalty}>
@@ -394,7 +354,7 @@ function ArrearsRow({
               Pénalité
               {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </Button>
-            <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex">
+            <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex" onClick={handleRelanceClick}>
               <span className={buttonVariants({ variant: "whatsapp", size: "sm" })}>
                 <Send size={14} />
                 Relancer
@@ -403,9 +363,18 @@ function ArrearsRow({
           </div>
         </TableCell>
       </TableRow>
+      {historyOpen && (
+        <TableRow className="!bg-surface-muted">
+          <TableCell colSpan={7}>
+            <div className="py-2">
+              <RelanceHistory relances={relances} accessToken={accessToken} onChanged={loadHistory} />
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
       {open && (
         <TableRow className="!bg-surface-muted">
-          <TableCell colSpan={6}>
+          <TableCell colSpan={7}>
             <form onSubmit={handleApplyPenalty} className="flex flex-col gap-3 py-2">
               <p className="text-body-xs text-ink-muted">
                 Montant à votre appréciation — aucun calcul automatique. Génère une dette séparée pour {a.renterName},
@@ -432,6 +401,177 @@ function ArrearsRow({
                 {submitting ? "Application…" : "Appliquer la pénalité"}
               </Button>
             </form>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+function UtilityArrearsRow({
+  arrears: a,
+  companyName,
+  accessToken,
+}: {
+  arrears: UtilityArrearsEntry;
+  companyName: string | undefined;
+  accessToken: string | null;
+}) {
+  const [lastRelanceAt, setLastRelanceAt] = React.useState(a.lastRelanceAt);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [relances, setRelances] = React.useState<Relance[] | null>(null);
+
+  function loadHistory() {
+    if (!accessToken) return;
+    listRelances(accessToken, "charge", a.chargeId).then((res) => setRelances(res.relances));
+  }
+  function toggleHistory() {
+    const next = !historyOpen;
+    setHistoryOpen(next);
+    if (next) loadHistory();
+  }
+  function handleRelanceClick() {
+    if (!accessToken) return;
+    recordRelance(accessToken, "charge", a.chargeId)
+      .then(() => { setLastRelanceAt(todayIso()); if (historyOpen) loadHistory(); })
+      .catch(() => {});
+  }
+
+  const message = buildUtilityReminderMessage({
+    renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
+    unitLabel: a.unitCode,
+    utilityTypeLabel: UTILITY_TYPE_LABELS[a.utilityType],
+    amountOwed: a.amountOwed,
+    daysLate: a.daysLate,
+    billedAt: formatDateLabel(a.billedAt),
+    companyName,
+  });
+
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          <Link href={`/espace/locataires/${a.renterId}`} className="text-primary hover:underline">
+            {a.renterName}
+          </Link>
+          <div className="text-body-xs text-ink-muted">{a.phone}</div>
+        </TableCell>
+        <TableCell className="text-ink-soft">
+          {a.propertyCode} · {a.unitCode}
+        </TableCell>
+        <TableCell className="text-ink-soft">
+          <span className="inline-flex items-center gap-1.5">
+            {a.utilityType === "soneb" ? <Droplets size={14} /> : <Zap size={14} />}
+            {UTILITY_TYPE_LABELS[a.utilityType]}
+          </span>
+        </TableCell>
+        <TableAmount>{formatFcfa(a.amountOwed)}</TableAmount>
+        <TableCell className="text-danger-fg">{a.daysLate} j</TableCell>
+        <TableCell>
+          <button type="button" onClick={toggleHistory} className="inline-flex items-center gap-1 text-body-sm text-ink-soft hover:text-ink hover:underline">
+            <History size={13} />
+            {lastRelanceAt ? formatDateLabel(lastRelanceAt) : "Jamais"}
+          </button>
+        </TableCell>
+        <TableCell className="text-right">
+          <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex" onClick={handleRelanceClick}>
+            <span className={buttonVariants({ variant: "whatsapp", size: "sm" })}>
+              <Send size={14} />
+              Relancer
+            </span>
+          </a>
+        </TableCell>
+      </TableRow>
+      {historyOpen && (
+        <TableRow className="!bg-surface-muted">
+          <TableCell colSpan={7}>
+            <div className="py-2">
+              <RelanceHistory relances={relances} accessToken={accessToken} onChanged={loadHistory} />
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+function PredictiveAlertRow({
+  alert: a,
+  companyName,
+  accessToken,
+}: {
+  alert: PredictiveAlertEntry;
+  companyName: string | undefined;
+  accessToken: string | null;
+}) {
+  const [lastRelanceAt, setLastRelanceAt] = React.useState(a.lastRelanceAt);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [relances, setRelances] = React.useState<Relance[] | null>(null);
+
+  function loadHistory() {
+    if (!accessToken) return;
+    listRelances(accessToken, "bail", a.leaseId).then((res) => setRelances(res.relances));
+  }
+  function toggleHistory() {
+    const next = !historyOpen;
+    setHistoryOpen(next);
+    if (next) loadHistory();
+  }
+  function handleRelanceClick() {
+    if (!accessToken) return;
+    recordRelance(accessToken, "bail", a.leaseId)
+      .then(() => { setLastRelanceAt(todayIso()); if (historyOpen) loadHistory(); })
+      .catch(() => {});
+  }
+
+  const message = buildPredictiveReminderMessage({
+    renterFirstName: a.renterName.split(" ")[0] ?? a.renterName,
+    unitLabel: a.unitCode,
+    monthlyRent: a.monthlyRent,
+    dueDate: formatDateLabel(a.dueDate),
+    companyName,
+  });
+
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          <Link href={`/espace/locataires/${a.renterId}`} className="text-primary hover:underline">
+            {a.renterName}
+          </Link>
+          <div className="text-body-xs text-ink-muted">{a.phone}</div>
+        </TableCell>
+        <TableCell className="text-ink-soft">
+          {a.propertyCode} · {a.unitCode}
+        </TableCell>
+        <TableCell className="text-warning-fg">
+          {a.lateCount}/{a.recentPaymentsCount} derniers paiements en retard
+        </TableCell>
+        <TableCell className="text-ink-soft">
+          {formatDateLabel(a.dueDate)}
+          {a.daysUntilDue >= 0 && ` (dans ${a.daysUntilDue} j)`}
+        </TableCell>
+        <TableCell>
+          <button type="button" onClick={toggleHistory} className="inline-flex items-center gap-1 text-body-sm text-ink-soft hover:text-ink hover:underline">
+            <History size={13} />
+            {lastRelanceAt ? formatDateLabel(lastRelanceAt) : "Jamais"}
+          </button>
+        </TableCell>
+        <TableCell className="text-right">
+          <a href={buildWhatsAppHref(a.phone, message)} target="_blank" rel="noopener noreferrer" className="inline-flex" onClick={handleRelanceClick}>
+            <span className={buttonVariants({ variant: "warning", size: "sm" })}>
+              <Send size={14} />
+              Relancer
+            </span>
+          </a>
+        </TableCell>
+      </TableRow>
+      {historyOpen && (
+        <TableRow className="!bg-surface-muted">
+          <TableCell colSpan={6}>
+            <div className="py-2">
+              <RelanceHistory relances={relances} accessToken={accessToken} onChanged={loadHistory} />
+            </div>
           </TableCell>
         </TableRow>
       )}

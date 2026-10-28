@@ -124,14 +124,14 @@ async function plaintesOuvertes(ctx, input) {
     params.scopeAgentId = ctx.scopeAgentId;
   }
   const [rows] = await pool.query(
-    `SELECT c.code, c.title, c.category, c.priority, c.status, c.reported_at,
+    `SELECT c.code, c.title, c.priority, c.status, c.reported_at,
             r.first_name, r.last_name, un.code AS unit_code, p.code AS property_code
      FROM complaints c
      JOIN leases l ON l.id = c.lease_id
      JOIN renters r ON r.id = l.renter_id
      JOIN property_units un ON un.id = l.unit_id
      JOIN properties p ON p.id = un.property_id
-     WHERE c.tenant_id = :tenantId AND c.status IN ('ouverte', 'en_cours') ${scopeClause}
+     WHERE c.tenant_id = :tenantId AND c.status = 'non_resolue' ${scopeClause}
      ORDER BY c.priority = 'urgente' DESC, c.reported_at ASC`,
     params,
   );
@@ -252,7 +252,7 @@ const TOOLS = [
     name: 'plaintes_ouvertes',
     label: 'Consultation des plaintes en cours…',
     allowed: (ctx) => hasAny(ctx, 'plaintes'),
-    description: "Liste les plaintes/réclamations ouvertes ou en cours (référence, titre, priorité, locataire, ancienneté).",
+    description: "Liste les plaintes/réclamations non résolues (référence, titre, priorité, locataire, ancienneté).",
     properties: limiteSchema(20, 8),
     run: plaintesOuvertes,
   },

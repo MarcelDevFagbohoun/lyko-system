@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { ComplaintCategory, ComplaintPriority, ComplaintStatus } from "./complaints";
+import type { ComplaintPriority, ComplaintStatus } from "./complaints";
 
 /** Page de suivi publique d'une plainte : le jeton du lien est le seul secret, aucun accessToken. */
 
@@ -19,7 +19,6 @@ export type TrackingView = {
   complaint: {
     code: string;
     title: string;
-    category: ComplaintCategory;
     priority: ComplaintPriority;
     status: ComplaintStatus;
     description: string | null;

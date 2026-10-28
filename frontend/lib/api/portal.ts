@@ -1,6 +1,6 @@
 import { apiFetch, API_URL } from "./client";
 import type { PaymentMethod, RentStripMonth } from "./renters";
-import type { ComplaintCategory, ComplaintPriority, ComplaintStatus } from "./complaints";
+import type { ComplaintPriority, ComplaintStatus } from "./complaints";
 
 /**
  * Client du portail locataire (étape 12, idée n°2) : aucun `accessToken`
@@ -124,7 +124,6 @@ export function portalMoveOutReportPdfUrl(token: string) {
 }
 
 export type PortalComplaintInput = {
-  category: ComplaintCategory;
   title: string;
   description?: string;
   priority?: ComplaintPriority;

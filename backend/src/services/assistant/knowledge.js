@@ -16,7 +16,7 @@ const PLATFORM_KNOWLEDGE = `
 - Propriétaires — /espace/proprietaires ; fiche /espace/proprietaires/{id} : taux de commission (avec dates d'effet), versements, relevé mensuel PDF, lien du portail propriétaire, solde que l'entreprise détient pour lui (séquestre), carnet des charges.
 - Locataires — /espace/locataires ; création /espace/locataires/nouveau ; fiche /espace/locataires/{id} : bail, frise des 12 derniers mois de loyer, enregistrement des paiements, quittances PDF, plaintes, état des lieux, sortie.
 - Relances — /espace/relances : locataires en retard de loyer et factures SONEB/SBEE impayées ; bouton « Relancer » (ouvre WhatsApp avec un message prêt) ; option « Pénalité ».
-- Plaintes — /espace/plaintes ; nouvelle plainte /espace/plaintes/nouveau ; suivi ouverte → en cours → résolue → fermée (une note de résolution est obligatoire pour résoudre).
+- Plaintes — /espace/plaintes ; nouvelle plainte /espace/plaintes/nouveau ; deux statuts seulement, non résolue → résolue (une note de résolution est obligatoire pour résoudre).
 - Tâches — /espace/taches : tâches du jour et tâches assignées.
 - Comptabilité — /espace/comptabilite : période, loyers encaissés, versements aux propriétaires, dépenses (bouton « Nouvelle dépense »), export Excel, rapport mensuel PDF, clôture du mois (bouton « Clôturer le mois », réservé à la direction).
 - Comptabilité avancée — /espace/comptabilite-avancee : module OPTIONNEL sur le plan SYSCOHADA (grand livre, balance, bilan, compte de résultat, rapprochement bancaire, exercices) ; la direction l'active dans les Réglages.
