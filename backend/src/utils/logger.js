@@ -7,14 +7,18 @@
  */
 const { isProd } = require('../config/env');
 
+// Sous `node --test`, le stdout du processus de test est le canal binaire du lanceur : une ligne de log qui s'y glisse en plein
+// message provoque « Unable to deserialize cloned data » (échec intermittent d'un fichier entier). Les logs de test vont donc sur stderr.
+const out = process.env.NODE_ENV === 'test' ? process.stderr : process.stdout;
+
 function emit(level, msg, meta) {
   const entry = { ts: new Date().toISOString(), level, msg, ...(meta || {}) };
   if (isProd) {
-    process.stdout.write(JSON.stringify(entry) + '\n');
+    out.write(JSON.stringify(entry) + '\n');
   } else {
     const tag = { info: 'ℹ', warn: '⚠', error: '✖', debug: '·' }[level] || '•';
     const extra = meta && Object.keys(meta).length ? ' ' + JSON.stringify(meta) : '';
-    process.stdout.write(`${tag} ${msg}${extra}\n`);
+    out.write(`${tag} ${msg}${extra}\n`);
   }
 }
 
