@@ -64,7 +64,6 @@ test('lien de suivi : stable, et la page publique ne montre jamais le contenu in
   trackingPath = r1.path;
 
   await post(`/api/complaints/${complaintId}/events`, { comment: 'Plombier prévenu pour demain', visibility: 'tenant' }, bearer(A));
-  await post(`/api/complaints/${complaintId}/events`, { status: 'en_cours' }, bearer(A));
 
   const res = await fetch(`${base}/api/complaint-tracking/${token()}`);
   assert.equal(res.status, 200);
@@ -73,11 +72,11 @@ test('lien de suivi : stable, et la page publique ne montre jamais le contenu in
   const view = JSON.parse(raw);
   const bodies = view.events.map((e) => e.body).filter(Boolean);
   assert.deepEqual(bodies, ['Plombier prévenu pour demain']);
-  assert.ok(view.events.some((e) => e.type === 'status_changed' && e.toStatus === 'en_cours'));
+  assert.ok(view.events.some((e) => e.type === 'reported' && e.toStatus === 'non_resolue'));
   assert.ok(view.events.every((e) => e.by === 'team' || e.by === 'tenant'));
   assert.ok(!('author' in view.events[0]));
   assert.equal(view.complaint.description, null); // saisie par l'équipe : non affichée
-  assert.equal(view.complaint.status, 'en_cours');
+  assert.equal(view.complaint.status, 'non_resolue');
   assert.ok(view.dates.reportedAt);
   for (const k of ['lease', 'renter', 'tenantId', 'id', 'resolutionNote']) assert.ok(!(k in view.complaint), `champ ${k} exposé`);
 });
@@ -114,14 +113,14 @@ test('résolution : date de résolution, note de résolution jamais montrée au 
   assert.equal(JSON.parse(raw).complaint.status, 'resolue');
 });
 
-test('ancienne route de statut : mêmes événements ; dossier fermé = plus de réponse du locataire', async () => {
-  const r = await fetch(`${base}/api/complaints/${complaintId}/status`, { method: 'PATCH', headers: bearer(A), body: JSON.stringify({ status: 'fermee' }) });
+test('ancienne route de statut : mêmes événements ; réouverture, le locataire peut toujours répondre', async () => {
+  const r = await fetch(`${base}/api/complaints/${complaintId}/status`, { method: 'PATCH', headers: bearer(A), body: JSON.stringify({ status: 'non_resolue' }) });
   assert.equal(r.status, 200);
   const d = await (await fetch(`${base}/api/complaints/${complaintId}`, { headers: bearer(A) })).json();
-  assert.ok(d.events.some((e) => e.type === 'status_changed' && e.toStatus === 'fermee'));
+  assert.ok(d.events.some((e) => e.type === 'status_changed' && e.toStatus === 'non_resolue'));
   const view = await (await fetch(`${base}/api/complaint-tracking/${token()}`)).json();
-  assert.equal(view.complaint.canComment, false);
-  assert.equal((await post(`/api/complaint-tracking/${token()}/comments`, { message: 'encore' }, json)).status, 400);
+  assert.equal(view.complaint.status, 'non_resolue');
+  assert.equal(view.complaint.canComment, true); // plus de statut « fermée » : jamais de verrouillage
 });
 
 test('isolation entre entreprises : l\'autre entreprise ne voit ni le dossier, ni le journal, ni ne commente', async () => {

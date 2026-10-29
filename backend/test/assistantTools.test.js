@@ -98,12 +98,12 @@ before(async () => {
 
   // Deux plaintes ouvertes : une urgente (sur le Bien de la fixture), une normale (sur le Bien restreint).
   const [c1] = await pool.query(
-    "INSERT INTO complaints (tenant_id, lease_id, code, category, title, priority, status, reported_at, created_by) VALUES (:t, :l, 'INC-TEST-1', 'plomberie', 'Fuite urgente', 'urgente', 'ouverte', '2026-09-01', :by)",
+    "INSERT INTO complaints (tenant_id, lease_id, code, category, title, priority, status, reported_at, created_by) VALUES (:t, :l, 'INC-TEST-1', 'plomberie', 'Fuite urgente', 'urgente', 'non_resolue', '2026-09-01', :by)",
     { t: fx.tenantId, l: fx.leaseId, by: fx.dgId },
   );
   complaintUrgentId = c1.insertId;
   const [c2] = await pool.query(
-    "INSERT INTO complaints (tenant_id, lease_id, code, category, title, priority, status, reported_at, created_by) VALUES (:t, :l, 'INC-TEST-2', 'electricite', 'Prise cassée', 'normale', 'en_cours', '2026-09-10', :by)",
+    "INSERT INTO complaints (tenant_id, lease_id, code, category, title, priority, status, reported_at, created_by) VALUES (:t, :l, 'INC-TEST-2', 'electricite', 'Prise cassée', 'normale', 'non_resolue', '2026-09-10', :by)",
     { t: fx.tenantId, l: scopedLeaseId, by: fx.dgId },
   );
   complaintNormalId = c2.insertId;
