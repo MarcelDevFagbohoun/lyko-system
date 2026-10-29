@@ -75,3 +75,19 @@ export const adminGrantPartner = (t: string, tenantId: number, input: PartnerGra
   apiFetch<{ ok: true; extended: boolean; currentPeriodEnd: string }>(`/api/admin/tenants/${tenantId}/partner`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify(input) });
 export const adminRevokePartner = (t: string, tenantId: number, note: string) =>
   apiFetch<{ ok: true }>(`/api/admin/tenants/${tenantId}/partner/revoke`, { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ note }) });
+
+export type AdminStats = {
+  months: number;
+  kpis: {
+    collectedTotal: number; collectedMonth: number; collectedPrevMonth: number; refundedTotal: number; refundedMonth: number; refundsPending: number;
+    success30: number; failed30: number; incomplete30: number; failedAmount30: number; successRate30: number | null; anomalies: number; anomalyAmount: number;
+  };
+  series: { month: string; amount: number; payments: number; failed: number }[];
+  byPlan: { planKey: string; payments: number; amount: number }[];
+  byKind: { kind: string; payments: number; amount: number }[];
+  failureReasons: { reason: string; count: number }[];
+  tenants: { total: number; newThisMonth: number; paying: number; partners: number; internal: number; expired: number; expiring14: number };
+  plans: { planKey: string; count: number }[];
+  recent: { id: number; status: string; reason: string | null; planKey: string; months: number; kind: string; amount: number; createdAt: string; paidAt: string | null; companyName: string }[];
+};
+export const adminStats = (t: string, months = 12) => apiFetch<AdminStats>(`/api/admin/stats?months=${months}`, { accessToken: t });

@@ -13,6 +13,7 @@ import type { PaymentIssue } from "@/lib/api/admin";
 import { offerLabel } from "@/lib/api/billing";
 import { CatalogEditor } from "./catalog-editor";
 import { PartnerDialog } from "./partner-dialog";
+import { StatsPanel } from "./stats-panel";
 import { PartnerBadge } from "@/components/billing/partner-badge";
 import { PAYMENT_OUTCOME } from "@/lib/billing-plans";
 import { Badge } from "@/components/ui/badge";
@@ -100,7 +101,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "succes
 };
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
-  const [tab, setTab] = React.useState<"refunds" | "payments" | "tenants" | "catalog" | "security" | "audit">("refunds");
+  const [tab, setTab] = React.useState<"stats" | "refunds" | "payments" | "tenants" | "catalog" | "security" | "audit">("stats");
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [issues, setIssues] = React.useState<PaymentIssue[]>([]);
   const [refs, setRefs] = React.useState<Record<number, string>>({});
@@ -132,6 +133,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="font-display text-headline-lg text-ink">Back-office</h1>
           <div className="flex flex-wrap gap-2">
+            <Button variant={tab === "stats" ? "primary" : "secondary"} onClick={() => setTab("stats")}>Tableau de bord</Button>
             <Button variant={tab === "refunds" ? "primary" : "secondary"} onClick={() => setTab("refunds")}>Remboursements</Button>
             <Button variant={tab === "payments" ? "primary" : "secondary"} onClick={() => setTab("payments")}>
               Paiements à surveiller{issues.some((i) => i.status === "anomaly") ? " ⚠" : issues.length ? ` (${issues.length})` : ""}
@@ -144,6 +146,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
           </div>
         </div>
         {message && <p className="rounded border border-border bg-surface p-3 text-body-sm text-ink">{message}</p>}
+
+        {tab === "stats" && <StatsPanel token={token} onLogout={onLogout} onOpenIssues={() => setTab("payments")} />}
 
         {tab === "refunds" && (
           <div className="flex flex-col gap-4">

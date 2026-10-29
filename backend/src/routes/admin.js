@@ -17,6 +17,7 @@ const catalogService = require('../services/planCatalog');
 const { findOffer, paymentOutcome } = require('../services/billing');
 const { activatePayment } = require('../services/billing');
 const partners = require('../services/partnerSubscription');
+const adminStats = require('../services/adminStats');
 const { parsePartnerRights } = require('../services/entitlements');
 const { PARTNER_SELECTABLE_FEATURES } = require('../constants/plans');
 const logger = require('../utils/logger');
@@ -147,6 +148,11 @@ router.get('/tenants', async (_req, res, next) => {
     };
     res.json({ tenants: rows.map((r) => ({ partner: partnerOf(r), overLimits: over(r), id: r.id, companyName: r.company_name, createdAt: r.created_at, planKey: r.plan_key, status: r.status === 'active' && r.plan_key !== 'interne' && !Number(r.running) ? 'expired' : r.status, currentPeriodEnd: r.current_period_end, founderPrice: !!r.founder_price, totalPaid: Number(r.total_paid), lastPayment: r.last_payment_status ? paymentOutcome(r.last_payment_status, r.last_payment_amount) : null })) });
   } catch (err) { next(err); }
+});
+
+// Tableau de bord : encaissements, évolution mensuelle, échecs, répartition des entreprises (?months=3..24, 12 par défaut).
+router.get('/stats', async (req, res, next) => {
+  try { res.json(await adminStats.getStats(req.query.months)); } catch (err) { next(err); }
 });
 
 router.get('/payment-issues', async (req, res, next) => {
