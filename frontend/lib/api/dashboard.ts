@@ -67,3 +67,18 @@ export function listActivity(accessToken: string, filters: ActivityFilters = {})
   const qs = params.toString();
   return apiFetch<{ entries: ActivityEntry[] }>(`/api/dashboard/activity${qs ? `?${qs}` : ""}`, { accessToken });
 }
+
+export type DashboardTrends = {
+  months: number;
+  series: {
+    month: string;
+    rentCollected: number; rentPayments: number; arrears: number; arrearsCount: number;
+    revenue: { commission: number; entryFees: number; lateFees: number; saleCommissions: number; otherIncomes: number; expenses: number; net: number };
+    expensesByCategory: Record<string, number>;
+    occupancy: { total: number; occupied: number; rate: number | null };
+  }[];
+  daily: { currentMonth: string; previousMonth: string; today: number; daysInCurrent: number; daysInPrevious: number; current: number[]; previous: number[] };
+};
+export function getDashboardTrends(accessToken: string, months = 6) {
+  return apiFetch<DashboardTrends>(`/api/dashboard/trends?months=${months}`, { accessToken });
+}

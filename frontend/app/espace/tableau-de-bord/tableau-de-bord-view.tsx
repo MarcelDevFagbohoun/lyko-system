@@ -24,6 +24,7 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { ComplaintsPanel, QuickAccessPanel } from "@/components/espace/dashboard-panels";
+import { DashboardTrendsSection } from "@/components/espace/dashboard-trends";
 import { StatCard } from "@/components/ui/stat-card";
 import { CADRES, type Cadre } from "@/lib/module-theme";
 
@@ -197,6 +198,10 @@ function TableauDeBordContent() {
             </div>
           </DashboardSection>
         )}
+
+        <DashboardSection cadre="finances" title="Évolution" description="Comment votre activité évolue, mois après mois.">
+          <DashboardTrendsSection accessToken={accessToken} />
+        </DashboardSection>
 
         <DashboardSection cadre="operations" title="À traiter" description="Ce qui demande votre attention aujourd'hui.">
           <div className="stagger grid grid-cols-1 gap-4 lg:grid-cols-2">

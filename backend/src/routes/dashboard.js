@@ -14,6 +14,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { listRecentActivity } = require('../services/activity');
 const { listPendingDepositRegularizations } = require('../services/inspection');
 const { isModuleActive } = require('../services/gl/glPostingService');
+const { getTrends } = require('../services/dashboardTrends');
 
 const router = Router();
 router.use(requireAuth, requireRole('dg'));
@@ -134,6 +135,12 @@ router.get('/overview', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// GET /api/dashboard/trends?months=3..12 — évolution mois par mois (loyers, impayés, recette du cabinet, dépenses, occupation)
+// et cumul jour par jour du mois en cours contre le précédent. Réutilise les calculs de la comptabilité (voir services/dashboardTrends.js).
+router.get('/trends', async (req, res, next) => {
+  try { res.json(await getTrends(req.user.tenantId, req.query.months)); } catch (err) { next(err); }
 });
 
 // GET /api/dashboard/activity?limit=&date=&month=&type= — journal d'activité
