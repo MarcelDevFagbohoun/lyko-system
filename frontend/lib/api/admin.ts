@@ -80,9 +80,14 @@ export type AdminStats = {
   months: number;
   kpis: {
     collectedTotal: number; collectedMonth: number; collectedPrevMonth: number; refundedTotal: number; refundedMonth: number; refundsPending: number;
+    mrr: number; mrrPrevious: number;
     success30: number; failed30: number; incomplete30: number; failedAmount30: number; successRate30: number | null; anomalies: number; anomalyAmount: number;
   };
-  series: { month: string; amount: number; payments: number; failed: number }[];
+  series: {
+    month: string; amount: number; payments: number; failed: number; refunded: number; net: number; mrr: number;
+    byPlan: Record<"demarrage" | "pro" | "entreprise", number>; byKind: Record<"purchase" | "renewal" | "upgrade", number>;
+  }[];
+  daily: { currentMonth: string; previousMonth: string; today: number; daysInCurrent: number; daysInPrevious: number; current: number[]; previous: number[] };
   byPlan: { planKey: string; payments: number; amount: number }[];
   byKind: { kind: string; payments: number; amount: number }[];
   failureReasons: { reason: string; count: number }[];
