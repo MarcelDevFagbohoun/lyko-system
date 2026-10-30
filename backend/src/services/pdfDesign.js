@@ -427,7 +427,7 @@ function drawNote(doc, y, label, text) {
  * Cartes de signature (une ou deux). `cards` : [{ title, name, role?, date?, signatureFile?, stampFile?, hint? }].
  * Bandeau marine en tête de carte, zone de signature, nom et fonction dessous.
  */
-function drawSignatureCards(doc, y, cards, { section = true } = {}) {
+function drawSignatureCards(doc, y, cards, { section = true, plain = false } = {}) {
   // Cachet/signature agrandis (demande utilisateur, 2026-10-23) : la carte et ses deux zones d'image
   // grandissent ensemble pour rester professionnelles (ni signature écrasée, ni cachet rogné) — tout
   // le reste du bloc (ligne d'appui, nom, fonction, mention) est redescendu en conséquence.
@@ -440,11 +440,15 @@ function drawSignatureCards(doc, y, cards, { section = true } = {}) {
   cards.forEach((c, i) => {
     const x = startX + i * (w + gap);
     doc.roundedRect(x, y, w, cardH, 7).lineWidth(0.75).fillAndStroke(C.WHITE, C.TINT_BORDER);
-    doc.save();
-    doc.roundedRect(x, y, w, 22, 7).clip();
-    doc.rect(x, y, w, 22).fill(C.NAVY);
-    doc.restore();
-    doc.font(F.BOLD).fontSize(7.5).fillColor(C.WHITE).text(String(c.title).toUpperCase(), x + 14, y + 8, { width: w - 28, characterSpacing: 0.5, lineBreak: false });
+    if (plain) {
+      doc.font(F.BOLD).fontSize(8.5).fillColor(C.MUTED).text(String(c.title), x + 14, y + 8, { width: w - 28, lineBreak: false });
+    } else {
+      doc.save();
+      doc.roundedRect(x, y, w, 22, 7).clip();
+      doc.rect(x, y, w, 22).fill(C.NAVY);
+      doc.restore();
+      doc.font(F.BOLD).fontSize(7.5).fillColor(C.WHITE).text(String(c.title).toUpperCase(), x + 14, y + 8, { width: w - 28, characterSpacing: 0.5, lineBreak: false });
+    }
     const boxY = y + 26;
     if (c.signatureFile) {
       try {
@@ -463,6 +467,108 @@ function drawSignatureCards(doc, y, cards, { section = true } = {}) {
     if (c.hint) doc.font(F.ITALIC).fontSize(7).fillColor(C.MUTED).text(c.hint, x + 14, y + cardH - 14, { width: w - 28, lineBreak: false });
   });
   return y + cardH + 14;
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Style « reçu » épuré (demande utilisateur 2026-10-30 : s'inspirer des reçus Claude/Google) : fond blanc, aucune bande de
+// couleur, titre en grand, références en clé/valeur, tableau à simples filets, totaux alignés à droite.
+// ---------------------------------------------------------------------------------------------------------------------
+const sentenceCase = (t) => { const x = String(t ?? '').toLowerCase(); return x.charAt(0).toUpperCase() + x.slice(1); };
+
+/** En-tête : titre + logo, références clé/valeur, identité de l'émetteur. Renvoie le y suivant. */
+function drawPlainHeader(doc, tenant, { title, subtitle = null, meta = [] }) {
+  const heading = sentenceCase(title);
+  const logoFile = imageIfExists(tenant.logo_path);
+  const titleW = logoFile ? WIDTH - 64 : WIDTH;
+  let size = 24;
+  doc.font(F.BOLD).fontSize(size);
+  while (doc.widthOfString(heading) > titleW && size > 14) { size -= 1; doc.fontSize(size); }
+  doc.fillColor(C.INK).text(heading, LEFT, 50, { width: titleW, lineBreak: false });
+  let y = 50 + size + 6;
+  if (subtitle) { doc.font(F.SANS).fontSize(10.5).fillColor(C.MUTED).text(subtitle, LEFT, y, { width: titleW, lineBreak: false }); y += 20; }
+  if (logoFile) {
+    try { doc.image(logoFile, LEFT + WIDTH - 48, 46, { fit: [48, 48], align: 'right', valign: 'top' }); } catch { /* logo illisible : on continue */ }
+  }
+  y = Math.max(y, 100) + 10;
+  for (const [label, value] of meta) {
+    doc.font(F.BOLD).fontSize(9.5).fillColor(C.INK).text(String(label), LEFT, y, { width: 130, lineBreak: false });
+    doc.font(F.SANS).fontSize(9.5).fillColor(C.INK).text(String(value ?? '—'), LEFT + 135, y, { width: WIDTH - 135, lineBreak: false });
+    y += 15;
+  }
+  y += 14;
+  doc.font(F.BOLD).fontSize(10).fillColor(C.INK).text(String(tenant.company_name), LEFT, y, { width: WIDTH, lineBreak: false });
+  const identity = [tenant.rccm && `RCCM ${tenant.rccm}`, tenant.ifu && `IFU ${tenant.ifu}`, tenant.contact_phone].filter(Boolean).join('  ·  ');
+  if (identity) doc.font(F.SANS).fontSize(8.5).fillColor(C.MUTED).text(identity, LEFT, y + 14, { width: WIDTH, lineBreak: false });
+  doc._aimTitle = heading;
+  doc._aimContext = meta[0] ? String(meta[0][1] ?? '') : '';
+  doc._aimLight = true;
+  doc.y = y + 40;
+  return y + 40;
+}
+
+/** Titre de section sobre : gras, casse normale, aucune barre. */
+function drawPlainSection(doc, y, label) {
+  y = ensureRoom(doc, y, 40);
+  doc.font(F.BOLD).fontSize(11).fillColor(C.INK).text(String(label), LEFT, y, { width: WIDTH, lineBreak: false });
+  return y + 20;
+}
+
+/** Tableau à simples filets : en-tête grise, un filet sous l'en-tête et un sous chaque ligne, aucun aplat de couleur. */
+function drawPlainTable(doc, y, columns, rows) {
+  const rule = (yy, color = L.RULE, w = 0.5) => doc.moveTo(LEFT, yy).lineTo(LEFT + WIDTH, yy).lineWidth(w).strokeColor(color).stroke();
+  const head = () => {
+    let x = LEFT;
+    for (const col of columns) {
+      doc.font(F.SANS).fontSize(8.5).fillColor(C.MUTED).text(col.label, x, y, { width: col.width - 8, align: col.align ?? 'left', lineBreak: false });
+      x += col.width;
+    }
+    y += 16;
+    rule(y, C.TINT_BORDER, 0.75);
+    y += 8;
+  };
+  y = ensureRoom(doc, y, 70);
+  head();
+  for (const row of rows) {
+    const values = columns.map((col, ci) => (Array.isArray(row) ? row[ci] : row[col.key ?? ci]));
+    const heights = columns.map((col, ci) => doc.font(col.bold ? F.BOLD : F.SANS).fontSize(9.5).heightOfString(String(values[ci] ?? ''), { width: col.width - 8 }));
+    const h = Math.max(18, Math.max(...heights) + 4);
+    if (y + h + 10 > pageBottom(doc)) { doc.addPage(); y = doc.page.margins.top + 4; head(); }
+    let x = LEFT;
+    columns.forEach((col, ci) => {
+      doc.font(col.bold ? F.BOLD : F.SANS).fontSize(9.5).fillColor(col.color ?? C.INK).text(String(values[ci] ?? '—'), x, y, { width: col.width - 8, align: col.align ?? 'left' });
+      x += col.width;
+    });
+    y += h + 6;
+    rule(y);
+    y += 8;
+  }
+  return y + 6;
+}
+
+/** Montant principal en grand (libellé gris au-dessus), puis, sous le tableau, une ligne de total alignée à droite. */
+function drawPlainAmount(doc, y, label, amountText) {
+  y = ensureRoom(doc, y, 52);
+  doc.font(F.SANS).fontSize(9).fillColor(C.MUTED).text(String(label), LEFT, y, { width: WIDTH, lineBreak: false });
+  doc.font(F.BOLD).fontSize(20).fillColor(C.INK).text(amountText, LEFT, y + 13, { width: WIDTH, lineBreak: false });
+  return y + 52;
+}
+function drawPlainTotal(doc, y, label, amountText) {
+  y = ensureRoom(doc, y, 34);
+  const x = LEFT + WIDTH - 270;
+  doc.moveTo(x, y).lineTo(LEFT + WIDTH, y).lineWidth(0.75).strokeColor(C.TINT_BORDER).stroke();
+  doc.font(F.BOLD).fontSize(10.5).fillColor(C.INK).text(String(label), x, y + 10, { width: 150, lineBreak: false });
+  doc.font(F.BOLD).fontSize(10.5).fillColor(C.INK).text(amountText, x + 120, y + 10, { width: 150, align: 'right', lineBreak: false });
+  return y + 36;
+}
+
+/** Note : simple paragraphe, sans cadre. */
+function drawPlainNote(doc, y, text) {
+  doc.font(F.SANS).fontSize(9);
+  const h = doc.heightOfString(text, { width: WIDTH });
+  y = ensureRoom(doc, y, h + 12);
+  doc.font(F.SANS).fontSize(9).fillColor(C.INK_SOFT).text(text, LEFT, y, { width: WIDTH });
+  return y + h + 18;
 }
 
 /** Pied de page commun + bandeaux de continuation. À appeler une seule fois avant `doc.end()`. */
@@ -489,4 +595,5 @@ module.exports = {
   C, F, LEFT, WIDTH, CONTENT_TOP, fcfa, amountInWordsFr, sentenceAmount, imageIfExists,
   drawBanner, layoutActivityList, drawActivityList, drawContinuationBand, drawSection, drawInfoGrid, drawStatTiles, drawTable, drawTotalBar,
   drawWordsLine, drawNote, drawSignatureCards, finishDocument, ensureRoom,
+  drawPlainHeader, drawPlainSection, drawPlainTable, drawPlainAmount, drawPlainTotal, drawPlainNote,
 };

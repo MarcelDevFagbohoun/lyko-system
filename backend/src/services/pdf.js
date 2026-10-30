@@ -225,21 +225,22 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
   res.setHeader('Cache-Control', 'private, no-store');
   doc.pipe(res);
 
-  let y = D.drawBanner(doc, tenant, { title, subtitle, meta, light: true });
+  let y = D.drawPlainHeader(doc, tenant, { title, subtitle, meta });
   if (intro) {
     doc.font(D.F.SANS).fontSize(9.5).fillColor(D.C.INK_SOFT).text(intro.prefix, D.LEFT, y, { continued: true });
     doc.font(D.F.BOLD).fillColor(D.C.INK).text(intro.bold);
-    y = doc.y + 16;
+    y = doc.y + 18;
   }
-  y = D.drawSection(doc, y, partiesLabel, { bar: false });
+  y = D.drawPlainSection(doc, y, partiesLabel);
   y = D.drawInfoGrid(doc, y, parties, { light: true });
-  y = D.drawSection(doc, y, detailLabel, { bar: false });
-  y = D.drawTable(doc, y, lines.columns, lines.rows);
-  if (extraRows) y = D.drawTable(doc, y, extraRows.columns, extraRows.rows);
-  y = D.drawTotalBar(doc, y, total.label, total.amount);
+  y = D.drawPlainAmount(doc, y, total.label, total.amount);
+  y = D.drawPlainSection(doc, y, detailLabel);
+  y = D.drawPlainTable(doc, y, lines.columns, lines.rows);
+  if (extraRows) y = D.drawPlainTable(doc, y, extraRows.columns, extraRows.rows);
+  y = D.drawPlainTotal(doc, y, total.label, total.amount);
   y = D.drawWordsLine(doc, y, total.raw, wordsPrefix, { color: D.C.DANGER }); // phrase « Arrêtée la présente… » en rouge
-  if (note) y = D.drawNote(doc, y + 2, null, note);
-  y = D.drawSignatureCards(doc, y, [issuerCard(tenant, issuer, signatureTitle)], { section: false });
+  if (note) y = D.drawPlainNote(doc, y + 2, note);
+  y = D.drawSignatureCards(doc, y, [issuerCard(tenant, issuer, signatureTitle)], { section: false, plain: true });
 
   drawFooter(doc, { verificationCode });
   doc.end();
