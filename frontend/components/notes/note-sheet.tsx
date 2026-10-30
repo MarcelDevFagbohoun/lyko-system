@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Bold, Eye, Heading2, Italic, List, ListOrdered, Pencil } from "lucide-react";
+import { Bold, Eye, Heading2, Italic, List, ListOrdered, NotebookPen, Pencil, Plus } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
 import { conflictSheet, getNoteSheet, saveNoteSheet, type EntityNote, type NoteSheet as Sheet, type SheetEntityType } from "@/lib/api/notes";
 import { applyFormat, type FormatKind } from "@/lib/note-format";
@@ -117,12 +117,18 @@ export function NoteSheet({
   }
 
   return (
-    <section className="flex max-w-2xl flex-col gap-3" aria-label={title}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-label-md text-ink">{title}</h3>
-        {!editing && sheet && (
+    <section className="flex flex-col gap-4" aria-label={title}>
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface text-tint-slate-solid shadow-sm ring-1 ring-border">
+          <NotebookPen size={20} aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="font-display text-headline-sm text-ink">{title}</h3>
+          <p className="text-body-xs text-ink-muted">Partagée avec l&apos;équipe, selon les droits d&apos;accès.</p>
+        </div>
+        {!editing && sheet && sheet.version !== 0 && (
           <Button size="sm" variant="secondary" onClick={startEdit}>
-            <Pencil size={14} /> {sheet.version === 0 ? "Remplir la fiche" : "Modifier"}
+            <Pencil size={14} /> Modifier
           </Button>
         )}
       </div>
@@ -132,7 +138,7 @@ export function NoteSheet({
       {!editing ? (
         sheet && (
           sheet.content.trim() ? (
-            <div className="rounded-lg border border-border bg-surface px-4 py-3">
+            <div className="rounded-xl border border-border bg-surface px-4 py-3 shadow-sm">
               <SafeMarkdown text={sheet.content} />
               {sheet.updatedAt && (
                 <p className="mt-3 border-t border-border pt-2 text-body-xs text-ink-faint">
@@ -141,12 +147,20 @@ export function NoteSheet({
               )}
             </div>
           ) : (
-            <p className="text-body-sm text-ink-muted">La fiche est vide. Notez ici ce qu&apos;il faut savoir sur cette personne.</p>
+            <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border-strong bg-surface px-4 py-7 text-center">
+              <p className="max-w-md text-body-sm text-ink-muted">
+                La fiche est vide. Notez ici ce qu&apos;il faut savoir sur cette personne : comportement de paiement, relation, points d&apos;attention.
+              </p>
+              <Button onClick={startEdit}>
+                <Plus size={16} /> Remplir la fiche
+              </Button>
+            </div>
           )
         )
       ) : (
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-1" role="toolbar" aria-label="Mise en forme">
+        <div className="flex flex-col gap-3">
+         <div className="overflow-hidden rounded-xl border border-border-strong bg-surface shadow-sm focus-within:ring-2 focus-within:ring-primary">
+          <div className="flex flex-wrap items-center gap-1 border-b border-border bg-surface-muted px-2 py-1.5" role="toolbar" aria-label="Mise en forme">
             {TOOLS.map((t) => (
               <button
                 key={t.kind}
@@ -155,7 +169,7 @@ export function NoteSheet({
                 aria-label={t.label}
                 disabled={preview}
                 onClick={() => format(t.kind)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded border border-border-strong bg-surface text-ink-soft hover:bg-surface-muted disabled:opacity-40"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-soft hover:bg-surface disabled:opacity-40"
               >
                 {t.icon}
               </button>
@@ -164,14 +178,14 @@ export function NoteSheet({
               type="button"
               onClick={() => setPreview((p) => !p)}
               aria-pressed={preview}
-              className={cn("ml-auto inline-flex h-9 items-center gap-1.5 rounded border px-3 text-body-sm", preview ? "border-primary bg-primary/10 text-primary" : "border-border-strong bg-surface text-ink-soft hover:bg-surface-muted")}
+              className={cn("ml-auto inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-body-sm", preview ? "bg-primary/10 text-primary" : "text-ink-soft hover:bg-surface")}
             >
               <Eye size={14} /> Aperçu
             </button>
           </div>
 
           {preview ? (
-            <div className="min-h-[180px] rounded-lg border border-border bg-surface px-4 py-3">
+            <div className="min-h-[180px] px-4 py-3">
               {draft.trim() ? <SafeMarkdown text={draft} /> : <p className="text-body-sm text-ink-muted">Rien à afficher.</p>}
             </div>
           ) : (
@@ -183,10 +197,11 @@ export function NoteSheet({
               maxLength={20000}
               placeholder={placeholder}
               aria-label="Contenu de la fiche"
-              className="min-h-[180px] w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-md text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="block min-h-[180px] w-full resize-y border-0 bg-surface px-4 py-3 text-body-md text-ink placeholder:text-ink-faint focus:outline-none"
             />
           )}
-          <p className="text-body-xs text-ink-faint">{draft.length} / 20 000 caractères</p>
+          <p className="border-t border-border bg-surface-muted/60 px-4 py-1.5 text-right text-body-xs text-ink-faint">{draft.length} / 20 000 caractères</p>
+         </div>
 
           {conflict && (
             <div className="rounded-lg border border-warning-border bg-warning-bg p-3 text-body-sm text-warning-fg" role="alert">

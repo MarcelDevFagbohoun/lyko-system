@@ -3,7 +3,7 @@
 import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import Link from "next/link";
-import { DoorOpen, LogOut, FileDown } from "lucide-react";
+import { CalendarRange, DoorOpen, LogOut, FileDown } from "lucide-react";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
   createLease,
@@ -255,8 +255,11 @@ export function LeaseCard({
         </div>
 
         {lease.rentStrip && (
-          <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
-            <span className="font-label-sm uppercase tracking-wider text-ink-muted">Les 12 mois en un coup d&apos;œil</span>
+          <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 shadow-sm sm:p-5">
+            <div className="flex items-center gap-2">
+              <CalendarRange size={18} className="text-primary" aria-hidden />
+              <h4 className="font-display text-headline-sm text-ink">Les 12 mois en un coup d&apos;œil</h4>
+            </div>
             <RentStrip months={lease.rentStrip} variant="full" />
           </div>
         )}
