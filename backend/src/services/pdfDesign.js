@@ -255,7 +255,8 @@ function drawLightBanner(doc, tenant, { title, subtitle, meta }) {
     const cardW = WIDTH + LEFT - cardX;
     const items = meta.slice(0, 3);
     const cardH = 14 + items.length * 26;
-    doc.roundedRect(cardX, 28, cardW, cardH, 8).fill(L.PANEL);
+    // Carte de références : fond blanc uni, simple filet (demande utilisateur 2026-10-30), plus de gris.
+    doc.roundedRect(cardX, 28, cardW, cardH, 8).lineWidth(0.75).fillAndStroke(C.WHITE, L.RULE);
     items.forEach(([label, value], i) => {
       const y = 38 + i * 26;
       doc.font(F.SANS).fontSize(6.5).fillColor(L.MUTED).text(String(label).toUpperCase(), cardX + 14, y, { width: cardW - 28, characterSpacing: 0.5, lineBreak: false });
@@ -293,9 +294,9 @@ function drawContinuationBand(doc, title, context) {
 }
 
 /** Titre de section : barre d'accent + libellé en capitales marine. Renvoie le y suivant. */
-function drawSection(doc, y, label, { right = null } = {}) {
-  doc.rect(LEFT, y, 3.5, 13).fill(C.ACCENT);
-  doc.font(F.BOLD).fontSize(10.5).fillColor(C.NAVY).text(String(label).toUpperCase(), LEFT + 11, y + 1.5, { width: 330, lineBreak: false, characterSpacing: 0.3 });
+function drawSection(doc, y, label, { right = null, bar = true } = {}) {
+  if (bar) doc.rect(LEFT, y, 3.5, 13).fill(C.ACCENT);
+  doc.font(F.BOLD).fontSize(10.5).fillColor(C.NAVY).text(String(label).toUpperCase(), bar ? LEFT + 11 : LEFT, y + 1.5, { width: 330, lineBreak: false, characterSpacing: 0.3 });
   if (right) doc.font(F.SANS).fontSize(8).fillColor(C.MUTED).text(right, 360, y + 3, { width: 185, align: 'right', lineBreak: false });
   return y + 24;
 }
@@ -325,7 +326,7 @@ function drawInfoGrid(doc, y, cells, { columns = 3, light = false } = {}) {
   });
   const total = heights.reduce((a, b) => a + b, 0);
   y = ensureRoom(doc, y, total + 6);
-  doc.roundedRect(LEFT, y, WIDTH, total, 8).lineWidth(0.75).fillAndStroke(light ? L.PANEL_SOFT : C.WHITE, border);
+  doc.roundedRect(LEFT, y, WIDTH, total, 8).lineWidth(0.75).fillAndStroke(C.WHITE, border); // fond blanc, y compris en version « light » des reçus
   let cy = y;
   rows.forEach((row, ri) => {
     if (ri > 0) doc.moveTo(LEFT, cy).lineTo(LEFT + WIDTH, cy).lineWidth(0.5).strokeColor(border).stroke();

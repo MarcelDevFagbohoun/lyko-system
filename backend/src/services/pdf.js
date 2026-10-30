@@ -231,9 +231,9 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
     doc.font(D.F.BOLD).fillColor(D.C.INK).text(intro.bold);
     y = doc.y + 16;
   }
-  y = D.drawSection(doc, y, partiesLabel);
+  y = D.drawSection(doc, y, partiesLabel, { bar: false });
   y = D.drawInfoGrid(doc, y, parties, { light: true });
-  y = D.drawSection(doc, y, detailLabel);
+  y = D.drawSection(doc, y, detailLabel, { bar: false });
   y = D.drawTable(doc, y, lines.columns, lines.rows);
   if (extraRows) y = D.drawTable(doc, y, extraRows.columns, extraRows.rows);
   y = D.drawTotalBar(doc, y, total.label, total.amount);
