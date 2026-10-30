@@ -75,7 +75,14 @@ type AuthContextValue = AuthState & {
   resendVerificationCode: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string, confirmNewPassword: string) => Promise<void>;
-  updateMyProfile: (input: { avatar?: File; stamp?: File; signature?: File }) => Promise<void>;
+  updateMyProfile: (input: {
+    avatar?: File;
+    stamp?: File;
+    signature?: File;
+    removeAvatar?: boolean;
+    removeStamp?: boolean;
+    removeSignature?: boolean;
+  }) => Promise<void>;
   refreshUser: () => Promise<void>;
 };
 
@@ -254,11 +261,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const updateMyProfile = React.useCallback(
-    async (input: { avatar?: File; stamp?: File; signature?: File }) => {
+    async (input: {
+      avatar?: File;
+      stamp?: File;
+      signature?: File;
+      removeAvatar?: boolean;
+      removeStamp?: boolean;
+      removeSignature?: boolean;
+    }) => {
       const fd = new FormData();
       if (input.avatar) fd.append("avatar", input.avatar);
+      else if (input.removeAvatar) fd.append("removeAvatar", "true");
       if (input.stamp) fd.append("stamp", input.stamp);
+      else if (input.removeStamp) fd.append("removeStamp", "true");
       if (input.signature) fd.append("signature", input.signature);
+      else if (input.removeSignature) fd.append("removeSignature", "true");
       await apiFetch("/api/auth/my-profile", {
         method: "PATCH",
         accessToken: accessTokenRef.current ?? undefined,

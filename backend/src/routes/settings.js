@@ -200,19 +200,23 @@ router.patch(
 
       const stampFile = req.files?.stamp?.[0];
       const signatureFile = req.files?.signature?.[0];
+      // Un nouveau fichier téléversé pour un champ prévaut toujours sur une demande de suppression du
+      // même champ dans la même requête (le formulaire ne peut de toute façon pas combiner les deux).
+      const removeStamp = data.removeStamp && !stampFile;
+      const removeSignature = data.removeSignature && !signatureFile;
 
       // Chemins actuels : pour supprimer l'ancien fichier après remplacement
       // (les noms sont désormais aléatoires — étape 12 — donc non réutilisés).
       const oldPaths = [];
-      if (stampFile || signatureFile) {
+      if (stampFile || signatureFile || removeStamp || removeSignature) {
         const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}`);
         await fs.mkdir(dir, { recursive: true });
         const [[current]] = await pool.query(
           'SELECT stamp_path, signature_path FROM tenants WHERE id = :id LIMIT 1',
           { id: req.user.tenantId },
         );
-        if (stampFile && current?.stamp_path) oldPaths.push(current.stamp_path);
-        if (signatureFile && current?.signature_path) oldPaths.push(current.signature_path);
+        if ((stampFile || removeStamp) && current?.stamp_path) oldPaths.push(current.stamp_path);
+        if ((signatureFile || removeSignature) && current?.signature_path) oldPaths.push(current.signature_path);
       }
       if (stampFile) {
         const ext = assertUploadType(stampFile, { label: 'Cachet' });
@@ -220,6 +224,8 @@ router.patch(
         await fs.writeFile(path.join(UPLOADS_ROOT, rel), stampFile.buffer);
         fields.push('stamp_path = :stampPath');
         params.stampPath = rel;
+      } else if (removeStamp) {
+        fields.push('stamp_path = NULL');
       }
       if (signatureFile) {
         const ext = assertUploadType(signatureFile, { label: 'Signature' });
@@ -227,6 +233,8 @@ router.patch(
         await fs.writeFile(path.join(UPLOADS_ROOT, rel), signatureFile.buffer);
         fields.push('signature_path = :signaturePath');
         params.signaturePath = rel;
+      } else if (removeSignature) {
+        fields.push('signature_path = NULL');
       }
 
       if (fields.length > 0) {

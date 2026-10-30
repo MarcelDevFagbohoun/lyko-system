@@ -90,6 +90,18 @@ const updateSettingsSchema = z.object({
     .union([z.boolean(), z.enum(['true', 'false'])])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+
+  // Suppression du cachet/de la signature de l'entreprise, sans en retéléverser un autre (demande
+  // utilisateur, 2026-10-30) : jusqu'ici, seul un remplacement était possible, aucun retrait. Ignoré si
+  // un nouveau fichier est fourni pour le même champ dans la même requête (voir routes/settings.js).
+  removeStamp: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+  removeSignature: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
 });
 
 module.exports = { updateSettingsSchema };

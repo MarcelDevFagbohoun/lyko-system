@@ -753,7 +753,12 @@ router.patch(
       const avatarFile = req.files?.avatar?.[0];
       const stampFile = req.files?.stamp?.[0];
       const signatureFile = req.files?.signature?.[0];
-      if (!avatarFile && !stampFile && !signatureFile) {
+      // Suppression sans retéléverser (demande utilisateur, 2026-10-30) : un nouveau fichier pour un
+      // champ prévaut toujours sur une demande de suppression du même champ.
+      const removeAvatar = req.body?.removeAvatar === 'true' && !avatarFile;
+      const removeStamp = req.body?.removeStamp === 'true' && !stampFile;
+      const removeSignature = req.body?.removeSignature === 'true' && !signatureFile;
+      if (!avatarFile && !stampFile && !signatureFile && !removeAvatar && !removeStamp && !removeSignature) {
         throw new ApiError(400, 'Aucun fichier reçu');
       }
 
@@ -774,6 +779,9 @@ router.patch(
         await fs.writeFile(path.join(UPLOADS_ROOT, rel), avatarFile.buffer);
         fields.push('avatar_path = :avatarPath');
         params.avatarPath = rel;
+      } else if (removeAvatar) {
+        if (current?.avatar_path) oldPaths.push(current.avatar_path);
+        fields.push('avatar_path = NULL');
       }
       if (stampFile) {
         if (current?.stamp_path) oldPaths.push(current.stamp_path);
@@ -782,6 +790,9 @@ router.patch(
         await fs.writeFile(path.join(UPLOADS_ROOT, rel), stampFile.buffer);
         fields.push('stamp_path = :stampPath');
         params.stampPath = rel;
+      } else if (removeStamp) {
+        if (current?.stamp_path) oldPaths.push(current.stamp_path);
+        fields.push('stamp_path = NULL');
       }
       if (signatureFile) {
         if (current?.signature_path) oldPaths.push(current.signature_path);
@@ -790,9 +801,14 @@ router.patch(
         await fs.writeFile(path.join(UPLOADS_ROOT, rel), signatureFile.buffer);
         fields.push('signature_path = :signaturePath');
         params.signaturePath = rel;
+      } else if (removeSignature) {
+        if (current?.signature_path) oldPaths.push(current.signature_path);
+        fields.push('signature_path = NULL');
       }
 
-      await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = :id`, params);
+      if (fields.length > 0) {
+        await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = :id`, params);
+      }
       await Promise.all(oldPaths.map((rel) => fs.unlink(path.join(UPLOADS_ROOT, rel)).catch(() => {})));
 
       const [rows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', { id: req.user.id });
