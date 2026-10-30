@@ -449,16 +449,23 @@ function drawSignatureCards(doc, y, cards, { section = true, plain = false } = {
       doc.restore();
       doc.font(F.BOLD).fontSize(7.5).fillColor(C.WHITE).text(String(c.title).toUpperCase(), x + 14, y + 8, { width: w - 28, characterSpacing: 0.5, lineBreak: false });
     }
+    // Cachet + signature superposés (demande utilisateur, 2026-10-30) : à l'image d'une quittance signée à
+    // la main, le cachet reste à l'emplacement central (celui qu'occupait la signature seule) et la
+    // signature est dessinée PAR-DESSUS, agrandie — d'où l'ordre : le cachet d'abord (le fond), la
+    // signature ensuite (par-dessus, opacité pleine pour rester lisible sur le cachet).
     const boxY = y + 26;
-    if (c.signatureFile) {
-      try {
-        doc.image(c.signatureFile, x + 14, boxY, { fit: [w - 28, 65], align: 'center', valign: 'center' });
-      } catch { /* signature illisible : on continue */ }
-    }
+    const boxH = 100;
     if (c.stampFile) {
       try {
-        doc.opacity(0.9).image(c.stampFile, x + w - 106, boxY, { fit: [92, 92] }).opacity(1);
+        const stampW = Math.min(w - 28, 150);
+        doc.opacity(0.9).image(c.stampFile, x + (w - stampW) / 2, boxY, { fit: [stampW, boxH] }).opacity(1);
       } catch { /* cachet illisible : on continue */ }
+    }
+    if (c.signatureFile) {
+      try {
+        const sigW = Math.min(w - 20, 180);
+        doc.image(c.signatureFile, x + (w - sigW) / 2, boxY + 12, { fit: [sigW, 78], align: 'center', valign: 'center' });
+      } catch { /* signature illisible : on continue */ }
     }
     doc.moveTo(x + 14, boxY + 100).lineTo(x + w - 14, boxY + 100).dash(2, { space: 2 }).lineWidth(0.75).strokeColor(C.TINT_BORDER).stroke().undash();
     doc.font(F.BOLD).fontSize(9).fillColor(C.INK).text(c.name || ' ', x + 14, boxY + 106, { width: w - 28, lineBreak: false });
