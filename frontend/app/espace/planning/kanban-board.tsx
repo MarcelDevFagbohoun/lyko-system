@@ -20,8 +20,19 @@ export function KanbanBoard({
   onAdd: () => void;
 }) {
   const [over, setOver] = React.useState<TaskStatus | null>(null);
+  const [mobileCol, setMobileCol] = React.useState<TaskStatus>("a_faire"); // téléphone : une colonne à la fois
   return (
-    <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-3 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
+    <div className="flex flex-col gap-3">
+      <div role="tablist" aria-label="Colonnes" className="grid grid-cols-3 gap-1 rounded-xl bg-surface-muted p-1 md:hidden">
+        {COLS.map((c) => (
+          <button key={c} role="tab" aria-selected={mobileCol === c} type="button" onClick={() => setMobileCol(c)}
+            className={cn("flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-body-sm font-medium", mobileCol === c ? "bg-surface text-ink shadow-sm" : "text-ink-soft")}>
+            <span className={cn("h-2 w-2 rounded-full", HEAD[c])} />{STATUS_LABEL[c]}
+            <span className="rounded-full bg-surface-muted px-1.5 text-xs">{tasks.filter((t) => t.status === c).length}</span>
+          </button>
+        ))}
+      </div>
+      <div className="md:grid md:grid-cols-3 md:gap-3">
       {COLS.map((col) => {
         const list = tasks.filter((t) => t.status === col);
         return (
@@ -35,16 +46,20 @@ export function KanbanBoard({
               const t = tasks.find((x) => x.id === Number(e.dataTransfer.getData("text/plain")));
               if (t && t.status !== col) onMove(t, col);
             }}
-            className={cn("flex min-h-[200px] w-[86%] shrink-0 snap-center flex-col rounded-xl bg-surface-muted/70 p-2.5 md:w-auto", over === col && "ring-2 ring-primary/40")}
+            className={cn("min-h-[160px] flex-col rounded-xl bg-surface-muted/70 p-2.5 md:flex md:min-h-[200px]", mobileCol === col ? "flex" : "hidden", over === col && "ring-2 ring-primary/40")}
           >
             <header className="mb-2 flex items-center gap-2 px-1">
               <span className={cn("h-2.5 w-2.5 rounded-full", HEAD[col])} />
               <h3 className="font-label-md text-ink">{STATUS_LABEL[col]}</h3>
               <span className="rounded-full bg-surface px-2 text-xs text-ink-muted">{list.length}</span>
-              {col === "a_faire" && <button type="button" onClick={onAdd} className="ml-auto rounded px-2 py-0.5 text-body-sm text-primary hover:bg-surface">+ Ajouter</button>}
+              {col === "a_faire" && <button type="button" onClick={onAdd} className="ml-auto rounded px-2 py-1 text-body-sm text-primary hover:bg-surface">+ Ajouter</button>}
             </header>
             <div className="flex flex-col gap-2">
-              {list.length === 0 && <p className="px-2 py-6 text-center text-body-sm text-ink-muted">Rien ici.</p>}
+              {list.length === 0 && (
+                <p className="px-2 py-6 text-center text-body-sm text-ink-muted">
+                  {col === "a_faire" ? "Aucune tâche à faire. Ajoutez-en une avec « + Ajouter »." : col === "en_cours" ? "Rien en cours. Faites avancer une tâche avec la flèche →." : "Aucune tâche terminée pour l'instant."}
+                </p>
+              )}
               {list.map((t) => {
                 const idx = COLS.indexOf(t.status);
                 const late = isOverdue(t.dueDate, t.status);
@@ -67,8 +82,8 @@ export function KanbanBoard({
                       {t.assignedByOther && t.owner.id === meId && <span className="rounded bg-info-bg px-1.5 text-info-fg">Confiée par {t.createdBy.name.split(" ")[0]}</span>}
                     </div>
                     <div className="mt-2 flex justify-between">
-                      <button type="button" disabled={idx === 0} onClick={() => onMove(t, COLS[idx - 1])} aria-label="Déplacer vers la colonne précédente" className="rounded p-1 text-ink-soft hover:bg-surface-muted disabled:opacity-25"><ArrowLeft size={16} /></button>
-                      <button type="button" disabled={idx === COLS.length - 1} onClick={() => onMove(t, COLS[idx + 1])} aria-label="Déplacer vers la colonne suivante" className="rounded p-1 text-ink-soft hover:bg-surface-muted disabled:opacity-25"><ArrowRight size={16} /></button>
+                      <button type="button" disabled={idx === 0} onClick={() => onMove(t, COLS[idx - 1])} aria-label="Déplacer vers la colonne précédente" className="inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs text-ink-soft hover:bg-surface-muted disabled:invisible"><ArrowLeft size={16} /><span className="hidden sm:inline">{idx > 0 ? STATUS_LABEL[COLS[idx - 1]] : ""}</span></button>
+                      <button type="button" disabled={idx === COLS.length - 1} onClick={() => onMove(t, COLS[idx + 1])} aria-label="Déplacer vers la colonne suivante" className="inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs text-ink-soft hover:bg-surface-muted disabled:invisible"><span className="hidden sm:inline">{idx < COLS.length - 1 ? STATUS_LABEL[COLS[idx + 1]] : ""}</span><ArrowRight size={16} /></button>
                     </div>
                   </article>
                 );
@@ -77,6 +92,7 @@ export function KanbanBoard({
           </section>
         );
       })}
+      </div>
     </div>
   );
 }

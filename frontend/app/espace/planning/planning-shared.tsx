@@ -59,3 +59,61 @@ export function ProgressBar({ value, className }: { value: number; className?: s
     </div>
   );
 }
+
+/** Petit encadré d'explication (une phrase ou deux) affiché en tête d'un onglet. */
+export function Hint({ icon, children, className }: { icon?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  return (
+    <p className={cn("flex items-start gap-2 rounded-lg bg-info-bg/60 px-3 py-2 text-body-sm text-ink-soft", className)}>
+      {icon && <span className="mt-0.5 shrink-0 text-info-fg">{icon}</span>}
+      <span>{children}</span>
+    </p>
+  );
+}
+
+const GUIDE_KEY = "aim_planning_guide_hidden";
+
+/**
+ * Guide « Comment ça marche ? » : explique en trois étapes comment planifier son travail. Ouvert à la première
+ * visite, puis replié (le choix est mémorisé sur l'appareil) ; on peut le rouvrir à tout moment.
+ */
+export function PlanningGuide() {
+  const [open, setOpen] = React.useState(true);
+  React.useEffect(() => {
+    try { if (localStorage.getItem(GUIDE_KEY) === "1") setOpen(false); } catch { /* stockage indisponible : reste ouvert */ }
+  }, []);
+  function toggle() {
+    setOpen((v) => {
+      try { localStorage.setItem(GUIDE_KEY, v ? "1" : "0"); } catch { /* ignoré */ }
+      return !v;
+    });
+  }
+  const steps = [
+    { n: 1, t: "Fixez un objectif", d: "Onglet « Objectifs » : ce que vous voulez atteindre sur le mois ou le trimestre, avec des chiffres pour le mesurer (ex. 95 % des loyers encaissés)." },
+    { n: 2, t: "Découpez en tâches", d: "Bouton « Nouvelle tâche » : une action concrète, avec une échéance et une priorité. Rattachez-la à un objectif pour qu'il avance tout seul." },
+    { n: 3, t: "Suivez l'avancement", d: "Onglet « Tableau » : faites passer chaque tâche de « À faire » à « En cours » puis « Terminé ». Onglet « Calendrier » : voyez ce qui tombe quel jour." },
+  ];
+  return (
+    <section aria-label="Guide du planning" className="rounded-xl border border-info-border bg-info-bg/40">
+      <button type="button" onClick={toggle} aria-expanded={open} className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left">
+        <span className="font-label-md text-ink">Comment ça marche ?</span>
+        <span className="text-body-sm text-primary">{open ? "Masquer" : "Afficher le guide"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-info-border/60 px-4 pb-4 pt-3">
+          <p className="mb-3 text-body-sm text-ink-soft">
+            Le planning réunit trois méthodes courantes de gestion du travail : des <strong>objectifs mesurables</strong> (méthode OKR), un <strong>tableau d&apos;avancement</strong> (méthode Kanban) et un <strong>calendrier</strong>.
+            Chacun gère son propre planning ; la direction peut aussi confier des tâches ou des objectifs à un collègue.
+          </p>
+          <ol className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            {steps.map((s) => (
+              <li key={s.n} className="flex gap-3 rounded-lg bg-surface p-3">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-fg">{s.n}</span>
+                <div><p className="font-label-md text-ink">{s.t}</p><p className="text-body-sm text-ink-muted">{s.d}</p></div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </section>
+  );
+}

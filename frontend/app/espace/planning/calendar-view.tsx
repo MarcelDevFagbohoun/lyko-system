@@ -90,8 +90,14 @@ export function CalendarView({ tasks, onOpen, onAdd }: { tasks: PlanningTask[]; 
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-xs text-ink-muted" aria-label="Légende des priorités">
+        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500" />Priorité haute</span>
+        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-sky-500" />Normale</span>
+        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-400" />Basse</span>
+      </div>
+
       <div className="rounded-xl border border-border bg-surface p-3">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h4 className="font-label-md capitalize text-ink">{new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${selected}T00:00:00Z`))}</h4>
           <Button size="sm" variant="secondary" onClick={() => onAdd(selected)}><Plus size={14} /> Tâche ce jour</Button>
         </div>

@@ -81,32 +81,32 @@ export function TaskDialog({
           <textarea id="pt-desc" rows={3} className={areaCls} value={description} onChange={(e) => setDescription(e.target.value)} disabled={readOnly} maxLength={2000} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Statut" htmlFor="pt-status">
+          <Field label="Statut" htmlFor="pt-status" hint="Où en est la tâche (colonne du tableau).">
             <select id="pt-status" className={selectCls} value={status} onChange={(e) => setStatus(e.target.value as TaskStatus)}>
               {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
             </select>
           </Field>
-          <Field label="Priorité" htmlFor="pt-prio">
+          <Field label="Priorité" htmlFor="pt-prio" hint="Haute = à traiter en premier.">
             <select id="pt-prio" className={selectCls} value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)} disabled={readOnly}>
               {(Object.keys(PRIORITY_LABEL) as TaskPriority[]).map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
             </select>
           </Field>
-          <Field label="Début" htmlFor="pt-start" error={fe("startDate")}>
+          <Field label="Début" htmlFor="pt-start" error={fe("startDate")} hint="Facultatif.">
             <Input id="pt-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={readOnly} />
           </Field>
-          <Field label="Échéance" htmlFor="pt-due" error={fe("dueDate")}>
+          <Field label="Échéance" htmlFor="pt-due" error={fe("dueDate")} hint="Place la tâche dans le calendrier.">
             <Input id="pt-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={readOnly} />
           </Field>
         </div>
         {canAssign && !readOnly && (
-          <Field label="Confier à" htmlFor="pt-owner" error={fe("ownerId")}>
+          <Field label="Confier à" htmlFor="pt-owner" error={fe("ownerId")} hint="Le collègue la verra dans son planning et pourra la faire avancer.">
             <select id="pt-owner" className={selectCls} value={ownerId} onChange={(e) => { setOwnerId(Number(e.target.value)); setObjectiveId(""); }}>
               {people.map((p) => <option key={p.id} value={p.id}>{p.me ? `Moi (${p.name})` : `${p.name} — ${p.roleLabel}`}</option>)}
             </select>
           </Field>
         )}
         {!readOnly && (
-          <Field label="Objectif lié" htmlFor="pt-obj" error={fe("objectiveId")} hint={ownerObjectives.length ? undefined : "Aucun objectif pour cette personne."}>
+          <Field label="Objectif lié" htmlFor="pt-obj" error={fe("objectiveId")} hint={ownerObjectives.length ? "Les tâches terminées font avancer cet objectif." : "Aucun objectif pour cette personne : créez-en un dans l'onglet Objectifs."}>
             <select id="pt-obj" className={selectCls} value={objectiveId} onChange={(e) => setObjectiveId(e.target.value === "" ? "" : Number(e.target.value))}>
               <option value="">Aucun</option>
               {ownerObjectives.map((o) => <option key={o.id} value={o.id}>{o.title}</option>)}

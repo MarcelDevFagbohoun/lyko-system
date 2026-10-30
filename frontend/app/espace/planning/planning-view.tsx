@@ -15,7 +15,7 @@ import { KanbanBoard } from "./kanban-board";
 import { CalendarView } from "./calendar-view";
 import { ObjectivesPanel } from "./objectives-panel";
 import { TaskDialog } from "./task-dialog";
-import { selectCls } from "./planning-shared";
+import { Hint, PlanningGuide, selectCls } from "./planning-shared";
 
 type Tab = "kanban" | "calendrier" | "objectifs";
 const TABS: { id: Tab; label: string; icon: typeof Columns3 }[] = [
@@ -74,21 +74,23 @@ function PlanningContent() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8">
-      <header className="flex flex-wrap items-end justify-between gap-3">
+      <header className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
         <div>
           <h1 className="font-display text-headline-md text-ink">Planning</h1>
           <p className="text-body-sm text-ink-soft">{open} en cours · {done} terminée(s)</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           {canAssign && people.length > 1 && (
-            <select aria-label="Filtrer par personne" className={cn(selectCls, "w-auto min-w-[180px]")} value={filter} onChange={(e) => setFilter(e.target.value === "all" ? "all" : Number(e.target.value))}>
+            <select aria-label="Filtrer par personne" className={cn(selectCls, "sm:w-auto sm:min-w-[200px]")} value={filter} onChange={(e) => setFilter(e.target.value === "all" ? "all" : Number(e.target.value))}>
               <option value="all">Toute l&apos;équipe (ce que je vois)</option>
               {people.map((p) => <option key={p.id} value={p.id}>{p.me ? "Moi" : p.name}</option>)}
             </select>
           )}
-          <Button onClick={() => setDialog({ task: null })}><Plus size={16} /> Nouvelle tâche</Button>
+          <Button className="w-full sm:w-auto" onClick={() => setDialog({ task: null })}><Plus size={16} /> Nouvelle tâche</Button>
         </div>
       </header>
+
+      <PlanningGuide />
 
       <div role="tablist" className="flex gap-1 rounded-xl bg-surface-muted p-1 sm:w-fit">
         {TABS.map((t) => (
@@ -104,7 +106,17 @@ function PlanningContent() {
       {tasks === null && !error && <p className="py-10 text-center text-body-sm text-ink-muted">Chargement…</p>}
 
       {tasks !== null && tab === "kanban" && (
+        <Hint icon={<Columns3 size={15} />}>
+          Chaque carte est une tâche. Faites-la avancer avec les flèches (ou en la glissant sur ordinateur) : <strong>À faire</strong> → <strong>En cours</strong> → <strong>Terminé</strong>. Touchez une carte pour la modifier.
+        </Hint>
+      )}
+      {tasks !== null && tab === "kanban" && (
         <KanbanBoard tasks={visible} meId={meId} onOpen={(t) => setDialog({ task: t })} onMove={move} onAdd={() => setDialog({ task: null })} />
+      )}
+      {tasks !== null && tab === "calendrier" && (
+        <Hint icon={<CalendarDays size={15} />}>
+          Chaque tâche apparaît à sa date d&apos;échéance (ou sur toute sa durée si elle a une date de début). Touchez un jour pour voir ses tâches en dessous ; les points colorés indiquent la priorité.
+        </Hint>
       )}
       {tasks !== null && tab === "calendrier" && (
         <CalendarView tasks={visible} onOpen={(t) => setDialog({ task: t })} onAdd={(date) => setDialog({ task: null, due: date })} />
