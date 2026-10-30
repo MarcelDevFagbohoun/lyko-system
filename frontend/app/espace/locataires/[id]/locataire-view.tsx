@@ -196,7 +196,7 @@ function LocataireContent() {
         </div>
         )}
 
-        <Card>
+        <Card tone="slate" accent>
           <CardContent className="pt-5">
             <NoteSheet entityType="renter" entityId={renter.id} accessToken={accessToken} title="Fiche de notes du locataire" />
           </CardContent>
@@ -237,7 +237,7 @@ function LocataireContent() {
         )}
 
         {pastLeases.length > 0 && (
-          <Card>
+          <Card tone="blue" accent>
             <CardHeader>
               <CardTitle>Historique des contrats</CardTitle>
               <CardDescription>Baux précédents de ce locataire.</CardDescription>

@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import { ApiError } from "@/lib/api/client";
 import { payOpeningDebt, type Lease, type PaymentMethod } from "@/lib/api/renters";
@@ -75,7 +76,7 @@ export function OpeningDebtSection({
   }
 
   return (
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
+    <SectionTile tone="violet">
       <div className="flex items-center justify-between gap-2">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Impayés existants à l&apos;entrée</span>
         {remaining > 0 && (
@@ -147,7 +148,7 @@ export function OpeningDebtSection({
           ))}
         </div>
       )}
-    </div>
+    </SectionTile>
   );
 }
 

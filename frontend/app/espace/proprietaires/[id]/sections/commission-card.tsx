@@ -96,7 +96,7 @@ export function CommissionCard({
   }
 
   return (
-    <Card>
+    <Card tone="violet" accent>
       <CardHeader>
         <CardTitle>Commission de l&apos;entreprise</CardTitle>
         <CardDescription>Taux appliqué sur la recette nette de chaque Bien de ce propriétaire.</CardDescription>

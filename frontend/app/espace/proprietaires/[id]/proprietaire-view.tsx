@@ -252,19 +252,19 @@ function ProprietaireContent() {
         {canManage && !archived && <PortalLinkCard owner={owner} accessToken={accessToken} onGenerated={load} />}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Card>
+          <Card tone="blue" accent>
             <CardContent className="flex flex-col gap-1 py-5">
               <span className="font-label-sm uppercase tracking-wider text-ink-muted">Biens gérés</span>
               <span className="font-display text-headline-md text-ink">{properties.length}</span>
             </CardContent>
           </Card>
-          <Card>
+          <Card tone="violet" accent>
             <CardContent className="flex flex-col gap-1 py-5">
               <span className="font-label-sm uppercase tracking-wider text-ink-muted">Unités occupées</span>
               <span className="font-display text-headline-md text-ink">{unitsOccupied}/{unitsCount}</span>
             </CardContent>
           </Card>
-          <Card>
+          <Card tone="teal" accent>
             <CardContent className="flex flex-col gap-1 py-5">
               <span className="font-label-sm uppercase tracking-wider text-ink-muted">Loyers mensuels en cours</span>
               <span className="tabular font-currency-table text-headline-md text-ink">{formatFcfa(occupiedRentTotal)}</span>
@@ -272,7 +272,7 @@ function ProprietaireContent() {
           </Card>
         </div>
 
-        <Card>
+        <Card tone="blue" accent>
           <CardHeader>
             <CardTitle>Patrimoine géré</CardTitle>
             <CardDescription>Biens et unités rattachés à ce propriétaire.</CardDescription>
@@ -338,7 +338,7 @@ function ProprietaireContent() {
           <RestrictedFinancialsNotice />
         )}
 
-        <Card>
+        <Card tone="slate" accent>
           <CardContent className="pt-5">
             <NoteSheet entityType="owner" entityId={owner.id} accessToken={accessToken} title="Fiche de notes du propriétaire" placeholder="Relation, préférences, modalités de versement, points d'attention…" />
           </CardContent>
@@ -370,7 +370,7 @@ function ProprietaireContent() {
         )}
 
         {canSeeCharges && (
-          <Card>
+          <Card tone="cyan" accent>
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
@@ -394,7 +394,7 @@ function ProprietaireContent() {
         )}
 
         {canSeeFinancials && (
-        <Card>
+        <Card tone="teal" accent>
           <CardHeader>
             <CardTitle>Versements</CardTitle>
             <CardDescription>Historique des loyers nets reversés à ce propriétaire.</CardDescription>

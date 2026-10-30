@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import { getLeaseBalanceSnapshots, type Lease, type LeaseBalanceSnapshot } from "@/lib/api/renters";
 import { formatFcfa } from "@/lib/utils";
@@ -23,7 +24,7 @@ export function BalanceSnapshotsSection({ leaseId, accessToken }: { leaseId: num
   if (!snapshots || snapshots.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
+    <SectionTile tone="violet">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -42,7 +43,7 @@ export function BalanceSnapshotsSection({ leaseId, accessToken }: { leaseId: num
           ))}
         </div>
       )}
-    </div>
+    </SectionTile>
   );
 }
 

@@ -104,7 +104,7 @@ export function DepositTransferCard({
   }
 
   return (
-    <Card>
+    <Card tone="amber" accent>
       <CardHeader>
         <CardTitle>Dépôts de garantie remis au propriétaire</CardTitle>
         <CardDescription>

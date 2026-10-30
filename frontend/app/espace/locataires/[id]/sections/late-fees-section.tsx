@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import { ApiError } from "@/lib/api/client";
 import {
@@ -36,7 +37,7 @@ export function LateFeesSection({ leaseId, accessToken, canManage }: { leaseId: 
   if (lateFees !== null && lateFees.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
+    <SectionTile tone="rose">
       <span className="font-label-sm uppercase tracking-wider text-ink-muted">Pénalités de retard appliquées</span>
       {lateFees === null ? (
         <p className="text-body-sm text-ink-muted">Chargement…</p>
@@ -47,7 +48,7 @@ export function LateFeesSection({ leaseId, accessToken, canManage }: { leaseId: 
           ))}
         </div>
       )}
-    </div>
+    </SectionTile>
   );
 }
 

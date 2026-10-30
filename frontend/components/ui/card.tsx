@@ -61,9 +61,23 @@ function CardToneProvider({ tone, children }: { tone: CardTone; children: React.
   return <CardToneContext.Provider value={tone}>{children}</CardToneContext.Provider>;
 }
 
+/** Filet épais à gauche, de la couleur « pleine » de la teinte : repère la section au premier coup d'œil. */
+const CARD_ACCENTS: Partial<Record<CardTone, string>> = {
+  blue: "border-l-4 border-l-tint-blue-solid",
+  violet: "border-l-4 border-l-tint-violet-solid",
+  orange: "border-l-4 border-l-tint-orange-solid",
+  cyan: "border-l-4 border-l-tint-cyan-solid",
+  teal: "border-l-4 border-l-tint-teal-solid",
+  amber: "border-l-4 border-l-tint-amber-solid",
+  rose: "border-l-4 border-l-tint-rose-solid",
+  slate: "border-l-4 border-l-tint-slate-solid",
+};
+
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Teinte de la carte ; absente = celle du module en cours (blanc hors espace connecté). */
   tone?: CardTone;
+  /** Ajoute le filet coloré à gauche (couleur de la teinte). Sans effet sur une carte blanche. */
+  accent?: boolean;
   /** Carte cliquable (lien, raccourci) : se soulève au survol pour montrer qu'elle réagit. */
   interactive?: boolean;
 }
@@ -73,7 +87,7 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
  * (contact + diffusion) pour un rendu net et professionnel, et apparition douce à l'affichage
  * (`animate-card-in`, coupée si l'utilisateur a demandé moins d'animations).
  */
-const Card = React.forwardRef<HTMLDivElement, CardProps>(({ className, tone, interactive, ...props }, ref) => {
+const Card = React.forwardRef<HTMLDivElement, CardProps>(({ className, tone, accent, interactive, ...props }, ref) => {
   const inherited = React.useContext(CardToneContext);
   const resolved = tone ?? inherited;
   const card = (
@@ -84,6 +98,7 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(({ className, tone, int
         interactive &&
           "cursor-pointer transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_2px_4px_rgba(15,23,42,0.05),0_12px_24px_-10px_rgba(30,58,138,0.25)]",
         CARD_TONES[resolved],
+        accent && CARD_ACCENTS[resolved],
         className,
       )}
       {...props}

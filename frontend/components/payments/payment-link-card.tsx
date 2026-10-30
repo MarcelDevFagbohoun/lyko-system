@@ -62,7 +62,7 @@ export function PaymentLinkCard({
   const whatsappHref = link && phone ? buildWhatsAppHref(phone, whatsappMessage(link.url, link.amount)) : "#";
 
   return (
-    <Card>
+    <Card tone="cyan" accent>
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <div>

@@ -82,7 +82,7 @@ export function PortalLinkCard({
   const whatsappHref = link && owner.phone ? buildWhatsAppHref(owner.phone, message) : "#";
 
   return (
-    <Card>
+    <Card tone="cyan" accent>
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <div>

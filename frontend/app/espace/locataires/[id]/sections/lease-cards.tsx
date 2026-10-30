@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import Link from "next/link";
 import { DoorOpen, LogOut, FileDown } from "lucide-react";
@@ -105,7 +106,7 @@ export function NewLeaseCard({
   }
 
   return (
-    <Card>
+    <Card tone="violet" accent>
       <CardHeader>
         <CardTitle>Attribuer une nouvelle unité</CardTitle>
         <CardDescription>
@@ -211,7 +212,7 @@ export function LeaseCard({
   onChanged: () => void;
 }) {
   return (
-    <Card>
+    <Card tone="blue" accent>
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <CardTitle>
@@ -261,7 +262,7 @@ export function LeaseCard({
         )}
 
         {lease.entryReceiptNumber && (
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-border p-4">
+          <SectionTile tone="amber" className="flex-row items-center justify-between gap-2">
             <div>
               <span className="font-label-sm uppercase tracking-wider text-ink-muted">Reçu d&apos;entrée</span>
               <p className="text-body-sm text-ink">{lease.entryReceiptNumber}</p>
@@ -275,11 +276,11 @@ export function LeaseCard({
               <FileDown size={16} />
               Télécharger
             </Button>
-          </div>
+          </SectionTile>
         )}
 
         {lease.additionalDeposits.length > 0 && (
-          <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+          <SectionTile tone="amber">
             <span className="font-label-sm uppercase tracking-wider text-ink-muted">Cautions supplémentaires</span>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {lease.additionalDeposits.map((d) => (
@@ -300,7 +301,7 @@ export function LeaseCard({
                 </div>
               ))}
             </div>
-          </div>
+          </SectionTile>
         )}
 
         {(lease.unit.sonebMeterNumber || lease.unit.sbeeMeterNumber) && (
@@ -312,7 +313,7 @@ export function LeaseCard({
         )}
 
         {canManage && (
-          <div className="flex flex-col gap-3 border-t border-border pt-4">
+          <SectionTile tone="slate">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2 text-body-sm text-ink-soft">
                 <DoorOpen size={16} className="text-primary" />
@@ -355,7 +356,7 @@ export function LeaseCard({
                 <span className="text-ink-muted">État des lieux de sortie non réalisé</span>
               )}
             </div>
-          </div>
+          </SectionTile>
         )}
 
         <ComplaintsSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} />

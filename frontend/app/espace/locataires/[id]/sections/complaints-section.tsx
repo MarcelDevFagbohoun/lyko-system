@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import Link from "next/link";
 import { AlertTriangle, Plus } from "lucide-react";
@@ -35,7 +36,7 @@ export function ComplaintsSection({
   if (!canView) return null;
 
   return (
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
+    <SectionTile tone="rose">
       <div className="flex items-center justify-between">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Plaintes & incidents</span>
         <Link href={`/espace/plaintes/nouveau?renterId=${renterId}`}>
@@ -72,7 +73,7 @@ export function ComplaintsSection({
           ))}
         </div>
       )}
-    </div>
+    </SectionTile>
   );
 }
 

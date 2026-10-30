@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import {
   FileText,
@@ -163,7 +164,7 @@ export function PaymentRegister({
 
   return (
     <>
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
+    <SectionTile tone="teal">
       <div className="flex items-center justify-between">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Registre des paiements</span>
         {canRecord && (
@@ -402,7 +403,7 @@ export function PaymentRegister({
           </Table>
         </div>
       )}
-    </div>
+    </SectionTile>
     <ConfirmDialog
       open={confirming}
       icon={Receipt}

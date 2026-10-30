@@ -114,7 +114,7 @@ export function ChargeRemittanceCard({
   }
 
   return (
-    <Card>
+    <Card tone="orange" accent>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <HandCoins size={18} className="text-primary" />

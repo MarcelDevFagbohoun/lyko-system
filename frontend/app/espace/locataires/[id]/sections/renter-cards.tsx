@@ -84,7 +84,7 @@ export function PortalLinkCard({
   const whatsappHref = link ? buildWhatsAppHref(renter.phone, message) : "#";
 
   return (
-    <Card>
+    <Card tone="cyan" accent>
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <div>
@@ -201,7 +201,7 @@ export function EditRenterForm({
   }
 
   return (
-    <Card>
+    <Card tone="slate" accent>
       <CardHeader>
         <CardTitle>Modifier le locataire</CardTitle>
         <CardDescription>

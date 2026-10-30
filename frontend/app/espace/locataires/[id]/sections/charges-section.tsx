@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import Link from "next/link";
 import { Plus } from "lucide-react";
@@ -38,7 +39,7 @@ export function ChargesSection({
   if (!canView) return null;
 
   return (
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
+    <SectionTile tone="cyan">
       <div className="flex items-center justify-between">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Charges SONEB & SBEE</span>
         <Link href={`/espace/charges/nouveau?renterId=${renterId}`}>
@@ -88,7 +89,7 @@ export function ChargesSection({
           })}
         </div>
       )}
-    </div>
+    </SectionTile>
   );
 }
 

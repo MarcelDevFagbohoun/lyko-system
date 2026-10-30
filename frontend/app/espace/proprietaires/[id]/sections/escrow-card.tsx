@@ -17,7 +17,7 @@ import {
  * patrimoine) mais le détail des sommes (séquestre, cautions, versements, commission) reste masqué. */
 export function RestrictedFinancialsNotice() {
   return (
-    <Card>
+    <Card tone="slate" accent>
       <CardContent className="flex items-center gap-2.5 py-5 text-body-sm text-ink-muted">
         <Wallet size={16} className="shrink-0" />
         Le détail financier de ce propriétaire (séquestre, cautions, versements, commission) n&apos;est
@@ -46,7 +46,7 @@ export function EscrowBalanceCard({
   if (!escrow) return null;
   const isNegative = escrow.balance < 0;
   return (
-    <Card>
+    <Card tone="amber" accent>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Landmark size={18} className="text-primary" />

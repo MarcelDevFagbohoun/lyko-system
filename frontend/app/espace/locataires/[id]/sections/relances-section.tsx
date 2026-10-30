@@ -1,5 +1,6 @@
 "use client";
 
+import { SectionTile } from "@/components/ui/section-tile";
 import * as React from "react";
 import { listRelancesForLease, type Relance } from "@/lib/api/relances";
 import { RelanceHistory } from "@/components/relances/relance-history";
@@ -27,9 +28,9 @@ export function RelancesSection({ leaseId, accessToken }: { leaseId: number; acc
   if (relances !== null && relances.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
+    <SectionTile tone="orange">
       <span className="font-label-sm uppercase tracking-wider text-ink-muted">Relances envoyées</span>
       <RelanceHistory relances={relances} accessToken={accessToken} onChanged={load} />
-    </div>
+    </SectionTile>
   );
 }
