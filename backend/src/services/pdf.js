@@ -725,7 +725,7 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
 
   drawContractHeader(doc, tenant, {
     title: 'CONTRAT DE BAIL',
-    subtitle: contract.status === 'finalized' ? "Bail d'habitation — signé" : "Bail d'habitation — projet",
+    subtitle: contract.status === 'finalized' ? "Bail d'habitation — signé" : "Bail d'habitation",
     refLines: [
       ['Référence', `BAIL-${String(leaseId).padStart(5, '0')}`],
       [
@@ -735,11 +735,6 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
       ...(verificationCode ? [['Code de vérification', verificationCode]] : []),
     ],
   });
-
-  if (contract.status !== 'finalized') {
-    doc.font(SERIF_BOLD).fontSize(9.5).fillColor(CK.ALERT).text('PROJET — NON SIGNÉ, à relire avant signature des deux parties.', 50, doc.y, { width: 495, align: 'center', characterSpacing: 0.4 });
-    doc.moveDown(1);
-  }
 
   // --- Récapitulatif : les parties et les faits essentiels en un coup d'œil. ---
   let y = drawContractParties(doc, doc.y, {
