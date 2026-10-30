@@ -133,7 +133,7 @@ router.get('/:id', canRead, async (req, res, next) => {
     const owner = await owners.loadOwner(pool, req.user.tenantId, id, scopeAgentId);
 
     // Un agent restreint ne voit, dans la fiche du propriétaire, QUE ses propres Biens attribués.
-    const propertyRows = await owners.listOwnerPropertyUnits(id, scopeAgentId);
+    const propertyRows = await owners.listOwnerPropertyUnits(req.user.tenantId, id, scopeAgentId);
 
     const propertiesById = new Map();
     for (const row of propertyRows) {
@@ -177,7 +177,7 @@ router.get('/:id', canRead, async (req, res, next) => {
     let payouts = [];
 
     if (canSeeFinancials) {
-      const payoutRows = await owners.listOwnerPayouts(id);
+      const payoutRows = await owners.listOwnerPayouts(req.user.tenantId, id);
       payouts = payoutRows.map((p) => ({
         id: p.id,
         amount: Number(p.amount),
@@ -189,7 +189,7 @@ router.get('/:id', canRead, async (req, res, next) => {
         recordedBy: toActor(p.recorded_by_first_name, p.recorded_by_last_name, p.recorded_by_role),
       }));
 
-      const rateRows = await owners.listCommissionRates(id);
+      const rateRows = await owners.listCommissionRates(req.user.tenantId, id);
       commissionRates = rateRows.map((r) => ({
         id: r.id,
         rate: Number(r.rate),

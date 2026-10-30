@@ -721,9 +721,10 @@ async function createRenter(tenantId, userId, scopeAgentId, data) {
     // jamais une étape à part que quelqu'un pourrait oublier. Le token n'est renvoyé qu'ici, une
     // seule fois (voir `regeneratePortalLink` pour le régénérer plus tard).
     const portalToken = generatePortalToken();
-    await conn.query('UPDATE renters SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id', {
+    await conn.query('UPDATE renters SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id AND tenant_id = :tenantId', {
       hash: hashToken(portalToken),
       id: renterId,
+      tenantId,
     });
 
     await conn.commit();
@@ -788,14 +789,14 @@ async function updateRenter(tenantId, id, scopeAgentId, data) {
   await assertRenterInScope(tenantId, id, scopeAgentId);
 
   const fields = [];
-  const params = { id };
+  const params = { id, tenantId };
   if (data.firstName !== undefined) { fields.push('first_name = :firstName'); params.firstName = data.firstName; }
   if (data.lastName !== undefined) { fields.push('last_name = :lastName'); params.lastName = data.lastName; }
   if (data.email !== undefined) { fields.push('email = :email'); params.email = data.email; }
   if (data.profession !== undefined) { fields.push('profession = :profession'); params.profession = data.profession; }
 
   if (fields.length > 0) {
-    await pool.query(`UPDATE renters SET ${fields.join(', ')} WHERE id = :id`, params);
+    await pool.query(`UPDATE renters SET ${fields.join(', ')} WHERE id = :id AND tenant_id = :tenantId`, params);
   }
   return loadRenterWithActorsById(id);
 }
@@ -806,8 +807,8 @@ async function updateRenterNotes(tenantId, userId, id, scopeAgentId, notes) {
   await assertRenterInScope(tenantId, id, scopeAgentId);
 
   await pool.query(
-    'UPDATE renters SET notes = :notes, notes_updated_by = :by, notes_updated_at = NOW() WHERE id = :id',
-    { id, notes, by: userId },
+    'UPDATE renters SET notes = :notes, notes_updated_by = :by, notes_updated_at = NOW() WHERE id = :id AND tenant_id = :tenantId',
+    { id, notes, by: userId, tenantId },
   );
   return loadRenterWithActorsById(id);
 }
@@ -823,9 +824,10 @@ async function regeneratePortalLink(tenantId, id, scopeAgentId) {
   if (!renterRows[0]) throw new ApiError(404, 'Locataire introuvable');
 
   const token = generatePortalToken();
-  await pool.query('UPDATE renters SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id', {
+  await pool.query('UPDATE renters SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id AND tenant_id = :tenantId', {
     hash: hashToken(token),
     id,
+    tenantId,
   });
   return token;
 }

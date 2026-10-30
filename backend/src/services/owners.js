@@ -106,8 +106,8 @@ async function listOwners(tenantId, scopeAgentId, q) {
 }
 
 /** Biens et unités d'un propriétaire (un agent restreint ne voit que ses propres Biens), locataire actuel inclus. */
-async function listOwnerPropertyUnits(ownerId, scopeAgentId) {
-  const params = { id: ownerId };
+async function listOwnerPropertyUnits(tenantId, ownerId, scopeAgentId) {
+  const params = { id: ownerId, tenantId };
   let scope = '';
   if (scopeAgentId != null) {
     scope = ' AND p.agent_id = :scopeAgentId';
@@ -122,7 +122,7 @@ async function listOwnerPropertyUnits(ownerId, scopeAgentId) {
      LEFT JOIN property_units u ON u.property_id = p.id
      LEFT JOIN leases l ON l.unit_id = u.id AND l.status = 'active'
      LEFT JOIN renters r ON r.id = l.renter_id
-     WHERE p.owner_id = :id ${scope}
+     WHERE p.owner_id = :id AND p.tenant_id = :tenantId ${scope}
      ORDER BY p.code, u.code`,
     params,
   );
@@ -130,27 +130,27 @@ async function listOwnerPropertyUnits(ownerId, scopeAgentId) {
 }
 
 /** Versements (loyers nets reversés) d'un propriétaire, du plus récent au plus ancien. */
-async function listOwnerPayouts(ownerId) {
+async function listOwnerPayouts(tenantId, ownerId) {
   const [rows] = await pool.query(
     `SELECT op.*, u.first_name AS recorded_by_first_name, u.last_name AS recorded_by_last_name, u.role AS recorded_by_role
      FROM owner_payouts op
      JOIN users u ON u.id = op.recorded_by
-     WHERE op.owner_id = :id
+     WHERE op.owner_id = :id AND op.tenant_id = :tenantId
      ORDER BY op.paid_at DESC, op.id DESC`,
-    { id: ownerId },
+    { id: ownerId, tenantId },
   );
   return rows;
 }
 
 /** Historique des taux de commission d'un propriétaire. */
-async function listCommissionRates(ownerId) {
+async function listCommissionRates(tenantId, ownerId) {
   const [rows] = await pool.query(
     `SELECT cr.*, u.first_name AS set_by_first_name, u.last_name AS set_by_last_name, u.role AS set_by_role
      FROM owner_commission_rates cr
      JOIN users u ON u.id = cr.set_by
-     WHERE cr.owner_id = :id
+     WHERE cr.owner_id = :id AND cr.tenant_id = :tenantId
      ORDER BY cr.starts_on DESC`,
-    { id: ownerId },
+    { id: ownerId, tenantId },
   );
   return rows;
 }
@@ -392,8 +392,8 @@ async function cancelChargeRemittance(tenantId, userId, ownerId, remittanceId, s
     const [result] = await conn.query(
       `UPDATE owner_charge_remittances
        SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason
-       WHERE id = :remittanceId AND deleted_at IS NULL`,
-      { by: userId, reason, remittanceId },
+       WHERE id = :remittanceId AND tenant_id = :tenantId AND deleted_at IS NULL`,
+      { by: userId, reason, remittanceId, tenantId },
     );
     if (result.affectedRows === 0) throw new ApiError(409, 'Ce reversement est déjà annulé.');
     if (rows[0].kind === 'balance') {
@@ -450,8 +450,8 @@ async function setCommissionRate(tenantId, userId, ownerId, scopeAgentId, { rate
 
     if (active) {
       await conn.query(
-        `UPDATE owner_commission_rates SET ends_on = DATE_SUB(:startsOn, INTERVAL 1 DAY) WHERE id = :id`,
-        { startsOn, id: active.id },
+        `UPDATE owner_commission_rates SET ends_on = DATE_SUB(:startsOn, INTERVAL 1 DAY) WHERE id = :id AND tenant_id = :tenantId`,
+        { startsOn, id: active.id, tenantId },
       );
     }
 
@@ -510,9 +510,10 @@ async function regeneratePortalLink(tenantId, ownerId, scopeAgentId) {
   assertMandateActive(owner);
 
   const token = generatePortalToken();
-  await pool.query('UPDATE owners SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id', {
+  await pool.query('UPDATE owners SET portal_token_hash = :hash, portal_link_created_at = NOW() WHERE id = :id AND tenant_id = :tenantId', {
     hash: hashToken(token),
     id: ownerId,
+    tenantId,
   });
   return token;
 }
@@ -561,8 +562,8 @@ async function endMandate(tenantId, userId, ownerId, reason) {
   }
 
   await pool.query(
-    `UPDATE owners SET mandate_ended_at = NOW(), mandate_ended_by = :by, mandate_end_reason = :reason WHERE id = :id`,
-    { by: userId, reason, id: ownerId },
+    `UPDATE owners SET mandate_ended_at = NOW(), mandate_ended_by = :by, mandate_end_reason = :reason WHERE id = :id AND tenant_id = :tenantId`,
+    { by: userId, reason, id: ownerId, tenantId },
   );
   return loadOwner(pool, tenantId, ownerId, null);
 }
@@ -573,8 +574,8 @@ async function reactivateMandate(tenantId, ownerId) {
   if (!owner.mandate_ended_at) throw new ApiError(409, 'Le mandat de ce propriétaire est déjà actif.');
 
   await pool.query(
-    `UPDATE owners SET mandate_ended_at = NULL, mandate_ended_by = NULL, mandate_end_reason = NULL WHERE id = :id`,
-    { id: ownerId },
+    `UPDATE owners SET mandate_ended_at = NULL, mandate_ended_by = NULL, mandate_end_reason = NULL WHERE id = :id AND tenant_id = :tenantId`,
+    { id: ownerId, tenantId },
   );
   return loadOwner(pool, tenantId, ownerId, null);
 }

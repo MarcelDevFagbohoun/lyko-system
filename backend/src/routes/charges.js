@@ -219,7 +219,7 @@ router.post('/:id/payments', async (req, res, next) => {
       newStatus,
       by: req.user.id,
     });
-    res.status(201).json({ charge: toPublicCharge(await charges.getChargeRow(id)) });
+    res.status(201).json({ charge: toPublicCharge(await charges.getChargeRow(req.user.tenantId, id)) });
   } catch (err) {
     next(err);
   }

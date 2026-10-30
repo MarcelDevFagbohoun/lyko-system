@@ -71,8 +71,8 @@ async function loadCharge(conn, tenantId, id, scopeAgentId) {
 }
 
 /** Une facture avec tout son contexte (locataire, unité, Bien, auteurs) pour l'affichage, ou undefined. */
-async function getChargeRow(id, db = pool) {
-  const [rows] = await db.query(`SELECT ${CHARGE_SELECT} ${CHARGE_JOINS} WHERE uc.id = :id`, { id });
+async function getChargeRow(tenantId, id, db = pool) {
+  const [rows] = await db.query(`SELECT ${CHARGE_SELECT} ${CHARGE_JOINS} WHERE uc.id = :id AND uc.tenant_id = :tenantId`, { id, tenantId });
   return rows[0];
 }
 
@@ -279,11 +279,12 @@ async function updateCharge(tenantId, id, scopeAgentId, data) {
       if (data.billedAt !== undefined) {
         await assertPeriodOpenLocked(conn, tenantId, data.billedAt);
       }
-      await conn.query(`UPDATE utility_charges SET ${fields.join(', ')} WHERE id = :id`, params);
+      params.tenantId = tenantId;
+      await conn.query(`UPDATE utility_charges SET ${fields.join(', ')} WHERE id = :id AND tenant_id = :tenantId`, params);
       await conn.commit();
     }
 
-    return getChargeRow(id);
+    return getChargeRow(tenantId, id);
   } catch (err) {
     await conn.rollback().catch(() => {});
     throw err;
@@ -357,8 +358,8 @@ async function recordUtilityPayment(
   await conn.query(
     `UPDATE utility_charges
      SET status = :status, paid_at = :paidAt, payment_method = :paymentMethod, paid_recorded_by = :by
-     WHERE id = :id`,
-    { status: newStatus, paidAt, paymentMethod, by: recordedBy ?? null, id: charge.id },
+     WHERE id = :id AND tenant_id = :tenantId`,
+    { status: newStatus, paidAt, paymentMethod, by: recordedBy ?? null, id: charge.id, tenantId },
   );
 
   // Module comptabilité SYSCOHADA (nouveau) — voir le commentaire identique
@@ -403,7 +404,7 @@ async function recordManualPayment(tenantId, userId, id, scopeAgentId, data) {
     await assertPeriodOpenLocked(conn, tenantId, charge.billed_at);
     // Sérialise les enregistrements concurrents sur cette facture — même principe que les paiements de
     // loyer (routes/leases.js).
-    await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id });
+    await conn.query('SELECT id FROM utility_charges WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', { id, tenantId });
 
     // Garde anti-doublon (étape 36). Voie normale : clé d'idempotence jointe à l'envoi, réclamée dans la
     // transaction — deux règlements VOULUS, même de montants égaux le même jour avec le même mode, ne
@@ -459,8 +460,8 @@ async function deleteCharge(tenantId, userId, id, scopeAgentId, reason) {
     await conn.beginTransaction();
     await assertPeriodOpenLocked(conn, tenantId, existing.billed_at);
     await conn.query(
-      'UPDATE utility_charges SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason WHERE id = :id',
-      { by: userId, reason, id },
+      'UPDATE utility_charges SET deleted_at = NOW(), deleted_by = :by, deleted_reason = :reason WHERE id = :id AND tenant_id = :tenantId',
+      { by: userId, reason, id, tenantId },
     );
     await conn.commit();
   } catch (err) {

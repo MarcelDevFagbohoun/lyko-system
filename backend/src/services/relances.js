@@ -68,7 +68,10 @@ async function recordRelance(tenantId, userId, scopeAgentId, { entityType, entit
     'INSERT INTO relance_log (tenant_id, entity_type, entity_id, sent_at, sent_by) VALUES (:tenantId, :entityType, :entityId, CURDATE(), :by)',
     { tenantId, entityType, entityId, by: userId },
   );
-  const [rows] = await pool.query(`SELECT ${SELECT} ${JOINS} WHERE rl.id = :id`, { id: result.insertId });
+  const [rows] = await pool.query(`SELECT ${SELECT} ${JOINS} WHERE rl.id = :id AND rl.tenant_id = :tenantId`, {
+    id: result.insertId,
+    tenantId,
+  });
   return toPublicRelance(rows[0]);
 }
 
@@ -113,10 +116,13 @@ async function setOutcome(tenantId, userId, scopeAgentId, relanceId, note) {
   await assertEntityInScope(tenantId, existing[0].entity_type, existing[0].entity_id, scopeAgentId);
 
   await pool.query(
-    'UPDATE relance_log SET outcome_note = :note, outcome_recorded_at = NOW(), outcome_recorded_by = :by WHERE id = :id',
-    { note, by: userId, id: relanceId },
+    'UPDATE relance_log SET outcome_note = :note, outcome_recorded_at = NOW(), outcome_recorded_by = :by WHERE id = :id AND tenant_id = :tenantId',
+    { note, by: userId, id: relanceId, tenantId },
   );
-  const [rows] = await pool.query(`SELECT ${SELECT} ${JOINS} WHERE rl.id = :id`, { id: relanceId });
+  const [rows] = await pool.query(`SELECT ${SELECT} ${JOINS} WHERE rl.id = :id AND rl.tenant_id = :tenantId`, {
+    id: relanceId,
+    tenantId,
+  });
   return toPublicRelance(rows[0]);
 }
 

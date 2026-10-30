@@ -200,9 +200,10 @@ async function createProperty(tenantId, userId, scopeAgentId, data, files) {
 
     if (files && files.length > 0) {
       const photoPaths = await writePhotos(tenantId, propertyId, files);
-      await conn.query('UPDATE properties SET photo_paths = :paths WHERE id = :id', {
+      await conn.query('UPDATE properties SET photo_paths = :paths WHERE id = :id AND tenant_id = :tenantId', {
         paths: JSON.stringify(photoPaths),
         id: propertyId,
+        tenantId,
       });
     }
 
@@ -229,7 +230,7 @@ async function updateProperty(tenantId, userId, id, scopeAgentId, data, files) {
     }
 
     const fields = [];
-    const params = { id };
+    const params = { id, tenantId };
     if (data.ownerId !== undefined) { fields.push('owner_id = :ownerId'); params.ownerId = data.ownerId; }
     if (data.address !== undefined) { fields.push('address = :address'); params.address = data.address; }
     if (data.latitude !== undefined) { fields.push('latitude = :latitude'); params.latitude = data.latitude; }
@@ -277,7 +278,7 @@ async function updateProperty(tenantId, userId, id, scopeAgentId, data, files) {
     }
 
     if (fields.length > 0) {
-      await conn.query(`UPDATE properties SET ${fields.join(', ')} WHERE id = :id`, params);
+      await conn.query(`UPDATE properties SET ${fields.join(', ')} WHERE id = :id AND tenant_id = :tenantId`, params);
     }
 
     if (ownerChanging) await conn.commit();
@@ -353,7 +354,7 @@ async function updateUnit(tenantId, propertyId, unitId, scopeAgentId, data) {
   }
 
   const fields = [];
-  const params = { unitId };
+  const params = { unitId, tenantId };
   if (data.designation !== undefined) { fields.push('designation = :designation'); params.designation = data.designation; }
   if (data.designationCustom !== undefined) { fields.push('designation_custom = :designationCustom'); params.designationCustom = data.designationCustom; }
   if (data.monthlyRent !== undefined) { fields.push('monthly_rent = :rent'); params.rent = data.monthlyRent; }
@@ -363,7 +364,7 @@ async function updateUnit(tenantId, propertyId, unitId, scopeAgentId, data) {
   if (data.status !== undefined) { fields.push('status = :status'); params.status = data.status; }
 
   if (fields.length > 0) {
-    await pool.query(`UPDATE property_units SET ${fields.join(', ')} WHERE id = :unitId`, params);
+    await pool.query(`UPDATE property_units SET ${fields.join(', ')} WHERE id = :unitId AND tenant_id = :tenantId`, params);
   }
 
   const [updated] = await pool.query(
