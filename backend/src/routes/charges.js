@@ -94,21 +94,36 @@ router.get('/previous-reading', async (req, res, next) => {
   }
 });
 
-// GET /api/charges?status=&utilityType=&leaseId=&q= — registre des charges SONEB/SBEE.
+// GET /api/charges?status=&utilityType=&leaseId=&propertyId=&q= — registre des charges SONEB/SBEE.
 router.get('/', async (req, res, next) => {
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const status = typeof req.query.status === 'string' ? req.query.status : '';
     const utilityType = typeof req.query.utilityType === 'string' ? req.query.utilityType : '';
     const leaseId = Number(req.query.leaseId);
+    const propertyId = Number(req.query.propertyId);
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const rows = await charges.listCharges(req.user.tenantId, scopeAgentId, {
       status: CHARGE_STATUSES.includes(status) ? status : '',
       utilityType: utilityType === 'soneb' || utilityType === 'sbee' ? utilityType : '',
       leaseId: Number.isInteger(leaseId) && leaseId > 0 ? leaseId : 0,
+      propertyId: Number.isInteger(propertyId) && propertyId > 0 ? propertyId : 0,
       q,
     });
     res.json({ charges: rows.map(toPublicCharge) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/charges/unpaid-by-property — pour chaque Bien ayant au moins une facture SONEB/SBEE non
+// soldée (impayée ou partielle) : nombre de factures et montant restant dû. Alimente le badge de la
+// liste des biens et le résumé de la fiche d'un Bien (demande utilisateur, 2026-10-30).
+router.get('/unpaid-by-property', async (req, res, next) => {
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const rows = await charges.getUnpaidSummaryByProperty(req.user.tenantId, scopeAgentId);
+    res.json({ byProperty: rows });
   } catch (err) {
     next(err);
   }

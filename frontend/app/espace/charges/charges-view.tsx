@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Droplets, Zap, Plus, Search, Check, Trash2, Pencil, Lock, Gauge, Scale } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Droplets, Zap, Plus, Search, Check, Trash2, Pencil, Lock, Gauge, Scale, X } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import {
   listCharges,
@@ -13,6 +14,7 @@ import {
   type UtilityType,
   type ChargeStatus,
 } from "@/lib/api/charges";
+import { getProperty } from "@/lib/api/properties";
 import { listClosedPeriods } from "@/lib/api/accounting";
 import { generateChargePaymentLink } from "@/lib/api/paymentLinks";
 import type { PaymentMethod } from "@/lib/api/renters";
@@ -67,6 +69,13 @@ export function ChargesView() {
 function ChargesContent() {
   const { accessToken } = useAuth();
   const canRecord = useCan("charges_enregistrer");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Arrivée depuis la fiche d'un bien (« Gérer dans Charges », demande utilisateur, 2026-10-30) :
+  // préfiltre sur ce bien jusqu'à ce qu'on l'enlève explicitement.
+  const propertyIdParam = Number(searchParams.get("propertyId"));
+  const propertyId = Number.isInteger(propertyIdParam) && propertyIdParam > 0 ? propertyIdParam : null;
+  const [propertyCode, setPropertyCode] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState<ChargeStatus | "all">("all");
   const [utilityType, setUtilityType] = React.useState<UtilityType | "all">("all");
   const [query, setQuery] = React.useState("");
@@ -81,11 +90,22 @@ function ChargesContent() {
     listCharges(accessToken, {
       status: tab === "all" ? undefined : tab,
       utilityType: utilityType === "all" ? undefined : utilityType,
+      propertyId: propertyId ?? undefined,
       q: query || undefined,
     })
       .then((res) => setCharges(res.charges))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les charges."));
-  }, [accessToken, tab, utilityType, query]);
+  }, [accessToken, tab, utilityType, propertyId, query]);
+
+  React.useEffect(() => {
+    if (!accessToken || !propertyId) {
+      setPropertyCode(null);
+      return;
+    }
+    getProperty(accessToken, propertyId)
+      .then((res) => setPropertyCode(res.property.code))
+      .catch(() => setPropertyCode(null));
+  }, [accessToken, propertyId]);
 
   React.useEffect(() => {
     const t = setTimeout(load, 200);
@@ -143,6 +163,25 @@ function ChargesContent() {
             )}
           </div>
         </div>
+
+        {propertyId && (
+          <div className="flex items-center gap-2">
+            <Badge variant="info" className="gap-1.5 py-1 text-body-sm normal-case">
+              Filtré sur le bien {propertyCode ?? `#${propertyId}`}
+              <button
+                type="button"
+                onClick={() => router.push("/espace/charges")}
+                aria-label="Retirer le filtre sur ce bien"
+                className="ml-0.5 rounded-full hover:bg-info-border/60"
+              >
+                <X size={12} />
+              </button>
+            </Badge>
+            <Link href={`/espace/biens/${propertyId}`} className="text-body-sm text-primary hover:underline">
+              Voir la fiche du bien
+            </Link>
+          </div>
+        )}
 
         <UtilityAlertsCard hideWhenEmpty />
 

@@ -56,15 +56,24 @@ export function getChargesMeta(accessToken: string) {
 
 export function listCharges(
   accessToken: string,
-  filters?: { status?: ChargeStatus; utilityType?: UtilityType; leaseId?: number; q?: string },
+  filters?: { status?: ChargeStatus; utilityType?: UtilityType; leaseId?: number; propertyId?: number; q?: string },
 ) {
   const params = new URLSearchParams();
   if (filters?.status) params.set("status", filters.status);
   if (filters?.utilityType) params.set("utilityType", filters.utilityType);
   if (filters?.leaseId) params.set("leaseId", String(filters.leaseId));
+  if (filters?.propertyId) params.set("propertyId", String(filters.propertyId));
   if (filters?.q) params.set("q", filters.q);
   const qs = params.toString();
   return apiFetch<{ charges: UtilityCharge[] }>(`/api/charges${qs ? `?${qs}` : ""}`, { accessToken });
+}
+
+// Résumé des charges SONEB/SBEE non soldées par Bien (badge liste des biens + fiche d'un Bien,
+// demande utilisateur, 2026-10-30).
+export type UnpaidChargesByProperty = { propertyId: number; unpaidCount: number; totalDue: number };
+
+export function getUnpaidChargesByProperty(accessToken: string) {
+  return apiFetch<{ byProperty: UnpaidChargesByProperty[] }>("/api/charges/unpaid-by-property", { accessToken });
 }
 
 export type CreateChargeInput = {

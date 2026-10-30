@@ -49,6 +49,7 @@ import { RecetteCard } from "./sections/recette-card";
 import { UNIT_STATUS_BADGE } from "./sections/shared";
 import { EditUnitForm, NewUnitForm, PublishListingForm, ReleaseUnitAction } from "./sections/unit-forms";
 import { UtilityConfigCard } from "./sections/utility-config-card";
+import { PropertyChargesCard } from "./sections/property-charges-card";
 
 export function BienView() {
   return (
@@ -61,7 +62,10 @@ export function BienView() {
 function BienContent() {
   const { id } = useParams<{ id: string }>();
   const propertyId = Number(id);
-  const { accessToken, user } = useAuth();
+  const { accessToken, user, tenant } = useAuth();
+  // Module Charges (SONEB/SBEE) : masqué si désactivé pour l'entreprise ou si l'employé n'a pas
+  // la permission dédiée (même règle que côté serveur, `requirePermission('charges')`).
+  const canSeeCharges = !!tenant?.chargesEnabled && (user?.role === "dg" || !!user?.permissions.includes("charges"));
   // Recette/commission : donnée financière sensible, réservée à
   // proprietaires/comptabilite (même règle que côté serveur) — pas un agent
   // qui n'a que `locataires`, bien qu'il puisse consulter le reste de la fiche.
@@ -186,6 +190,8 @@ function BienContent() {
         <LocationCard property={property} accessToken={accessToken} onSaved={load} />
 
         <UtilityConfigCard property={property} accessToken={accessToken} onSaved={load} />
+
+        {canSeeCharges && <PropertyChargesCard propertyId={propertyId} accessToken={accessToken} />}
 
         {user?.role === "dg" && (
           <AgentAssignmentCard property={property} accessToken={accessToken} onSaved={load} />

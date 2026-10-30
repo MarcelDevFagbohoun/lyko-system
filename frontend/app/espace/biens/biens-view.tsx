@@ -3,11 +3,13 @@
 import * as React from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { Building2, List, MapPin, Plus, Search } from "lucide-react";
+import { Building2, List, MapPin, Plus, Search, Zap } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { listProperties, type PropertyListItem } from "@/lib/api/properties";
+import { getUnpaidChargesByProperty, type UnpaidChargesByProperty } from "@/lib/api/charges";
 import { PROPERTY_TYPE_LABELS } from "@/lib/constants/properties";
 import { ApiError } from "@/lib/api/client";
+import { formatFcfa } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,12 +30,17 @@ export function BiensView() {
 }
 
 function BiensContent() {
-  const { accessToken, user } = useAuth();
+  const { accessToken, user, tenant } = useAuth();
   const isDg = user?.role === "dg";
+  const canSeeCharges = !!tenant?.chargesEnabled && (isDg || !!user?.permissions.includes("charges"));
   const [query, setQuery] = React.useState("");
   const [properties, setProperties] = React.useState<PropertyListItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [view, setView] = React.useState<"liste" | "carte">("liste");
+  // Charges SONEB/SBEE non soldées par bien (demande utilisateur, 2026-10-30) : un badge « au coup
+  // d'œil » sur la liste, sans avoir à ouvrir chaque bail. Purement indicatif — une erreur de chargement
+  // ne doit jamais bloquer l'affichage des biens eux-mêmes.
+  const [unpaidByProperty, setUnpaidByProperty] = React.useState<Map<number, UnpaidChargesByProperty> | null>(null);
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
@@ -46,6 +53,13 @@ function BiensContent() {
     const t = setTimeout(load, 200);
     return () => clearTimeout(t);
   }, [load]);
+
+  React.useEffect(() => {
+    if (!accessToken || !canSeeCharges) return;
+    getUnpaidChargesByProperty(accessToken)
+      .then((res) => setUnpaidByProperty(new Map(res.byProperty.map((r) => [r.propertyId, r]))))
+      .catch(() => {});
+  }, [accessToken, canSeeCharges]);
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -144,6 +158,7 @@ function BiensContent() {
                 <TableHead>Type</TableHead>
                 {isDg && <TableHead>Agent</TableHead>}
                 <TableHead className="text-center">Unités</TableHead>
+                {canSeeCharges && <TableHead className="text-center">Charges</TableHead>}
                 <TableHead className="text-right">Actions</TableHead>
               </tr>
             </TableHeader>
@@ -169,6 +184,22 @@ function BiensContent() {
                       {p.unitsFree}/{p.unitsCount} libre{p.unitsFree > 1 ? "s" : ""}
                     </Badge>
                   </TableCell>
+                  {canSeeCharges && (
+                    <TableCell className="text-center">
+                      {(() => {
+                        const unpaid = unpaidByProperty?.get(p.id);
+                        if (!unpaid) {
+                          return unpaidByProperty ? <Badge variant="success">À jour</Badge> : null;
+                        }
+                        return (
+                          <Badge variant="warning" className="gap-1">
+                            <Zap size={11} />
+                            {unpaid.unpaidCount} impayée{unpaid.unpaidCount > 1 ? "s" : ""} · {formatFcfa(unpaid.totalDue)}
+                          </Badge>
+                        );
+                      })()}
+                    </TableCell>
+                  )}
                   <TableCell className="text-right">
                     <Link href={`/espace/biens/${p.id}`}>
                       <Button variant="ghost" size="sm">

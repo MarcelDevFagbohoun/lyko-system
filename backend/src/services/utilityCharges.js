@@ -88,8 +88,8 @@ async function getPreviousReadingEnd(tenantId, leaseId, utilityType, scopeAgentI
   return row ? row.reading_end : null;
 }
 
-/** Registre des factures (filtres facultatifs : status, utilityType, leaseId, q), portée agent comprise. */
-async function listCharges(tenantId, scopeAgentId, { status, utilityType, leaseId, q }) {
+/** Registre des factures (filtres facultatifs : status, utilityType, leaseId, propertyId, q), portée agent comprise. */
+async function listCharges(tenantId, scopeAgentId, { status, utilityType, leaseId, propertyId, q }) {
   const params = { tenantId };
   let where = 'uc.tenant_id = :tenantId AND uc.deleted_at IS NULL';
   if (scopeAgentId != null) {
@@ -107,6 +107,10 @@ async function listCharges(tenantId, scopeAgentId, { status, utilityType, leaseI
   if (leaseId) {
     where += ' AND uc.lease_id = :leaseId';
     params.leaseId = leaseId;
+  }
+  if (propertyId) {
+    where += ' AND p.id = :propertyId';
+    params.propertyId = propertyId;
   }
   if (q) {
     where += ' AND (r.first_name LIKE :q OR r.last_name LIKE :q OR u.code LIKE :q)';
@@ -170,6 +174,45 @@ async function getMonthSummary(tenantId, scopeAgentId, month, currentMonth) {
     olderRemaining: Number(older.remaining),
     olderCount: Number(older.n),
   };
+}
+
+/**
+ * Résumé des charges SONEB/SBEE non soldées, groupé par Bien (demande utilisateur, 2026-10-30 :
+ * « que le point des charges payées soit plus clair au niveau de chaque bien »). Un seul aller-retour
+ * pour toute la liste des biens (clé = `property_id`) ; `getPropertyChargesSummary` ci-dessous
+ * l'utilise aussi pour la fiche d'un Bien précis.
+ */
+async function getUnpaidSummaryByProperty(tenantId, scopeAgentId) {
+  const params = { tenantId };
+  let where = "uc.tenant_id = :tenantId AND uc.deleted_at IS NULL AND uc.status <> 'payee'";
+  if (scopeAgentId != null) {
+    where += ' AND p.agent_id = :scopeAgentId';
+    params.scopeAgentId = scopeAgentId;
+  }
+  const [rows] = await pool.query(
+    `SELECT p.id AS property_id, COUNT(*) AS unpaid_count,
+            SUM(uc.amount - COALESCE(pt.paid_total, 0)) AS total_due
+     FROM utility_charges uc
+     LEFT JOIN (SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id) pt ON pt.charge_id = uc.id
+     JOIN leases l ON l.id = uc.lease_id
+     JOIN property_units u ON u.id = l.unit_id
+     JOIN properties p ON p.id = u.property_id
+     WHERE ${where}
+     GROUP BY p.id`,
+    params,
+  );
+  return rows.map((r) => ({
+    propertyId: r.property_id,
+    unpaidCount: Number(r.unpaid_count),
+    totalDue: Number(r.total_due),
+  }));
+}
+
+/** Même résumé qu'au-dessus, restreint à un seul Bien (fiche détail) — renvoie des zéros s'il n'y a rien à devoir. */
+async function getPropertyChargesSummary(tenantId, scopeAgentId, propertyId) {
+  const all = await getUnpaidSummaryByProperty(tenantId, scopeAgentId);
+  const found = all.find((r) => r.propertyId === propertyId);
+  return found ?? { propertyId, unpaidCount: 0, totalDue: 0 };
 }
 
 /** Total déjà réglé sur une facture. */
@@ -509,6 +552,8 @@ module.exports = {
   getPreviousReadingEnd,
   listCharges,
   getMonthSummary,
+  getUnpaidSummaryByProperty,
+  getPropertyChargesSummary,
   createCharge,
   updateCharge,
   listChargePayments,
