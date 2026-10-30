@@ -6,8 +6,8 @@ import { Reveal } from "@/components/marketing/reveal";
 const ITEMS = [
   { icon: Users, title: "Une équipe alignée", text: "Chacun son espace, tout le monde au même rythme." },
   { icon: Home, title: "Des clients rassurés", text: "Propriétaires et locataires informés, sans vous appeler." },
-  { icon: MessageCircle, title: "Zéro relance oubliée", text: "Un message, un clic, et c'est parti." },
-  { icon: Calculator, title: "Des comptes sereins", text: "Fini les calculs de fin de mois." },
+  { icon: MessageCircle, title: "Zéro relance oubliée", text: "Un rappel par WhatsApp, un clic, et c'est parti." },
+  { icon: Calculator, title: "Charges sans prise de tête", text: "SONEB, SBEE : suivi et refacturation sans calcul à la main." },
   { icon: Smartphone, title: "Payé plus vite", text: "Vos loyers arrivent, vous gardez la main." },
   { icon: ShieldCheck, title: "Tout sous contrôle", text: "Chaque action est protégée et tracée." },
 ] as const;

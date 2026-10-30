@@ -39,6 +39,11 @@ export const FAQ_ITEMS = [
       "Oui. L'interface s'adapte aux écrans de téléphone et de tablette, et l'application peut être installée sur l'écran d'accueil comme une application.",
   },
   {
+    question: "Combien ça coûte ?",
+    answer:
+      "Trois offres selon la taille de votre portefeuille : une offre d'entrée pour démarrer, une offre pensée pour la majorité des cabinets, et une offre pour les plus grandes structures. Le détail est sur notre page Tarifs, accessible depuis le menu.",
+  },
+  {
     question: "Comment démarrer ?",
     answer:
       "Créez le compte de votre entreprise en quelques minutes, choisissez votre offre, puis ajoutez vos employés, vos biens et vos locataires. Vous êtes satisfait ou remboursé pendant 15 jours.",

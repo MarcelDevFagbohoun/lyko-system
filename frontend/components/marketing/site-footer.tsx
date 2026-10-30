@@ -23,6 +23,9 @@ export function SiteFooter() {
             <a href="#fonctionnalites" className="text-body-sm text-ink-soft hover:text-ink">
               Fonctionnalités
             </a>
+            <Link href="/tarifs" className="text-body-sm text-ink-soft hover:text-ink">
+              Tarifs
+            </Link>
             <a href="#questions" className="text-body-sm text-ink-soft hover:text-ink">
               Questions
             </a>

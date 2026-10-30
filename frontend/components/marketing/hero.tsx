@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BadgeCheck, Smartphone } from "lucide-react";
+import { BadgeCheck, MapPin, Smartphone } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -21,18 +21,19 @@ export function Hero() {
             Encaissez vos loyers à temps. <span className="text-primary">Rendez des comptes justes</span> à vos propriétaires.
           </h1>
           <p className="animate-fade-up max-w-xl text-body-lg text-ink-soft [animation-delay:120ms]">
-            Un seul espace pour toute votre équipe, pour gagner du temps et rassurer vos propriétaires.
+            Loyers, charges SONEB/SBEE, propriétaires et locataires : un seul espace pour toute votre équipe, pensé pour le Bénin.
           </p>
           <div className="animate-fade-up flex flex-col gap-3 [animation-delay:180ms] sm:flex-row">
             <Link href="/inscription" className={cn(buttonVariants({ variant: "primary", size: "lg" }), "transition-transform hover:-translate-y-0.5")}>
               Créer mon compte
             </Link>
-            <a href="#tarifs" className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "transition-transform hover:-translate-y-0.5")}>
-              Voir les tarifs
+            <a href="#comment-ca-marche" className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "transition-transform hover:-translate-y-0.5")}>
+              Voir comment ça marche
             </a>
           </div>
           <ul className="animate-fade-up flex flex-col gap-2 pt-2 text-body-sm text-ink-muted [animation-delay:240ms] sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6">
             <li className="inline-flex items-center gap-1.5"><BadgeCheck size={16} className="text-primary" />Satisfait ou remboursé 15 jours</li>
+            <li className="inline-flex items-center gap-1.5"><MapPin size={16} className="text-primary" />FCFA, Mobile Money, pensé pour le Bénin</li>
             <li className="inline-flex items-center gap-1.5"><Smartphone size={16} className="text-primary" />Ordinateur, tablette et téléphone</li>
           </ul>
         </div>
