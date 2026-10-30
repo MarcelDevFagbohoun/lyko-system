@@ -320,21 +320,24 @@ function drawInfoGrid(doc, y, cells, { columns = 3, light = false } = {}) {
   const rows = [];
   for (let i = 0; i < cells.length; i += columns) rows.push(cells.slice(i, i + columns));
   const colW = WIDTH / columns;
+  const pad = light ? 0 : 12; // sans cadre, le texte s'aligne sur le titre de section
+  const textW = light ? colW - 12 : colW - 24;
   const heights = rows.map((row) => {
-    const h = Math.max(...row.map(([, v]) => doc.font(F.BOLD).fontSize(9.5).heightOfString(String(v ?? '—'), { width: colW - 24 })));
+    const h = Math.max(...row.map(([, v]) => doc.font(F.BOLD).fontSize(9.5).heightOfString(String(v ?? '—'), { width: textW })));
     return Math.max(40, h + 28);
   });
   const total = heights.reduce((a, b) => a + b, 0);
   y = ensureRoom(doc, y, total + 6);
-  doc.roundedRect(LEFT, y, WIDTH, total, 8).lineWidth(0.75).fillAndStroke(C.WHITE, border); // fond blanc, y compris en version « light » des reçus
+  // Version « light » (reçus) : aucune bordure, ni cadre ni filets de séparation (demande utilisateur 2026-10-30).
+  if (!light) doc.roundedRect(LEFT, y, WIDTH, total, 8).lineWidth(0.75).fillAndStroke(C.WHITE, border);
   let cy = y;
   rows.forEach((row, ri) => {
-    if (ri > 0) doc.moveTo(LEFT, cy).lineTo(LEFT + WIDTH, cy).lineWidth(0.5).strokeColor(border).stroke();
+    if (ri > 0 && !light) doc.moveTo(LEFT, cy).lineTo(LEFT + WIDTH, cy).lineWidth(0.5).strokeColor(border).stroke();
     row.forEach(([label, value], ci) => {
       const x = LEFT + ci * colW;
-      if (ci > 0) doc.moveTo(x, cy + 8).lineTo(x, cy + heights[ri] - 8).lineWidth(0.5).strokeColor(border).stroke();
-      doc.font(F.SANS).fontSize(6.5).fillColor(labelColor).text(String(label).toUpperCase(), x + 12, cy + 10, { width: colW - 24, characterSpacing: 0.5, lineBreak: false });
-      doc.font(F.BOLD).fontSize(9.5).fillColor(C.INK).text(String(value ?? '—'), x + 12, cy + 22, { width: colW - 24 });
+      if (ci > 0 && !light) doc.moveTo(x, cy + 8).lineTo(x, cy + heights[ri] - 8).lineWidth(0.5).strokeColor(border).stroke();
+      doc.font(F.SANS).fontSize(6.5).fillColor(labelColor).text(String(label).toUpperCase(), x + pad, cy + 10, { width: textW, characterSpacing: 0.5, lineBreak: false });
+      doc.font(F.BOLD).fontSize(9.5).fillColor(C.INK).text(String(value ?? '—'), x + pad, cy + 22, { width: textW });
     });
     cy += heights[ri];
   });
@@ -403,9 +406,9 @@ function drawTotalBar(doc, y, label, amountText, { color = C.NAVY } = {}) {
 }
 
 /** Montant en lettres, en italique discret. */
-function drawWordsLine(doc, y, amount, prefix) {
+function drawWordsLine(doc, y, amount, prefix, { color = C.MUTED } = {}) {
   y = ensureRoom(doc, y, 24);
-  doc.font(F.ITALIC).fontSize(8.5).fillColor(C.MUTED).text(sentenceAmount(amount, prefix), LEFT, y, { width: WIDTH });
+  doc.font(F.ITALIC).fontSize(8.5).fillColor(color).text(sentenceAmount(amount, prefix), LEFT, y, { width: WIDTH });
   return doc.y + 14;
 }
 
