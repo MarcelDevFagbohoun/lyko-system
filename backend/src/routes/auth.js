@@ -496,7 +496,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
   const throttleKey = `phone:${phone}`;
 
   try {
-    assertNotLocked(throttleKey);
+    await assertNotLocked(throttleKey);
 
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
@@ -513,7 +513,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
     // (audit sécurité — sans ça, un identifiant inconnu répondait plus vite).
     const passwordOk = await verifyPassword(password, row ? row.password_hash : DUMMY_PASSWORD_HASH);
     if (!row || !passwordOk) {
-      recordFailure(throttleKey);
+      await recordFailure(throttleKey);
       throw new ApiError(401, 'Identifiants incorrects (numéro, e-mail ou mot de passe).');
     }
     if (row.role !== 'dg') {
@@ -533,7 +533,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
       });
     }
 
-    recordSuccess(throttleKey);
+    await recordSuccess(throttleKey);
     await respondWithSession(res, row);
   } catch (err) {
     next(err);
@@ -550,7 +550,7 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
   const throttleKey = `id:${identifier}`;
 
   try {
-    assertNotLocked(throttleKey);
+    await assertNotLocked(throttleKey);
 
     const [rows] = await pool.query(
       `SELECT u.*, t.company_name, t.rccm, t.ifu, t.contact_phone, t.country, t.logo_path,
@@ -567,14 +567,14 @@ router.post('/login-employee', loginLimiter, async (req, res, next) => {
     // n'existe pas).
     const passwordOk = await verifyPassword(password, row ? row.password_hash : DUMMY_PASSWORD_HASH);
     if (!row || !passwordOk || row.role === 'dg' || (role && row.role !== role)) {
-      recordFailure(throttleKey);
+      await recordFailure(throttleKey);
       throw new ApiError(401, 'Identifiant ou mot de passe incorrect');
     }
     if (row.status !== 'active') {
       throw new ApiError(403, 'Ce compte a été désactivé. Contactez votre direction.');
     }
 
-    recordSuccess(throttleKey);
+    await recordSuccess(throttleKey);
     await respondWithSession(res, row);
   } catch (err) {
     next(err);
