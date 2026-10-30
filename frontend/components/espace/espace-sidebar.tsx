@@ -9,7 +9,7 @@ import {
   Landmark,
   Users,
   MessageSquareWarning,
-  ListTodo,
+  MessagesSquare,
   Wallet,
   Receipt,
   Banknote,
@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { API_URL } from "@/lib/api/client";
+import { chatUnreadCount } from "@/lib/api/chat";
 import { ROLE_LABELS } from "@/lib/constants/roles";
 import { BrandLogo } from "@/components/brand/logo";
 import { ConnectionIndicator } from "@/components/system/connection-indicator";
@@ -41,7 +42,7 @@ import { AuthenticatedImage } from "@/components/ui/authenticated-image";
 import { CADRES, type Cadre } from "@/lib/module-theme";
 import { cn } from "@/lib/utils";
 
-type NavItem = { href: string; label: string; icon: typeof LayoutDashboard; hint?: string };
+type NavItem = { href: string; label: string; icon: typeof LayoutDashboard; hint?: string; badge?: number };
 type NavGroup = { cadre: Cadre; items: NavItem[] };
 
 /**
@@ -86,6 +87,22 @@ export function EspaceSidebar() {
   }
 
   React.useEffect(() => setMobileOpen(false), [pathname]);
+
+  // Pastille « messages non lus » de la Discussion : sondage léger + mise à jour immédiate depuis la page.
+  const [chatUnread, setChatUnread] = React.useState(0);
+  React.useEffect(() => {
+    if (!accessToken) return;
+    let stop = false;
+    const poll = () => {
+      if (document.hidden) return;
+      chatUnreadCount(accessToken).then((r) => { if (!stop) setChatUnread(r.count); }).catch(() => {});
+    };
+    poll();
+    const t = setInterval(poll, 20000);
+    const onEvt = (e: Event) => setChatUnread((e as CustomEvent<number>).detail ?? 0);
+    window.addEventListener("aim:chat-unread", onEvt);
+    return () => { stop = true; clearInterval(t); window.removeEventListener("aim:chat-unread", onEvt); };
+  }, [accessToken]);
 
   React.useEffect(() => {
     if (!accessToken) return;
@@ -134,7 +151,9 @@ export function EspaceSidebar() {
         // `canCharges` manquait ici (audit du 2026-10-23) : la page Relances accepte déjà
         // locataires/comptabilite/charges (voir `relances-view.tsx`), le menu devait suivre.
         (canLocataires || canAccounting || canCharges) && { href: "/espace/relances", label: "Relances", icon: BellRing },
-        { href: "/espace/taches", label: "Tâches", icon: ListTodo },
+        // « Tâches » est remplacé par la Discussion interne (2026-10-30) ; la page /espace/taches reste accessible
+        // depuis la carte « Mes tâches » de l'accueil et du tableau de bord.
+        { href: "/espace/discussion", label: "Discussion", icon: MessagesSquare, badge: chatUnread },
       ],
     },
     {
@@ -250,6 +269,11 @@ export function EspaceSidebar() {
                           className={cn("shrink-0 transition-all duration-200", cadre.text, active ? "scale-110" : "opacity-70 group-hover:scale-110 group-hover:opacity-100")}
                         />
                         <span className="truncate">{item.label}</span>
+                        {!!item.badge && (
+                          <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-xs font-semibold text-white" aria-label={`${item.badge} message(s) non lu(s)`}>
+                            {item.badge > 99 ? "99+" : item.badge}
+                          </span>
+                        )}
                       </Link>
                     );
                   })}

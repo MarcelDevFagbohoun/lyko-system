@@ -60,6 +60,9 @@ router.get('/*', (req, res, next) => {
     return next(new ApiError(404, 'Fichier introuvable'));
   }
 
+  // Les pièces jointes de la Discussion ne sont lisibles que par les deux participants (routes/chat.js).
+  if (normalized.includes('/chat/')) return next(new ApiError(404, 'Fichier introuvable'));
+
   const ext = path.extname(normalized).slice(1).toLowerCase();
   if (!ALLOWED_EXTENSIONS.has(ext)) {
     return next(new ApiError(404, 'Fichier introuvable'));

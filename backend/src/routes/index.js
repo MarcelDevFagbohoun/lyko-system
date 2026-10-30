@@ -23,6 +23,7 @@ const dashboardRoutes = require('./dashboard');
 const portalRoutes = require('./portal');
 const ownerPortalRoutes = require('./ownerPortal');
 const taskRoutes = require('./tasks');
+const chatRoutes = require('./chat');
 const assignedTaskRoutes = require('./assignedTasks');
 const historyRoutes = require('./history');
 const marketplaceRoutes = require('./marketplace');
@@ -98,6 +99,8 @@ router.use('/owner-portal', ownerPortalRoutes);
 // Tableau de bord « Mes tâches » (comptable/agent, étape 18) : même piège
 // que ci-dessus, doit aussi être monté avant `utilityReadingRoutes`.
 router.use('/tasks', taskRoutes);
+// Discussion interne un-à-un : authentifiée, même piège de montage (avant `utilityReadingRoutes`).
+router.use('/chat', chatRoutes);
 // Tâches à délai assignées par le DG (nouveau) : même piège, même raison.
 router.use('/tasks/assigned', assignedTaskRoutes);
 // Historique personnel (comptable/agent, étape 18) : même piège, même raison.
