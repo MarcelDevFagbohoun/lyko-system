@@ -135,15 +135,15 @@ async function listExpensesWithoutReceipt(tenantId) {
 
 /**
  * Tâches à délai assignées à CET utilisateur par le DG (nouveau — voir
- * routes/assignedTasks.js), non terminées, triées par échéance la plus
+ * routes/planning.js), non terminées, triées par échéance la plus
  * proche. Indépendant des permissions locataires/comptabilité : une tâche
  * libre peut porter sur n'importe quoi.
  */
 async function listAssignedTasksFor(tenantId, userId) {
   const [rows] = await pool.query(
     `SELECT id, title, description, due_date
-     FROM tasks_assigned
-     WHERE tenant_id = :tenantId AND assigned_to = :userId AND completed_at IS NULL
+     FROM planning_tasks
+     WHERE tenant_id = :tenantId AND owner_id = :userId AND status <> 'termine' AND due_date IS NOT NULL
      ORDER BY due_date ASC
      LIMIT 20`,
     { tenantId, userId },

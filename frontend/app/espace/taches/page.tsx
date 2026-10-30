@@ -1,8 +1,6 @@
-import type { Metadata } from "next";
-import { TachesView } from "./taches-view";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "Tâches" };
-
-export default function TachesPage() {
-  return <TachesView />;
+// Ancienne page « Tâches » : remplacée par le Planning (2026-10-30).
+export default function TachesRedirect() {
+  redirect("/espace/planning");
 }

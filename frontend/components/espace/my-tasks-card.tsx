@@ -118,13 +118,13 @@ export function MyTasksCard() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <CategoryCard icon={<ListTodo size={14} />} title="Tâches assignées par la direction" tone={assignedTone} count={tasks.assignedTasks.length} href="/espace/taches">
+          <CategoryCard icon={<ListTodo size={14} />} title="Mes tâches planifiées" tone={assignedTone} count={tasks.assignedTasks.length} href="/espace/planning">
             {tasks.assignedTasks.slice(0, 4).map((t) => {
               const due = formatTaskDueLabel(t.dueDate, null);
               return (
                 <Row
                   key={t.id}
-                  href="/espace/taches"
+                  href="/espace/planning"
                   label={t.title}
                   detail={t.description ?? undefined}
                   badge={<Badge variant={TONE_BADGE[due.urgency === "overdue" || due.urgency === "today" ? "danger" : due.urgency === "soon" ? "warning" : "info"]}>{due.text}</Badge>}

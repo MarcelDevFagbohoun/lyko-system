@@ -102,7 +102,7 @@ function buildItems(tasks: MyTasks | null, closing: ClosingOverview | null, isDg
         href:
           drafts.length === 1
             ? `/espace/locataires/${d.renterId}/${d.kind === "move-in" ? "etat-des-lieux" : "sortie"}?leaseId=${d.leaseId}`
-            : "/espace/taches",
+            : "/espace/planning",
       });
     }
     const predicted = tasks.agent.predictiveAlerts;
@@ -157,7 +157,7 @@ function buildItems(tasks: MyTasks | null, closing: ClosingOverview | null, isDg
         title: `${deposits.length} ${plural(deposits.length, "retenue sur caution à comptabiliser", "retenues sur caution à comptabiliser")}`,
         detail: "La sortie est finalisée, mais la retenue n'apparaît pas encore en comptabilité.",
         cta: "Régulariser",
-        href: deposits.length === 1 ? `/espace/locataires/${deposits[0].renterId}/sortie?leaseId=${deposits[0].leaseId}` : "/espace/taches",
+        href: deposits.length === 1 ? `/espace/locataires/${deposits[0].renterId}/sortie?leaseId=${deposits[0].leaseId}` : "/espace/planning",
       });
     }
     const receipts = tasks.accountant.expensesWithoutReceipt;
@@ -185,7 +185,7 @@ function buildItems(tasks: MyTasks | null, closing: ClosingOverview | null, isDg
       title: overdue ? `Tâche en retard : ${t.title}` : `À faire aujourd'hui : ${t.title}`,
       detail: t.description ?? "Tâche confiée par la direction.",
       cta: "Ouvrir",
-      href: "/espace/taches",
+      href: "/espace/planning",
     });
   }
 
@@ -295,7 +295,7 @@ export function PriorityPanel() {
       </ul>
       {hidden > 0 && (
         <div className="border-t border-border bg-surface-muted px-5 py-2.5 text-right">
-          <Link href="/espace/taches" className="text-body-sm text-primary hover:underline">
+          <Link href="/espace/planning" className="text-body-sm text-primary hover:underline">
             Voir les {hidden} autres actions
           </Link>
         </div>

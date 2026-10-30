@@ -24,7 +24,7 @@ const portalRoutes = require('./portal');
 const ownerPortalRoutes = require('./ownerPortal');
 const taskRoutes = require('./tasks');
 const chatRoutes = require('./chat');
-const assignedTaskRoutes = require('./assignedTasks');
+const planningRoutes = require('./planning');
 const historyRoutes = require('./history');
 const marketplaceRoutes = require('./marketplace');
 const salePropertyRoutes = require('./saleProperties');
@@ -101,8 +101,8 @@ router.use('/owner-portal', ownerPortalRoutes);
 router.use('/tasks', taskRoutes);
 // Discussion interne un-à-un : authentifiée, même piège de montage (avant `utilityReadingRoutes`).
 router.use('/chat', chatRoutes);
-// Tâches à délai assignées par le DG (nouveau) : même piège, même raison.
-router.use('/tasks/assigned', assignedTaskRoutes);
+// Planning (objectifs OKR, tâches Kanban/calendrier ; remplace les tâches assignées) : même piège, même raison.
+router.use('/planning', planningRoutes);
 // Historique personnel (comptable/agent, étape 18) : même piège, même raison.
 router.use('/history', historyRoutes);
 // Marketplace : sa route `/public/:tenantId` est PUBLIQUE (aucune auth) —

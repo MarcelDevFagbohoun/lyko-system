@@ -81,7 +81,7 @@ const CADRE_PREFIXES: [prefix: string, cadre: Cadre][] = [
   ["/espace/marketplace", "patrimoine"],
   ["/espace/plaintes", "operations"],
   ["/espace/relances", "operations"],
-  ["/espace/taches", "operations"],
+  ["/espace/planning", "operations"],
   ["/espace/discussion", "operations"],
   ["/espace/comptabilite", "finances"], // couvre aussi /espace/comptabilite-avancee
   ["/espace/charges", "finances"],

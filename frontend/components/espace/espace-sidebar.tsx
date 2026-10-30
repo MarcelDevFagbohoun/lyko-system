@@ -10,6 +10,7 @@ import {
   Users,
   MessageSquareWarning,
   MessagesSquare,
+  CalendarCheck,
   Wallet,
   Receipt,
   Banknote,
@@ -151,8 +152,7 @@ export function EspaceSidebar() {
         // `canCharges` manquait ici (audit du 2026-10-23) : la page Relances accepte déjà
         // locataires/comptabilite/charges (voir `relances-view.tsx`), le menu devait suivre.
         (canLocataires || canAccounting || canCharges) && { href: "/espace/relances", label: "Relances", icon: BellRing },
-        // « Tâches » est remplacé par la Discussion interne (2026-10-30) ; la page /espace/taches reste accessible
-        // depuis la carte « Mes tâches » de l'accueil et du tableau de bord.
+        { href: "/espace/planning", label: "Planning", icon: CalendarCheck },
         { href: "/espace/discussion", label: "Discussion", icon: MessagesSquare, badge: chatUnread },
       ],
     },

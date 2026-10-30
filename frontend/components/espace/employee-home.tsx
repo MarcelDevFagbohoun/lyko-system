@@ -59,7 +59,7 @@ export function EmployeeHome() {
     // `charges` manquait ici (audit du 2026-10-23) : un employé charges-only pouvait ouvrir
     // /espace/relances par URL (la page l'autorise) mais n'avait aucun lien pour la trouver.
     { href: "/espace/relances", label: "Relances", description: "Loyers en retard à relancer", icon: BellRing, cadre: "operations", show: has("locataires") || has("comptabilite") || (chargesOn && has("charges")) },
-    { href: "/espace/taches", label: "Mes tâches", description: "Ce qui vous est confié", icon: ListTodo, cadre: "operations", show: true },
+    { href: "/espace/planning", label: "Mes tâches", description: "Ce qui vous est confié", icon: ListTodo, cadre: "operations", show: true },
     { href: "/espace/comptabilite", label: "Trésorerie & recettes", description: "Encaissements et solde de caisse", icon: Wallet, cadre: "finances", show: has("comptabilite") },
     { href: "/espace/charges", label: "Charges locatives", description: "Factures SONEB / SBEE", icon: Receipt, cadre: "finances", show: chargesOn && has("charges") },
     { href: "/espace/comptabilite-avancee", label: "Comptabilité générale", description: "Journaux, grand livre, balance", icon: Calculator, cadre: "finances", show: has("comptabilite_avancee") },
