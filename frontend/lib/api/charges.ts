@@ -113,17 +113,39 @@ export function getChargePayments(accessToken: string, id: number) {
   return apiFetch<{ payments: UtilityPayment[] }>(`/api/charges/${id}/payments`, { accessToken });
 }
 
-export function recordChargePayment(
+/**
+ * Enregistre un règlement de facture SONEB/SBEE — autorisé hors-ligne (étape
+ * 11, extension) : sans réseau, mis en file (IndexedDB) et rejoué
+ * automatiquement au retour de la connexion, comme le paiement de loyer.
+ */
+export async function recordChargePayment(
   accessToken: string,
   id: number,
   input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string; idempotencyKey?: string },
-) {
-  return apiFetch<{ charge: UtilityCharge }>(`/api/charges/${id}/payments`, {
-    method: "POST",
-    accessToken,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+): Promise<{ queued: boolean; charge: UtilityCharge | null }> {
+  const path = `/api/charges/${id}/payments`;
+  try {
+    const result = await apiFetch<{ charge: UtilityCharge }>(path, {
+      method: "POST",
+      accessToken,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    return { queued: false, ...result };
+  } catch (err) {
+    const { isNetworkError, enqueueMutation } = await import("@/lib/offline/queue");
+    if (isNetworkError(err)) {
+      await enqueueMutation({
+        kind: "utility_payment",
+        method: "POST",
+        path,
+        body: input,
+        summary: `Règlement facture — ${input.amount} FCFA`,
+      });
+      return { queued: true, charge: null };
+    }
+    throw err;
+  }
 }
 
 export function getPreviousReading(accessToken: string, leaseId: number, utilityType: UtilityType) {

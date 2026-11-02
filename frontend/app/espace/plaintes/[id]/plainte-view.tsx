@@ -223,11 +223,15 @@ function StatusActions({
     setSubmitting(true);
     setError(null);
     try {
-      await updateComplaintStatus(accessToken, complaint.id, { status, resolutionNote: note });
+      const res = await updateComplaintStatus(accessToken, complaint.id, { status, resolutionNote: note });
       setResolving(false);
       setResolutionNote("");
-      onChanged();
-      if (message) toast.success(message);
+      if (res.queued) {
+        toast.success("Pas de réseau : ce changement est mis en attente, il partira à la reconnexion.");
+      } else {
+        onChanged();
+        if (message) toast.success(message);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de modifier le statut.");
     } finally {

@@ -140,9 +140,13 @@ export function ComplaintJournalCard({
     setError(null);
     try {
       const res = await addComplaintEvent(accessToken, complaint.id, { comment: text, visibility });
-      onUpdated(res);
       setComment("");
-      toast.success(visibility === "tenant" ? "Commentaire ajouté, visible par le locataire." : "Commentaire interne ajouté.");
+      if (res.queued) {
+        toast.success("Pas de réseau : commentaire mis en attente, il partira à la reconnexion.");
+      } else {
+        onUpdated(res);
+        toast.success(visibility === "tenant" ? "Commentaire ajouté, visible par le locataire." : "Commentaire interne ajouté.");
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce commentaire.");
     } finally {

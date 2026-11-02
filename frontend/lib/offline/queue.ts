@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api/client";
 import { queueAdd, queueList, queueUpdate, queueRemove, type QueueItem, type QueueItemKind } from "./db";
+import type { EncodedFile } from "./files";
 
 /**
  * Étape 11 — moteur de synchronisation de la file d'écriture hors-ligne.
@@ -68,12 +69,29 @@ export async function processQueue(accessToken: string | null): Promise<void> {
       await notify();
       try {
         const { apiFetch } = await import("@/lib/api/client");
-        await apiFetch(item.path, {
-          method: item.method,
-          accessToken,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(item.body),
-        });
+        // Plainte avec photos mises en file (étape 11, extension) : les
+        // photos ont été encodées en base64 pour tenir dans le JSON chiffré
+        // (voir `files.ts`) — reconstruites en `File` ici, au moment du
+        // vrai envoi, pour repartir en multipart comme l'aurait fait le
+        // formulaire en ligne (le serveur attend `multer`, pas du JSON).
+        const photosBase64 = item.body.photosBase64 as EncodedFile[] | undefined;
+        if (item.kind === "complaint" && Array.isArray(photosBase64) && photosBase64.length > 0) {
+          const { decodeBase64ToFile } = await import("./files");
+          const fd = new FormData();
+          Object.entries(item.body).forEach(([key, value]) => {
+            if (key === "photosBase64") return;
+            fd.append(key, String(value));
+          });
+          photosBase64.forEach((p) => fd.append("photos", decodeBase64ToFile(p)));
+          await apiFetch(item.path, { method: item.method, accessToken, body: fd });
+        } else {
+          await apiFetch(item.path, {
+            method: item.method,
+            accessToken,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(item.body),
+          });
+        }
         await queueRemove(item.id);
       } catch (err) {
         if (isNetworkError(err)) {

@@ -25,6 +25,9 @@ type ConnState = "online" | "offline" | "syncing";
 const KIND_LABEL: Record<QueueItem["kind"], string> = {
   rent_payment: "Paiement de loyer",
   complaint: "Plainte",
+  utility_payment: "Règlement facture",
+  relance: "Relance",
+  complaint_event: "Suivi de plainte",
 };
 
 export function ConnectionIndicator({ className }: { className?: string }) {

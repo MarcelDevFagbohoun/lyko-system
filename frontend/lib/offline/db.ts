@@ -5,11 +5,13 @@
  *   - `getCache` : dernière réponse connue de chaque GET (clé = URL complète),
  *     pour que les pages déjà visitées restent consultables hors-ligne.
  *   - `mutationQueue` : actions d'écriture mises en attente quand le réseau
- *     est indisponible (ex. paiement de loyer, plainte) — rejouées au retour
- *     de la connexion. Volontairement limité à une liste blanche d'actions
- *     sûres (décision explicite, étape 11) : tout ce qui crée une entité à
- *     code auto-généré côté serveur (bien, locataire, bail, propriétaire...)
- *     reste bloqué hors-ligne, jamais mis en file.
+ *     est indisponible — rejouées au retour de la connexion. Volontairement
+ *     limité à une liste blanche d'actions sûres (décision explicite, étape
+ *     11) : paiement de loyer, règlement de facture SONEB/SBEE, relance,
+ *     plainte (création, avec photos) et suivi de plainte (commentaire,
+ *     statut). Tout ce qui crée une entité à code auto-généré côté serveur
+ *     (bien, locataire, bail, propriétaire...) reste bloqué hors-ligne,
+ *     jamais mis en file.
  *
  * Étape 49/50 (audit sécurité) — le contenu potentiellement sensible
  * (`body` des deux magasins, `summary` de la file — noms/montants lisibles)
@@ -26,7 +28,7 @@ const DB_VERSION = 1;
 export const GET_CACHE_STORE = "getCache";
 export const MUTATION_QUEUE_STORE = "mutationQueue";
 
-export type QueueItemKind = "rent_payment" | "complaint";
+export type QueueItemKind = "rent_payment" | "complaint" | "utility_payment" | "relance" | "complaint_event";
 export type QueueItemStatus = "pending" | "syncing" | "failed";
 
 export type QueueItem = {

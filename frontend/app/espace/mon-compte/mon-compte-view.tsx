@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { AuthenticatedImage } from "@/components/ui/authenticated-image";
+import { OfflinePrepareCard } from "@/components/system/offline-prepare-card";
 import { cn } from "@/lib/utils";
 
 /**
@@ -234,6 +235,8 @@ function MonCompteContent() {
             <ChevronRight size={16} className="shrink-0 text-ink-faint" />
           </Link>
         </Card>
+
+        <OfflinePrepareCard />
       </div>
     </div>
   );
