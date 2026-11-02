@@ -41,7 +41,7 @@ export const FAQ_ITEMS = [
   {
     question: "Combien ça coûte ?",
     answer:
-      "Trois offres selon la taille de votre portefeuille : une offre d'entrée pour démarrer, une offre pensée pour la majorité des cabinets, et une offre pour les plus grandes structures. Le détail est sur notre page Tarifs, accessible depuis le menu.",
+      "Trois offres selon la taille de votre portefeuille : une offre d'entrée pour démarrer, une offre pensée pour la majorité des entreprises, et une offre pour les plus grandes structures. Le détail est sur notre page Tarifs, accessible depuis le menu.",
   },
   {
     question: "Comment démarrer ?",

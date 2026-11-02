@@ -29,7 +29,7 @@ const PROFILES: { key: Exclude<GlProfile, "personnalise">; title: string; taglin
   {
     key: "standard",
     title: "Standard OHADA",
-    tagline: "Conseillé pour un cabinet déclaré",
+    tagline: "Conseillé pour une entreprise déclarée",
     points: ["TVA sur vos commissions", "Résultat enregistré en fin d'année", "Charges SONEB/SBEE sur un compte propriétaire", "Ventes de matériel avec prix"],
   },
   {
@@ -353,7 +353,7 @@ export function GlOptionsCard({ accessToken }: { accessToken: string | null }) {
         <Section
           title="TVA sur mes commissions"
           status={<Pill on={s.vatEnabled}>{s.vatEnabled ? `Activée · ${s.vatRate} %` : "Désactivée"}</Pill>}
-          help="Si votre cabinet est assujetti à la TVA, la taxe incluse dans votre commission est mise de côté pour l'État. Rien ne change pour les propriétaires ni pour la caisse."
+          help="Si votre entreprise est assujettie à la TVA, la taxe incluse dans votre commission est mise de côté pour l'État. Rien ne change pour les propriétaires ni pour la caisse."
         >
           <ToggleRow checked={s.vatEnabled} disabled={busy} onChange={() => apply({ vatEnabled: !s.vatEnabled }, s.vatEnabled ? "TVA désactivée." : "TVA activée.")} title="Calculer la TVA sur mes commissions">
             Votre pourcentage de commission est considéré TTC : la TVA est extraite du montant et suivie dans « TVA à reverser ».

@@ -116,8 +116,8 @@ export function DashboardTrendsSection({ accessToken }: { accessToken: string | 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Recette du cabinet par mois</CardTitle>
-            <CardDescription>Ce que gagne le cabinet : commissions, frais d&apos;entrée, pénalités, ventes et autres entrées. Le net (après dépenses) s&apos;affiche au survol.</CardDescription>
+            <CardTitle>Recette de l&apos;entreprise par mois</CardTitle>
+            <CardDescription>Ce que gagne l&apos;entreprise : commissions, frais d&apos;entrée, pénalités, ventes et autres entrées. Le net (après dépenses) s&apos;affiche au survol.</CardDescription>
           </CardHeader>
           <CardContent>
             <MonthlyBars series={data.series} segments={INCOME} value={(s, k) => s.revenue[k as keyof Point["revenue"]]} testId="trend-revenue"
@@ -126,7 +126,7 @@ export function DashboardTrendsSection({ accessToken }: { accessToken: string | 
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Dépenses du cabinet par mois</CardTitle>
+            <CardTitle>Dépenses de l&apos;entreprise par mois</CardTitle>
             <CardDescription>Dépenses réellement payées, par catégorie (les 4 plus importantes de la période).</CardDescription>
           </CardHeader>
           <CardContent>

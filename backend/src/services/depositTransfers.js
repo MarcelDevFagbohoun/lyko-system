@@ -93,9 +93,9 @@ const createTransfer = async (conn, { tenantId, ownerId, owner, data, recordedBy
   const outstanding = net.get(netKey) ?? 0;
 
   if (data.direction === 'to_owner') {
-    if (!item) throw new ApiError(400, 'Cette caution n’est pas détenue par le cabinet (déjà restituée, ou non reçue).');
+    if (!item) throw new ApiError(400, 'Cette caution n’est pas détenue par l’entreprise (déjà restituée, ou non reçue).');
     if (data.amount > item.atCabinet) {
-      throw new ApiError(400, `Montant trop élevé : le cabinet ne détient plus que ${item.atCabinet} FCFA de cette caution.`);
+      throw new ApiError(400, `Montant trop élevé : l'entreprise ne détient plus que ${item.atCabinet} FCFA de cette caution.`);
     }
   } else if (data.amount > outstanding) {
     throw new ApiError(400, `Le propriétaire ne détient que ${Math.max(0, outstanding)} FCFA de cette caution.`);
