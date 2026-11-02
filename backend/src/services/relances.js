@@ -11,6 +11,8 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { assertLeaseInScope } = require('./scope');
 const { toActor } = require('../utils/actor');
+const { sendPushToUser } = require('./push/sendPush');
+const logger = require('../utils/logger');
 
 const SELECT = `
   rl.id, rl.entity_type, rl.entity_id, rl.sent_at, rl.outcome_note, rl.outcome_recorded_at,
@@ -61,6 +63,44 @@ async function assertEntityInScope(tenantId, entityType, entityId, scopeAgentId)
   }
 }
 
+/**
+ * Notifie le DG qu'une relance a été envoyée — sauf si c'est le DG lui-même qui l'a envoyée (inutile de
+ * se notifier soi-même). Ne lève jamais d'exception : un push raté n'annule pas la relance déjà enregistrée.
+ */
+async function notifyRelanceSent(tenantId, userId, entityType, entityId) {
+  try {
+    const [dgRows] = await pool.query("SELECT id FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1", { tenantId });
+    const dgId = dgRows[0]?.id;
+    if (!dgId || Number(dgId) === Number(userId)) return;
+
+    let leaseId = entityType === 'bail' ? entityId : null;
+    if (entityType === 'charge') {
+      const [[charge]] = await pool.query('SELECT lease_id FROM utility_charges WHERE id = :id', { id: entityId });
+      leaseId = charge?.lease_id ?? null;
+    }
+    let renterId = null;
+    let renterName = null;
+    if (leaseId) {
+      const [[lease]] = await pool.query(
+        'SELECT l.renter_id, r.first_name, r.last_name FROM leases l JOIN renters r ON r.id = l.renter_id WHERE l.id = :id',
+        { id: leaseId },
+      );
+      if (lease) {
+        renterId = lease.renter_id;
+        renterName = [lease.first_name, lease.last_name].filter(Boolean).join(' ');
+      }
+    }
+    await sendPushToUser(dgId, {
+      title: 'Relance envoyée',
+      body: renterName ? `Relance envoyée à ${renterName}` : 'Une relance a été envoyée',
+      url: renterId ? `/espace/locataires/${renterId}` : '/espace/relances',
+      tag: 'relance',
+    });
+  } catch (err) {
+    logger.warn('Échec notification push relance', { tenantId, error: err.message });
+  }
+}
+
 /** Enregistre une relance envoyée (date du jour, auteur) — appelé au clic sur « Relancer ». */
 async function recordRelance(tenantId, userId, scopeAgentId, { entityType, entityId }) {
   await assertEntityInScope(tenantId, entityType, entityId, scopeAgentId);
@@ -72,6 +112,7 @@ async function recordRelance(tenantId, userId, scopeAgentId, { entityType, entit
     id: result.insertId,
     tenantId,
   });
+  notifyRelanceSent(tenantId, userId, entityType, entityId).catch(() => {});
   return toPublicRelance(rows[0]);
 }
 

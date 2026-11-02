@@ -15,6 +15,7 @@ const { extourneEcriture } = require('./gl/glReversalService');
 const { getEscrowBalances } = require('./commission');
 const { resolveOwnerFromLease } = require('./gl/glAccountResolver');
 const { notifyRentPaymentsRecorded } = require('./payments/notify');
+const { notifyLeaseStaff } = require('./push/notifyLeaseEvent');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { getOrCreateIssuance, ensureShareToken } = require('./documentIssuance');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
@@ -261,6 +262,13 @@ async function createPayment(tenantId, userId, leaseId, scopeAgentId, data) {
 
     await conn.commit();
     notifyRentPaymentsRecorded(tenantId, created.map((c) => c.paymentId));
+    // Notification push au DG + à l'agent du bien — jamais bloquant pour le paiement déjà enregistré.
+    notifyLeaseStaff(tenantId, lease.property_agent_id, {
+      title: 'Paiement reçu',
+      body: `${Number(data.amount).toLocaleString('fr-FR')} F — ${lease.property_label ? `${lease.property_label} ` : ''}${lease.unit_code}, ${lease.property_address}`,
+      url: `/espace/locataires/${lease.renter_id}`,
+      tag: 'payment',
+    }).catch(() => {});
     return { created, monthsCovered, fullMonths, partialAmount };
   } catch (err) {
     await conn.rollback().catch(() => {});

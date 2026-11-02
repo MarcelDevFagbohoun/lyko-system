@@ -5,6 +5,7 @@ const { pool } = require('../config/db');
 const { recordRentPayment } = require('./rentPayments');
 const { recordUtilityPayment, loadCharge } = require('./utilityCharges');
 const { notifyRentPaymentsRecorded, notifyUtilityPaymentRecorded } = require('./payments/notify');
+const { notifyLeaseStaffByLeaseId, notifyLeaseStaff } = require('./push/notifyLeaseEvent');
 const { assertPeriodOpenLocked } = require('./accountingPeriods');
 const { todayIso } = require('../utils/dates');
 
@@ -27,6 +28,7 @@ async function loadActiveLeaseForPayment(conn, tenantId, leaseId) {
 async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, linkId, transactionKey, amount, paymentMethod }) {
   let rentResult = null;
   let utilityResult = null;
+  let chargeAgentId;
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -51,6 +53,7 @@ async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, l
     } else {
       await conn.query('SELECT id FROM utility_charges WHERE id = :id FOR UPDATE', { id: chargeId });
       const charge = await loadCharge(conn, tenant.id, chargeId);
+      chargeAgentId = charge.property_agent_id ?? null;
       if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée');
       utilityResult = await recordUtilityPayment(conn, {
         tenantId: tenant.id,
@@ -92,6 +95,13 @@ async function recordConfirmedOnlinePayment({ tenant, kind, leaseId, chargeId, l
     // E-mail automatique au locataire (après commit ; ne bloque ni n'échoue jamais le paiement).
     if (rentResult) notifyRentPaymentsRecorded(tenant.id, rentResult.payments.map((p) => p.paymentId));
     if (utilityResult) notifyUtilityPaymentRecorded(tenant.id, utilityResult.paymentId);
+    // Notification push au DG + à l'agent du bien (paiement en ligne confirmé par le prestataire).
+    const pushBody = `${Number(amount).toLocaleString('fr-FR')} F réglé en ligne`;
+    if (kind === 'rent') {
+      notifyLeaseStaffByLeaseId(tenant.id, leaseId, { title: 'Paiement reçu', body: pushBody, url: '/espace/paiements', tag: 'payment' }).catch(() => {});
+    } else if (chargeAgentId !== undefined) {
+      notifyLeaseStaff(tenant.id, chargeAgentId, { title: 'Paiement reçu', body: pushBody, url: '/espace/charges', tag: 'payment' }).catch(() => {});
+    }
     return { alreadyRecorded: false, amount };
   } catch (err) {
     await conn.rollback().catch(() => {});

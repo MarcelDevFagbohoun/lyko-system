@@ -11,6 +11,7 @@ const { COMPLAINT_STATUSES } = require('../constants/complaints');
 const { ROLE_LABELS } = require('../constants/roles');
 const { toActor } = require('../utils/actor');
 const { todayIso } = require('../utils/dates');
+const { notifyLeaseStaff } = require('./push/notifyLeaseEvent');
 
 const MAX_TENANT_COMMENTS_PER_HOUR = 10;
 const TEAM_LABEL = 'Équipe de gestion';
@@ -182,7 +183,7 @@ async function applyStaffUpdate({ tenantId, complaintId, user, status, comment, 
 async function findByTrackingToken(token) {
   if (typeof token !== 'string' || token.length < 20 || token.length > 64) return null;
   const [rows] = await pool.query(
-    `SELECT c.*, l.renter_id, t.company_name, t.contact_phone, p.address AS property_address, u.code AS unit_code
+    `SELECT c.*, l.renter_id, t.company_name, t.contact_phone, p.address AS property_address, p.agent_id AS property_agent_id, u.code AS unit_code
      FROM complaints c
      JOIN leases l ON l.id = c.lease_id
      JOIN property_units u ON u.id = l.unit_id
@@ -239,6 +240,12 @@ async function addTenantComment(token, body) {
       tenantId: c.tenant_id, complaintId: c.id, type: 'comment', body, visibility: 'tenant', renterId: c.renter_id,
     });
     await conn.commit();
+    notifyLeaseStaff(c.tenant_id, c.property_agent_id, {
+      title: 'Nouveau message — plainte',
+      body: `${c.code} : ${body}`.slice(0, 180),
+      url: `/espace/plaintes/${c.id}`,
+      tag: 'complaint',
+    }).catch(() => {});
   } catch (err) {
     await conn.rollback().catch(() => {});
     throw err;

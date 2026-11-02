@@ -1,5 +1,6 @@
 /*
- * Service worker Africa Immo Management — shell applicatif (étape 0).
+ * Service worker Africa Immo Management — shell applicatif (étape 0) +
+ * notifications push navigateur (étape push, Web Push API).
  *
  * Rôle limité au shell (navigations + assets statiques) : rendre l'appli
  * chargeable hors-ligne. Les données métier (lecture) et la file d'écriture
@@ -8,6 +9,10 @@
  * (`db.ts`, `queue.ts`) — jamais dans ce service worker, volontairement :
  * ça reste au plus près de `apiFetch` où l'authentification et les erreurs
  * applicatives sont déjà gérées, pas dans un intercepteur réseau générique.
+ *
+ * Les événements `push`/`notificationclick` vivent ICI (et pas dans un
+ * second service worker) : un seul SW peut contrôler une portée donnée —
+ * en créer un second désenregistrerait celui-ci.
  */
 const VERSION = "v0.1.0";
 const SHELL_CACHE = `aim-shell-${VERSION}`;
@@ -84,4 +89,42 @@ self.addEventListener("fetch", (event) => {
       }),
     );
   }
+});
+
+// Notification push reçue (même onglet fermé) : le serveur envoie un JSON
+// { title, body, url, tag } — voir backend/src/services/push/sendPush.js.
+self.addEventListener("push", (event) => {
+  let data = {};
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch {
+      data = { body: event.data.text() };
+    }
+  }
+  const title = data.title || "Africa Immo Management";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || "",
+      icon: "/icons/icon.svg",
+      badge: "/icons/icon.svg",
+      tag: data.tag,
+      data: { url: data.url || "/espace" },
+    }),
+  );
+});
+
+// Clic sur la notification : focaliser un onglet déjà ouvert sur la bonne
+// page, sinon en ouvrir un nouveau.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/espace";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if (client.url.includes(url) && "focus" in client) return client.focus();
+      }
+      return self.clients.openWindow ? self.clients.openWindow(url) : undefined;
+    }),
+  );
 });

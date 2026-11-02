@@ -9,6 +9,7 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { claimIdempotencyKey } = require('./paymentGuards');
 const complaintEvents = require('./complaintEvents');
+const { notifyLeaseStaff } = require('./push/notifyLeaseEvent');
 
 /**
  * Charge le bail ACTIF du locataire authentifié par son token (ou lève 404).
@@ -17,7 +18,7 @@ const complaintEvents = require('./complaintEvents');
  */
 async function loadActivePortalLease(tenantId, renterId) {
   const [rows] = await pool.query(
-    `SELECT l.*, u.code AS unit_code, u.designation, u.designation_custom, p.address AS property_address
+    `SELECT l.*, u.code AS unit_code, u.designation, u.designation_custom, p.address AS property_address, p.agent_id AS property_agent_id
      FROM leases l
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
@@ -283,6 +284,12 @@ async function createPortalComplaint(tenantId, renterId, data) {
     await complaintEvents.recordReported(conn, { tenantId, complaintId: result.insertId, renterId });
     const trackingToken = await complaintEvents.ensureTrackingToken(conn, result.insertId);
     await conn.commit();
+    notifyLeaseStaff(tenantId, lease.property_agent_id, {
+      title: 'Nouvelle plainte (portail locataire)',
+      body: `${code} — ${data.title}`,
+      url: `/espace/plaintes/${result.insertId}`,
+      tag: 'complaint',
+    }).catch(() => {});
     return { complaintId: result.insertId, code, leaseId: lease.id, trackingPath: `/suivi/${trackingToken}` };
   } catch (err) {
     await conn.rollback().catch(() => {});

@@ -15,6 +15,7 @@ const { assertLeaseInScope } = require('./scope');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { notifyUtilityPaymentRecorded } = require('./payments/notify');
+const { notifyLeaseStaff } = require('./push/notifyLeaseEvent');
 const { isoDate } = require('../utils/dates');
 
 // Un lien de paiement expire par défaut sous 48h — même valeur que leases.js.
@@ -478,6 +479,12 @@ async function recordManualPayment(tenantId, userId, id, scopeAgentId, data) {
     });
     await conn.commit();
     notifyUtilityPaymentRecorded(tenantId, paymentId);
+    notifyLeaseStaff(tenantId, charge.property_agent_id, {
+      title: 'Paiement reçu',
+      body: `${Number(data.amount).toLocaleString('fr-FR')} F — facture ${charge.utility_type === 'soneb' ? 'SONEB' : 'SBEE'} (${charge.period_label})`,
+      url: '/espace/charges',
+      tag: 'payment',
+    }).catch(() => {});
     return { newStatus, paymentId };
   } catch (err) {
     await conn.rollback().catch(() => {});

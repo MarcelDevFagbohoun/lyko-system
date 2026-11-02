@@ -9,6 +9,7 @@ import { CardToneProvider } from "@/components/ui/card";
 import { SubscriptionGate } from "@/components/billing/subscription-gate";
 import { ASSISTANT_ENABLED } from "@/lib/features";
 import { AssistantWidget } from "@/components/assistant/assistant-widget";
+import { PushNotificationsPrompt } from "@/components/system/push-notifications-prompt";
 import { CADRES, cadreForPath } from "@/lib/module-theme";
 import { BrandLogo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,7 @@ export default function EspaceLayout({ children }: { children: React.ReactNode }
         </CardToneProvider>
       </main>
       {ASSISTANT_ENABLED && status === "authenticated" && <AssistantWidget />}
+      {status === "authenticated" && <PushNotificationsPrompt />}
     </div>
   );
 }

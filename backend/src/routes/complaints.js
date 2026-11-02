@@ -25,6 +25,7 @@ const { toActor } = require('../utils/actor');
 const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { resolvePropertyScope } = require('../services/scope');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
+const { notifyLeaseStaff } = require('../services/push/notifyLeaseEvent');
 const logger = require('../utils/logger');
 const { isoDate } = require('../utils/dates');
 
@@ -249,7 +250,7 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_COMPLAINT), async (req, r
   const conn = await pool.getConnection();
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    await loadActiveLease(conn, req.user.tenantId, data.leaseId, scopeAgentId);
+    const lease = await loadActiveLease(conn, req.user.tenantId, data.leaseId, scopeAgentId);
     const code = await nextComplaintCode(conn, req.user.tenantId);
 
     await conn.beginTransaction();
@@ -293,6 +294,12 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_COMPLAINT), async (req, r
 
     await conn.commit();
     logger.info('Plainte déclarée', { tenantId: req.user.tenantId, complaintId, code, by: req.user.id });
+    notifyLeaseStaff(req.user.tenantId, lease.property_agent_id, {
+      title: 'Nouvelle plainte',
+      body: `${code} — ${data.title}`,
+      url: `/espace/plaintes/${complaintId}`,
+      tag: 'complaint',
+    }).catch(() => {});
     res.status(201).json({ complaintId, code });
   } catch (err) {
     await conn.rollback().catch(() => {});
