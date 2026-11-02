@@ -27,6 +27,21 @@ export const adminAudit = (t: string) => apiFetch<{ entries: AuditEntry[] }>("/a
 export const adminTenants = (t: string) => apiFetch<{ tenants: AdminTenant[] }>("/api/admin/tenants", { accessToken: t });
 export type PaymentIssue = { id: number; reference: string; status: "pending" | "failed" | "anomaly"; reason: string | null; planKey: string; months: number; kind: string; amount: number; creditApplied: number; createdAt: string; companyName: string };
 export const adminPaymentIssues = (t: string) => apiFetch<{ issues: PaymentIssue[] }>("/api/admin/payment-issues", { accessToken: t });
+export type ContactMessage = {
+  id: number;
+  firstName: string;
+  lastName: string;
+  companyName: string | null;
+  phone: string;
+  subject: string;
+  description: string;
+  status: "new" | "read";
+  createdAt: string;
+  readAt: string | null;
+};
+export const adminContactMessages = (t: string) => apiFetch<{ messages: ContactMessage[] }>("/api/admin/contact-messages", { accessToken: t });
+export const adminMarkContactMessageRead = (t: string, id: number) =>
+  apiFetch<{ ok: true }>(`/api/admin/contact-messages/${id}/read`, { accessToken: t, method: "POST" });
 export const adminRefunds = (t: string, status?: string) =>
   apiFetch<{ refunds: Refund[] }>(`/api/admin/refunds${status ? `?status=${status}` : ""}`, { accessToken: t });
 export const adminApprove = (t: string, id: number, feeAmount?: number, note?: string) =>

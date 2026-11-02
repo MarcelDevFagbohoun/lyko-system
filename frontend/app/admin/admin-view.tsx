@@ -5,8 +5,8 @@ import QRCode from "qrcode";
 import { ApiError } from "@/lib/api/client";
 import {
   adminLogin, adminMe, adminTenants, adminRefunds, adminPaymentIssues, adminApprove, adminReject, adminPay, adminMarkPaid, adminRefresh, adminGrant, adminSetInternal, adminRevokePartner,
-  admin2faSetup, admin2faEnable, admin2faDisable, adminAudit,
-  getAdminToken, setAdminToken, type AdminTenant, type AuditEntry,
+  admin2faSetup, admin2faEnable, admin2faDisable, adminAudit, adminContactMessages, adminMarkContactMessageRead,
+  getAdminToken, setAdminToken, type AdminTenant, type AuditEntry, type ContactMessage,
 } from "@/lib/api/admin";
 import { ACCOUNT_TYPE_LABELS, type PlanKey, type Refund } from "@/lib/api/billing";
 import type { PaymentIssue } from "@/lib/api/admin";
@@ -101,9 +101,10 @@ const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "succes
 };
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
-  const [tab, setTab] = React.useState<"stats" | "refunds" | "payments" | "tenants" | "catalog" | "security" | "audit">("stats");
+  const [tab, setTab] = React.useState<"stats" | "refunds" | "payments" | "tenants" | "catalog" | "security" | "audit" | "messages">("stats");
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [issues, setIssues] = React.useState<PaymentIssue[]>([]);
+  const [contactMessages, setContactMessages] = React.useState<ContactMessage[]>([]);
   const [refs, setRefs] = React.useState<Record<number, string>>({});
   const [tenants, setTenants] = React.useState<AdminTenant[]>([]);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -115,8 +116,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [partnerDialog, setPartnerDialog] = React.useState<AdminTenant | null>(null);
 
   const load = React.useCallback(() => {
-    Promise.all([adminRefunds(token), adminTenants(token), adminPaymentIssues(token)])
-      .then(([r, t, i]) => { setRefunds(r.refunds); setTenants(t.tenants); setIssues(i.issues); })
+    Promise.all([adminRefunds(token), adminTenants(token), adminPaymentIssues(token), adminContactMessages(token)])
+      .then(([r, t, i, c]) => { setRefunds(r.refunds); setTenants(t.tenants); setIssues(i.issues); setContactMessages(c.messages); })
       .catch((e) => { if (e instanceof ApiError && e.status === 401) onLogout(); else setMessage(e instanceof ApiError ? e.message : "Chargement impossible."); });
   }, [token, onLogout]);
   React.useEffect(() => load(), [load]);
@@ -139,6 +140,9 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
               Paiements à surveiller{issues.some((i) => i.status === "anomaly") ? " ⚠" : issues.length ? ` (${issues.length})` : ""}
             </Button>
             <Button variant={tab === "tenants" ? "primary" : "secondary"} onClick={() => setTab("tenants")}>Entreprises</Button>
+            <Button variant={tab === "messages" ? "primary" : "secondary"} onClick={() => setTab("messages")}>
+              Messages{contactMessages.some((m) => m.status === "new") ? ` (${contactMessages.filter((m) => m.status === "new").length})` : ""}
+            </Button>
             <Button variant={tab === "catalog" ? "primary" : "secondary"} onClick={() => setTab("catalog")}>Offres et prix</Button>
             <Button variant={tab === "audit" ? "primary" : "secondary"} onClick={() => setTab("audit")}>Journal</Button>
             <Button variant={tab === "security" ? "primary" : "secondary"} onClick={() => setTab("security")}>Sécurité</Button>
@@ -237,6 +241,15 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
         {tab === "catalog" && <CatalogEditor token={token} />}
         {tab === "audit" && <AuditPanel token={token} />}
         {tab === "security" && <SecurityPanel token={token} />}
+        {tab === "messages" && (
+          <ContactMessagesPanel
+            token={token}
+            messages={contactMessages}
+            onRead={(id) =>
+              setContactMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status: "read", readAt: new Date().toISOString() } : m)))
+            }
+          />
+        )}
 
         {tab === "tenants" && (
           <Card>
@@ -380,6 +393,65 @@ const ACTION_LABELS: Record<string, string> = {
   refund_approve: "Remboursement accepté", refund_reject: "Remboursement refusé", refund_pay: "Virement de remboursement",
   tenant_grant: "Offre attribuée", tenant_partner_grant: "Abonnement partenaire attribué", tenant_partner_extend: "Abonnement partenaire prolongé", tenant_partner_revoke: "Partenariat terminé", tenant_set_internal: "Passage en interne", catalog_save: "Offres modifiées", catalog_reset: "Offres réinitialisées",
 };
+
+/** Messages reçus via le formulaire de contact de la page d'accueil (voir components/marketing/contact-section.tsx). */
+function ContactMessagesPanel({
+  token,
+  messages,
+  onRead,
+}: {
+  token: string;
+  messages: ContactMessage[];
+  onRead: (id: number) => void;
+}) {
+  const [openId, setOpenId] = React.useState<number | null>(null);
+
+  async function open(m: ContactMessage) {
+    setOpenId((prev) => (prev === m.id ? null : m.id));
+    if (m.status === "new") {
+      try {
+        await adminMarkContactMessageRead(token, m.id);
+        onRead(m.id);
+      } catch {
+        // Un échec du marquage « lu » n'empêche pas de lire le message — pas bloquant.
+      }
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Messages du formulaire de contact</CardTitle></CardHeader>
+      <CardContent className="flex flex-col gap-2 pt-0">
+        {messages.length === 0 && <p className="text-body-sm text-ink-muted">Aucun message reçu pour le moment.</p>}
+        {messages.map((m) => (
+          <div key={m.id} className="rounded border border-border">
+            <button
+              type="button"
+              onClick={() => open(m)}
+              className="flex w-full flex-wrap items-center justify-between gap-2 p-3 text-left hover:bg-surface-muted"
+            >
+              <span className="flex items-center gap-2">
+                {m.status === "new" && <Badge variant="info">Nouveau</Badge>}
+                <span className="font-label-md text-ink">{m.firstName} {m.lastName}</span>
+                {m.companyName && <span className="text-body-sm text-ink-muted">— {m.companyName}</span>}
+              </span>
+              <span className="text-body-sm text-ink-muted">{m.subject}</span>
+              <span className="whitespace-nowrap text-body-xs text-ink-faint">{new Date(m.createdAt).toLocaleString("fr-FR")}</span>
+            </button>
+            {openId === m.id && (
+              <div className="flex flex-col gap-2 border-t border-border p-3 text-body-sm">
+                <p className="whitespace-pre-wrap text-ink">{m.description}</p>
+                <a href={`tel:${m.phone.replace(/[^\d+]/g, "")}`} className="font-label-sm text-primary">
+                  {m.phone}
+                </a>
+              </div>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
 
 function AuditPanel({ token }: { token: string }) {
   const [entries, setEntries] = React.useState<AuditEntry[] | null>(null);

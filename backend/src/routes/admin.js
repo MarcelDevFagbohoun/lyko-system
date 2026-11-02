@@ -119,6 +119,42 @@ router.get('/audit', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Messages du formulaire de contact public (page d'accueil) — voir routes/contact.js.
+router.get('/contact-messages', async (_req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, first_name, last_name, company_name, phone, subject, description, status, created_at, read_at
+       FROM contact_messages ORDER BY id DESC LIMIT 300`,
+    );
+    res.json({
+      messages: rows.map((r) => ({
+        id: r.id,
+        firstName: r.first_name,
+        lastName: r.last_name,
+        companyName: r.company_name,
+        phone: r.phone,
+        subject: r.subject,
+        description: r.description,
+        status: r.status,
+        createdAt: r.created_at,
+        readAt: r.read_at,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+router.post('/contact-messages/:id/read', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new ApiError(400, 'Identifiant invalide');
+    await pool.query(
+      "UPDATE contact_messages SET status = 'read', read_at = NOW() WHERE id = :id AND status = 'new'",
+      { id },
+    );
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 router.get('/tenants', async (_req, res, next) => {
   try {
     const [rows] = await pool.query(
