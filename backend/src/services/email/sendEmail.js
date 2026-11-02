@@ -308,4 +308,26 @@ async function sendBillingEmail({ to, subject, heading, paragraphs, linkUrl = nu
   return sendViaResend({ to, subject: safeHeader(subject), html });
 }
 
-module.exports = { sendBillingEmail, sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendPasswordResetCodeEmail, sendSubscriptionActivatedEmail, sendPaymentConfirmationEmail, escapeHtml, safeHeader };
+/**
+ * Message du formulaire de contact public (page d'accueil, aucun compte requis). Aucune adresse
+ * e-mail n'est demandée au visiteur (seulement son téléphone) : le destinataire (l'équipe) rappelle,
+ * il ne répond jamais par e-mail à ce message.
+ */
+async function sendContactFormEmail({ to, firstName, lastName, companyName, phone, subject, description }) {
+  const fullName = `${firstName} ${lastName}`.trim();
+  const telHref = phone.replace(/[^\d+]/g, '');
+  const html = wrapHtml(`
+    <h1 style="margin:0 0 16px;font-size:20px;">Nouveau message depuis le site</h1>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;font-size:14px;border-collapse:collapse;">
+      <tr><td style="padding:4px 0;width:140px;color:${MUTED};">Nom</td><td style="padding:4px 0;font-weight:700;">${escapeHtml(fullName)}</td></tr>
+      ${companyName ? `<tr><td style="padding:4px 0;color:${MUTED};">Entreprise</td><td style="padding:4px 0;">${escapeHtml(companyName)}</td></tr>` : ''}
+      <tr><td style="padding:4px 0;color:${MUTED};">Téléphone</td><td style="padding:4px 0;"><a href="tel:${escapeHtml(telHref)}" style="color:${PRIMARY};">${escapeHtml(phone)}</a></td></tr>
+      <tr><td style="padding:4px 0;color:${MUTED};">Objet</td><td style="padding:4px 0;">${escapeHtml(subject)}</td></tr>
+    </table>
+    <p style="margin:0 0 6px;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;color:${MUTED};">Message</p>
+    <p style="margin:0;font-size:14px;white-space:pre-wrap;">${escapeHtml(description)}</p>
+  `, { preheader: `${fullName} — ${subject}` });
+  return sendViaResend({ to, subject: safeHeader(`Contact site : ${subject} — ${fullName}`), html });
+}
+
+module.exports = { sendBillingEmail, sendSubscriptionReminderEmail, sendVerificationCodeEmail, sendWelcomeEmail, sendPasswordResetCodeEmail, sendSubscriptionActivatedEmail, sendPaymentConfirmationEmail, sendContactFormEmail, escapeHtml, safeHeader };

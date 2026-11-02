@@ -6,6 +6,7 @@ import { TeamPhoto } from "@/components/marketing/team-photo";
 import { HowItWorks } from "@/components/marketing/how-it-works";
 import { Faq, FAQ_ITEMS } from "@/components/marketing/faq";
 import { CtaBanner } from "@/components/marketing/cta-banner";
+import { ContactSection } from "@/components/marketing/contact-section";
 import { Reveal } from "@/components/marketing/reveal";
 
 /**
@@ -51,6 +52,7 @@ export default function LandingPage() {
         <Reveal><TeamPhoto /></Reveal>
         <Reveal><HowItWorks /></Reveal>
         <Reveal><Faq /></Reveal>
+        <Reveal><ContactSection /></Reveal>
         <Reveal><CtaBanner /></Reveal>
       </main>
       <SiteFooter />

@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: "#fonctionnalites", label: "Fonctionnalités" },
   { href: "/tarifs", label: "Tarifs" },
   { href: "#questions", label: "Questions" },
+  { href: "#contact", label: "Contact" },
 ];
 
 /** En-tête public — logo, ancres de la page, CTA inscription/connexion. */

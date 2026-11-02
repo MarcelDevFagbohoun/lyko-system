@@ -29,6 +29,9 @@ export function SiteFooter() {
             <a href="#questions" className="text-body-sm text-ink-soft hover:text-ink">
               Questions
             </a>
+            <a href="#contact" className="text-body-sm text-ink-soft hover:text-ink">
+              Contact
+            </a>
           </div>
           <div className="flex flex-col gap-2">
             <span className="font-label-sm uppercase tracking-wider text-ink-muted">Compte</span>
@@ -53,6 +56,9 @@ export function SiteFooter() {
             <Link href="/mentions-legales" className="text-body-sm text-ink-soft hover:text-ink">
               Mentions légales
             </Link>
+            <a href={`tel:${CONTACT.phoneTel}`} className="text-body-sm text-ink-soft hover:text-ink">
+              {CONTACT.phone}
+            </a>
             {CONTACT.whatsappUrl && (
               <a href={CONTACT.whatsappUrl} target="_blank" rel="noopener noreferrer" className="text-body-sm text-ink-soft hover:text-ink">
                 WhatsApp

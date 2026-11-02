@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const healthRoutes = require('./health');
 const authRoutes = require('./auth');
+const contactRoutes = require('./contact');
 const employeeRoutes = require('./employees');
 const renterRoutes = require('./renters');
 const leaseRoutes = require('./leases');
@@ -52,6 +53,7 @@ const glPayrollLiabilitiesRoutes = require('./gl/glPayrollLiabilities');
 const fileRoutes = require('./files');
 const billingRoutes = require('./billing');
 const adminRoutes = require('./admin');
+const pushRoutes = require('./push');
 const config = require('../config/env');
 const { requireAuth } = require('../middleware/auth');
 const { requireFeature, enforceActiveSubscription } = require('../services/entitlements');
@@ -63,6 +65,8 @@ router.use(enforceActiveSubscription);
 
 router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
+// Formulaire de contact public (page d'accueil) : aucune authentification, aucun tenant.
+router.use('/contact', contactRoutes);
 // Fichiers téléversés authentifiés (photos, justificatifs, cachets/
 // signatures, avatars — étape 49, audit sécurité) : `requireAuth` posé DANS
 // `files.js` lui-même, pas de piège d'ordre de montage particulier ici.
@@ -136,6 +140,8 @@ router.use('/payments', paymentOrderRoutes);
 router.use(utilityReadingRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/dashboard', dashboardRoutes);
+// Notifications push navigateur : tous rôles connectés (chacun gère l'abonnement de son appareil).
+router.use('/push', pushRoutes);
 // Module comptabilité SYSCOHADA (espace Comptabilité avancée, livrable 6) —
 // authentifié, aucun piège de montage (pas de préfixe public en dessous).
 router.use('/gl', requireAuth, requireFeature('advanced_accounting'));
