@@ -15,7 +15,6 @@ import {
   finalizeMoveInReport,
   reopenMoveInReport,
   moveInReportPdfPath,
-  inspectionBlankFormPdfPath,
   type Lease,
   type InspectionReport,
   type InspectionZone,
@@ -26,6 +25,7 @@ import { InspectionReadOnly } from "@/components/inspections/inspection-readonly
 import { FinalizeSection } from "@/components/inspections/finalize-section";
 import { SignatureBlock } from "@/components/inspections/signature-block";
 import { ReopenReportButton } from "@/components/inspections/reopen-button";
+import { BlankFormEditorButton } from "@/components/inspections/blank-form-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { useToast } from "@/lib/toast/toast-context";
@@ -156,18 +156,10 @@ function StartCard({
 
         <div className="mt-2 flex flex-col items-center gap-1.5 border-t border-border pt-4">
           <p className="text-body-xs text-ink-muted">
-            Locataire absent de la plateforme ? Imprimez un formulaire vierge pour une saisie manuelle sur
-            le terrain (à ressaisir ensuite ici).
+            Locataire absent de la plateforme ? Préparez et imprimez un formulaire vierge pour une saisie
+            manuelle sur le terrain (à ressaisir ensuite ici).
           </p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => accessToken && openAuthenticatedPdf(inspectionBlankFormPdfPath("entree"), accessToken)}
-          >
-            <FileDown size={14} />
-            Formulaire vierge (entrée)
-          </Button>
+          <BlankFormEditorButton kind="entree" accessToken={accessToken} label="Formulaire vierge (entrée)" />
         </div>
       </CardContent>
     </Card>

@@ -114,8 +114,20 @@ const chargeRepairFeeSchema = z.object({
   note: optionalText(500),
 });
 
+// Formulaire vierge personnalisable (demande utilisateur, 2026-11-03 : « il doit pouvoir éditer le
+// formulaire, ajouter d'autres choses s'il veut avant de le télécharger ») — l'utilisateur part de la
+// grille standard (`GET /api/inspections/master-zones`), l'adapte à l'écran (ajoute/retire des
+// pièces/éléments) PUIS télécharge le PDF avec SA propre liste, jamais celle, figée, du serveur. Même
+// forme de zone que la saisie en ligne : `condition`/`deduction`/`billing`/`photoUrls` sont acceptés
+// mais ignorés par le rendu PDF (`drawBlankChecklistZones` ne lit que les libellés).
+const blankFormSchema = z.object({
+  kind: z.enum(['entree', 'sortie'], { errorMap: () => ({ message: "Paramètre 'kind' invalide (attendu : entree ou sortie)" }) }),
+  zones: z.array(inspectionZoneSchema).min(1, 'Au moins une zone requise'),
+});
+
 module.exports = {
   keySchema,
+  inspectionZoneSchema,
   startInspectionReportSchema,
   updateInspectionDraftSchema,
   updateMoveOutDraftSchema,
@@ -123,4 +135,5 @@ module.exports = {
   rejectMoveOutReviewSchema,
   recordTenantPayoutSchema,
   chargeRepairFeeSchema,
+  blankFormSchema,
 };

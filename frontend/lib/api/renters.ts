@@ -1,4 +1,4 @@
-import { apiFetch, API_URL, type Actor } from "./client";
+import { apiFetch, API_URL, openAuthenticatedPdfViaPost, type Actor } from "./client";
 import type { PropertyOwner, PropertyTypeKey, UnitDesignationKey } from "./properties";
 import type { InspectionCondition } from "@/lib/constants/inspection";
 
@@ -1005,10 +1005,16 @@ export function moveOutReportPdfPath(leaseId: number) {
 /**
  * Formulaire d'état des lieux VIERGE (entrée ou sortie), indépendant de tout bail — pour une saisie
  * manuelle sur le terrain quand la plateforme n'est pas utilisée directement (demande utilisateur,
- * 2026-11-03). Voir `routes/inspectionTools.js`.
+ * 2026-11-03). Avant de le télécharger, l'utilisateur peut éditer la liste de pièces/éléments (ajouter,
+ * retirer, renommer — demande utilisateur, 2026-11-03 : « il doit pouvoir éditer le formulaire, ajouter
+ * d'autres choses s'il veut ») — jamais la grille figée du serveur. Voir `routes/inspectionTools.js`.
  */
-export function inspectionBlankFormPdfPath(kind: "entree" | "sortie") {
-  return `/api/inspections/blank-form.pdf?kind=${kind}`;
+export function getInspectionMasterZones(accessToken: string) {
+  return apiFetch<{ zones: InspectionZone[] }>("/api/inspections/master-zones", { accessToken });
+}
+
+export function downloadInspectionBlankFormPdf(accessToken: string, kind: "entree" | "sortie", zones: InspectionZone[]) {
+  return openAuthenticatedPdfViaPost("/api/inspections/blank-form.pdf", accessToken, { kind, zones });
 }
 
 /**

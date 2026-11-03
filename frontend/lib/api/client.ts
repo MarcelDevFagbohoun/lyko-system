@@ -105,6 +105,28 @@ export async function openAuthenticatedPdf(path: string, accessToken: string) {
 }
 
 /**
+ * Variante POST de `openAuthenticatedPdf` — pour un PDF généré à partir d'un contenu que le client a
+ * personnalisé (ex. formulaire d'état des lieux vierge, étape 48bis), trop volumineux/structuré pour
+ * tenir dans l'URL d'un simple GET.
+ */
+export async function openAuthenticatedPdfViaPost(path: string, accessToken: string, body: unknown) {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const resBody = await res.json().catch(() => null);
+    throw new ApiError(res.status, resBody?.error || `Erreur ${res.status}`, resBody?.details);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener,noreferrer");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/**
  * Télécharge un document binaire protégé par Bearer token (ex. export
  * Excel) en forçant l'enregistrement plutôt que l'ouverture dans un onglet —
  * contrairement à un PDF, un navigateur ne sait pas afficher un `.xlsx`

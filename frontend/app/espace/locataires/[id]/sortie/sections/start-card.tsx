@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { ClipboardList, FileDown } from "lucide-react";
-import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
-import { startMoveOutReport, inspectionBlankFormPdfPath, type MoveOutReport } from "@/lib/api/renters";
+import { ClipboardList } from "lucide-react";
+import { ApiError } from "@/lib/api/client";
+import { startMoveOutReport, type MoveOutReport } from "@/lib/api/renters";
+import { BlankFormEditorButton } from "@/components/inspections/blank-form-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -50,18 +51,10 @@ export function StartCard({
 
         <div className="mt-2 flex flex-col items-center gap-1.5 border-t border-border pt-4">
           <p className="text-body-xs text-ink-muted">
-            Locataire absent de la plateforme ? Imprimez un formulaire vierge pour une saisie manuelle sur
-            le terrain (à ressaisir ensuite ici).
+            Locataire absent de la plateforme ? Préparez et imprimez un formulaire vierge pour une saisie
+            manuelle sur le terrain (à ressaisir ensuite ici).
           </p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => accessToken && openAuthenticatedPdf(inspectionBlankFormPdfPath("sortie"), accessToken)}
-          >
-            <FileDown size={14} />
-            Formulaire vierge (sortie)
-          </Button>
+          <BlankFormEditorButton kind="sortie" accessToken={accessToken} label="Formulaire vierge (sortie)" />
         </div>
       </CardContent>
     </Card>
