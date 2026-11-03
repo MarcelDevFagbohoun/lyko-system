@@ -156,7 +156,7 @@ function RentersTable({
           Actifs ({active.length})
         </TabButton>
         <TabButton active={tab === "archives"} onClick={() => onTabChange("archives")}>
-          Archivés ({archived.length})
+          Archives des locataires sortants ({archived.length})
         </TabButton>
       </div>
 
