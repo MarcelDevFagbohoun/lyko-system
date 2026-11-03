@@ -13,6 +13,7 @@ import {
   PiggyBank,
   Wallet,
   ClipboardCheck,
+  Send,
   Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -243,6 +244,45 @@ function TableauDeBordContent() {
                         </p>
                       </div>
                       <span className="tabular text-body-sm text-danger-fg">{formatFcfa(d.totalDeductions)}</span>
+                    </Link>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {overview && overview.inspections.pendingMoveOutReviews.length > 0 && (
+              <Card tone={CADRES.operations.tone} className="border-l-4 border-l-primary">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-white">
+                        <Send size={14} />
+                      </span>
+                      <CardTitle>PV de sortie en attente de validation</CardTitle>
+                    </div>
+                    <Badge variant="primary">{overview.inspections.pendingMoveOutReviews.length}</Badge>
+                  </div>
+                  <CardDescription>
+                    Soumis par un employé : à examiner, puis valider ou rejeter avec un motif.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {overview.inspections.pendingMoveOutReviews.map((p) => (
+                    <Link
+                      key={p.leaseId}
+                      href={`/espace/locataires/${p.renterId}/sortie?leaseId=${p.leaseId}`}
+                      className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 hover:bg-surface-hover"
+                    >
+                      <div>
+                        <p className="font-label-md text-ink">
+                          {p.renterName} — {p.unitCode}
+                        </p>
+                        <p className="text-body-xs text-ink-muted">
+                          Soumis {p.submittedByName ? `par ${p.submittedByName}` : ""} le{" "}
+                          {new Date(p.submittedAt).toLocaleDateString("fr-FR")}
+                        </p>
+                      </div>
+                      <Badge variant="primary">À valider</Badge>
                     </Link>
                   ))}
                 </CardContent>

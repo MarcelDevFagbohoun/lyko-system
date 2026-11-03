@@ -12,7 +12,7 @@ const { Router } = require('express');
 const { pool } = require('../config/db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { listRecentActivity } = require('../services/activity');
-const { listPendingDepositRegularizations, listPendingMoveOutPayouts } = require('../services/inspection');
+const { listPendingDepositRegularizations, listPendingMoveOutPayouts, listPendingMoveOutReviews } = require('../services/inspection');
 const { isModuleActive } = require('../services/gl/glPostingService');
 const { getTrends } = require('../services/dashboardTrends');
 
@@ -100,6 +100,9 @@ router.get('/overview', async (req, res, next) => {
     // que le bouton « Payer le locataire »/« Encaisser le complément » n'a pas été actionné, que la
     // comptabilité avancée soit active ou non (voir services/inspection.js).
     const pendingMoveOutPayouts = await listPendingMoveOutPayouts(tenantId);
+    // PV de sortie soumis par un employé, en attente de validation (demande utilisateur, 2026-11-03 :
+    // « l'admin ne reçoit aucune notification sur sa page d'accueil ») — voir services/inspection.js.
+    const pendingMoveOutReviews = await listPendingMoveOutReviews(tenantId);
 
     const totalUnits = Number(unitStats.total);
     const occupiedUnits = Number(unitStats.occupied);
@@ -135,6 +138,7 @@ router.get('/overview', async (req, res, next) => {
         moveOutsThisMonthCount: Number(moveOutsThisMonthCount),
         pendingDepositRegularizations,
         pendingMoveOutPayouts,
+        pendingMoveOutReviews,
       },
     });
   } catch (err) {

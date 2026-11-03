@@ -20,7 +20,7 @@ const { listPortfolioArrears, listPredictiveLateAlerts } = require('../services/
 const { getPeriodClosability } = require('../services/accountingPeriods');
 const { getNextMonthToClose } = require('../services/closingOverview');
 const { isModuleActive } = require('../services/gl/glPostingService');
-const { listPendingDepositRegularizations, listPendingMoveOutPayouts } = require('../services/inspection');
+const { listPendingDepositRegularizations, listPendingMoveOutPayouts, listPendingMoveOutReviews } = require('../services/inspection');
 const { isoDate } = require('../utils/dates');
 
 const router = Router();
@@ -61,7 +61,14 @@ async function listOpenComplaints(tenantId, scopeAgentId) {
   }));
 }
 
-/** États des lieux (entrée + sortie) en brouillon, non finalisés — étape 15. */
+/**
+ * États des lieux (entrée + sortie) en brouillon, non finalisés — étape 15.
+ * Pour une sortie, `reviewStatus`/`reviewNote`/`submittedAt` (migration 139) sont renvoyés pour que
+ * l'employé voie, sans quitter cet écran, si son PV soumis a été REJETÉ (avec le motif, à corriger) ou
+ * est juste en attente de décision du DG — demande utilisateur du 2026-11-03 (« l'employé ne reçoit
+ * aucune notification que l'état des lieux est validé ou pas »). Une sortie VALIDÉE quitte cette liste
+ * d'elle-même (passe en `status = 'finalized'`), donc rien à filtrer pour ce cas-là.
+ */
 async function listDraftInspections(tenantId, scopeAgentId) {
   const params = { tenantId };
   let scopeClause = '';
@@ -69,17 +76,27 @@ async function listDraftInspections(tenantId, scopeAgentId) {
     scopeClause = ' AND p.agent_id = :scopeAgentId';
     params.scopeAgentId = scopeAgentId;
   }
-  const baseSelect = (table) => `
-    SELECT t.lease_id, t.conducted_at, r.id AS renter_id, r.first_name, r.last_name, un.code AS unit_code
-    FROM ${table} t
-    JOIN leases l ON l.id = t.lease_id
-    JOIN renters r ON r.id = l.renter_id
-    JOIN property_units un ON un.id = l.unit_id
-    JOIN properties p ON p.id = un.property_id
-    WHERE t.tenant_id = :tenantId AND t.status = 'draft' ${scopeClause}
-  `;
-  const [moveIns] = await pool.query(baseSelect('move_in_reports'), params);
-  const [moveOuts] = await pool.query(baseSelect('move_out_reports'), params);
+  const [moveIns] = await pool.query(
+    `SELECT t.lease_id, t.conducted_at, r.id AS renter_id, r.first_name, r.last_name, un.code AS unit_code
+     FROM move_in_reports t
+     JOIN leases l ON l.id = t.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     JOIN property_units un ON un.id = l.unit_id
+     JOIN properties p ON p.id = un.property_id
+     WHERE t.tenant_id = :tenantId AND t.status = 'draft' ${scopeClause}`,
+    params,
+  );
+  const [moveOuts] = await pool.query(
+    `SELECT t.lease_id, t.conducted_at, t.review_status, t.review_note, t.submitted_at,
+            r.id AS renter_id, r.first_name, r.last_name, un.code AS unit_code
+     FROM move_out_reports t
+     JOIN leases l ON l.id = t.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     JOIN property_units un ON un.id = l.unit_id
+     JOIN properties p ON p.id = un.property_id
+     WHERE t.tenant_id = :tenantId AND t.status = 'draft' ${scopeClause}`,
+    params,
+  );
   return [
     ...moveIns.map((r) => ({
       leaseId: r.lease_id,
@@ -96,6 +113,9 @@ async function listDraftInspections(tenantId, scopeAgentId) {
       renterName: `${r.first_name} ${r.last_name}`,
       unitCode: r.unit_code,
       conductedAt: isoDate(r.conducted_at),
+      reviewStatus: r.review_status,
+      reviewNote: r.review_note,
+      submittedAt: isoDate(r.submitted_at),
     })),
   ];
 }
@@ -173,13 +193,16 @@ router.get('/', async (req, res, next) => {
     let agent = null;
     if (hasLocataires) {
       const scopeAgentId = await resolvePropertyScope(req.user);
-      const [lateRenters, predictiveAlerts, openComplaints, draftInspections] = await Promise.all([
+      const [lateRenters, predictiveAlerts, openComplaints, draftInspections, pendingMoveOutReviews] = await Promise.all([
         listPortfolioArrears(tenantId, scopeAgentId),
         listPredictiveLateAlerts(tenantId, scopeAgentId),
         listOpenComplaints(tenantId, scopeAgentId),
         listDraftInspections(tenantId, scopeAgentId),
+        // PV de sortie en attente de validation (demande utilisateur, 2026-11-03) — seul le DG
+        // valide/rejette : jamais calculé pour un employé, même avec la permission « locataires ».
+        isDg ? listPendingMoveOutReviews(tenantId) : Promise.resolve([]),
       ]);
-      agent = { lateRenters, predictiveAlerts, openComplaints, draftInspections };
+      agent = { lateRenters, predictiveAlerts, openComplaints, draftInspections, pendingMoveOutReviews };
     }
 
     let accountant = null;

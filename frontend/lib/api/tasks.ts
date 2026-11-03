@@ -16,6 +16,12 @@ export type OpenComplaintTask = {
   renterName: string;
 };
 
+/**
+ * Pour une sortie (migration 139), `reviewStatus` dit où en est la validation DG — demande
+ * utilisateur du 2026-11-03 : l'employé doit voir sur cet écran si son PV soumis a été rejeté
+ * (`reviewNote` porte le motif, à corriger) ou juste en attente de décision. `undefined` pour une
+ * entrée (pas de circuit de revue) ou une sortie jamais soumise.
+ */
 export type DraftInspectionTask = {
   leaseId: number;
   renterId: number;
@@ -23,6 +29,19 @@ export type DraftInspectionTask = {
   renterName: string;
   unitCode: string;
   conductedAt: string;
+  reviewStatus?: "draft" | "submitted" | "rejected" | "validated" | null;
+  reviewNote?: string | null;
+  submittedAt?: string | null;
+};
+
+/** PV de sortie soumis par un employé, en attente de validation DG — jamais peuplé pour un employé. */
+export type PendingMoveOutReviewTask = {
+  leaseId: number;
+  renterId: number;
+  renterName: string;
+  unitCode: string;
+  submittedAt: string;
+  submittedByName: string | null;
 };
 
 export type AgentTasks = {
@@ -30,6 +49,7 @@ export type AgentTasks = {
   predictiveAlerts: PredictiveAlertEntry[];
   openComplaints: OpenComplaintTask[];
   draftInspections: DraftInspectionTask[];
+  pendingMoveOutReviews: PendingMoveOutReviewTask[];
 };
 
 export type PendingBatchTask = {

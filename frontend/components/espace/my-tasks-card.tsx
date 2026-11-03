@@ -198,13 +198,35 @@ export function MyTasksCard() {
                 ))}
               </CategoryCard>
 
-              <CategoryCard icon={<ClipboardList size={14} />} title="États des lieux en brouillon" tone="info" count={tasks.agent.draftInspections.length}>
+              <CategoryCard
+                icon={<ClipboardList size={14} />}
+                title="États des lieux en brouillon"
+                tone={tasks.agent.draftInspections.some((d) => d.reviewStatus === "rejected") ? "danger" : "info"}
+                count={tasks.agent.draftInspections.length}
+              >
                 {tasks.agent.draftInspections.slice(0, 4).map((d) => (
                   <Row
                     key={`${d.leaseId}-${d.kind}`}
                     href={`/espace/locataires/${d.renterId}/${d.kind === "move-in" ? "etat-des-lieux" : "sortie"}?leaseId=${d.leaseId}`}
                     label={`${d.renterName} — ${d.unitCode}`}
-                    detail={d.kind === "move-in" ? "Entrée non finalisée" : "Sortie non finalisée"}
+                    detail={
+                      d.reviewStatus === "rejected"
+                        ? d.reviewNote
+                          ? `Rejeté par le DG : ${d.reviewNote}`
+                          : "Rejeté par le DG — à corriger"
+                        : d.reviewStatus === "submitted"
+                          ? "Soumis, en attente de validation du DG"
+                          : d.kind === "move-in"
+                            ? "Entrée non finalisée"
+                            : "Sortie non finalisée"
+                    }
+                    badge={
+                      d.reviewStatus === "rejected" ? (
+                        <Badge variant="danger">Rejeté</Badge>
+                      ) : d.reviewStatus === "submitted" ? (
+                        <Badge variant="info">Soumis</Badge>
+                      ) : undefined
+                    }
                   />
                 ))}
               </CategoryCard>

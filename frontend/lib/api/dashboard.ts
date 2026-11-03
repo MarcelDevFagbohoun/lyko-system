@@ -50,6 +50,16 @@ export type DashboardOverview = {
       amount: number;
       finalizedAt: string;
     }[];
+    // PV de sortie soumis par un employé, en attente de validation du DG (demande utilisateur,
+    // 2026-11-03 : « l'admin ne reçoit aucune notification sur sa page d'accueil »).
+    pendingMoveOutReviews: {
+      leaseId: number;
+      renterId: number;
+      renterName: string;
+      unitCode: string;
+      submittedAt: string;
+      submittedByName: string | null;
+    }[];
   };
 };
 

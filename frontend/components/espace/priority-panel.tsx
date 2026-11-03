@@ -13,6 +13,7 @@ import {
   Lock,
   MessageSquareWarning,
   Receipt,
+  Send,
   ShieldAlert,
   Sparkles,
   Wallet,
@@ -90,7 +91,29 @@ function buildItems(tasks: MyTasks | null, closing: ClosingOverview | null, isDg
         href: urgentComplaints.length === 1 ? `/espace/plaintes/${urgentComplaints[0].id}` : "/espace/plaintes",
       });
     }
-    const drafts = tasks.agent.draftInspections;
+    const allDrafts = tasks.agent.draftInspections;
+    // Circuit de validation DG (migration 139, demande utilisateur 2026-11-03) : une sortie REJETÉE
+    // attend une correction de l'employé (urgent — le motif est dans `reviewNote`), une sortie
+    // SOUMISE attend une décision du DG (rien à faire pour l'employé, juste une info), et seul le
+    // reste (jamais soumis, ou une entrée) est vraiment « à finaliser ».
+    const rejectedDrafts = allDrafts.filter((d) => d.reviewStatus === "rejected");
+    const submittedDrafts = allDrafts.filter((d) => d.reviewStatus === "submitted");
+    const drafts = allDrafts.filter((d) => d.reviewStatus !== "rejected" && d.reviewStatus !== "submitted");
+    if (rejectedDrafts.length > 0) {
+      const d = rejectedDrafts[0];
+      items.push({
+        key: "etats-des-lieux-rejetes",
+        severity: "urgent",
+        icon: AlertTriangle,
+        title: `${rejectedDrafts.length} ${plural(rejectedDrafts.length, "PV de sortie rejeté", "PV de sortie rejetés")} par le DG`,
+        detail: rejectedDrafts.length === 1 && d.reviewNote ? `Motif : ${d.reviewNote}` : "À corriger puis resoumettre à la validation.",
+        cta: "Corriger",
+        href:
+          rejectedDrafts.length === 1
+            ? `/espace/locataires/${d.renterId}/sortie?leaseId=${d.leaseId}`
+            : "/espace/planning",
+      });
+    }
     if (drafts.length > 0) {
       const d = drafts[0];
       items.push({
@@ -103,6 +126,38 @@ function buildItems(tasks: MyTasks | null, closing: ClosingOverview | null, isDg
         href:
           drafts.length === 1
             ? `/espace/locataires/${d.renterId}/${d.kind === "move-in" ? "etat-des-lieux" : "sortie"}?leaseId=${d.leaseId}`
+            : "/espace/planning",
+      });
+    }
+    if (submittedDrafts.length > 0) {
+      const d = submittedDrafts[0];
+      items.push({
+        key: "etats-des-lieux-soumis",
+        severity: "info",
+        icon: Send,
+        title: `${submittedDrafts.length} ${plural(submittedDrafts.length, "PV de sortie soumis", "PV de sortie soumis")}, en attente de validation`,
+        detail: "Envoyé au DG — rien à faire pour l'instant, sauf s'il est rejeté.",
+        cta: "Voir",
+        href:
+          submittedDrafts.length === 1
+            ? `/espace/locataires/${d.renterId}/sortie?leaseId=${d.leaseId}`
+            : "/espace/planning",
+      });
+    }
+
+    const pendingReviews = tasks.agent.pendingMoveOutReviews;
+    if (pendingReviews.length > 0) {
+      const p = pendingReviews[0];
+      items.push({
+        key: "pv-sortie-a-valider",
+        severity: "urgent",
+        icon: Send,
+        title: `${pendingReviews.length} ${plural(pendingReviews.length, "PV de sortie à valider", "PV de sortie à valider")}`,
+        detail: pendingReviews.length === 1 ? `Soumis par ${p.submittedByName ?? "un employé"} — ${p.renterName}` : "Soumis par vos employés, en attente de votre décision.",
+        cta: "Examiner",
+        href:
+          pendingReviews.length === 1
+            ? `/espace/locataires/${p.renterId}/sortie?leaseId=${p.leaseId}`
             : "/espace/planning",
       });
     }

@@ -435,10 +435,42 @@ async function listPendingMoveOutPayouts(tenantId) {
   }));
 }
 
+/**
+ * PV de sortie soumis par un employé, en attente de validation du DG (demande utilisateur,
+ * 2026-11-03 : « l'admin ne reçoit aucune notification »). `review_status = 'submitted'` — le PV
+ * reste en `status = 'draft'` jusqu'à la validation (voir migration 139/services/moveOutReport.js) ;
+ * ne redescend JAMAIS en-dessous de ce statut sans action du DG (valider ou rejeter), donc cette
+ * liste est l'exact miroir de ce qui attend une décision.
+ */
+async function listPendingMoveOutReviews(tenantId) {
+  const [rows] = await pool.query(
+    `SELECT mo.lease_id, mo.submitted_at, r.id AS renter_id, r.first_name, r.last_name, un.code AS unit_code,
+            u.first_name AS submitter_first_name, u.last_name AS submitter_last_name
+     FROM move_out_reports mo
+     JOIN leases l ON l.id = mo.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     JOIN property_units un ON un.id = l.unit_id
+     LEFT JOIN users u ON u.id = mo.submitted_by
+     WHERE mo.tenant_id = :tenantId AND mo.review_status = 'submitted'
+     ORDER BY mo.submitted_at ASC
+     LIMIT 20`,
+    { tenantId },
+  );
+  return rows.map((r) => ({
+    leaseId: r.lease_id,
+    renterId: r.renter_id,
+    renterName: `${r.first_name} ${r.last_name}`,
+    unitCode: r.unit_code,
+    submittedAt: r.submitted_at,
+    submittedByName: r.submitter_first_name ? `${r.submitter_first_name} ${r.submitter_last_name}` : null,
+  }));
+}
+
 module.exports = {
   INSPECTION_CONDITION_RANK,
   listPendingDepositRegularizations,
   listPendingMoveOutPayouts,
+  listPendingMoveOutReviews,
   cloneMasterZones,
   cloneZonesFrom,
   mergeMoveInZones,
