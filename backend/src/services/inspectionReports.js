@@ -15,7 +15,9 @@ const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
 const INSPECTION_REPORT_SELECT = `
   t.*, cu.first_name AS conductor_first_name, cu.last_name AS conductor_last_name, cu.role AS conductor_role,
   fu.first_name AS finalizer_first_name, fu.last_name AS finalizer_last_name, fu.role AS finalizer_role,
-  ru.first_name AS reopener_first_name, ru.last_name AS reopener_last_name, ru.role AS reopener_role
+  ru.first_name AS reopener_first_name, ru.last_name AS reopener_last_name, ru.role AS reopener_role,
+  al.archived_at AS lease_archived_at,
+  au.first_name AS archiver_first_name, au.last_name AS archiver_last_name, au.role AS archiver_role
 `;
 
 // move_out_reports uniquement (colonnes absentes de move_in_reports) — la
@@ -44,6 +46,11 @@ async function loadInspectionReportRow(conn, reportsTable, leaseId) {
      LEFT JOIN users cu ON cu.id = t.conducted_by
      LEFT JOIN users fu ON fu.id = t.finalized_by
      LEFT JOIN users ru ON ru.id = t.reopened_by
+     -- Archivage manuel du locataire (migration 140) : vit sur leases, pas sur la fiche elle-même —
+     -- jointe ici pour que toPublicMoveOutReport puisse exposer si/quand/par qui, et afficher ou non
+     -- le bouton « Archivé » côté frontend sans requête séparée.
+     LEFT JOIN leases al ON al.id = t.lease_id
+     LEFT JOIN users au ON au.id = al.archived_by
      ${isMoveOut ? MOVE_OUT_REGULARIZER_JOIN : ''}
      WHERE t.lease_id = :leaseId LIMIT 1`,
     { leaseId },

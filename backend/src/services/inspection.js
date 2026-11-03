@@ -366,6 +366,10 @@ function toPublicMoveOutReport(row) {
     repairFeeNote: row.repair_fee_note,
     repairFeeChargedAt: isoDateTime(row.repair_fee_charged_at),
     repairFeeChargedBy: toActor(row.repair_fee_user_first_name, row.repair_fee_user_last_name, row.repair_fee_user_role),
+    // Archivage manuel du locataire sortant (migration 140, demande utilisateur 2026-11-03) — vit sur
+    // `leases`, jamais automatique : voir services/moveOutReport.js `archiveMoveOut`.
+    leaseArchivedAt: isoDateTime(row.lease_archived_at),
+    leaseArchivedBy: toActor(row.archiver_first_name, row.archiver_last_name, row.archiver_role),
   };
 }
 
@@ -466,11 +470,85 @@ async function listPendingMoveOutReviews(tenantId) {
   }));
 }
 
+/**
+ * Boîte « État des lieux » (demande utilisateur, 2026-11-03 : « comme une boîte mail ») — TOUT état
+ * des lieux (entrée et sortie) encore en cours, pour un employé qui a besoin de reprendre le sien là
+ * où il l'a laissé, et pour le DG/comptable qui peut agir dessus jusqu'à sa phase terminale :
+ *   - une ENTRÉE y tombe dès son démarrage (`status = 'draft'`) et en sort dès sa finalisation — pas
+ *     de paiement en jeu, rien à archiver.
+ *   - une SORTIE y tombe dès son démarrage et y reste jusqu'à son ARCHIVAGE MANUEL (`leases.archived_at`,
+ *     migration 140) : brouillon, soumise, rejetée, validée en attente de décaissement, décaissée mais
+ *     pas encore archivée — tout ce qui n'a pas encore reçu le clic « Archivé ».
+ * `scopeAgentId` : un employé restreint ne voit que son périmètre « Biens gérés » ; `null` pour le DG
+ * (tout le cabinet) — même portée que `listDraftInspections` (routes/tasks.js).
+ */
+async function listInProgressInspections(tenantId, scopeAgentId) {
+  const params = { tenantId };
+  let scopeClause = '';
+  if (scopeAgentId != null) {
+    scopeClause = ' AND p.agent_id = :scopeAgentId';
+    params.scopeAgentId = scopeAgentId;
+  }
+
+  const [moveIns] = await pool.query(
+    `SELECT t.lease_id, t.status, t.conducted_at, r.id AS renter_id, r.first_name, r.last_name, un.code AS unit_code
+     FROM move_in_reports t
+     JOIN leases l ON l.id = t.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     JOIN property_units un ON un.id = l.unit_id
+     JOIN properties p ON p.id = un.property_id
+     WHERE t.tenant_id = :tenantId AND t.status = 'draft' ${scopeClause}`,
+    params,
+  );
+
+  const [moveOuts] = await pool.query(
+    `SELECT t.lease_id, t.status, t.review_status, t.payout_status, t.conducted_at, t.submitted_at, t.finalized_at,
+            r.id AS renter_id, r.first_name, r.last_name, un.code AS unit_code
+     FROM move_out_reports t
+     JOIN leases l ON l.id = t.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     JOIN property_units un ON un.id = l.unit_id
+     JOIN properties p ON p.id = un.property_id
+     WHERE t.tenant_id = :tenantId AND l.archived_at IS NULL ${scopeClause}`,
+    params,
+  );
+
+  return [
+    ...moveIns.map((r) => ({
+      leaseId: r.lease_id,
+      renterId: r.renter_id,
+      kind: 'move-in',
+      renterName: `${r.first_name} ${r.last_name}`,
+      unitCode: r.unit_code,
+      conductedAt: isoDate(r.conducted_at),
+      status: r.status,
+      canArchive: false,
+    })),
+    ...moveOuts.map((r) => ({
+      leaseId: r.lease_id,
+      renterId: r.renter_id,
+      kind: 'move-out',
+      renterName: `${r.first_name} ${r.last_name}`,
+      unitCode: r.unit_code,
+      conductedAt: isoDate(r.conducted_at),
+      status: r.status,
+      reviewStatus: r.review_status,
+      payoutStatus: r.payout_status,
+      submittedAt: isoDate(r.submitted_at),
+      finalizedAt: isoDate(r.finalized_at),
+      // Le bouton « Archivé » n'apparaît que lorsqu'il n'y a plus rien en attente — jamais tant qu'un
+      // décaissement reste à exécuter (voir `archiveMoveOut`, services/moveOutReport.js).
+      canArchive: r.status === 'finalized' && r.payout_status !== 'pending',
+    })),
+  ];
+}
+
 module.exports = {
   INSPECTION_CONDITION_RANK,
   listPendingDepositRegularizations,
   listPendingMoveOutPayouts,
   listPendingMoveOutReviews,
+  listInProgressInspections,
   cloneMasterZones,
   cloneZonesFrom,
   mergeMoveInZones,

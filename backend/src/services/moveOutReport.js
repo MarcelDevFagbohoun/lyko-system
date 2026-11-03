@@ -343,6 +343,36 @@ async function rejectMoveOutReview(tenantId, userId, leaseId, note) {
   return { row };
 }
 
+/**
+ * Archivage manuel du locataire sortant (migration 140, demande utilisateur 2026-11-03 : « une fois
+ * le paiement effectué on doit avoir un bouton archivé... sans ça le locataire ne peut aller dans
+ * l'archive »). Geste explicite du DG OU du comptable (jamais automatique) — exige que le PV soit
+ * finalisé ET que le décaissement ne soit plus en attente (`payout_status` 'paid' ou
+ * 'not_applicable' ; jamais 'pending'). Tant que ce flag n'est pas posé, le dossier reste visible
+ * dans la boîte « État des lieux » (`listInProgressInspections`, services/inspection.js) et le
+ * locataire n'apparaît pas dans l'onglet Archives (voir services/renters.js `listRenters`).
+ */
+async function archiveMoveOut(tenantId, userId, leaseId, scopeAgentId) {
+  await loadLease(pool, tenantId, leaseId, scopeAgentId); // vérifie le périmètre agent (404/403 si hors portée)
+  const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+  assertFinalized(report, 'état des lieux de sortie');
+  if (report.payout_status === 'pending') {
+    throw new ApiError(400, "Le décaissement (restitution de caution ou complément) doit d'abord être réglé avant d'archiver.");
+  }
+
+  const [[leaseRow]] = await pool.query('SELECT archived_at FROM leases WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
+    id: leaseId,
+    tenantId,
+  });
+  if (!leaseRow) throw new ApiError(404, 'Bail introuvable');
+  if (leaseRow.archived_at) throw new ApiError(409, 'Ce locataire est déjà archivé.');
+
+  await pool.query('UPDATE leases SET archived_at = NOW(), archived_by = :by WHERE id = :id', { by: userId, id: leaseId });
+
+  const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+  return { row };
+}
+
 /** Ajoute une photo (3 maximum) à un élément du brouillon. */
 async function addMoveOutPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemKey, file) {
   await loadLease(pool, tenantId, leaseId, scopeAgentId);
@@ -1107,5 +1137,6 @@ module.exports = {
   regularizeMoveOutGl,
   recordTenantPayout,
   chargeRepairFee,
+  archiveMoveOut,
   getMoveOutPdfData,
 };

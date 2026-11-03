@@ -11,6 +11,7 @@ import {
   MessageSquareWarning,
   MessagesSquare,
   CalendarCheck,
+  Inbox,
   Wallet,
   Receipt,
   Banknote,
@@ -124,6 +125,9 @@ export function EspaceSidebar() {
   // Biens à vendre (demande utilisateur, 2026-10-18) — jamais accordée par défaut, le DG décide au cas
   // par cas (voir constants/permissions.js) : accès volontairement restreint, pas "tout comptable/agent".
   const canSaleProperties = isDg || user.permissions.includes("biens_a_vendre");
+  // Boîte « État des lieux » (demande utilisateur, 2026-11-03) : même permission que la saisie des
+  // états des lieux eux-mêmes (routes/inspectionTools.js `canEtatsDesLieux`).
+  const canInspections = isDg || user.permissions.includes("etats_des_lieux");
 
   const rawGroups: { cadre: Cadre; items: (NavItem | false)[] }[] = [
     {
@@ -142,6 +146,12 @@ export function EspaceSidebar() {
         // contrairement aux autres liens de ce menu.
         { href: "/espace/proprietaires", label: "Propriétaires", icon: Landmark },
         { href: "/espace/locataires", label: "Locataires", icon: Users },
+        canInspections && {
+          href: "/espace/etats-des-lieux",
+          label: "État des lieux",
+          icon: Inbox,
+          hint: "Tous les états des lieux en cours, entrée et sortie, jusqu'à leur archivage.",
+        },
         canSaleProperties && { href: "/espace/biens-a-vendre", label: "Biens à vendre", icon: Tag },
       ],
     },

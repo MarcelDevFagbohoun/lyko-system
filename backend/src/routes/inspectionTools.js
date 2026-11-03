@@ -14,13 +14,29 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { blankFormSchema } = require('../validators/inspections');
-const { cloneMasterZones } = require('../services/inspection');
+const { cloneMasterZones, listInProgressInspections } = require('../services/inspection');
 const { streamInspectionBlankFormPdf } = require('../services/pdf');
+const { resolvePropertyScope } = require('../services/scope');
 
 const router = Router();
 router.use(requireAuth);
 
 const canEtatsDesLieux = requirePermission('etats_des_lieux');
+
+// GET /api/inspections/in-progress — boîte « État des lieux » (demande utilisateur, 2026-11-03 :
+// « comme une boîte mail ») : tout état des lieux en cours, entrée comme sortie, pour tout le cabinet
+// (un employé restreint ne voit que son périmètre « Biens gérés », comme ailleurs — voir
+// `resolvePropertyScope`). Reste visible ici jusqu'à sa phase terminale : finalisation pour une
+// entrée, archivage manuel pour une sortie (voir services/inspection.js).
+router.get('/in-progress', canEtatsDesLieux, async (req, res, next) => {
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const items = await listInProgressInspections(req.user.tenantId, scopeAgentId);
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /api/inspections/master-zones — la grille standard (JSON, pas le PDF), pour que l'écran permette
 // de la personnaliser (ajouter/retirer une pièce ou un élément) AVANT de générer le formulaire vierge

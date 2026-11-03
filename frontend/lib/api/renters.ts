@@ -225,6 +225,11 @@ export type MoveOutReport = InspectionReport & {
   repairFeeNote: string | null;
   repairFeeChargedAt: string | null;
   repairFeeChargedBy: Actor;
+  // Archivage manuel du locataire sortant (migration 140, demande utilisateur 2026-11-03) — vit sur le
+  // bail, jamais automatique : tant que `leaseArchivedAt` est null, le locataire reste dans la boîte
+  // « État des lieux » et n'apparaît pas dans l'onglet Archives.
+  leaseArchivedAt: string | null;
+  leaseArchivedBy: Actor;
 };
 
 /** Règlement (total ou partiel) des impayés existants d'un bail à l'entrée. */
@@ -958,6 +963,18 @@ export function chargeRepairFee(accessToken: string, leaseId: number, input: { a
   });
 }
 
+/**
+ * Archivage manuel du locataire sortant (migration 140, demande utilisateur 2026-11-03 : « une fois le
+ * paiement effectué on doit avoir un bouton archivé qui envoie directement le locataire dans
+ * l'archive »). DG ou comptable. Exige un PV finalisé dont le décaissement n'est plus en attente.
+ */
+export function archiveMoveOutReport(accessToken: string, leaseId: number) {
+  return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/archive`, {
+    method: "POST",
+    accessToken,
+  });
+}
+
 /** Marque comme réglée (à la main, en comptabilité) une restitution de caution avec retenue. */
 export function markMoveOutGlRegularized(accessToken: string, leaseId: number) {
   return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/gl-regularized`, {
@@ -1015,6 +1032,30 @@ export function getInspectionMasterZones(accessToken: string) {
 
 export function downloadInspectionBlankFormPdf(accessToken: string, kind: "entree" | "sortie", zones: InspectionZone[]) {
   return openAuthenticatedPdfViaPost("/api/inspections/blank-form.pdf", accessToken, { kind, zones });
+}
+
+/**
+ * Boîte « État des lieux » (demande utilisateur, 2026-11-03 : « comme une boîte mail ») — tout état
+ * des lieux en cours (entrée et sortie), pour tout le cabinet (scopé « Biens gérés » côté serveur pour
+ * un employé restreint). Une sortie y reste jusqu'à son archivage manuel (`canArchive`).
+ */
+export type InProgressInspectionItem = {
+  leaseId: number;
+  renterId: number;
+  kind: "move-in" | "move-out";
+  renterName: string;
+  unitCode: string;
+  conductedAt: string;
+  status: "draft" | "finalized";
+  reviewStatus?: ReviewStatus;
+  payoutStatus?: PayoutStatus;
+  submittedAt?: string | null;
+  finalizedAt?: string | null;
+  canArchive: boolean;
+};
+
+export function getInProgressInspections(accessToken: string) {
+  return apiFetch<{ items: InProgressInspectionItem[] }>("/api/inspections/in-progress", { accessToken });
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   markMoveOutGlRegularized,
   recordTenantPayout,
   chargeRepairFee,
+  archiveMoveOutReport,
   moveOutReportPdfPath,
   type Lease,
   type MoveOutReport,
@@ -54,6 +55,7 @@ export function FinalizedView({
   const { user } = useAuth();
   const toast = useToast();
   const [regularizing, setRegularizing] = React.useState(false);
+  const [archiving, setArchiving] = React.useState(false);
   const canRegularize = useCan("comptabilite");
 
   async function handleReopen(reason: string) {
@@ -90,6 +92,23 @@ export function FinalizedView({
     const res = await chargeRepairFee(accessToken, leaseId, { amount, note: note.trim() || undefined });
     onReportChange(res.report);
     toast.success("Frais de service prélevés sur le solde propriétaire.");
+  }
+
+  // Archivage manuel (migration 140, demande utilisateur 2026-11-03) : DG ou comptable, uniquement
+  // une fois le décaissement réglé — envoie le locataire dans l'onglet Archives (voir
+  // services/renters.js) et le retire de la boîte « État des lieux ».
+  async function handleArchive() {
+    if (!accessToken) return;
+    setArchiving(true);
+    try {
+      const res = await archiveMoveOutReport(accessToken, leaseId);
+      onReportChange(res.report);
+      toast.success("Locataire archivé.");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Impossible d'archiver pour l'instant.");
+    } finally {
+      setArchiving(false);
+    }
   }
 
   return (
@@ -208,6 +227,25 @@ export function FinalizedView({
             )}
           </div>
         )}
+
+        {report.payoutStatus !== "pending" &&
+          (report.leaseArchivedAt ? (
+            <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-xs text-ink-muted">
+              Locataire archivé le {new Date(report.leaseArchivedAt).toLocaleDateString("fr-FR")}
+              {report.leaseArchivedBy && ` par ${report.leaseArchivedBy.name} (${report.leaseArchivedBy.roleLabel})`}.
+            </p>
+          ) : (
+            canRegularize && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-3">
+                <p className="text-body-sm text-ink-soft">
+                  Décaissement réglé — vous pouvez archiver ce locataire, ce qui l&apos;envoie dans l&apos;onglet Archives.
+                </p>
+                <Button type="button" size="sm" onClick={handleArchive} disabled={archiving}>
+                  {archiving ? "Archivage…" : "Archivé"}
+                </Button>
+              </div>
+            )
+          ))}
 
         {report.reviewHistory.length > 0 && <ReviewHistoryList history={report.reviewHistory} />}
 

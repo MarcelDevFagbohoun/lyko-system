@@ -363,6 +363,15 @@ async function listRenters(tenantId, scopeAgentId) {
        LEFT JOIN properties p ON p.id = u.property_id
        LEFT JOIN owners o ON o.id = p.owner_id
        WHERE r.tenant_id = :tenantId
+       -- Archivage manuel (migration 140, demande utilisateur 2026-11-03) : un locataire dont le
+       -- DERNIER bail est terminé mais pas encore archivé (bouton « Archivé » jamais cliqué, en
+       -- attente du paiement) n'apparaît ni en « Actifs » ni en « Archives » ici — il reste visible
+       -- uniquement dans la boîte « État des lieux » (voir services/inspection.js), jusqu'à l'archivage.
+       AND NOT EXISTS (
+         SELECT 1 FROM leases cur
+         WHERE cur.id = (SELECT MAX(l2.id) FROM leases l2 WHERE l2.renter_id = r.id)
+           AND cur.status = 'ended' AND cur.archived_at IS NULL
+       )
        ${scopeClause}
        ORDER BY r.created_at DESC`,
     params,
@@ -409,7 +418,7 @@ async function listRenters(tenantId, scopeAgentId) {
            JOIN property_units u ON u.id = l.unit_id
            JOIN properties p ON p.id = u.property_id
            JOIN owners o ON o.id = p.owner_id
-           WHERE l.tenant_id = ? AND l.renter_id IN (${placeholders}) AND l.status = 'ended'
+           WHERE l.tenant_id = ? AND l.renter_id IN (${placeholders}) AND l.status = 'ended' AND l.archived_at IS NOT NULL
          ) t WHERE rn = 1`,
       [tenantId, ...rentersWithoutActiveLease],
     );

@@ -860,6 +860,24 @@ router.post('/:leaseId/move-out-report/repair-fee', canRegularizeGl, async (req,
   }
 });
 
+// POST /api/leases/:leaseId/move-out-report/archive — archivage manuel du locataire sortant
+// (migration 140, demande utilisateur 2026-11-03) : DG ET comptable (même garde que le décaissement
+// et la régularisation GL ci-dessus), jamais automatique. Exige un PV finalisé dont le décaissement
+// n'est plus en attente — voir services/moveOutReport.js `archiveMoveOut`.
+router.post('/:leaseId/move-out-report/archive', canRegularizeGl, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const { row } = await moveOutReport.archiveMoveOut(req.user.tenantId, req.user.id, leaseId, scopeAgentId);
+    logger.info('Locataire sortant archivé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+    res.json({ report: toPublicMoveOutReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/leases/:leaseId/move-out-report.pdf — PV de sortie & décompte de caution.
 router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
