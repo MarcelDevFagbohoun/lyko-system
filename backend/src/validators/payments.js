@@ -59,11 +59,22 @@ const otherOrder = z
   })
   .strict();
 
-const createOrderSchema = z.discriminatedUnion('purpose', [salaryOrder, ownerOrder, otherOrder]);
+// Remboursement de caution à un locataire sortant via FedaPay (migration 139, demande utilisateur
+// 2026-11-03) — le montant n'est JAMAIS fourni par le client : `resolvePurpose` le relit sur le PV de
+// sortie lui-même (`payout_amount`), seul `leaseId` identifie l'opération.
+const tenantRefundOrder = z
+  .object({
+    purpose: z.literal('remboursement_caution_locataire'),
+    leaseId: z.coerce.number().int().positive('Bail invalide'),
+    ...common,
+  })
+  .strict();
+
+const createOrderSchema = z.discriminatedUnion('purpose', [salaryOrder, ownerOrder, otherOrder, tenantRefundOrder]);
 
 const listOrdersQuery = z.object({
   status: z.enum(['created', 'processing', 'sent', 'failed']).optional(),
-  purpose: z.enum(['salaire', 'reversement_proprietaire', 'autre']).optional(),
+  purpose: z.enum(['salaire', 'reversement_proprietaire', 'autre', 'remboursement_caution_locataire']).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),

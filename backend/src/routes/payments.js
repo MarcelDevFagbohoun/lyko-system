@@ -189,7 +189,14 @@ router.get('/receipts/:kind/:id.pdf', canSeePayments, async (req, res, next) => 
     const found = items.find((i) => i.id === id && i.status === 'paid');
     if (!found) throw new ApiError(404, 'Opération introuvable');
     const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id', { id: req.user.tenantId });
-    streamOperationReceiptPdf(res, { tenant, op: { ...found, kindLabel: KIND_LABELS[kind] } });
+    // Cachet de qui a RÉELLEMENT payé (DG ou comptable) sur la quittance de restitution de caution —
+    // jamais figé sur le DG (demande utilisateur, 2026-11-03 ; voir `services/paymentHistory.js`).
+    let issuer = null;
+    if (kind === 'restitution_caution' && found.paidBy) {
+      const [[u]] = await pool.query('SELECT first_name, last_name, role, stamp_path FROM users WHERE id = :id', { id: found.paidBy });
+      issuer = u || null;
+    }
+    streamOperationReceiptPdf(res, { tenant, op: { ...found, kindLabel: KIND_LABELS[kind] }, issuer });
   } catch (err) {
     next(err);
   }

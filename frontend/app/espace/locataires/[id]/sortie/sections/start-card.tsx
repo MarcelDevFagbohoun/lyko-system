@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { ClipboardList } from "lucide-react";
-import { ApiError } from "@/lib/api/client";
-import { startMoveOutReport, type MoveOutReport } from "@/lib/api/renters";
+import { ClipboardList, FileDown } from "lucide-react";
+import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
+import { startMoveOutReport, inspectionBlankFormPdfPath, type MoveOutReport } from "@/lib/api/renters";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -47,6 +47,22 @@ export function StartCard({
         <Button onClick={handleStart} disabled={submitting}>
           {submitting ? "Démarrage…" : "Commencer l'état des lieux de sortie"}
         </Button>
+
+        <div className="mt-2 flex flex-col items-center gap-1.5 border-t border-border pt-4">
+          <p className="text-body-xs text-ink-muted">
+            Locataire absent de la plateforme ? Imprimez un formulaire vierge pour une saisie manuelle sur
+            le terrain (à ressaisir ensuite ici).
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => accessToken && openAuthenticatedPdf(inspectionBlankFormPdfPath("sortie"), accessToken)}
+          >
+            <FileDown size={14} />
+            Formulaire vierge (sortie)
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

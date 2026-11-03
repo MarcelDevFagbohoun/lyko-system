@@ -3,11 +3,14 @@
 import * as React from "react";
 import { AlertTriangle } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
+import { useAuth } from "@/lib/auth/auth-context";
 import {
   updateMoveOutReport,
   uploadInspectionItemPhoto,
   deleteInspectionItemPhoto,
   finalizeMoveOutReport,
+  submitMoveOutReport,
+  rejectMoveOutReview,
   type Lease,
   type MoveOutReport,
   type InspectionZone,
@@ -39,7 +42,7 @@ import {
 } from "@/components/ui/card";
 import { useToast } from "@/lib/toast/toast-context";
 import { BillingReportSection, ComparisonSection } from "./finalized-view";
-import { REFUND_PAYMENT_METHODS } from "./shared";
+import { REFUND_PAYMENT_METHODS, ReviewHistoryList } from "./shared";
 
 export function DraftEditor({
   leaseId,
@@ -77,6 +80,17 @@ export function DraftEditor({
   const [refundPaymentMethod, setRefundPaymentMethod] = React.useState("");
   const [catalog, setCatalog] = React.useState<CatalogItem[]>([]);
   const toast = useToast();
+  const { user } = useAuth();
+
+  // Circuit de validation DG (demande utilisateur, 2026-11-03) : un PV conduit par un EMPLOYÉ doit être
+  // soumis puis validé par le DG ; un PV conduit par le DG lui-même continue de se finaliser directement
+  // (voir `services/moveOutReport.js` `finalizeMoveOut`, même logique côté serveur — l'autorité reste là-bas).
+  const authorIsDg = report.conductedBy?.role === "dg";
+  const isDg = user?.role === "dg";
+  const [submitting, setSubmitting] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
+  const [rejecting, setRejecting] = React.useState(false);
+  const [rejectError, setRejectError] = React.useState<string | null>(null);
 
   // Cautions supplémentaires (étape 43) — celles encore détenues sur ce bail (SBEE/SONEB réglées
   // automatiquement à la sortie sur les charges impayées, peinture retenue manuellement ci-dessous).
@@ -253,6 +267,40 @@ export function DraftEditor({
       setFinalizeError(err instanceof ApiError ? err.message : "Impossible de finaliser la sortie.");
     } finally {
       setFinalizing(false);
+    }
+  }
+
+  /** Soumission employé (circuit de validation DG) — même principe que `handleFinalize` : on enregistre
+   * d'abord le brouillon, pour ne jamais soumettre une version en retard sur l'écran affiché. */
+  async function handleSubmit() {
+    if (!accessToken) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await persist();
+      const res = await submitMoveOutReport(accessToken, leaseId, null, null);
+      onReportChange(res.report);
+      toast.success("PV soumis pour validation à la direction générale.");
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Impossible de soumettre le PV.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /** Rejet DG — le PV reste en brouillon, modifiable et resoumissible par l'employé. */
+  async function handleReject(note: string) {
+    if (!accessToken) return;
+    setRejecting(true);
+    setRejectError(null);
+    try {
+      const res = await rejectMoveOutReview(accessToken, leaseId, note);
+      onReportChange(res.report);
+      toast.info("PV renvoyé à l'employé pour correction.");
+    } catch (err) {
+      setRejectError(err instanceof ApiError ? err.message : "Impossible de rejeter ce PV.");
+    } finally {
+      setRejecting(false);
     }
   }
 
@@ -436,9 +484,84 @@ export function DraftEditor({
           </Button>
         </div>
 
-        <FinalizeSection printedSignatures onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
+        {report.reviewHistory.length > 0 && <ReviewHistoryList history={report.reviewHistory} />}
+
+        {!authorIsDg && report.reviewStatus === "rejected" && report.reviewNote && (
+          <div className="rounded-lg border border-danger-border bg-danger-bg p-3">
+            <p className="font-label-sm text-danger-fg">PV renvoyé par la direction générale — à corriger puis à resoumettre</p>
+            <p className="mt-1 text-body-sm text-ink">{report.reviewNote}</p>
+            {report.reviewedBy && (
+              <p className="mt-1 text-body-xs text-ink-muted">
+                Par {report.reviewedBy.name}
+                {report.reviewedAt ? ` le ${new Date(report.reviewedAt).toLocaleDateString("fr-FR")}` : ""}
+              </p>
+            )}
+          </div>
+        )}
+
+        {authorIsDg ? (
+          // PV conduit par le DG lui-même : finalisation directe, comme avant ce circuit de validation.
+          <FinalizeSection printedSignatures onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
+        ) : isDg ? (
+          report.reviewStatus === "submitted" ? (
+            <div className="flex flex-col gap-4">
+              <FinalizeSection printedSignatures onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
+              <RejectSection onReject={handleReject} submitting={rejecting} error={rejectError} />
+            </div>
+          ) : (
+            <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm text-ink-muted">
+              {report.reviewStatus === "rejected"
+                ? "En attente de resoumission par l'employé après votre rejet ci-dessus."
+                : "En attente de soumission par l'employé qui a réalisé cette sortie — vous pourrez valider ou rejeter une fois le PV soumis."}
+              {" "}Vous pouvez modifier et enregistrer le brouillon en attendant.
+            </p>
+          )
+        ) : (
+          // Employé : jamais de finalisation directe, toujours via soumission pour validation DG.
+          <FinalizeSection printedSignatures mode="submit" onFinalize={handleSubmit} submitting={submitting} error={submitError} tenantName={renterName} />
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Rejet d'un PV soumis (DG uniquement) — note obligatoire, transmise à l'employé pour correction. */
+function RejectSection({
+  onReject,
+  submitting,
+  error,
+}: {
+  onReject: (note: string) => void | Promise<void>;
+  submitting: boolean;
+  error: string | null;
+}) {
+  const [note, setNote] = React.useState("");
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-danger-border bg-danger-bg p-4">
+      <div>
+        <h3 className="font-label-lg text-ink">Rejeter ce PV</h3>
+        <p className="text-body-sm text-ink-muted">
+          L&apos;employé reçoit votre motif et pourra corriger puis resoumettre le PV.
+        </p>
+      </div>
+      {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        rows={2}
+        placeholder="Ex. La photo du salon manque, et la retenue électricité n'est pas justifiée."
+        className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      />
+      <Button
+        type="button"
+        variant="destructive"
+        onClick={() => onReject(note.trim())}
+        disabled={submitting || note.trim().length < 5}
+        className="self-start"
+      >
+        {submitting ? "Envoi…" : "Rejeter et renvoyer à l'employé"}
+      </Button>
+    </div>
   );
 }
 

@@ -116,19 +116,27 @@ async function listPaymentHistory(tenantId, { from = null, to = null, kinds = nu
     }
   }
 
+  // Migration 139 (demande utilisateur, 2026-11-03) : une restitution n'est RÉELLEMENT sortie de caisse
+  // que lorsque `payout_status = 'paid'` — avec retenue, `net_refund > 0` seul ne le garantit plus (le
+  // décaissement peut encore être en attente, voir « Payer le locataire »). Datée du paiement RÉEL
+  // (`payout_paid_at`), pas de la finalisation, et porte l'auteur du paiement (`payout_paid_by`) pour que
+  // la quittance affiche le cachet de qui a VRAIMENT payé (DG ou comptable), jamais figé sur le DG.
   if (want('restitution_caution')) {
     const [rows] = await pool.query(
-      `SELECT m.id, m.net_refund, m.refund_payment_method, DATE(m.finalized_at) AS day, r.first_name, r.last_name
+      `SELECT m.id, m.net_refund, m.payout_method, m.payout_paid_by, DATE(m.payout_paid_at) AS day, r.first_name, r.last_name
        FROM move_out_reports m
        JOIN leases l ON l.id = m.lease_id JOIN renters r ON r.id = l.renter_id
-       WHERE m.tenant_id = :tenantId AND m.status = 'finalized' AND m.net_refund > 0 ${range('DATE(m.finalized_at)')}`,
+       WHERE m.tenant_id = :tenantId AND m.status = 'finalized' AND m.payout_status = 'paid'
+         AND m.payout_direction = 'refund_to_tenant' AND m.net_refund > 0 ${range('DATE(m.payout_paid_at)')}`,
       params,
     );
     for (const r of rows) {
+      const ord = applied.get(`move_out_reports:${r.id}`);
       items.push({
         kind: 'restitution_caution', id: r.id, date: iso(r.day), amount: Number(r.net_refund),
-        beneficiary: `${r.first_name} ${r.last_name}`, label: 'Restitution de caution', method: r.refund_payment_method ?? 'especes',
-        channel: channelOf(null, r.refund_payment_method), reference: null, status: 'paid', orderId: null,
+        beneficiary: `${r.first_name} ${r.last_name}`, label: 'Restitution de caution', method: r.payout_method ?? 'especes',
+        channel: channelOf(ord, r.payout_method), reference: ord?.reference ?? null, status: 'paid', orderId: ord?.id ?? null,
+        paidBy: r.payout_paid_by,
         receiptUrl: `/api/payments/receipts/restitution_caution/${r.id}.pdf`,
       });
     }

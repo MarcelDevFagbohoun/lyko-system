@@ -322,6 +322,13 @@ async function resolveLineAmount(conn, { tenantId, line, totalAmount, context })
         const price = Number(context.salePrice ?? 0);
         return line.amount_formula === 'pourcentage_variable' ? price : totalAmount - price;
       }
+      // `retenue_sortie` (`caution_restituee_avec_retenue` UNIQUEMENT) : part de la caution absorbée par
+      // les dégradations constatées à la sortie — calculée et transmise par `services/moveOutReport.js`
+      // (`context.retenueAmount`), jamais recalculée ici (déjà figée au PV de sortie).
+      if (line.formula_param === 'retenue_sortie') {
+        const retenue = Number(context.retenueAmount ?? 0);
+        return line.amount_formula === 'pourcentage_variable' ? retenue : totalAmount - retenue;
+      }
       if (line.formula_param === 'taux_repercussion_charge') {
         const rate = await resolveUtilityPassThroughPercent(conn, tenantId);
         const passedThrough = Math.round((totalAmount * rate) / 100);

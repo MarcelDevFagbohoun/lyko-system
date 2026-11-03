@@ -18,6 +18,9 @@ const {
   updateInspectionDraftSchema,
   updateMoveOutDraftSchema,
   reopenInspectionReportSchema,
+  rejectMoveOutReviewSchema,
+  recordTenantPayoutSchema,
+  chargeRepairFeeSchema,
 } = require('../validators/inspections');
 const { streamReceiptPdf, streamEntryReceiptPdf, streamMoveOutPdf, streamMoveInPdf, streamLeaseContractPdf } = require('../services/pdf');
 const { toPublicContract } = require('../services/leaseContract');
@@ -29,7 +32,6 @@ const logger = require('../utils/logger');
 const leasePayments = require('../services/leasePayments');
 const moveInReport = require('../services/moveInReport');
 const moveOutReport = require('../services/moveOutReport');
-const { saveInspectionFile } = require('../services/inspectionReports');
 
 const router = Router();
 router.use(requireAuth);
@@ -627,8 +629,58 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const { row, additionalDeposits, statement } = await moveOutReport.updateMoveOutDraft(req.user.tenantId, leaseId, scopeAgentId, data);
+    const { row, additionalDeposits, statement } = await moveOutReport.updateMoveOutDraft(req.user.tenantId, leaseId, scopeAgentId, data, req.user.id);
     res.json({ report: toPublicMoveOutReport(row), additionalDeposits, statement });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/move-out-report/submit — circuit de validation DG (demande utilisateur,
+// 2026-11-03) : un employé (pas le DG lui-même) soumet son PV pour validation au lieu de le finaliser
+// directement — signatures locataire/agent prises ICI (locataire physiquement présent), jamais redemandées
+// à la validation (voir `finalizeMoveOut`). Peut être resoumis plusieurs fois après un rejet.
+router.post(
+  '/:leaseId/move-out-report/submit',
+  canEtatsDesLieux,
+  signaturesUpload.fields([
+    { name: 'tenantSignature', maxCount: 1 },
+    { name: 'agentSignature', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    const leaseId = Number(req.params.leaseId);
+    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+    const tenantSignatureFile = req.files?.tenantSignature?.[0];
+    const agentSignatureFile = req.files?.agentSignature?.[0];
+
+    try {
+      const scopeAgentId = await resolvePropertyScope(req.user);
+      const { row } = await moveOutReport.submitMoveOutReport(req.user.tenantId, req.user.id, leaseId, scopeAgentId, {
+        tenantSignatureFile,
+        agentSignatureFile,
+      });
+      res.json({ report: toPublicMoveOutReport(row) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/leases/:leaseId/move-out-report/reject — DG uniquement, note obligatoire : le PV repasse en
+// brouillon modifiable par l'employé, qui est notifié ; peut être resoumis plusieurs fois.
+router.post('/:leaseId/move-out-report/reject', canReopenInspection, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = rejectMoveOutReviewSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    const { row } = await moveOutReport.rejectMoveOutReview(req.user.tenantId, req.user.id, leaseId, parsed.data.note);
+    res.json({ report: toPublicMoveOutReport(row) });
   } catch (err) {
     next(err);
   }
@@ -762,6 +814,52 @@ router.post('/:leaseId/move-out-report/gl-regularized', canRegularizeGl, async (
   }
 });
 
+// POST /api/leases/:leaseId/move-out-report/pay-tenant — décaissement MANUEL (sans FedaPay) de la
+// restitution de caution avec retenue, ou encaissement du complément dû par le locataire (même route,
+// la direction est déjà figée sur le PV — `payout_direction`). DG ou comptable (demande utilisateur,
+// 2026-11-03 : « le comptable aura un bouton payé le locataire »). Pour le paiement VIA FedaPay, voir
+// POST /api/payments/orders avec purpose 'remboursement_caution_locataire'.
+router.post('/:leaseId/move-out-report/pay-tenant', canRegularizeGl, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = recordTenantPayoutSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const { row } = await moveOutReport.recordTenantPayout(req.user.tenantId, req.user.id, leaseId, scopeAgentId, parsed.data);
+
+    logger.info('Décaissement de sortie manuel enregistré', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+    res.json({ report: toPublicMoveOutReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/move-out-report/repair-fee — frais de service de l'agence pour la gestion
+// d'une réparation, prélevés sur le solde déjà crédité au propriétaire — montant LIBRE saisi par le DG
+// (demande utilisateur, 2026-11-03), devient un vrai produit du cabinet (visible en trésorerie/recette).
+router.post('/:leaseId/move-out-report/repair-fee', canRegularizeGl, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = chargeRepairFeeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const { row } = await moveOutReport.chargeRepairFee(req.user.tenantId, req.user.id, leaseId, scopeAgentId, parsed.data);
+    res.json({ report: toPublicMoveOutReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/leases/:leaseId/move-out-report.pdf — PV de sortie & décompte de caution.
 router.get('/:leaseId/move-out-report.pdf', canEtatsDesLieux, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
@@ -846,46 +944,24 @@ router.patch('/:leaseId/contract', canLocataires, async (req, res, next) => {
   }
 });
 
-// POST /api/leases/:leaseId/contract/finalize — verrouille le contrat (signatures des deux parties) ;
-// fige les données du bail dans `snapshot` — un contrat déjà signé ne change plus jamais de contenu,
-// même si le bail est modifié ensuite (voir migration 070).
-router.post(
-  '/:leaseId/contract/finalize',
-  canLocataires,
-  signaturesUpload.fields([
-    { name: 'tenantSignature', maxCount: 1 },
-    { name: 'agentSignature', maxCount: 1 },
-  ]),
-  async (req, res, next) => {
-    const leaseId = Number(req.params.leaseId);
-    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+// POST /api/leases/:leaseId/contract/finalize — verrouille le contrat et fige les données du bail
+// dans `snapshot` — un contrat déjà signé ne change plus jamais de contenu, même si le bail est
+// modifié ensuite (voir migration 070). Plus de signatures numériques à fournir (demande utilisateur,
+// 2026-11-02) : `finalizeContract` refuse elle-même si le DG n'a pas de cachet téléversé.
+router.post('/:leaseId/contract/finalize', canLocataires, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
 
-    const tenantSignatureFile = req.files?.tenantSignature?.[0];
-    const agentSignatureFile = req.files?.agentSignature?.[0];
-    if (!tenantSignatureFile || !agentSignatureFile) {
-      return next(new ApiError(400, 'Signature du locataire et de l’agent requises'));
-    }
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const { row, snapshot } = await leaseContractActions.finalizeContract(req.user.tenantId, req.user.id, leaseId, scopeAgentId);
 
-    try {
-      const scopeAgentId = await resolvePropertyScope(req.user);
-      const { row, snapshot } = await leaseContractActions.finalizeContract(
-        req.user.tenantId,
-        req.user.id,
-        leaseId,
-        scopeAgentId,
-        (kind) =>
-          kind === 'tenant'
-            ? saveInspectionFile(req.user.tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature')
-            : saveInspectionFile(req.user.tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature'),
-      );
-
-      logger.info('Contrat de bail finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
-      res.json({ contract: toPublicContract(row), preview: snapshot });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+    logger.info('Contrat de bail finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+    res.json({ contract: toPublicContract(row), preview: snapshot });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /api/leases/:leaseId/contract.pdf — brouillon (aperçu LIVE, jamais signé) ou contrat finalisé
 // (données figées à la signature) — jamais de limite de téléchargement côté employé (par conception).

@@ -20,8 +20,21 @@ const INSPECTION_REPORT_SELECT = `
 
 // move_out_reports uniquement (colonnes absentes de move_in_reports) — la
 // jointure reste dans une clause à part pour ne pas casser move_in_reports.
-const MOVE_OUT_REGULARIZER_SELECT = `, gu.first_name AS regularizer_first_name, gu.last_name AS regularizer_last_name, gu.role AS regularizer_role`;
-const MOVE_OUT_REGULARIZER_JOIN = `LEFT JOIN users gu ON gu.id = t.gl_regularized_by`;
+// Étendu (2026-11-03) avec les acteurs du circuit de validation/décaissement
+// (soumission employé, revue DG, paiement, frais de réparation) — voir
+// migration 139 et `services/moveOutReport.js`.
+const MOVE_OUT_REGULARIZER_SELECT = `,
+  gu.first_name AS regularizer_first_name, gu.last_name AS regularizer_last_name, gu.role AS regularizer_role,
+  su.first_name AS submitter_first_name, su.last_name AS submitter_last_name, su.role AS submitter_role,
+  rvu.first_name AS reviewer_first_name, rvu.last_name AS reviewer_last_name, rvu.role AS reviewer_role,
+  pu.first_name AS payer_first_name, pu.last_name AS payer_last_name, pu.role AS payer_role,
+  rfu.first_name AS repair_fee_user_first_name, rfu.last_name AS repair_fee_user_last_name, rfu.role AS repair_fee_user_role`;
+const MOVE_OUT_REGULARIZER_JOIN = `
+  LEFT JOIN users gu ON gu.id = t.gl_regularized_by
+  LEFT JOIN users su ON su.id = t.submitted_by
+  LEFT JOIN users rvu ON rvu.id = t.reviewed_by
+  LEFT JOIN users pu ON pu.id = t.payout_paid_by
+  LEFT JOIN users rfu ON rfu.id = t.repair_fee_charged_by`;
 
 /** `reportsTable` : toujours l'un des deux littéraux ci-dessous, jamais une valeur venue du client. */
 async function loadInspectionReportRow(conn, reportsTable, leaseId) {

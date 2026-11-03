@@ -38,6 +38,37 @@ function cloneZonesFrom(sourceZones) {
   }));
 }
 
+/**
+ * Fusionne dans les zones de SORTIE tout élément présent dans les zones d'ENTRÉE mais absent côté
+ * sortie (même zone/élément `key`) — ajouté comme élément vide, jamais évalué (demande utilisateur,
+ * 2026-11-03 : « il faut que tous les éléments vérifiés à l'entrée apparaissent à la sortie »). Couvre le
+ * cas où la fiche de sortie a été démarrée AVANT que l'entrée soit terminée, ou complétée avec des
+ * éléments personnalisés après coup — `cloneZonesFrom` (ci-dessus) ne joue qu'au DÉMARRAGE de la fiche,
+ * jamais rejoué ensuite. Ne touche JAMAIS un élément déjà présent côté sortie (son état/sa retenue déjà
+ * saisis restent intacts). Retourne `{ zones, added }` — `added` indique s'il y a eu un ajout, pour savoir
+ * s'il faut persister.
+ */
+function mergeMoveInZones(moveOutZones, moveInZones) {
+  if (!moveInZones || moveInZones.length === 0) return { zones: moveOutZones, added: false };
+  let added = false;
+  const zones = moveOutZones.map((z) => ({ ...z, items: [...z.items] }));
+  for (const moveInZone of moveInZones) {
+    let zone = zones.find((z) => z.key === moveInZone.key);
+    if (!zone) {
+      zone = { key: moveInZone.key, label: moveInZone.label, custom: !!moveInZone.custom, items: [] };
+      zones.push(zone);
+      added = true;
+    }
+    for (const moveInItem of moveInZone.items) {
+      if (!zone.items.some((it) => it.key === moveInItem.key)) {
+        zone.items.push(emptyItem(moveInItem.key, moveInItem.label, !!moveInItem.custom));
+        added = true;
+      }
+    }
+  }
+  return { zones, added };
+}
+
 function slugifyLegacyLabel(label) {
   return (
     String(label)
@@ -312,6 +343,29 @@ function toPublicMoveOutReport(row) {
     // — voir routes/tasks.js « Mes tâches » et routes/leases.js POST .../gl-regularized.
     glRegularizedAt: isoDateTime(row.gl_regularized_at),
     glRegularizedBy: toActor(row.regularizer_first_name, row.regularizer_last_name, row.regularizer_role),
+    // Circuit de validation DG (demande utilisateur, 2026-11-03) — voir services/moveOutReport.js.
+    // `reviewStatus` : 'draft' (pas encore soumis) | 'submitted' | 'rejected' | 'validated'. Toujours
+    // 'validated' pour un PV saisi directement par le DG (pas de circuit de revue pour lui-même).
+    reviewStatus: row.review_status,
+    submittedAt: isoDateTime(row.submitted_at),
+    submittedBy: toActor(row.submitter_first_name, row.submitter_last_name, row.submitter_role),
+    reviewedAt: isoDateTime(row.reviewed_at),
+    reviewedBy: toActor(row.reviewer_first_name, row.reviewer_last_name, row.reviewer_role),
+    reviewNote: row.review_note,
+    // Journal en ajout seul (soumission/modification/rejet/validation) — l'historique visible demandé.
+    reviewHistory: row.review_history ? (typeof row.review_history === 'string' ? JSON.parse(row.review_history) : row.review_history) : [],
+    // Décaissement réel (distinct du simple choix de méthode ci-dessus) — voir migration 139.
+    payoutStatus: row.payout_status,
+    payoutDirection: row.payout_direction,
+    payoutAmount: row.payout_amount != null ? Number(row.payout_amount) : null,
+    payoutMethod: row.payout_method,
+    payoutPaidAt: isoDateTime(row.payout_paid_at),
+    payoutPaidBy: toActor(row.payer_first_name, row.payer_last_name, row.payer_role),
+    // Frais de gestion de la réparation prélevés par le cabinet sur le solde propriétaire.
+    repairFeeAmount: row.repair_fee_amount != null ? Number(row.repair_fee_amount) : null,
+    repairFeeNote: row.repair_fee_note,
+    repairFeeChargedAt: isoDateTime(row.repair_fee_charged_at),
+    repairFeeChargedBy: toActor(row.repair_fee_user_first_name, row.repair_fee_user_last_name, row.repair_fee_user_role),
   };
 }
 
@@ -325,12 +379,19 @@ function toPublicMoveOutReport(row) {
  */
 async function listPendingDepositRegularizations(tenantId) {
   const [rows] = await pool.query(
+    // `payout_status = 'not_applicable'` (migration 139, relecture du 2026-11-03) : depuis que la
+    // retenue a un vrai circuit automatisé (`listPendingMoveOutPayouts` + boutons « Payer le
+    // locataire »/« Encaisser le complément », `recordTenantPayout`), cette liste ne doit plus JAMAIS
+    // se recouper avec elle — sinon même sortie affichée en double, avec un message devenu faux
+    // (« à régulariser manuellement »). Ne reste ici QUE le cas `repairs_by_tenant` (le locataire
+    // répare lui-même, volontairement hors de ce nouveau circuit — voir `finalizeMoveOut`), seul cas où
+    // `payout_status` reste 'not_applicable' malgré une retenue.
     `SELECT mo.lease_id, mo.total_deductions, mo.finalized_at, r.id AS renter_id, r.first_name, r.last_name
      FROM move_out_reports mo
      JOIN leases l ON l.id = mo.lease_id
      JOIN renters r ON r.id = l.renter_id
      WHERE mo.tenant_id = :tenantId AND mo.status = 'finalized'
-       AND mo.total_deductions > 0 AND mo.gl_regularized_at IS NULL
+       AND mo.total_deductions > 0 AND mo.gl_regularized_at IS NULL AND mo.payout_status = 'not_applicable'
      ORDER BY mo.finalized_at ASC
      LIMIT 20`,
     { tenantId },
@@ -344,11 +405,43 @@ async function listPendingDepositRegularizations(tenantId) {
   }));
 }
 
+/**
+ * Décaissements de sortie non encore exécutés (demande utilisateur, 2026-11-03 : « tant que le
+ * paiement n'est pas effectué pour un locataire sortant il doit avoir une alerte sur le tableau de bord
+ * chaque fois ») — un PV validé avec un remboursement à verser ou un complément à encaisser, mais dont
+ * le bouton « Payer le locataire »/« Encaisser le complément » n'a pas encore été actionné (voir
+ * `payout_status`, migration 139). Indépendant du module comptabilité avancée (contrairement à
+ * `listPendingDepositRegularizations` ci-dessus) : même une entreprise sans comptabilité SYSCOHADA doit
+ * voir qu'un locataire sorti attend son remboursement.
+ */
+async function listPendingMoveOutPayouts(tenantId) {
+  const [rows] = await pool.query(
+    `SELECT mo.lease_id, mo.payout_direction, mo.payout_amount, mo.finalized_at, r.id AS renter_id, r.first_name, r.last_name
+     FROM move_out_reports mo
+     JOIN leases l ON l.id = mo.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     WHERE mo.tenant_id = :tenantId AND mo.status = 'finalized' AND mo.payout_status = 'pending'
+     ORDER BY mo.finalized_at ASC
+     LIMIT 20`,
+    { tenantId },
+  );
+  return rows.map((r) => ({
+    leaseId: r.lease_id,
+    renterId: r.renter_id,
+    renterName: `${r.first_name} ${r.last_name}`,
+    direction: r.payout_direction,
+    amount: Number(r.payout_amount),
+    finalizedAt: r.finalized_at,
+  }));
+}
+
 module.exports = {
   INSPECTION_CONDITION_RANK,
   listPendingDepositRegularizations,
+  listPendingMoveOutPayouts,
   cloneMasterZones,
   cloneZonesFrom,
+  mergeMoveInZones,
   normalizeStoredItems,
   findItem,
   getMissingConditionLabels,

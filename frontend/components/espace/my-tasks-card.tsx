@@ -10,6 +10,7 @@ import {
   Gauge,
   Receipt,
   PiggyBank,
+  Wallet,
   CalendarClock,
   CheckCircle2,
   ListTodo,
@@ -87,6 +88,7 @@ export function MyTasksCard() {
       ? tasks.accountant.pendingBatches.length +
         tasks.accountant.expensesWithoutReceipt.length +
         tasks.accountant.pendingDepositRegularizations.length +
+        tasks.accountant.pendingMoveOutPayouts.length +
         (monthClosable ? 1 : 0)
       : 0);
 
@@ -241,6 +243,23 @@ export function MyTasksCard() {
                     label={d.renterName}
                     detail={`Sortie finalisée le ${formatDateLabel(d.finalizedAt.slice(0, 10))}`}
                     badge={<Badge variant="danger">{formatFcfa(d.totalDeductions)}</Badge>}
+                  />
+                ))}
+              </CategoryCard>
+
+              <CategoryCard
+                icon={<Wallet size={14} />}
+                title="Décaissements de sortie à exécuter"
+                tone="danger"
+                count={tasks.accountant.pendingMoveOutPayouts.length}
+              >
+                {tasks.accountant.pendingMoveOutPayouts.slice(0, 4).map((p) => (
+                  <Row
+                    key={p.leaseId}
+                    href={`/espace/locataires/${p.renterId}/sortie?leaseId=${p.leaseId}`}
+                    label={p.renterName}
+                    detail={p.direction === "refund_to_tenant" ? "Caution à restituer au locataire" : "Complément à encaisser du locataire"}
+                    badge={<Badge variant="danger">{formatFcfa(p.amount)}</Badge>}
                   />
                 ))}
               </CategoryCard>

@@ -3,15 +3,18 @@
 import * as React from "react";
 import { FileDown, ChevronDown, ChevronUp } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
-import { openAuthenticatedPdf } from "@/lib/api/client";
+import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
   reopenMoveOutReport,
   markMoveOutGlRegularized,
+  recordTenantPayout,
+  chargeRepairFee,
   moveOutReportPdfPath,
   type Lease,
   type MoveOutReport,
   type InspectionZone,
   type AdditionalDeposit,
+  type ManualPayoutMethod,
 } from "@/lib/api/renters";
 import { compareInspectionReports, type ItemComparison } from "@/lib/inspection-comparison";
 import { CONDITION_LABELS } from "@/lib/constants/inspection";
@@ -20,6 +23,7 @@ import { InspectionReadOnly } from "@/components/inspections/inspection-readonly
 import { SignatureBlock } from "@/components/inspections/signature-block";
 import { ExitStatementTable } from "@/components/inspections/exit-statement";
 import { ReopenReportButton } from "@/components/inspections/reopen-button";
+import { Field, Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -31,7 +35,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useCan } from "@/lib/auth/use-can";
-import { REFUND_PAYMENT_METHODS } from "./shared";
+import { useToast } from "@/lib/toast/toast-context";
+import { REFUND_PAYMENT_METHODS, ReviewHistoryList } from "./shared";
 
 export function FinalizedView({
   leaseId,
@@ -47,6 +52,7 @@ export function FinalizedView({
   onReportChange: (report: MoveOutReport) => void;
 }) {
   const { user } = useAuth();
+  const toast = useToast();
   const [regularizing, setRegularizing] = React.useState(false);
   const canRegularize = useCan("comptabilite");
 
@@ -65,6 +71,25 @@ export function FinalizedView({
     } finally {
       setRegularizing(false);
     }
+  }
+
+  // Décaissement/encaissement manuel et frais de service de réparation (migration 139, demande
+  // utilisateur 2026-11-03) — DG ou comptable (`canRegularize`, même permission que la régularisation
+  // comptable ci-dessus, cohérent avec le serveur : `requirePermission('comptabilite')`).
+  async function handlePayout(method: ManualPayoutMethod, note: string) {
+    if (!accessToken) return;
+    const res = await recordTenantPayout(accessToken, leaseId, { method, note: note.trim() || undefined });
+    onReportChange(res.report);
+    toast.success(
+      report.payoutDirection === "refund_to_tenant" ? "Caution restituée au locataire." : "Complément encaissé auprès du locataire.",
+    );
+  }
+
+  async function handleRepairFee(amount: number, note: string) {
+    if (!accessToken) return;
+    const res = await chargeRepairFee(accessToken, leaseId, { amount, note: note.trim() || undefined });
+    onReportChange(res.report);
+    toast.success("Frais de service prélevés sur le solde propriétaire.");
   }
 
   return (
@@ -150,6 +175,41 @@ export function FinalizedView({
             )}
           </div>
         )}
+
+        {report.payoutStatus === "pending" && report.payoutDirection && (
+          canRegularize ? (
+            <PayoutSection direction={report.payoutDirection} amount={report.payoutAmount ?? 0} onPay={handlePayout} />
+          ) : (
+            <p className="rounded-lg border border-warning-border bg-warning-bg px-3 py-2 text-body-sm text-warning-fg">
+              {report.payoutDirection === "refund_to_tenant" ? "Caution" : "Complément"} en attente —{" "}
+              {formatFcfa(report.payoutAmount ?? 0)} à {report.payoutDirection === "refund_to_tenant" ? "restituer au locataire" : "encaisser du locataire"}.
+            </p>
+          )
+        )}
+
+        {report.payoutStatus === "paid" && (
+          <div className="flex flex-col gap-2 rounded-lg border border-success-border bg-success-bg p-3">
+            <p className="text-body-sm text-success-fg">
+              {report.payoutDirection === "refund_to_tenant" ? "Caution restituée" : "Complément encaissé"}
+              {report.payoutAmount ? ` : ${formatFcfa(report.payoutAmount)}` : ""}
+              {report.payoutMethod ? ` (${REFUND_PAYMENT_METHODS.find((m) => m.value === report.payoutMethod)?.label ?? report.payoutMethod})` : ""}
+              {report.payoutPaidAt && ` le ${new Date(report.payoutPaidAt).toLocaleDateString("fr-FR")}`}
+              {report.payoutPaidBy && ` par ${report.payoutPaidBy.name} (${report.payoutPaidBy.roleLabel})`}.
+            </p>
+            {report.repairFeeChargedAt ? (
+              <p className="text-body-sm text-ink">
+                Frais de service prélevés : {formatFcfa(report.repairFeeAmount ?? 0)} le{" "}
+                {new Date(report.repairFeeChargedAt).toLocaleDateString("fr-FR")}
+                {report.repairFeeChargedBy && ` par ${report.repairFeeChargedBy.name} (${report.repairFeeChargedBy.roleLabel})`}
+                {report.repairFeeNote ? ` — ${report.repairFeeNote}` : ""}.
+              </p>
+            ) : (
+              canRegularize && <RepairFeeSection onCharge={handleRepairFee} />
+            )}
+          </div>
+        )}
+
+        {report.reviewHistory.length > 0 && <ReviewHistoryList history={report.reviewHistory} />}
 
         {report.reopenedAt && (
           <div className="rounded-lg border border-border bg-surface-muted p-3">
@@ -323,6 +383,130 @@ export function DownloadPvButton({ leaseId }: { leaseId: number }) {
       <FileDown size={16} />
       Télécharger le PV de sortie
     </Button>
+  );
+}
+
+/** « Payer le locataire » / « Encaisser le complément » — décaissement manuel (migration 139). */
+function PayoutSection({
+  direction,
+  amount,
+  onPay,
+}: {
+  direction: "refund_to_tenant" | "collect_from_tenant";
+  amount: number;
+  onPay: (method: ManualPayoutMethod, note: string) => Promise<void>;
+}) {
+  const [method, setMethod] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function handleClick() {
+    if (!method) {
+      setError("Choisissez un mode de règlement.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onPay(method as ManualPayoutMethod, note);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer ce décaissement.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-warning-border bg-warning-bg p-4">
+      <div>
+        <h3 className="font-label-lg text-ink">
+          {direction === "refund_to_tenant" ? "Payer le locataire" : "Encaisser le complément"}
+        </h3>
+        <p className="text-body-sm text-ink-muted">
+          {direction === "refund_to_tenant"
+            ? `${formatFcfa(amount)} à restituer au locataire (restitution manuelle, hors FedaPay).`
+            : `${formatFcfa(amount)} restant dû par le locataire, au-delà de sa caution.`}
+        </p>
+      </div>
+      {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Mode de règlement" htmlFor="payoutMethod" required>
+          <select
+            id="payoutMethod"
+            value={method}
+            onChange={(e) => setMethod(e.target.value)}
+            className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <option value="" disabled>
+              Choisir…
+            </option>
+            {REFUND_PAYMENT_METHODS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Note (optionnel)" htmlFor="payoutNote">
+          <Input id="payoutNote" value={note} onChange={(e) => setNote(e.target.value)} />
+        </Field>
+      </div>
+      <Button type="button" variant="warning" onClick={handleClick} disabled={submitting} className="self-start">
+        {submitting ? "Enregistrement…" : direction === "refund_to_tenant" ? "Confirmer le paiement au locataire" : "Confirmer l'encaissement"}
+      </Button>
+    </div>
+  );
+}
+
+/** Frais de service de l'agence pour la gestion d'une réparation (migration 139) — montant libre. */
+function RepairFeeSection({ onCharge }: { onCharge: (amount: number, note: string) => Promise<void> }) {
+  const [amount, setAmount] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function handleClick() {
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value <= 0) {
+      setError("Montant invalide.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onCharge(value, note);
+      setAmount("");
+      setNote("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de prélever ces frais.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-success-border pt-2">
+      <p className="text-body-sm text-ink">Prélever des frais de service pour la gestion d&apos;une réparation (sur le solde propriétaire) :</p>
+      {error && <p className="text-body-sm text-danger-fg">{error}</p>}
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Montant (FCFA)" htmlFor="repairFeeAmount">
+          <Input
+            id="repairFeeAmount"
+            inputMode="numeric"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))}
+            className="max-w-[160px]"
+          />
+        </Field>
+        <Field label="Note (optionnel)" htmlFor="repairFeeNote">
+          <Input id="repairFeeNote" value={note} onChange={(e) => setNote(e.target.value)} />
+        </Field>
+        <Button type="button" variant="secondary" size="sm" onClick={handleClick} disabled={submitting}>
+          {submitting ? "…" : "Prélever les frais"}
+        </Button>
+      </div>
+    </div>
   );
 }
 

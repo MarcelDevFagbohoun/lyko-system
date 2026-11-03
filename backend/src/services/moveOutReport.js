@@ -23,6 +23,7 @@ const { computeMoveOutStatement } = require('./moveOutStatement');
 const {
   cloneMasterZones,
   cloneZonesFrom,
+  mergeMoveInZones,
   normalizeStoredItems,
   findItem,
   getMissingConditionLabels,
@@ -39,11 +40,54 @@ const {
   saveInspectionFile,
   deleteInspectionFile,
 } = require('./inspectionReports');
+const { sendPushToUser } = require('./push/sendPush');
+const { notifyLeaseStaff } = require('./push/notifyLeaseEvent');
+
+/** Rôle de l'utilisateur ayant conduit/soumis la fiche — pour savoir si le circuit de revue DG s'applique. */
+async function loadUserRole(conn, userId) {
+  if (!userId) return null;
+  const [[row]] = await conn.query('SELECT role FROM users WHERE id = :id LIMIT 1', { id: userId });
+  return row?.role ?? null;
+}
+
+/** Ajoute une entrée en AJOUT SEUL au journal `review_history` (jamais réécrit) — l'historique visible demandé. */
+function appendReviewHistory(existing, entry) {
+  const history = existing ? (typeof existing === 'string' ? JSON.parse(existing) : existing) : [];
+  history.push({ at: new Date().toISOString(), ...entry });
+  return JSON.stringify(history);
+}
+
+async function actorLabel(db, userId) {
+  const [[row]] = await db.query('SELECT first_name, last_name, role FROM users WHERE id = :id LIMIT 1', { id: userId });
+  if (!row) return { id: userId, name: 'Utilisateur', role: null };
+  return { id: userId, name: `${row.first_name} ${row.last_name}`, role: row.role };
+}
 
 /** Fiche de sortie (ou null) + arriérés en cours + cautions supplémentaires + décompte (brouillon seulement). */
 async function getMoveOutReport(tenantId, leaseId, scopeAgentId) {
   const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
-  const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+  let row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+
+  // Auto-guérison (demande utilisateur, 2026-11-03) : `cloneZonesFrom` ne recopie la structure de
+  // l'entrée qu'AU DÉMARRAGE de la fiche de sortie (`startMoveOutReport`) — si l'entrée a été démarrée ou
+  // complétée APRÈS, ou avec des éléments personnalisés ajoutés ensuite, ces éléments n'apparaissaient
+  // jamais côté sortie. Ici, à CHAQUE ouverture du brouillon, on fusionne et on persiste immédiatement
+  // tout élément d'entrée encore manquant — jamais touché un élément déjà évalué côté sortie (voir
+  // `mergeMoveInZones`). Sans effet sur une fiche déjà finalisée (voir `finalizeMoveOut` pour le
+  // garde-fou équivalent qui bloque la finalisation elle-même si quelque chose manque encore).
+  if (row && row.status === 'draft') {
+    const moveInRow = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+    if (moveInRow) {
+      const { zones: mergedZones, added } = mergeMoveInZones(normalizeStoredItems(row.items), normalizeStoredItems(moveInRow.items));
+      if (added) {
+        await pool.query('UPDATE move_out_reports SET items = :items WHERE lease_id = :leaseId', {
+          items: JSON.stringify({ zones: mergedZones }),
+          leaseId,
+        });
+        row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+      }
+    }
+  }
 
   let arrears = null;
   if (lease.status === 'active') {
@@ -111,11 +155,21 @@ async function startMoveOutReport(tenantId, userId, leaseId, scopeAgentId, condu
   return row;
 }
 
-/** Enregistre le brouillon (zones, retenues, notes) et renvoie fiche + cautions + décompte. */
-async function updateMoveOutDraft(tenantId, leaseId, scopeAgentId, data) {
+/**
+ * Enregistre le brouillon (zones, retenues, notes) et renvoie fiche + cautions + décompte.
+ * `actorUserId` : si fourni ET que la fiche a déjà été soumise au moins une fois (`review_status`
+ * 'submitted'/'rejected'), la modification est JOURNALISÉE dans `review_history` (demande utilisateur,
+ * 2026-11-03 : « il peut modifier les champs mais doit être traçable ») — comparaison avant/après avec
+ * les mêmes helpers que la correction post-finalisation (`diffInspectionReport`), jamais réécrite.
+ */
+async function updateMoveOutDraft(tenantId, leaseId, scopeAgentId, data, actorUserId = null) {
   await loadLease(pool, tenantId, leaseId, scopeAgentId);
   const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   assertDraft(report, 'état des lieux de sortie');
+  const trackChanges = actorUserId && ['submitted', 'rejected'].includes(report.review_status);
+  const snapshotBefore = trackChanges
+    ? snapshotForCorrection(normalizeStoredItems(report.items), report.general_notes, report.tenant_reserves)
+    : null;
 
   // Étape 51bis (Moyenne #7) : une retenue peinture saisie sur un bail SANS caution peinture n'avait
   // jusqu'ici aucun effet réel — `checkAdditionalDepositRefunds`/`finalizeAdditionalDeposits` ignorent
@@ -172,11 +226,121 @@ async function updateMoveOutDraft(tenantId, leaseId, scopeAgentId, data) {
     },
   );
 
+  if (trackChanges) {
+    const snapshotAfter = snapshotForCorrection(data.zones, data.generalNotes, report.tenant_reserves);
+    const changedFields = diffInspectionReport(snapshotBefore, snapshotAfter);
+    if (changedFields.length > 0) {
+      const by = await actorLabel(pool, actorUserId);
+      await pool.query('UPDATE move_out_reports SET review_history = :history WHERE lease_id = :leaseId', {
+        history: appendReviewHistory(report.review_history, { type: 'edited', by, changedFields }),
+        leaseId,
+      });
+    }
+  }
+
   const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   const additionalDeposits = await listLeaseDeposits(tenantId, leaseId);
   const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
   const statement = await computeMoveOutStatement(pool, { tenantId: tenantId, lease, report: row, deposits: additionalDeposits });
   return { row, additionalDeposits, statement };
+}
+
+/**
+ * Soumet le PV pour validation DG (demande utilisateur, 2026-11-03) — un employé (role <> 'dg') ne
+ * finalise plus seul : il soumet, le DG est notifié, peut modifier (tracé) puis valider ou rejeter avec
+ * une note. Les signatures locataire/agent (capture manuscrite, distincte du cachet — voir la demande du
+ * 2026-11-02) sont déjà prises ICI, au moment où le locataire est physiquement présent ; la validation
+ * DG ne les redemande pas (voir `finalizeMoveOut`, qui garde les signatures déjà enregistrées si aucun
+ * nouveau fichier n'est fourni). Peut être resoumis plusieurs fois (après un rejet) — chaque soumission
+ * ajoute une entrée à `review_history`, jamais réécrite.
+ */
+async function submitMoveOutReport(tenantId, userId, leaseId, scopeAgentId, { tenantSignatureFile, agentSignatureFile } = {}) {
+  const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+  assertDraft(report, 'état des lieux de sortie');
+
+  // Garde-fou (demande utilisateur, 2026-11-03) : même fusion que `getMoveOutReport`, en mémoire
+  // seulement (pas persistée ici) — si l'employé soumet sans être repassé par l'écran d'édition depuis
+  // le dernier changement de l'entrée, les éléments manquants sont quand même détectés et bloquent la
+  // soumission plutôt que de laisser un élément de l'entrée jamais évalué à la sortie.
+  const moveInRowForMerge = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
+  const zones = moveInRowForMerge
+    ? mergeMoveInZones(normalizeStoredItems(report.items), normalizeStoredItems(moveInRowForMerge.items)).zones
+    : normalizeStoredItems(report.items);
+  const missing = getMissingConditionLabels(zones);
+  if (missing.length > 0) {
+    throw new ApiError(400, `État manquant pour : ${missing.join(', ')}`);
+  }
+
+  const tenantSignaturePath = tenantSignatureFile
+    ? await saveInspectionFile(tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature')
+    : report.tenant_signature_path;
+  const agentSignaturePath = agentSignatureFile
+    ? await saveInspectionFile(tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature')
+    : report.agent_signature_path;
+
+  const by = await actorLabel(pool, userId);
+  await pool.query(
+    `UPDATE move_out_reports
+     SET review_status = 'submitted', submitted_at = NOW(), submitted_by = :by,
+         tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
+         review_note = NULL, review_history = :history
+     WHERE lease_id = :leaseId`,
+    {
+      by: userId,
+      tenantSig: tenantSignaturePath,
+      agentSig: agentSignaturePath,
+      history: appendReviewHistory(report.review_history, { type: 'submitted', by }),
+      leaseId,
+    },
+  );
+
+  const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+  // Notification DG — jamais bloquante pour la soumission elle-même.
+  notifyLeaseStaff(tenantId, null, {
+    title: 'PV de sortie à valider',
+    body: `${by.name} a soumis un PV de sortie — bail #${leaseId}`,
+    url: `/espace/locataires/${lease.renter_id ?? ''}`,
+    tag: `move-out-submitted-${leaseId}`,
+  }).catch(() => {});
+  return { row };
+}
+
+/**
+ * Rejette le PV soumis (DG uniquement), avec une note obligatoire — le PV repasse en brouillon
+ * modifiable et peut être resoumis plusieurs fois. Notifie l'employé qui l'avait soumis.
+ */
+async function rejectMoveOutReview(tenantId, userId, leaseId, note) {
+  const lease = await loadLease(pool, tenantId, leaseId, null);
+  const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+  assertDraft(report, 'état des lieux de sortie');
+  if (report.review_status !== 'submitted') {
+    throw new ApiError(400, "Ce PV n'est pas en attente de validation.");
+  }
+
+  const by = await actorLabel(pool, userId);
+  await pool.query(
+    `UPDATE move_out_reports
+     SET review_status = 'rejected', reviewed_at = NOW(), reviewed_by = :by, review_note = :note, review_history = :history
+     WHERE lease_id = :leaseId`,
+    {
+      by: userId,
+      note,
+      history: appendReviewHistory(report.review_history, { type: 'rejected', by, note }),
+      leaseId,
+    },
+  );
+
+  const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+  if (report.submitted_by) {
+    sendPushToUser(report.submitted_by, {
+      title: 'PV de sortie renvoyé',
+      body: `${by.name} a renvoyé votre PV de sortie : ${note}`,
+      url: `/espace/locataires/${lease.renter_id ?? ''}`,
+      tag: `move-out-rejected-${leaseId}`,
+    }).catch(() => {});
+  }
+  return { row };
 }
 
 /** Ajoute une photo (3 maximum) à un élément du brouillon. */
@@ -240,7 +404,34 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
     const isCorrection = !!report.reopened_at;
     if (!isCorrection && lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
 
-    const zones = normalizeStoredItems(report.items);
+    // Circuit de validation DG (demande utilisateur, 2026-11-03) : un PV saisi par un EMPLOYÉ (pas le
+    // DG lui-même) doit avoir été SOUMIS avant de pouvoir être finalisé, et seul le DG peut le
+    // finaliser (= le valider) — jamais rejoué sur une correction (`isCorrection`, déjà DG-only via
+    // `canReopenInspection`). Le DG qui conduit lui-même sa propre sortie continue de finaliser
+    // directement, sans passer par la soumission (demande explicite : « seulement ceux saisis par un
+    // employé »).
+    let authorIsDg = true;
+    if (!isCorrection) {
+      const authorRole = await loadUserRole(conn, report.conducted_by);
+      authorIsDg = authorRole === 'dg';
+      if (!authorIsDg) {
+        const actorRole = await loadUserRole(conn, userId);
+        if (actorRole !== 'dg') {
+          throw new ApiError(403, 'Seul le DG peut valider ce PV — soumettez-le pour validation (« Soumettre pour validation »).');
+        }
+        if (report.review_status !== 'submitted') {
+          throw new ApiError(400, "Ce PV doit d'abord être soumis pour validation avant de pouvoir être finalisé.");
+        }
+      }
+    }
+
+    // Garde-fou final (demande utilisateur, 2026-11-03) : même fusion qu'à la soumission/l'édition — en
+    // mémoire seulement — pour qu'un PV ne puisse JAMAIS être validé si un élément vérifié à l'entrée n'a
+    // pas été évalué à la sortie, quel que soit le chemin suivi pour arriver jusqu'ici.
+    const moveInRowForMerge = isCorrection ? null : await loadInspectionReportRow(conn, 'move_in_reports', leaseId);
+    const zones = moveInRowForMerge
+      ? mergeMoveInZones(normalizeStoredItems(report.items), normalizeStoredItems(moveInRowForMerge.items)).zones
+      : normalizeStoredItems(report.items);
     const missing = getMissingConditionLabels(zones);
     if (missing.length > 0) {
       throw new ApiError(400, `État manquant pour : ${missing.join(', ')}`);
@@ -361,8 +552,15 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
       throw new ApiError(400, 'Mode de règlement requis pour la restitution de la caution');
     }
 
-    const tenantSignaturePath = tenantSignatureFile ? await saveInspectionFile(tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature') : null;
-    const agentSignaturePath = agentSignatureFile ? await saveInspectionFile(tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature') : null;
+    // Garde les signatures déjà enregistrées (prises à la SOUMISSION, voir `submitMoveOutReport`) si la
+    // validation DG n'en fournit pas de nouvelles — ne les efface plus silencieusement (bug qu'aurait
+    // introduit le nouveau circuit de validation sans ce repli).
+    const tenantSignaturePath = tenantSignatureFile
+      ? await saveInspectionFile(tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature')
+      : report.tenant_signature_path;
+    const agentSignaturePath = agentSignatureFile
+      ? await saveInspectionFile(tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature')
+      : report.agent_signature_path;
     const tenantReserves =
       typeof body?.tenantReserves === 'string' && body.tenantReserves.trim()
         ? body.tenantReserves.trim().slice(0, 2000)
@@ -389,6 +587,41 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
       ? diffInspectionReport(report.pre_reopen_snapshot, snapshotForCorrection(zones, report.general_notes, tenantReserves))
       : null;
 
+    // Décaissement réel (migration 139) : le cas SIMPLE (aucune retenue) reste posté immédiatement ici
+    // (comportement historique inchangé, voir plus bas) — `payoutStatus` vaut alors directement 'paid'.
+    // Avec une retenue, ou un complément dû par le locataire, RIEN n'est payé/encaissé ici : seul le
+    // bouton dédié (« Payer le locataire »/« Encaisser le complément », `recordTenantPayout` ci-dessous)
+    // déclenche le vrai mouvement de caisse et l'écriture comptable.
+    let payoutDirection = null;
+    let payoutStatus = 'not_applicable';
+    let payoutAmount = null;
+    if (netRefund > 0) {
+      payoutDirection = 'refund_to_tenant';
+      payoutAmount = netRefund;
+      payoutStatus = totalDeductions === 0 ? 'paid' : 'pending';
+    } else if (shortfall > 0 && balanceResolution === 'paid') {
+      payoutDirection = 'collect_from_tenant';
+      payoutAmount = shortfall;
+      payoutStatus = 'pending';
+    } else if (shortfall === 0) {
+      // Bug corrigé avant même la première exécution (relecture du 2026-11-03) : `totalDeductions ===
+      // depositAmount` EXACTEMENT (caution entièrement absorbée par les dégâts, rien à rendre NI à
+      // encaisser) laissait `payoutStatus` à 'not_applicable' — la retenue n'était alors JAMAIS créditée
+      // au propriétaire et la caution (compte 165) jamais éteinte, sans aucune alerte pour le signaler.
+      // La retenue reste due au propriétaire même quand `netRefund` vaut 0 : direction
+      // 'refund_to_tenant' avec un montant à verser de 0 — le bouton « Payer le locataire » poste alors
+      // l'écriture d'extinction sans aucun mouvement de trésorerie réel (voir `recordTenantPayout`).
+      // Cas `shortfall > 0 && balanceResolution === 'repairs_by_tenant'` (le locataire répare lui-même) :
+      // volontairement hors périmètre, comme avant cette fonctionnalité — aucune écriture automatique.
+      payoutDirection = totalDeductions > 0 ? 'refund_to_tenant' : null;
+      payoutAmount = netRefund;
+      payoutStatus = totalDeductions > 0 ? 'pending' : 'not_applicable';
+    }
+    const authorLabelForHistory = isCorrection ? null : authorIsDg ? null : await actorLabel(conn, userId);
+    const reviewHistory = authorLabelForHistory
+      ? appendReviewHistory(report.review_history, { type: 'validated', by: authorLabelForHistory })
+      : report.review_history;
+
     await conn.query(
       `UPDATE move_out_reports
        SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
@@ -399,7 +632,10 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
            rent_owed_amount = :rentOwedGross, balance_due_amount = :shortfall, balance_resolution = :balanceResolution,
            balance_payment_method = :balancePaymentMethod, balance_note = :balanceNote,
            gl_regularized_at = NULL, gl_regularized_by = NULL,
-           correction_changes = :correctionChanges, pre_reopen_snapshot = NULL
+           correction_changes = :correctionChanges, pre_reopen_snapshot = NULL,
+           review_status = :reviewStatus, reviewed_at = :reviewedAt, reviewed_by = :reviewedBy, review_history = :reviewHistory,
+           payout_status = :payoutStatus, payout_direction = :payoutDirection, payout_amount = :payoutAmount,
+           payout_method = :payoutMethod, payout_paid_at = :payoutPaidAt, payout_paid_by = :payoutPaidBy
        WHERE lease_id = :leaseId`,
       {
         by: userId,
@@ -418,6 +654,19 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
         balanceNote,
         leaseId,
         correctionChanges: correctionChanges ? JSON.stringify(correctionChanges) : null,
+        // Une correction (DG, déjà validé plus tôt) ou un PV conduit par le DG lui-même : déjà/toujours
+        // 'validated', jamais remis en jeu par cette refinalisation.
+        reviewStatus: isCorrection || authorIsDg ? report.review_status === 'draft' ? 'validated' : report.review_status : 'validated',
+        reviewedAt: isCorrection || authorIsDg ? report.reviewed_at : new Date(),
+        reviewedBy: isCorrection || authorIsDg ? report.reviewed_by : userId,
+        reviewHistory,
+        payoutStatus,
+        payoutDirection,
+        payoutAmount,
+        // Cas simple sans retenue : déjà payé, le même paiement/méthode que le choix fait ici.
+        payoutMethod: payoutStatus === 'paid' ? refundPaymentMethod : null,
+        payoutPaidAt: payoutStatus === 'paid' ? new Date() : null,
+        payoutPaidBy: payoutStatus === 'paid' ? userId : null,
       },
     );
 
@@ -481,38 +730,54 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
     }
     finalizedAdditionalDeposits = await listLeaseDeposits(tenantId, leaseId, conn);
 
-    // Module comptabilité SYSCOHADA (nouveau) — restitution SIMPLE
-    // uniquement (aucune retenue) : le sort comptable d'une retenue sur
-    // caution (produit du cabinet ? compensation pour le propriétaire ?)
-    // est un choix de jugement comptable non tranché (voir seed, règle
-    // `caution_restituee`) — jamais inventé ici. Avec retenue, la caution
-    // reste "à régulariser manuellement" — désormais aussi signalée
-    // durablement dans « Mes tâches » (routes/tasks.js) tant que personne
-    // ne l'a marquée réglée, pas seulement dans cette réponse ponctuelle.
+    // Module comptabilité SYSCOHADA — restitution SIMPLE uniquement (aucune retenue) : postée
+    // immédiatement, comportement historique inchangé. AVEC retenue ou complément dû par le locataire
+    // (migration 139, demande utilisateur 2026-11-03) : plus aucune écriture ici — le bouton « Payer le
+    // locataire »/« Encaisser le complément » (`recordTenantPayout`) poste alors `caution_restituee_avec_retenue`
+    // ou `complement_sortie_encaisse_proprietaire` au moment du paiement réel, jamais à la seule
+    // finalisation. Visible tant que non réglé dans « Mes tâches »/tableau de bord DG, que le module
+    // comptabilité soit actif ou non (`listPendingMoveOutPayouts`, services/inspection.js).
     let depositAccountingNote = null;
-    if (await isModuleActive(conn, tenantId)) {
-      if (totalDeductions === 0 && netRefund > 0) {
-        await genererEcriture(conn, {
-          tenantId: tenantId,
-          operationType: 'caution_restituee',
-          entryDate: report.conducted_at,
-          amount: netRefund,
-          paymentMethod: refundPaymentMethod,
-          narrationVars: { locataire: renterName },
-          sourceTable: 'move_out_reports',
-          sourceId: report.id,
-          createdBy: userId,
-          context: { leaseId },
-        });
-      } else if (depositAmount > 0) {
-        depositAccountingNote = rentArrearsAmount > 0
-          ? `Caution avec retenue (dont ${rentArrearsAmount} FCFA d'arriérés de loyer réglés via la caution) : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d'une retenue sur caution n'est pas encore automatisé). Ce rappel reste visible dans « Mes tâches » jusqu'à ce qu'il soit marqué réglé.`
-          : 'Caution avec retenue : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d\'une retenue sur caution n\'est pas encore automatisé). Ce rappel reste visible dans « Mes tâches » jusqu\'à ce qu\'il soit marqué réglé.';
-      }
+    if (totalDeductions === 0 && netRefund > 0 && (await isModuleActive(conn, tenantId))) {
+      await genererEcriture(conn, {
+        tenantId: tenantId,
+        operationType: 'caution_restituee',
+        entryDate: report.conducted_at,
+        amount: netRefund,
+        paymentMethod: refundPaymentMethod,
+        narrationVars: { locataire: renterName },
+        sourceTable: 'move_out_reports',
+        sourceId: report.id,
+        createdBy: userId,
+        context: { leaseId },
+      });
+    } else if (payoutStatus === 'pending') {
+      depositAccountingNote = payoutDirection === 'refund_to_tenant'
+        ? payoutAmount > 0
+          ? `Caution avec retenue${rentArrearsAmount > 0 ? ` (dont ${rentArrearsAmount} FCFA d'arriérés de loyer réglés via la caution)` : ''} : ${payoutAmount} FCFA restent à verser au locataire — bouton « Payer le locataire » sur sa fiche.`
+          : 'Caution entièrement absorbée par les dégradations (rien à rendre au locataire) : la retenue doit tout de même être créditée au propriétaire — bouton « Payer le locataire » sur sa fiche.'
+        : `Le locataire doit encore ${payoutAmount} FCFA — bouton « Encaisser le complément » sur sa fiche.`;
+    } else if (totalDeductions > 0) {
+      // Bug corrigé avant même la première exécution (relecture du 2026-11-03) : ce cas (ex.
+      // `balanceResolution === 'repairs_by_tenant'`, volontairement hors du nouveau circuit automatisé —
+      // voir plus haut) n'affichait PLUS aucun message du tout depuis l'ajout du circuit « Payer le
+      // locataire » (perdant le seul signal donné au DG) — message et mécanisme manuel préexistants
+      // (`listPendingDepositRegularizations`/« Mes tâches » → marquer réglé) restaurés à l'identique.
+      depositAccountingNote = rentArrearsAmount > 0
+        ? `Caution avec retenue (dont ${rentArrearsAmount} FCFA d'arriérés de loyer réglés via la caution) : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d'une retenue sur caution n'est pas automatisé dans ce cas). Ce rappel reste visible dans « Mes tâches » jusqu'à ce qu'il soit marqué réglé.`
+        : 'Caution avec retenue : à régulariser manuellement dans Comptabilité avancée → Journal → Écriture diverse (le sort comptable d\'une retenue sur caution n\'est pas automatisé dans ce cas). Ce rappel reste visible dans « Mes tâches » jusqu\'à ce qu\'il soit marqué réglé.';
     }
 
     await conn.commit();
     const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    if (authorLabelForHistory && report.submitted_by) {
+      sendPushToUser(report.submitted_by, {
+        title: 'PV de sortie validé',
+        body: `${authorLabelForHistory.name} a validé votre PV de sortie.`,
+        url: `/espace/locataires/${lease.renter_id ?? ''}`,
+        tag: `move-out-validated-${leaseId}`,
+      }).catch(() => {});
+    }
     return { row, depositAccountingNote, additionalDeposits: finalizedAdditionalDeposits, totalDeductions, netRefund };
   } catch (err) {
     await conn.rollback().catch(() => {});
@@ -529,6 +794,12 @@ async function reopenMoveOut(tenantId, userId, leaseId, reason) {
     await loadLease(conn, tenantId, leaseId, null);
     const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
     assertFinalized(report, 'état des lieux de sortie');
+    // Argent déjà réellement mouvementé (« Payer le locataire »/« Encaisser le complément ») — une
+    // réouverture rejouerait aveuglément les retenues/signatures sans jamais pouvoir annuler ce paiement
+    // déjà parti (demande utilisateur implicite : la traçabilité du décaissement doit rester fiable).
+    if (report.payout_status === 'paid' && report.total_deductions > 0) {
+      throw new ApiError(409, 'Le paiement de sortie a déjà été effectué pour ce locataire — cette fiche ne peut plus être rouverte.');
+    }
 
     // Bug corrigé (audit fermeture du mois, points 2 et 5, 16/10/2026) : SI une écriture "caution
     // restituée" existe (module actif), l'extourne ci-dessous la reverse, datée AUJOURD'HUI (date de
@@ -608,6 +879,195 @@ async function regularizeMoveOutGl(tenantId, userId, leaseId, scopeAgentId) {
   return row;
 }
 
+/**
+ * Décaissement manuel (sans FedaPay) d'un PV finalisé avec retenue/complément en attente (migration 139,
+ * demande utilisateur 2026-11-03) : « Payer le locataire » (direction `refund_to_tenant`) ou « Encaisser le
+ * complément » (`collect_from_tenant`). Poste la retenue au compte du PROPRIÉTAIRE (jamais en produit du
+ * cabinet — décision explicite, voir `caution_restituee_avec_retenue`/`complement_sortie_encaisse_proprietaire`
+ * dans db/seedGeneralLedger.js), sans aucune notification au propriétaire (« action interne »).
+ */
+async function recordTenantPayout(tenantId, userId, leaseId, scopeAgentId, { method, note } = {}) {
+  const conn = await pool.getConnection();
+  try {
+    await loadLease(conn, tenantId, leaseId, scopeAgentId); // vérifie le périmètre agent (404/403 si hors portée)
+    const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
+    assertFinalized(report, 'état des lieux de sortie');
+    if (report.payout_status !== 'pending') {
+      throw new ApiError(400, "Aucun décaissement en attente pour cette sortie.");
+    }
+    const REFUND_METHODS = ['especes', 'mobile_money', 'virement', 'cheque'];
+    if (!REFUND_METHODS.includes(method)) {
+      throw new ApiError(400, 'Mode de règlement requis.');
+    }
+
+    const [renterRows] = await conn.query(
+      'SELECT r.first_name, r.last_name FROM leases l JOIN renters r ON r.id = l.renter_id WHERE l.id = :leaseId LIMIT 1',
+      { leaseId },
+    );
+    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
+    const paidAtIso = new Date().toISOString().slice(0, 10);
+    await assertPeriodOpen(tenantId, paidAtIso);
+
+    await conn.beginTransaction();
+    await assertPeriodOpenLocked(conn, tenantId, paidAtIso);
+
+    if (await isModuleActive(conn, tenantId)) {
+      if (report.payout_direction === 'refund_to_tenant') {
+        await genererEcriture(conn, {
+          tenantId,
+          operationType: 'caution_restituee_avec_retenue',
+          entryDate: paidAtIso,
+          amount: Number(report.deposit_amount),
+          paymentMethod: method,
+          narrationVars: { locataire: renterName },
+          sourceTable: 'move_out_reports',
+          sourceId: report.id,
+          createdBy: userId,
+          context: { leaseId, retenueAmount: Number(report.total_deductions) },
+        });
+      } else {
+        // Bug corrigé avant même la première exécution (relecture du 2026-11-03) : quand les dégâts
+        // DÉPASSENT la caution (`collect_from_tenant`), la caution (165) n'était jamais éteinte ni sa
+        // part créditée au propriétaire — seul le COMPLÉMENT collecté auprès du locataire l'était.
+        // Deux écritures, dans la même transaction : (1) extinction de la caution, intégralement
+        // créditée au propriétaire (`retenueAmount` = le dépôt en entier, `netRefund` = 0 par
+        // construction ici, donc rien à rendre) ; (2) le complément au-delà de la caution, encaissé
+        // auprès du locataire et lui aussi entièrement crédité au propriétaire (même traitement que la
+        // retenue — sert à la remise en état, jamais un produit du cabinet).
+        await genererEcriture(conn, {
+          tenantId,
+          operationType: 'caution_restituee_avec_retenue',
+          entryDate: paidAtIso,
+          amount: Number(report.deposit_amount),
+          paymentMethod: method,
+          narrationVars: { locataire: renterName },
+          sourceTable: 'move_out_reports',
+          sourceId: report.id,
+          createdBy: userId,
+          context: { leaseId, retenueAmount: Number(report.deposit_amount) },
+        });
+        await genererEcriture(conn, {
+          tenantId,
+          operationType: 'complement_sortie_encaisse_proprietaire',
+          entryDate: paidAtIso,
+          amount: Number(report.payout_amount),
+          paymentMethod: method,
+          narrationVars: { locataire: renterName },
+          sourceTable: 'move_out_reports',
+          sourceId: report.id,
+          createdBy: userId,
+          context: { leaseId },
+        });
+      }
+    }
+
+    const by = await actorLabel(conn, userId);
+    await conn.query(
+      `UPDATE move_out_reports
+       SET payout_status = 'paid', payout_method = :method, payout_paid_at = NOW(), payout_paid_by = :by,
+           review_history = :history
+       WHERE lease_id = :leaseId`,
+      {
+        method,
+        by: userId,
+        history: appendReviewHistory(report.review_history, {
+          type: report.payout_direction === 'refund_to_tenant' ? 'tenant_paid' : 'balance_collected',
+          by,
+          amount: Number(report.payout_amount),
+          method,
+          note: note || null,
+        }),
+        leaseId,
+      },
+    );
+
+    await conn.commit();
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    return { row };
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+/**
+ * Frais de service de l'agence, prélevés sur le solde propriétaire déjà crédité pour une réparation
+ * (demande utilisateur, 2026-11-03) : montant LIBRE saisi par le DG à chaque fois (jamais un taux fixe),
+ * devient un vrai produit du cabinet (compte 706) — visible dans le tableau de bord/recette. Exige que le
+ * décaissement ait déjà été effectué (le propriétaire doit déjà avoir été crédité) ; une seule fois par PV.
+ */
+async function chargeRepairFee(tenantId, userId, leaseId, scopeAgentId, { amount, note } = {}) {
+  const conn = await pool.getConnection();
+  try {
+    await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
+    assertFinalized(report, 'état des lieux de sortie');
+    if (report.payout_status !== 'paid') {
+      throw new ApiError(400, "Le propriétaire doit d'abord être crédité (décaissement effectué) avant de prélever des frais de service.");
+    }
+    if (report.repair_fee_charged_at) {
+      throw new ApiError(409, 'Des frais de service ont déjà été prélevés sur ce PV.');
+    }
+    const feeAmount = Number(amount);
+    if (!Number.isFinite(feeAmount) || feeAmount <= 0) {
+      throw new ApiError(400, 'Montant des frais de service invalide.');
+    }
+
+    const [renterRows] = await conn.query(
+      'SELECT r.first_name, r.last_name FROM leases l JOIN renters r ON r.id = l.renter_id WHERE l.id = :leaseId LIMIT 1',
+      { leaseId },
+    );
+    const renterName = renterRows[0] ? `${renterRows[0].first_name} ${renterRows[0].last_name}` : 'Locataire';
+    const chargedAtIso = new Date().toISOString().slice(0, 10);
+    await assertPeriodOpen(tenantId, chargedAtIso);
+
+    await conn.beginTransaction();
+    await assertPeriodOpenLocked(conn, tenantId, chargedAtIso);
+
+    if (await isModuleActive(conn, tenantId)) {
+      await genererEcriture(conn, {
+        tenantId,
+        operationType: 'frais_reparation_preleve_proprietaire',
+        entryDate: chargedAtIso,
+        amount: feeAmount,
+        paymentMethod: null,
+        narrationVars: { locataire: renterName },
+        sourceTable: 'move_out_reports',
+        sourceId: report.id,
+        createdBy: userId,
+        context: { leaseId },
+      });
+    }
+
+    const feeNote = typeof note === 'string' && note.trim() ? note.trim().slice(0, 255) : null;
+    const by = await actorLabel(conn, userId);
+    await conn.query(
+      `UPDATE move_out_reports
+       SET repair_fee_amount = :amount, repair_fee_note = :note, repair_fee_charged_at = NOW(), repair_fee_charged_by = :by,
+           review_history = :history
+       WHERE lease_id = :leaseId`,
+      {
+        amount: feeAmount,
+        note: feeNote,
+        by: userId,
+        history: appendReviewHistory(report.review_history, { type: 'repair_fee_charged', by, amount: feeAmount, note: feeNote }),
+        leaseId,
+      },
+    );
+
+    await conn.commit();
+    const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
+    return { row };
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 /** Données du PV de sortie (fiche finalisée uniquement). */
 async function getMoveOutPdfData(tenantId, leaseId, scopeAgentId) {
   const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
@@ -638,10 +1098,14 @@ module.exports = {
   getMoveOutReport,
   startMoveOutReport,
   updateMoveOutDraft,
+  submitMoveOutReport,
+  rejectMoveOutReview,
   addMoveOutPhoto,
   deleteMoveOutPhoto,
   finalizeMoveOut,
   reopenMoveOut,
   regularizeMoveOutGl,
+  recordTenantPayout,
+  chargeRepairFee,
   getMoveOutPdfData,
 };

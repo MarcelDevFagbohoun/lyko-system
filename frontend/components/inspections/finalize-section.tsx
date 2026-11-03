@@ -18,6 +18,7 @@ export function FinalizeSection({
   error,
   tenantName,
   printedSignatures = false,
+  mode = "finalize",
 }: {
   onFinalize: (tenantSignature: Blob | null, agentSignature: Blob | null, tenantReserves: string) => void | Promise<void>;
   submitting: boolean;
@@ -26,6 +27,13 @@ export function FinalizeSection({
   tenantName?: string;
   /** États des lieux : pas de signature numérique, le PV imprimé est signé à la main par les deux parties. */
   printedSignatures?: boolean;
+  /**
+   * Circuit de validation DG (demande utilisateur, 2026-11-03) : un employé « soumet » (le PV reste un
+   * brouillon modifiable, en attente de validation) au lieu de « finaliser » (verrouillage définitif,
+   * réservé au DG) — même formulaire, juste le texte et le bouton qui changent. `tenantReserves` n'a de
+   * sens qu'à la finalisation (voir `submitMoveOutReport`, qui ne l'accepte pas) : masqué en mode « submit ».
+   */
+  mode?: "finalize" | "submit";
 }) {
   const { user } = useAuth();
   const agentName = user ? `${user.firstName} ${user.lastName}` : undefined;
@@ -58,26 +66,30 @@ export function FinalizeSection({
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-border bg-surface-muted p-4">
       <div>
-        <h3 className="font-label-lg text-ink">Finaliser la fiche</h3>
+        <h3 className="font-label-lg text-ink">{mode === "submit" ? "Soumettre pour validation" : "Finaliser la fiche"}</h3>
         <p className="text-body-sm text-ink-muted">
-          Une fois finalisée, la fiche est verrouillée et ne peut plus être modifiée.
+          {mode === "submit"
+            ? "Le PV est transmis à la direction générale pour validation — vous pourrez encore le corriger si elle le renvoie."
+            : "Une fois finalisée, la fiche est verrouillée et ne peut plus être modifiée."}
         </p>
       </div>
 
       {(error || localError) && <p className="text-body-sm text-danger-fg">{error || localError}</p>}
 
-      <div className="flex flex-col gap-1.5">
-        <label className="font-label-sm text-ink-soft">
-          Réserves du locataire (optionnel — s&apos;il n&apos;est pas d&apos;accord sur un point précis)
-        </label>
-        <textarea
-          value={tenantReserves}
-          onChange={(e) => setTenantReserves(e.target.value)}
-          rows={2}
-          placeholder="Ex. Le locataire conteste l'état du carrelage de la chambre."
-          className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        />
-      </div>
+      {mode === "finalize" && (
+        <div className="flex flex-col gap-1.5">
+          <label className="font-label-sm text-ink-soft">
+            Réserves du locataire (optionnel — s&apos;il n&apos;est pas d&apos;accord sur un point précis)
+          </label>
+          <textarea
+            value={tenantReserves}
+            onChange={(e) => setTenantReserves(e.target.value)}
+            rows={2}
+            placeholder="Ex. Le locataire conteste l'état du carrelage de la chambre."
+            className="w-full rounded border border-border-strong bg-surface px-3 py-2 text-body-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </div>
+      )}
 
       {printedSignatures ? (
         <p className="text-body-sm text-ink-muted">
@@ -93,7 +105,13 @@ export function FinalizeSection({
 
       <Button type="button" size="lg" onClick={handleFinalize} disabled={submitting} className="self-start">
         <Lock size={16} />
-        {submitting ? "Finalisation…" : "Finaliser et verrouiller"}
+        {mode === "submit"
+          ? submitting
+            ? "Envoi…"
+            : "Soumettre pour validation"
+          : submitting
+            ? "Finalisation…"
+            : "Finaliser et verrouiller"}
       </Button>
     </div>
   );

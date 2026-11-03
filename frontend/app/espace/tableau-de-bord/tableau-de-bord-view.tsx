@@ -11,6 +11,7 @@ import {
   Droplets,
   Scale,
   PiggyBank,
+  Wallet,
   ClipboardCheck,
   Sparkles,
 } from "lucide-react";
@@ -242,6 +243,43 @@ function TableauDeBordContent() {
                         </p>
                       </div>
                       <span className="tabular text-body-sm text-danger-fg">{formatFcfa(d.totalDeductions)}</span>
+                    </Link>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {overview && overview.inspections.pendingMoveOutPayouts.length > 0 && (
+              <Card tone={CADRES.finances.tone} className="border-l-4 border-l-danger-strong">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-danger text-white">
+                        <Wallet size={14} />
+                      </span>
+                      <CardTitle>Décaissements de sortie à exécuter</CardTitle>
+                    </div>
+                    <Badge variant="danger">{overview.inspections.pendingMoveOutPayouts.length}</Badge>
+                  </div>
+                  <CardDescription>
+                    PV de sortie validés : caution à restituer au locataire ou complément à encaisser de sa part.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2">
+                  {overview.inspections.pendingMoveOutPayouts.map((p) => (
+                    <Link
+                      key={p.leaseId}
+                      href={`/espace/locataires/${p.renterId}/sortie?leaseId=${p.leaseId}`}
+                      className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 hover:bg-surface-hover"
+                    >
+                      <div>
+                        <p className="font-label-md text-ink">{p.renterName}</p>
+                        <p className="text-body-xs text-ink-muted">
+                          {p.direction === "refund_to_tenant" ? "Caution à restituer" : "Complément à encaisser"} ·
+                          sortie finalisée le {new Date(p.finalizedAt).toLocaleDateString("fr-FR")}
+                        </p>
+                      </div>
+                      <span className="tabular text-body-sm text-danger-fg">{formatFcfa(p.amount)}</span>
                     </Link>
                   ))}
                 </CardContent>

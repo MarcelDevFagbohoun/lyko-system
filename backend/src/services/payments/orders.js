@@ -136,6 +136,39 @@ async function resolvePurpose(tenantId, input) {
     };
   }
 
+  if (input.purpose === 'remboursement_caution_locataire') {
+    // Montant JAMAIS fourni par le client : relu sur le PV de sortie lui-même, qui a déjà figé
+    // `payout_amount`/`payout_direction` à la finalisation (migration 139, demande utilisateur
+    // 2026-11-03). `beneficiary_type` réutilise 'other' (aucune colonne dédiée) — le libellé/`context`
+    // suffisent à retrouver l'opération depuis `applyOrder`.
+    const [[report]] = await pool.query(
+      `SELECT mo.id, mo.payout_status, mo.payout_direction, mo.payout_amount, r.first_name, r.last_name
+       FROM move_out_reports mo
+       JOIN leases l ON l.id = mo.lease_id
+       JOIN renters r ON r.id = l.renter_id
+       WHERE mo.lease_id = :leaseId AND mo.tenant_id = :tenantId AND mo.status = 'finalized' LIMIT 1`,
+      { leaseId: input.leaseId, tenantId },
+    );
+    if (!report) throw new ApiError(404, 'PV de sortie introuvable ou non finalisé pour ce bail.');
+    if (report.payout_status !== 'pending' || report.payout_direction !== 'refund_to_tenant') {
+      throw new ApiError(400, 'Aucune restitution de caution en attente pour ce locataire.');
+    }
+    // La caution peut être entièrement absorbée par les dégâts (rien à rendre, `payout_amount = 0`) —
+    // la retenue doit tout de même être traitée (crédit propriétaire), mais FedaPay ne peut pas envoyer
+    // un paiement de 0 FCFA : ce cas passe obligatoirement par l'enregistrement manuel
+    // (`POST .../move-out-report/pay-tenant`, services/moveOutReport.js `recordTenantPayout`).
+    if (Number(report.payout_amount) <= 0) {
+      throw new ApiError(400, "Rien à verser au locataire pour cette sortie — utilisez l'enregistrement manuel pour traiter la retenue.");
+    }
+    const name = `${report.first_name} ${report.last_name}`;
+    return {
+      amount: Number(report.payout_amount),
+      beneficiary: { type: 'other', userId: null, ownerId: null, name, email: input.beneficiaryEmail ?? null },
+      label: `Restitution caution (sortie) — ${name}`,
+      context: { leaseId: input.leaseId, moveOutReportId: report.id },
+    };
+  }
+
   return {
     amount: input.amount,
     beneficiary: { type: 'other', userId: null, ownerId: null, name: input.beneficiaryName, email: input.beneficiaryEmail ?? null },
@@ -252,7 +285,41 @@ async function applyOrder(tenantId, orderId, { req = null } = {}) {
     try {
       await assertPeriodOpenLocked(conn, tenantId, paidAt);
       // Chargés ici pour éviter une dépendance circulaire au chargement des modules de routes.
-      if (order.purpose === 'reversement_proprietaire') {
+      if (order.purpose === 'remboursement_caution_locataire') {
+        // Même écriture GL que le décaissement manuel (`recordTenantPayout`, services/moveOutReport.js) —
+        // la retenue reste créditée au PROPRIÉTAIRE (jamais au cabinet), sans notification (action interne).
+        const [[report]] = await conn.query('SELECT * FROM move_out_reports WHERE id = :id AND tenant_id = :tenantId FOR UPDATE', {
+          id: context.moveOutReportId, tenantId,
+        });
+        if (!report || report.payout_status !== 'pending') {
+          throw new ApiError(409, 'Ce PV de sortie a déjà été réglé par un autre moyen.');
+        }
+        const [[renterRow]] = await conn.query(
+          'SELECT r.first_name, r.last_name FROM leases l JOIN renters r ON r.id = l.renter_id WHERE l.id = :leaseId LIMIT 1',
+          { leaseId: context.leaseId },
+        );
+        const renterName = renterRow ? `${renterRow.first_name} ${renterRow.last_name}` : 'Locataire';
+        if (await isModuleActive(conn, tenantId)) {
+          await genererEcriture(conn, {
+            tenantId,
+            operationType: 'caution_restituee_avec_retenue',
+            entryDate: paidAt,
+            amount: Number(report.deposit_amount),
+            paymentMethod: 'mobile_money',
+            narrationVars: { locataire: renterName },
+            sourceTable: 'move_out_reports',
+            sourceId: report.id,
+            createdBy: order.created_by,
+            context: { leaseId: context.leaseId, retenueAmount: Number(report.total_deductions) },
+          });
+        }
+        await conn.query(
+          `UPDATE move_out_reports SET payout_status = 'paid', payout_method = 'mobile_money', payout_paid_at = NOW(), payout_paid_by = :by
+           WHERE id = :id`,
+          { by: order.created_by, id: report.id },
+        );
+        appliedRef = `move_out_reports:${report.id}`;
+      } else if (order.purpose === 'reversement_proprietaire') {
         const { recordOwnerPayout } = require('../owners');
         const [[owner]] = await conn.query('SELECT * FROM owners WHERE id = :id AND tenant_id = :tenantId', { id: context.ownerId, tenantId });
         const payoutId = await recordOwnerPayout(conn, {

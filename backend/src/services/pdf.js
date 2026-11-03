@@ -201,13 +201,13 @@ function drawPanelRow(doc, label, value, x, y, { labelWidth = 280, valueWidth = 
     .text(value, x + labelWidth, y, { width: valueWidth, align: 'right' });
 }
 
-/** Carte de signature de l'émetteur (employé qui a encaissé, sinon cachet/signature de l'entreprise). */
+/** Carte de cachet de l'émetteur (employé qui a encaissé, sinon cachet de l'entreprise) — plus de
+ * signature téléversée séparément (demande utilisateur, 2026-11-02) : seul le cachet subsiste. */
 function issuerCard(tenant, issuer, title) {
   return {
     title,
     name: issuer ? `${issuer.first_name} ${issuer.last_name}` : tenant.company_name,
     role: issuer ? resolveRoleLabels(tenant)[issuer.role] ?? issuer.role : null,
-    signatureFile: D.imageIfExists(issuer?.signature_path || tenant.signature_path),
     stampFile: D.imageIfExists(issuer?.stamp_path || tenant.stamp_path),
   };
 }
@@ -255,17 +255,18 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
  * quittance certifie un paiement DÉJÀ reçu (pas une facture à régler) :
  * aucun sous-total/TVA/remise (n'existe pas pour un loyer au Bénin), et
  * aucun bloc « comment payer » (sans objet ici) — remplacé par le
- * cachet/signature déjà existant. Décisions explicites de l'utilisateur :
+ * cachet déjà existant. Décisions explicites de l'utilisateur :
  * le bloc « adresse du cabinet » du modèle reste RCCM/IFU/téléphone (aucune
  * adresse en base), le bloc « informations de paiement » devient le
- * cachet/signature (aucune coordonnée bancaire en base, et sans objet sur
+ * cachet (aucune coordonnée bancaire en base, et sans objet sur
  * une preuve de paiement déjà réglé).
  *
  * `issuer` : l'employé qui a réellement encaissé ce paiement précis
- * (`rent_payments.recorded_by`) — son cachet/sa signature/son nom sont
+ * (`rent_payments.recorded_by`) — son cachet/son nom sont
  * apposés s'il les a téléversés (`/api/auth/my-profile`), sinon on retombe
- * sur ceux de l'entreprise (`tenant.stamp_path`/`signature_path`), comme
- * avant cette fonctionnalité.
+ * sur ceux de l'entreprise (`tenant.stamp_path`), comme
+ * avant cette fonctionnalité. Plus de « signature » séparée (demande
+ * utilisateur, 2026-11-02).
  */
 function streamReceiptPdf(res, { tenant, renter, property, lease, payment, receipt, issuer, verificationCode }) {
   // Bail calendaire : nom du mois ; bail non-calendaire : plage de dates réelle de la période
@@ -457,7 +458,7 @@ function streamPaymentAdvicePdf(res, { tenant, order }) {
  * Reçu de sortie d'argent saisie manuellement (reversement, dépense, restitution de caution) : atteste du montant,
  * du bénéficiaire, du mode de règlement et de la date. Pas de numéro de compte.
  */
-function streamOperationReceiptPdf(res, { tenant, op }) {
+function streamOperationReceiptPdf(res, { tenant, op, issuer = null }) {
   const methodLabels = { especes: 'Espèces', mobile_money: 'Mobile Money', virement: 'Virement', cheque: 'Chèque' };
   const dateFr = formatDateFr(op.date);
   renderReceiptDocument(res, {
@@ -482,7 +483,10 @@ function streamOperationReceiptPdf(res, { tenant, op }) {
     wordsPrefix: 'Arrêté le présent reçu à la somme de',
     note: op.note ?? 'Document généré automatiquement.',
     signatureTitle: tenant.company_name,
-    issuer: null,
+    // Cachet de qui a RÉELLEMENT payé (DG ou comptable) — jamais fixé au DG, qui n'est obligatoire que
+    // sur le contrat de bail (demande utilisateur, 2026-11-03) ; repli sur le cachet de l'entreprise si
+    // l'opération n'a pas d'auteur identifié (`issuerCard` gère déjà ce repli).
+    issuer,
   });
 }
 
@@ -849,75 +853,36 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
     drawContractArticle(doc, 9, 'Conditions particulières', normalizeLineBreaks(data.particularConditions));
   }
 
-  // --- Signatures des deux parties, jamais coupées entre deux pages. ---
-  // Cachet/signature agrandis (demande utilisateur, 2026-10-23) — voir le bloc plus bas.
-  const SIGNATURE_BLOCK_HEIGHT = 210;
+  // --- Cachet de l'entreprise, jamais coupé entre deux pages. ---
+  // Plus de signatures numériques (demande utilisateur, 2026-11-02) : le contrat finalisé porte
+  // OBLIGATOIREMENT le cachet du DG (vérifié avant finalisation, voir `leaseContractActions.js`) —
+  // plus aucune zone de signature pour le locataire ni pour l'agent.
+  const SIGNATURE_BLOCK_HEIGHT = 170;
   if (doc.y + SIGNATURE_BLOCK_HEIGHT > doc.page.height - doc.page.margins.bottom) doc.addPage();
   doc.moveDown(0.5);
   doc.font(SERIF).fontSize(10).fillColor(CK.INK).text('Fait en deux exemplaires originaux, chacune des parties reconnaissant en avoir reçu un.', 50, doc.y, { width: 495 });
   doc.moveDown(1.2);
 
   const sigTop = doc.y;
-  doc.font(SERIF_BOLD).fontSize(8).fillColor(CK.MUTED).text('LE LOCATAIRE', 50, sigTop, { characterSpacing: 0.5 });
   doc.font(SERIF_BOLD).fontSize(8).fillColor(CK.MUTED).text("POUR LE BAILLEUR (L'ENTREPRISE)", 315, sigTop, { characterSpacing: 0.5 });
 
-  const tenantSigUrl = contract.tenantSignatureUrl;
-  const agentSigUrl = contract.agentSignatureUrl;
   const sigImgY = sigTop + 16;
-  // Cachet/signature agrandis (demande utilisateur, 2026-10-23) : signature et cachet plus grands et
-  // plus lisibles, sans se chevaucher ni déborder de la page — nom/fonction redescendus sous le plus
-  // bas des deux (le cachet, désormais plus haut que la signature).
-  if (tenantSigUrl) {
-    const f = uploadedFile(tenantSigUrl);
-    if (fs.existsSync(f)) {
-      try {
-        doc.image(f, 50, sigImgY, { fit: [220, 75] });
-      } catch {
-        // Signature illisible : on continue sans (page déjà valide sans elle).
-      }
-    }
-  } else {
-    doc.font(SERIF).fontSize(10).fillColor(CK.INK).text('_________________________', 50, sigImgY + 30);
-  }
-
-  const signatureFile = issuer?.signature_path
-    ? path.join(UPLOADS_ROOT, issuer.signature_path)
-    : tenant.signature_path
-      ? path.join(UPLOADS_ROOT, tenant.signature_path)
-      : null;
   const stampFile = issuer?.stamp_path
     ? path.join(UPLOADS_ROOT, issuer.stamp_path)
     : tenant.stamp_path
       ? path.join(UPLOADS_ROOT, tenant.stamp_path)
       : null;
-  if (agentSigUrl) {
-    const f = uploadedFile(agentSigUrl);
-    if (fs.existsSync(f)) {
-      try {
-        doc.image(f, 315, sigImgY, { fit: [150, 65] });
-      } catch {
-        // Signature illisible : repli sur celle de l'entreprise ci-dessous.
-      }
-    }
-  } else if (signatureFile && fs.existsSync(signatureFile)) {
-    try {
-      doc.image(signatureFile, 315, sigImgY, { fit: [150, 65] });
-    } catch {
-      // Signature illisible : ligne à signer par défaut.
-    }
-  } else {
-    doc.font(SERIF).fontSize(10).fillColor(CK.INK).text('_________________________', 315, sigImgY + 30);
-  }
   if (stampFile && fs.existsSync(stampFile)) {
     try {
-      doc.opacity(0.9).image(stampFile, 435, sigImgY, { fit: [110, 110] }).opacity(1);
+      doc.opacity(0.9).image(stampFile, 350, sigImgY, { fit: [120, 120] }).opacity(1);
     } catch {
-      // Cachet illisible : on continue sans (pas bloquant).
+      // Cachet illisible : on continue sans (pas bloquant pour l'affichage, mais la finalisation
+      // elle-même exige déjà ce cachet — voir leaseContractActions.js).
     }
   }
   if (issuer?.role) {
-    doc.font(SERIF_BOLD).fontSize(9).fillColor(CK.INK).text(`${issuer.first_name} ${issuer.last_name}`, 315, sigImgY + 118);
-    doc.font(SERIF).fontSize(8).fillColor(CK.MUTED).text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 315, sigImgY + 131);
+    doc.font(SERIF_BOLD).fontSize(9).fillColor(CK.INK).text(`${issuer.first_name} ${issuer.last_name}`, 315, sigImgY + 126);
+    doc.font(SERIF).fontSize(8).fillColor(CK.MUTED).text(resolveRoleLabels(tenant)[issuer.role] ?? issuer.role, 315, sigImgY + 139);
   }
 
   drawFooter(doc, { verificationCode });
@@ -1458,6 +1423,114 @@ function streamMoveInPdf(res, { tenant, renter, property, lease, report, verific
   drawSignatureBlock(doc, report, y, { tenantName, agentName, companyName: tenant.company_name });
 
   drawFooter(doc, { verificationCode });
+  doc.end();
+}
+
+/**
+ * Fiche VIERGE (entrée ou sortie), à imprimer pour un état des lieux réalisé entièrement à la main sur
+ * le terrain (demande utilisateur, 2026-11-03 : « reconstituer tous les éléments de notre état des lieux
+ * qu'on puisse télécharger... pour des états des lieux manuels »). Reconstitue la grille zones/éléments
+ * standard (`cloneMasterZones`, services/inspection.js) — jamais liée à un bail en particulier : un outil
+ * générique, téléchargeable à tout moment, à ressaisir ensuite dans l'écran habituel une fois rempli à la
+ * main. Trois cases à cocher par élément (Bon état / Mauvais état / Sous réserve — mêmes trois états que
+ * la saisie en ligne), une ligne d'observations, et (sortie uniquement) une ligne de retenue.
+ */
+function drawBlankChecklistZones(doc, zones, y, { showRetenue }) {
+  const ROW_H = showRetenue ? 92 : 78;
+  for (const zone of zones) {
+    y = ensureSpace(doc, y, 44);
+    doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, 24, 4).fill(PRIMARY_BG);
+    doc.rect(CONTENT_LEFT, y, 3, 24).fill(PRIMARY);
+    doc.font(FONT_SANS_BOLD).fontSize(10.5).fillColor(PRIMARY).text(zone.label, CONTENT_LEFT + 12, y + 7, { width: 400, lineBreak: false });
+    y += 32;
+
+    for (const item of zone.items) {
+      y = ensureSpace(doc, y, ROW_H);
+      doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, ROW_H - 8, 5).lineWidth(0.8).strokeColor(BORDER).stroke();
+      const PAD = 10;
+      let ly = y + 9;
+      doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text(item.label, CONTENT_LEFT + PAD, ly, { width: CONTENT_WIDTH - PAD * 2, lineBreak: false });
+      ly += 17;
+
+      // Trois cases à cocher (☐), mêmes trois états que la saisie en ligne (BE/ME/SR) — dessinées comme
+      // de vrais petits carrés (jamais un simple caractère ☐, peu fiable selon la police/le moteur PDF).
+      let cx = CONTENT_LEFT + PAD;
+      for (const code of ['BE', 'ME', 'SR']) {
+        doc.rect(cx, ly + 1, 9, 9).lineWidth(0.9).strokeColor(INK_SOFT).stroke();
+        doc.font(FONT_SANS).fontSize(8.5).fillColor(INK_SOFT).text(CONDITION_LABELS[code], cx + 14, ly, { lineBreak: false });
+        cx += 14 + doc.widthOfString(CONDITION_LABELS[code]) + 26;
+      }
+      ly += 20;
+
+      doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Observations :', CONTENT_LEFT + PAD, ly, { lineBreak: false });
+      doc.moveTo(CONTENT_LEFT + PAD + 68, ly + 7).lineTo(CONTENT_LEFT + CONTENT_WIDTH - PAD, ly + 7).lineWidth(0.6).strokeColor(BORDER_STRONG).stroke();
+      ly += 18;
+
+      if (showRetenue) {
+        doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Retenue (FCFA) :', CONTENT_LEFT + PAD, ly, { lineBreak: false });
+        doc.moveTo(CONTENT_LEFT + PAD + 78, ly + 7).lineTo(CONTENT_LEFT + 260, ly + 7).lineWidth(0.6).strokeColor(BORDER_STRONG).stroke();
+      }
+
+      y += ROW_H;
+    }
+    y += 6;
+  }
+  return y;
+}
+
+/** Cadre d'identification VIERGE (lignes à remplir à la main) — même esprit que `drawInfoPanel`, sans valeurs. */
+function drawBlankInfoPanel(doc, labels, y) {
+  y = ensureSpace(doc, y, 70);
+  y = D.drawSection(doc, y, 'Informations générales (à remplir)');
+  const colW = (CONTENT_WIDTH - 16) / 2;
+  labels.forEach((label, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = CONTENT_LEFT + col * (colW + 16);
+    const ly = y + row * 26;
+    doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text(label, x, ly, { lineBreak: false });
+    doc.moveTo(x, ly + 15).lineTo(x + colW, ly + 15).lineWidth(0.6).strokeColor(BORDER_STRONG).stroke();
+  });
+  return y + Math.ceil(labels.length / 2) * 26 + 10;
+}
+
+function streamInspectionBlankFormPdf(res, { tenant, kind, zones }) {
+  const isSortie = kind === 'sortie';
+  const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="etat-des-lieux-${kind}-fiche-vierge.pdf"`);
+  doc.pipe(res);
+
+  drawHeader(doc, tenant, {
+    title: isSortie ? 'ÉTAT DES LIEUX DE SORTIE' : "ÉTAT DES LIEUX D'ENTRÉE",
+    light: true,
+    subtitle: 'Fiche vierge — à remplir manuellement sur le terrain',
+  });
+  doc
+    .font(FONT_SANS)
+    .fontSize(8.5)
+    .fillColor(MUTED)
+    .text('Une fois complétée à la main, ressaisissez son contenu dans la fiche en ligne habituelle.', 50, doc.y, { width: CONTENT_WIDTH });
+
+  let y = doc.y + 16;
+  y = drawBlankInfoPanel(
+    doc,
+    isSortie
+      ? ['Locataire', 'Bien loué / Unité', 'Date de sortie', 'Réalisé par', 'Caution versée (FCFA)', 'Mode de règlement prévu']
+      : ['Locataire', 'Bien loué / Unité', "Date d'entrée", 'Réalisé par'],
+    y,
+  );
+  y = drawBlankChecklistZones(doc, zones, y, { showRetenue: isSortie });
+  y = ensureSpace(doc, y, 80);
+  doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Notes générales :', CONTENT_LEFT, y, { lineBreak: false });
+  y += 12;
+  for (let i = 0; i < 3; i += 1) {
+    doc.moveTo(CONTENT_LEFT, y).lineTo(CONTENT_LEFT + CONTENT_WIDTH, y).lineWidth(0.6).strokeColor(BORDER_STRONG).stroke();
+    y += 16;
+  }
+  drawPrintSignatureBoxes(doc, y, { tenantName: null, agentName: null, companyName: tenant.company_name });
+
+  drawFooter(doc);
   doc.end();
 }
 
@@ -2261,6 +2334,7 @@ module.exports = {
   streamUtilityCarnetPdf,
   streamMoveOutPdf,
   streamMoveInPdf,
+  streamInspectionBlankFormPdf,
   streamFinancialStatementsPdf,
   streamAccountingReportPdf,
   formatFcfa,

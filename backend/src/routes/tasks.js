@@ -20,7 +20,7 @@ const { listPortfolioArrears, listPredictiveLateAlerts } = require('../services/
 const { getPeriodClosability } = require('../services/accountingPeriods');
 const { getNextMonthToClose } = require('../services/closingOverview');
 const { isModuleActive } = require('../services/gl/glPostingService');
-const { listPendingDepositRegularizations } = require('../services/inspection');
+const { listPendingDepositRegularizations, listPendingMoveOutPayouts } = require('../services/inspection');
 const { isoDate } = require('../utils/dates');
 
 const router = Router();
@@ -185,11 +185,14 @@ router.get('/', async (req, res, next) => {
     let accountant = null;
     if (hasComptabilite) {
       const glActive = await isModuleActive(pool, tenantId);
-      const [pendingBatches, expensesWithoutReceipt, nextMonth, pendingDepositRegularizations] = await Promise.all([
+      const [pendingBatches, expensesWithoutReceipt, nextMonth, pendingDepositRegularizations, pendingMoveOutPayouts] = await Promise.all([
         listPendingBatches(tenantId),
         listExpensesWithoutReceipt(tenantId),
         getNextMonthToClose(tenantId),
         glActive ? listPendingDepositRegularizations(tenantId) : Promise.resolve([]),
+        // Décaissements de sortie en attente (demande utilisateur, 2026-11-03) — indépendant du module
+        // comptabilité, le comptable doit le voir même sans comptabilité avancée activée.
+        listPendingMoveOutPayouts(tenantId),
       ]);
       // Étape 54 : le PROCHAIN mois à clôturer (les mois se clôturent dans l'ordre), plus le mois en
       // cours — qui n'est presque jamais clôturable. Nom du champ conservé pour le frontend.
@@ -197,7 +200,7 @@ router.get('/', async (req, res, next) => {
         nextMonth && nextMonth <= currentPeriod()
           ? await getPeriodClosability(tenantId, nextMonth).then((c) => ({ period: nextMonth, isClosable: c.isClosable }))
           : null;
-      accountant = { pendingBatches, expensesWithoutReceipt, currentMonthClosability, pendingDepositRegularizations };
+      accountant = { pendingBatches, expensesWithoutReceipt, currentMonthClosability, pendingDepositRegularizations, pendingMoveOutPayouts };
     }
 
     const assignedTasks = await listAssignedTasksFor(tenantId, req.user.id);

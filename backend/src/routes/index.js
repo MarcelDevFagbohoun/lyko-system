@@ -8,6 +8,7 @@ const employeeRoutes = require('./employees');
 const renterRoutes = require('./renters');
 const leaseRoutes = require('./leases');
 const inspectionCatalogRoutes = require('./inspectionCatalog');
+const inspectionToolsRoutes = require('./inspectionTools');
 const settingsRoutes = require('./settings');
 const propertyRoutes = require('./properties');
 const ownerRoutes = require('./owners');
@@ -78,6 +79,7 @@ router.use('/notes', noteRoutes);
 router.use('/renters', renterRoutes);
 router.use('/leases', leaseRoutes);
 router.use('/inspection-catalog', inspectionCatalogRoutes);
+router.use('/inspections', inspectionToolsRoutes);
 router.use('/complaints', complaintRoutes);
 router.use('/relances', relanceRoutes);
 // Abonnement : jamais derrière requireFeature (une entreprise expirée doit pouvoir renouveler).

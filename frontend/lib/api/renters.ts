@@ -163,6 +163,25 @@ export type MoveOutStatement = {
   shortfall: number;
 };
 
+/** Circuit de validation DG / décaissement (migration 139, demande utilisateur 2026-11-03). */
+export type ReviewStatus = "draft" | "submitted" | "rejected" | "validated";
+export type PayoutStatus = "not_applicable" | "pending" | "paid";
+export type PayoutDirection = "refund_to_tenant" | "collect_from_tenant" | null;
+
+/** Acteur d'une entrée de `reviewHistory` — forme un peu plus pauvre que `Actor` (pas de `roleLabel`, rôle brut). */
+export type ReviewHistoryActor = { name: string; role: "dg" | "comptable" | "agent" | null } | null;
+
+/** Journal en ajout seul (`services/moveOutReport.js` `appendReviewHistory`) — un type d'entrée par étape du circuit. */
+export type ReviewHistoryEntry = {
+  at: string;
+  type: "submitted" | "edited" | "rejected" | "validated" | "tenant_paid" | "balance_collected" | "repair_fee_charged";
+  by: ReviewHistoryActor;
+  note?: string | null;
+  changedFields?: string[];
+  amount?: number;
+  method?: string;
+};
+
 export type MoveOutReport = InspectionReport & {
   extraLines: ExitExtraLine[];
   rentOwedAmount: number;
@@ -185,6 +204,27 @@ export type MoveOutReport = InspectionReport & {
   refundPaymentMethod: PaymentMethod | null;
   glRegularizedAt: string | null;
   glRegularizedBy: Actor;
+  // Circuit de validation DG (demande utilisateur, 2026-11-03) — toujours 'validated' pour un PV
+  // saisi directement par le DG (pas de circuit de revue pour lui-même).
+  reviewStatus: ReviewStatus;
+  submittedAt: string | null;
+  submittedBy: Actor;
+  reviewedAt: string | null;
+  reviewedBy: Actor;
+  reviewNote: string | null;
+  reviewHistory: ReviewHistoryEntry[];
+  // Décaissement réel (distinct du simple choix de méthode ci-dessus, voir migration 139).
+  payoutStatus: PayoutStatus;
+  payoutDirection: PayoutDirection;
+  payoutAmount: number | null;
+  payoutMethod: PaymentMethod | null;
+  payoutPaidAt: string | null;
+  payoutPaidBy: Actor;
+  // Frais de gestion de la réparation prélevés par le cabinet sur le solde propriétaire.
+  repairFeeAmount: number | null;
+  repairFeeNote: string | null;
+  repairFeeChargedAt: string | null;
+  repairFeeChargedBy: Actor;
 };
 
 /** Règlement (total ou partiel) des impayés existants d'un bail à l'entrée. */
@@ -663,8 +703,6 @@ export type LeaseContract = {
   id: number;
   status: "draft" | "finalized";
   particularConditions: string | null;
-  tenantSignatureUrl: string | null;
-  agentSignatureUrl: string | null;
   finalizedAt: string | null;
   finalizedBy: Actor | null;
   createdBy: Actor;
@@ -693,14 +731,12 @@ export function updateContract(accessToken: string, leaseId: number, particularC
   });
 }
 
-export function finalizeContract(accessToken: string, leaseId: number, tenantSignature: Blob, agentSignature: Blob) {
-  const fd = new FormData();
-  fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
-  fd.append("agentSignature", agentSignature, "signature-agent.png");
+/** Plus de signatures à fournir (demande utilisateur, 2026-11-02) : le serveur refuse lui-même si le
+ * DG n'a pas de cachet téléversé (Mon compte) — c'est ce cachet, et lui seul, qui signe le contrat. */
+export function finalizeContract(accessToken: string, leaseId: number) {
   return apiFetch<{ contract: LeaseContract; preview: LeaseContractData }>(`/api/leases/${leaseId}/contract/finalize`, {
     method: "POST",
     accessToken,
-    body: fd,
   });
 }
 
@@ -870,6 +906,58 @@ export function reopenMoveOutReport(accessToken: string, leaseId: number, reason
   );
 }
 
+/**
+ * Soumet le PV pour validation DG (demande utilisateur, 2026-11-03) — un employé (pas le DG lui-même)
+ * soumet son PV au lieu de le finaliser directement ; signatures prises ici (`printedSignatures`, donc
+ * `null`/`null` dans l'usage actuel), jamais redemandées à la validation. Peut être resoumis après un rejet.
+ */
+export function submitMoveOutReport(accessToken: string, leaseId: number, tenantSignature: Blob | null, agentSignature: Blob | null) {
+  const fd = new FormData();
+  if (tenantSignature) fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
+  if (agentSignature) fd.append("agentSignature", agentSignature, "signature-agent.png");
+  return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/submit`, {
+    method: "POST",
+    accessToken,
+    body: fd,
+  });
+}
+
+/** Rejette un PV soumis (DG uniquement) — note obligatoire, le PV repasse en brouillon modifiable. */
+export function rejectMoveOutReview(accessToken: string, leaseId: number, note: string) {
+  return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/reject`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note }),
+  });
+}
+
+/** Mode de règlement du décaissement/encaissement manuel — même liste que `REFUND_PAYMENT_METHODS` (shared.tsx). */
+export type ManualPayoutMethod = "especes" | "mobile_money" | "virement" | "cheque";
+
+/**
+ * Décaissement MANUEL (sans FedaPay) de la restitution de caution avec retenue, ou encaissement du
+ * complément dû par le locataire (même route, la direction est déjà figée sur le PV). DG ou comptable.
+ */
+export function recordTenantPayout(accessToken: string, leaseId: number, input: { method: ManualPayoutMethod; note?: string }) {
+  return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/pay-tenant`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Frais de service de l'agence pour la gestion d'une réparation, prélevés sur le solde propriétaire. */
+export function chargeRepairFee(accessToken: string, leaseId: number, input: { amount: number; note?: string }) {
+  return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/repair-fee`, {
+    method: "POST",
+    accessToken,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 /** Marque comme réglée (à la main, en comptabilité) une restitution de caution avec retenue. */
 export function markMoveOutGlRegularized(accessToken: string, leaseId: number) {
   return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/gl-regularized`, {
@@ -912,6 +1000,15 @@ export function deleteInspectionItemPhoto(
 
 export function moveOutReportPdfPath(leaseId: number) {
   return `/api/leases/${leaseId}/move-out-report.pdf`;
+}
+
+/**
+ * Formulaire d'état des lieux VIERGE (entrée ou sortie), indépendant de tout bail — pour une saisie
+ * manuelle sur le terrain quand la plateforme n'est pas utilisée directement (demande utilisateur,
+ * 2026-11-03). Voir `routes/inspectionTools.js`.
+ */
+export function inspectionBlankFormPdfPath(kind: "entree" | "sortie") {
+  return `/api/inspections/blank-form.pdf?kind=${kind}`;
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   Receipt,
   ShieldAlert,
   Sparkles,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -158,6 +159,18 @@ function buildItems(tasks: MyTasks | null, closing: ClosingOverview | null, isDg
         detail: "La sortie est finalisée, mais la retenue n'apparaît pas encore en comptabilité.",
         cta: "Régulariser",
         href: deposits.length === 1 ? `/espace/locataires/${deposits[0].renterId}/sortie?leaseId=${deposits[0].leaseId}` : "/espace/planning",
+      });
+    }
+    const payouts = tasks.accountant.pendingMoveOutPayouts;
+    if (payouts.length > 0) {
+      items.push({
+        key: "decaissements-sortie",
+        severity: "urgent",
+        icon: Wallet,
+        title: `${payouts.length} ${plural(payouts.length, "décaissement de sortie à exécuter", "décaissements de sortie à exécuter")}`,
+        detail: "Caution à restituer au locataire ou complément à encaisser de sa part.",
+        cta: "Traiter",
+        href: payouts.length === 1 ? `/espace/locataires/${payouts[0].renterId}/sortie?leaseId=${payouts[0].leaseId}` : "/espace/planning",
       });
     }
     const receipts = tasks.accountant.expensesWithoutReceipt;

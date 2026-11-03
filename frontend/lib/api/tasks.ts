@@ -56,11 +56,22 @@ export type PendingDepositRegularizationTask = {
   finalizedAt: string;
 };
 
+/** Décaissement de sortie en attente (migration 139) — même liste que côté tableau de bord DG. */
+export type PendingMoveOutPayoutTask = {
+  leaseId: number;
+  renterId: number;
+  renterName: string;
+  direction: "refund_to_tenant" | "collect_from_tenant";
+  amount: number;
+  finalizedAt: string;
+};
+
 export type AccountantTasks = {
   pendingBatches: PendingBatchTask[];
   expensesWithoutReceipt: ExpenseWithoutReceiptTask[];
   currentMonthClosability: { period: string; isClosable: boolean } | null;
   pendingDepositRegularizations: PendingDepositRegularizationTask[];
+  pendingMoveOutPayouts: PendingMoveOutPayoutTask[];
 };
 
 export type AssignedTaskSummary = {

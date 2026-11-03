@@ -394,10 +394,47 @@ const RULES = [
     journal: 'OD',
     narration_template: 'Caution restituée — {locataire}',
     note:
-      'Version SIMPLE (restitution intégrale). À VALIDER pour le cas avec retenue (dégâts constatés à l\'état des lieux de sortie, déjà calculé par le module Sorties de locataires existant) : la retenue est-elle un produit (707/758) ou une compensation de charge de remise en état ? Choix de jugement comptable à trancher avant d\'automatiser ce cas — non branché : voir routes/leases.js `move-out-report/finalize`.',
+      'Version SIMPLE (restitution intégrale, AUCUNE retenue) — postée automatiquement à la finalisation du PV de sortie, comportement historique inchangé. Voir `caution_restituee_avec_retenue` pour le cas avec dégâts, posté lui au moment du paiement réel (bouton « Payer le locataire »), pas à la finalisation.',
     lines: [
       { side: 'debit', account: '165', role: 'tiers_locataire_caution', formula: 'montant_total' },
       { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'caution_restituee_avec_retenue',
+    label: 'Restituer une caution avec retenue (dégâts à la sortie)',
+    journal: 'OD',
+    narration_template: 'Caution restituée avec retenue — {locataire}',
+    note:
+      "DÉCISION EXPLICITE DE L'UTILISATEUR (2026-11-03) : la retenue (dégâts constatés à l'état des lieux de sortie) n'est PAS un produit du cabinet — elle reste au PROPRIÉTAIRE du bien (compensation pour la remise en état), créditée sur son compte courant (4671), EXACTEMENT comme `charge_ajoutee_solde_proprietaire` (même rôle `tiers_proprietaire`), jamais notifiée au propriétaire (action strictement interne, demande explicite) — voir `frais_reparation_preleve_proprietaire` pour le prélèvement ultérieur des frais de gestion du cabinet sur ce même solde. `montant_total` = plein montant de la caution ABSORBÉ par cette restitution (= net restitué au locataire + retenue, jamais plus que le dépôt initial — un éventuel dépassement est réglé séparément par `complement_sortie_encaisse_proprietaire`). Posté au moment du PAIEMENT RÉEL (bouton « Payer le locataire »), jamais à la seule finalisation du PV — voir services/moveOutReport.js `recordTenantPayout`.",
+    lines: [
+      { side: 'debit', account: '165', role: 'tiers_locataire_caution', formula: 'montant_total' },
+      { side: 'credit', role: 'tresorerie_mode_paiement', formula: 'montant_moins_pourcentage', param: 'retenue_sortie' },
+      { side: 'credit', role: 'tiers_proprietaire', formula: 'pourcentage_variable', param: 'retenue_sortie' },
+    ],
+  },
+  {
+    operation_type: 'complement_sortie_encaisse_proprietaire',
+    label: 'Encaisser le complément dû par un locataire sortant',
+    journal: 'OD',
+    narration_template: 'Complément de sortie encaissé — {locataire}',
+    note:
+      "Quand les dégâts dépassent la caution, le locataire règle lui-même la différence (bouton « Encaisser le complément »). Même traitement que la retenue (`caution_restituee_avec_retenue`) : cette somme sert à la remise en état, donc créditée au propriétaire (4671), jamais au cabinet — voir `frais_reparation_preleve_proprietaire` pour les frais de gestion prélevés ensuite.",
+    lines: [
+      { side: 'debit', role: 'tresorerie_mode_paiement', formula: 'montant_total' },
+      { side: 'credit', role: 'tiers_proprietaire', formula: 'montant_total' },
+    ],
+  },
+  {
+    operation_type: 'frais_reparation_preleve_proprietaire',
+    label: 'Prélever des frais de gestion de réparation (solde propriétaire)',
+    journal: 'OD',
+    narration_template: 'Frais de gestion réparation — {locataire}',
+    note:
+      "Le cabinet peut prélever, sur le solde qu'il vient de créditer au propriétaire pour une réparation (`caution_restituee_avec_retenue`/`complement_sortie_encaisse_proprietaire`), des frais de service pour avoir géré cette réparation — montant saisi librement par le DG à chaque fois (pas un taux fixe), devient un vrai produit du cabinet. Compte 706 réutilisé (même réserve que `frais_agence_encaisse` : à revoir avec l'expert-comptable si une distinction séparée s'avère utile au reporting).",
+    lines: [
+      { side: 'debit', role: 'tiers_proprietaire', formula: 'montant_total' },
+      { side: 'credit', account: '706', formula: 'montant_total' },
     ],
   },
   {

@@ -12,7 +12,7 @@ const { Router } = require('express');
 const { pool } = require('../config/db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { listRecentActivity } = require('../services/activity');
-const { listPendingDepositRegularizations } = require('../services/inspection');
+const { listPendingDepositRegularizations, listPendingMoveOutPayouts } = require('../services/inspection');
 const { isModuleActive } = require('../services/gl/glPostingService');
 const { getTrends } = require('../services/dashboardTrends');
 
@@ -96,6 +96,10 @@ router.get('/overview', async (req, res, next) => {
     const pendingDepositRegularizations = (await isModuleActive(pool, tenantId))
       ? await listPendingDepositRegularizations(tenantId)
       : [];
+    // Décaissements de sortie non encore exécutés (demande utilisateur, 2026-11-03) — visible tant
+    // que le bouton « Payer le locataire »/« Encaisser le complément » n'a pas été actionné, que la
+    // comptabilité avancée soit active ou non (voir services/inspection.js).
+    const pendingMoveOutPayouts = await listPendingMoveOutPayouts(tenantId);
 
     const totalUnits = Number(unitStats.total);
     const occupiedUnits = Number(unitStats.occupied);
@@ -130,6 +134,7 @@ router.get('/overview', async (req, res, next) => {
         draftMoveOutCount: Number(draftMoveOutCount),
         moveOutsThisMonthCount: Number(moveOutsThisMonthCount),
         pendingDepositRegularizations,
+        pendingMoveOutPayouts,
       },
     });
   } catch (err) {

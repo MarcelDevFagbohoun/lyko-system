@@ -40,6 +40,16 @@ export type DashboardOverview = {
       totalDeductions: number;
       finalizedAt: string;
     }[];
+    // Décaissements de sortie non encore exécutés (demande utilisateur, 2026-11-03) — un PV validé
+    // avec un remboursement à verser ou un complément à encaisser, bouton pas encore actionné.
+    pendingMoveOutPayouts: {
+      leaseId: number;
+      renterId: number;
+      renterName: string;
+      direction: "refund_to_tenant" | "collect_from_tenant";
+      amount: number;
+      finalizedAt: string;
+    }[];
   };
 };
 

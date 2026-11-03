@@ -15,6 +15,7 @@ import {
   finalizeMoveInReport,
   reopenMoveInReport,
   moveInReportPdfPath,
+  inspectionBlankFormPdfPath,
   type Lease,
   type InspectionReport,
   type InspectionZone,
@@ -152,6 +153,22 @@ function StartCard({
         <Button onClick={handleStart} disabled={submitting}>
           {submitting ? "Démarrage…" : "Commencer l'état des lieux d'entrée"}
         </Button>
+
+        <div className="mt-2 flex flex-col items-center gap-1.5 border-t border-border pt-4">
+          <p className="text-body-xs text-ink-muted">
+            Locataire absent de la plateforme ? Imprimez un formulaire vierge pour une saisie manuelle sur
+            le terrain (à ressaisir ensuite ici).
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => accessToken && openAuthenticatedPdf(inspectionBlankFormPdfPath("entree"), accessToken)}
+          >
+            <FileDown size={14} />
+            Formulaire vierge (entrée)
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

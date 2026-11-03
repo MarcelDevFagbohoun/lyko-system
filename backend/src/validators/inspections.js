@@ -92,10 +92,35 @@ const reopenInspectionReportSchema = z.object({
   reason: z.string().trim().min(10, 'Motif trop court (10 caractères minimum)').max(2000),
 });
 
+// Rejet d'un PV soumis (DG, demande utilisateur 2026-11-03) : note obligatoire, c'est elle que
+// l'employé recevra pour corriger.
+const rejectMoveOutReviewSchema = z.object({
+  note: z.string().trim().min(5, 'Motif trop court (5 caractères minimum)').max(1000),
+});
+
+const REFUND_METHOD_VALUES = ['especes', 'mobile_money', 'virement', 'cheque'];
+
+// Décaissement/encaissement manuel (sans FedaPay) d'un PV de sortie — « Payer le locataire »/« Encaisser
+// le complément » (migration 139, demande utilisateur 2026-11-03).
+const recordTenantPayoutSchema = z.object({
+  method: z.enum(REFUND_METHOD_VALUES, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }),
+  note: optionalText(500),
+});
+
+// Frais de service de réparation prélevés sur le solde propriétaire : montant LIBRE saisi par le DG à
+// chaque fois (jamais un taux fixe) — demande explicite de l'utilisateur.
+const chargeRepairFeeSchema = z.object({
+  amount: amountSchema.refine((v) => v > 0, 'Le montant doit être supérieur à 0'),
+  note: optionalText(500),
+});
+
 module.exports = {
   keySchema,
   startInspectionReportSchema,
   updateInspectionDraftSchema,
   updateMoveOutDraftSchema,
   reopenInspectionReportSchema,
+  rejectMoveOutReviewSchema,
+  recordTenantPayoutSchema,
+  chargeRepairFeeSchema,
 };
