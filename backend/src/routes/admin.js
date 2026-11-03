@@ -20,6 +20,7 @@ const partners = require('../services/partnerSubscription');
 const adminStats = require('../services/adminStats');
 const { parsePartnerRights } = require('../services/entitlements');
 const { PARTNER_SELECTABLE_FEATURES } = require('../constants/plans');
+const platformFeatureGates = require('../services/platformFeatureGates');
 const logger = require('../utils/logger');
 const totp = require('../services/totp');
 const { encryptSecret, decryptSecret } = require('../utils/encryption');
@@ -315,6 +316,22 @@ router.put('/catalog', async (req, res, next) => {
 });
 router.post('/catalog/reset', async (req, res, next) => {
   try { const catalog = await catalogService.resetCatalog(req.admin.id); await audit(req, 'catalog_reset'); res.json({ catalog }); } catch (err) { next(err); }
+});
+
+// Verrou plateforme SYSCOHADA / FedaPay : tant qu'un module est à 0 ici, aucune entreprise ne peut
+// se l'activer elle-même (une entreprise qui l'a déjà n'est jamais affectée, voir platformFeatureGates.js).
+router.get('/platform-features', async (_req, res, next) => {
+  try { res.json(await platformFeatureGates.getPlatformFeatureGates()); } catch (err) { next(err); }
+});
+router.put('/platform-features', async (req, res, next) => {
+  try {
+    const gates = await platformFeatureGates.setPlatformFeatureGates(
+      { syscohadaEnabled: !!req.body?.syscohadaEnabled, fedapayEnabled: !!req.body?.fedapayEnabled },
+      { adminId: req.admin.id },
+    );
+    await audit(req, 'platform_features_save', null, gates);
+    res.json(gates);
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

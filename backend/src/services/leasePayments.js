@@ -50,7 +50,13 @@ async function endLease(tenantId, leaseId, scopeAgentId, endDate) {
     }
 
     await conn.beginTransaction();
-    await conn.query('UPDATE leases SET status = :status, end_date = :endDate WHERE id = :id', {
+    // Bug corrigé (audit du 2026-11-03, migration 140) : ce raccourci termine le bail SANS passer par
+    // un état des lieux de sortie (autorisé seulement quand il n'y a aucune caution à régulariser) —
+    // sans `archived_at` posé ici, le locataire disparaissait pour toujours de la fiche Locataires :
+    // ni « Actifs » (bail non actif), ni « Archives » (bail non archivé), ni la boîte « État des
+    // lieux » (aucun `move_out_reports` créé par ce chemin). Archivé d'office, comme les baux déjà
+    // terminés avant cette migration — rien à décaisser ici, donc rien n'attend de décision humaine.
+    await conn.query('UPDATE leases SET status = :status, end_date = :endDate, archived_at = NOW() WHERE id = :id', {
       status: 'ended',
       endDate: endDate,
       id: leaseId,

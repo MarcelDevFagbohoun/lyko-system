@@ -11,6 +11,7 @@ const { updateSettingsSchema } = require('../validators/settings');
 const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { ROLE_TITLE_PRESETS, resolveRoleLabels } = require('../constants/roles');
 const { encryptSecret } = require('../utils/encryption');
+const { assertCanActivate } = require('../services/platformFeatureGates');
 const logger = require('../utils/logger');
 const { parseActivities } = require('../utils/activities');
 
@@ -136,20 +137,22 @@ router.patch(
       }
       if (data.fedapayCollectEnabled !== undefined) {
         if (data.fedapayCollectEnabled) {
-          const [[current]] = await pool.query('SELECT fedapay_secret_key_enc FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+          const [[current]] = await pool.query('SELECT fedapay_secret_key_enc, fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
           if (!(data.fedapaySecretKey || current?.fedapay_secret_key_enc)) {
             throw new ApiError(400, "Renseignez la clé secrète FedaPay avant d'activer le paiement en ligne.");
           }
+          await assertCanActivate('fedapay', !!current?.fedapay_collect_enabled, pool);
         }
         fields.push('fedapay_collect_enabled = :fedapayCollectEnabled');
         params.fedapayCollectEnabled = data.fedapayCollectEnabled;
       }
       if (data.fedapayEnabled !== undefined) {
         if (data.fedapayEnabled) {
-          const [[current]] = await pool.query('SELECT fedapay_secret_key_enc FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
+          const [[current]] = await pool.query('SELECT fedapay_secret_key_enc, fedapay_enabled FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
           if (!(data.fedapaySecretKey || current?.fedapay_secret_key_enc)) {
             throw new ApiError(400, "Renseignez la clé secrète FedaPay avant d'activer les paiements sortants.");
           }
+          await assertCanActivate('fedapay', !!current?.fedapay_enabled, pool);
         }
         fields.push('fedapay_enabled = :fedapayEnabled');
         params.fedapayEnabled = data.fedapayEnabled;

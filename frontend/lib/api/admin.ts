@@ -111,3 +111,8 @@ export type AdminStats = {
   recent: { id: number; status: string; reason: string | null; planKey: string; months: number; kind: string; amount: number; createdAt: string; paidAt: string | null; companyName: string }[];
 };
 export const adminStats = (t: string, months = 12) => apiFetch<AdminStats>(`/api/admin/stats?months=${months}`, { accessToken: t });
+
+export type PlatformFeatureGates = { syscohadaEnabled: boolean; fedapayEnabled: boolean; updatedAt: string | null; updatedBy: number | null };
+export const adminPlatformFeatures = (t: string) => apiFetch<PlatformFeatureGates>("/api/admin/platform-features", { accessToken: t });
+export const adminSavePlatformFeatures = (t: string, gates: { syscohadaEnabled: boolean; fedapayEnabled: boolean }) =>
+  apiFetch<PlatformFeatureGates>("/api/admin/platform-features", { accessToken: t, method: "PUT", headers: json, body: JSON.stringify(gates) });

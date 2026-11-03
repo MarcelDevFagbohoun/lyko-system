@@ -876,6 +876,13 @@ async function reopenMoveOut(tenantId, userId, leaseId, reason) {
        WHERE lease_id = :leaseId`,
       { by: userId, reason: reason, leaseId, snapshot: JSON.stringify(snapshot) },
     );
+    // Bug corrigé (audit du 2026-11-03) : un locataire déjà archivé (migration 140) dont le PV est
+    // rouvert pour correction restait marqué archivé — invisible à la fois de l'onglet Archives (son
+    // dossier redevient un brouillon actif, plus un bail "ended" propre) ET de la boîte « État des
+    // lieux » (`listInProgressInspections` filtre `leases.archived_at IS NULL`). Lève le flag
+    // inconditionnellement : sans effet si le bail n'était pas archivé, et le DG/comptable réarchivera
+    // explicitement une fois la correction refinalisée et le décaissement réglé.
+    await conn.query('UPDATE leases SET archived_at = NULL, archived_by = NULL WHERE id = :id', { id: leaseId });
 
     await conn.commit();
     await deleteInspectionFile(report.tenant_signature_path);
@@ -941,6 +948,22 @@ async function recordTenantPayout(tenantId, userId, leaseId, scopeAgentId, { met
     await conn.beginTransaction();
     await assertPeriodOpenLocked(conn, tenantId, paidAtIso);
 
+    // Verrou anti-double-soumission (audit du flux de décaissement, 2026-11-03) : le chemin FedaPay
+    // (services/payments/orders.js) verrouille déjà la ligne avant de rejouer la vérification — ce
+    // chemin manuel ne le faisait pas, donc un double-clic ou une double requête pouvait passer la
+    // vérification `payout_status === 'pending'` faite plus haut DEUX FOIS avant que l'une des deux
+    // ne commette. En mode comptabilité simple (sans SYSCOHADA), rien ne l'empêchait alors : aucune
+    // écriture GL pour le bloquer via la contrainte d'unicité `source_table`/`source_id`. On revérifie
+    // donc sous verrou, à l'intérieur de la transaction, et on abandonne proprement si quelqu'un d'autre
+    // a déjà réglé ce décaissement entre-temps.
+    const [[lockedReport]] = await conn.query(
+      "SELECT payout_status FROM move_out_reports WHERE lease_id = :leaseId FOR UPDATE",
+      { leaseId },
+    );
+    if (!lockedReport || lockedReport.payout_status !== 'pending') {
+      throw new ApiError(409, 'Ce décaissement a déjà été réglé par quelqu’un d’autre.');
+    }
+
     if (await isModuleActive(conn, tenantId)) {
       if (report.payout_direction === 'refund_to_tenant') {
         await genererEcriture(conn, {
@@ -992,11 +1015,11 @@ async function recordTenantPayout(tenantId, userId, leaseId, scopeAgentId, { met
     }
 
     const by = await actorLabel(conn, userId);
-    await conn.query(
+    const [updateResult] = await conn.query(
       `UPDATE move_out_reports
        SET payout_status = 'paid', payout_method = :method, payout_paid_at = NOW(), payout_paid_by = :by,
            review_history = :history
-       WHERE lease_id = :leaseId`,
+       WHERE lease_id = :leaseId AND payout_status = 'pending'`,
       {
         method,
         by: userId,
@@ -1010,6 +1033,12 @@ async function recordTenantPayout(tenantId, userId, leaseId, scopeAgentId, { met
         leaseId,
       },
     );
+    // Garde-fou final, même principe que `extourneEcriture`/`payIrf`/`payLiability`/`payVat` : si la
+    // ligne a changé entre le verrou ci-dessus et cet UPDATE (ne devrait jamais arriver, le verrou
+    // tient toute la transaction), on ne commet jamais une écriture déjà postée sans sa mise à jour.
+    if (updateResult.affectedRows !== 1) {
+      throw new ApiError(409, 'Ce décaissement a déjà été réglé par quelqu’un d’autre.');
+    }
 
     await conn.commit();
     const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);

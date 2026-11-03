@@ -18,6 +18,7 @@ const {
   activateModule,
   deactivateModule,
 } = require('../../services/gl/glActivationService');
+const { assertCanActivate } = require('../../services/platformFeatureGates');
 const logger = require('../../utils/logger');
 
 const router = Router();
@@ -50,6 +51,8 @@ router.get('/status', async (req, res, next) => {
 // POST /api/gl/activation/activate
 router.post('/activate', async (req, res, next) => {
   try {
+    const [[tenantRow]] = await pool.query('SELECT gl_module_enabled FROM tenants WHERE id = :id', { id: req.user.tenantId });
+    await assertCanActivate('syscohada', !!tenantRow?.gl_module_enabled, pool);
     const result = await activateModule(pool, req.user.tenantId, { userId: req.user.id, ipAddress: req.ip });
     logger.info('Comptabilité avancée activée', {
       tenantId: req.user.tenantId,

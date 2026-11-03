@@ -401,8 +401,12 @@ async function releaseUnit(tenantId, propertyId, unitId, scopeAgentId) {
     let releasedLeaseId = null;
     if (activeLeaseRows[0]) {
       releasedLeaseId = activeLeaseRows[0].id;
+      // Bug corrigé (audit du 2026-11-03, migration 140) : même raison que `leasePayments.js
+      // endLease` — ce chemin (libération forcée d'une unité) termine le bail sans jamais créer de
+      // `move_out_reports`, donc sans jamais pouvoir recevoir `archived_at` via le circuit normal.
+      // Archivé d'office pour ne pas rendre le locataire invisible de la fiche Locataires.
       await conn.query(
-        "UPDATE leases SET status = 'ended', end_date = :endDate WHERE id = :id",
+        "UPDATE leases SET status = 'ended', end_date = :endDate, archived_at = NOW() WHERE id = :id",
         { endDate: new Date().toISOString().slice(0, 10), id: releasedLeaseId },
       );
     }

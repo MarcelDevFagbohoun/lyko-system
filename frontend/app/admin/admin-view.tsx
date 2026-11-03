@@ -14,6 +14,7 @@ import { offerLabel } from "@/lib/api/billing";
 import { CatalogEditor } from "./catalog-editor";
 import { PartnerDialog } from "./partner-dialog";
 import { StatsPanel } from "./stats-panel";
+import { PlatformFeaturesPanel } from "./platform-features-panel";
 import { PartnerBadge } from "@/components/billing/partner-badge";
 import { PAYMENT_OUTCOME } from "@/lib/billing-plans";
 import { Badge } from "@/components/ui/badge";
@@ -101,7 +102,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "succes
 };
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
-  const [tab, setTab] = React.useState<"stats" | "refunds" | "payments" | "tenants" | "catalog" | "security" | "audit" | "messages">("stats");
+  const [tab, setTab] = React.useState<"stats" | "refunds" | "payments" | "tenants" | "catalog" | "modules" | "security" | "audit" | "messages">("stats");
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [issues, setIssues] = React.useState<PaymentIssue[]>([]);
   const [contactMessages, setContactMessages] = React.useState<ContactMessage[]>([]);
@@ -144,6 +145,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
               Messages{contactMessages.some((m) => m.status === "new") ? ` (${contactMessages.filter((m) => m.status === "new").length})` : ""}
             </Button>
             <Button variant={tab === "catalog" ? "primary" : "secondary"} onClick={() => setTab("catalog")}>Offres et prix</Button>
+            <Button variant={tab === "modules" ? "primary" : "secondary"} onClick={() => setTab("modules")}>Modules</Button>
             <Button variant={tab === "audit" ? "primary" : "secondary"} onClick={() => setTab("audit")}>Journal</Button>
             <Button variant={tab === "security" ? "primary" : "secondary"} onClick={() => setTab("security")}>Sécurité</Button>
             <Button variant="ghost" onClick={onLogout}>Déconnexion</Button>
@@ -239,6 +241,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
         )}
 
         {tab === "catalog" && <CatalogEditor token={token} />}
+        {tab === "modules" && <PlatformFeaturesPanel token={token} />}
         {tab === "audit" && <AuditPanel token={token} />}
         {tab === "security" && <SecurityPanel token={token} />}
         {tab === "messages" && (

@@ -132,7 +132,18 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
   const fixedAssets = await sumCount(db, `SELECT COALESCE(SUM(acquisition_cost),0) total, COUNT(*) n FROM fixed_assets WHERE tenant_id = :tenantId AND payment_status = 'paid' AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
   // Restitutions de cautions — mêmes critères que le grand livre (`glActivationService`).
   const extraDepositsReturned = await sumCount(db, `SELECT COALESCE(SUM(returned_amount),0) total, COUNT(*) n FROM lease_deposits WHERE tenant_id = :tenantId AND status = 'returned' AND returned_amount > 0 AND returned_method IS NOT NULL AND DATE_FORMAT(returned_at,'%Y-%m') = :month`, p);
-  const rentDepositsReturned = await sumCount(db, `SELECT COALESCE(SUM(net_refund),0) total, COUNT(*) n FROM move_out_reports WHERE tenant_id = :tenantId AND status = 'finalized' AND total_deductions = 0 AND net_refund > 0 AND refund_payment_method IS NOT NULL AND DATE_FORMAT(conducted_at,'%Y-%m') = :month`, p);
+  // Correction (audit du flux de décaissement, 2026-11-03) : l'ancienne requête ne comptait que le cas
+  // SIMPLE (aucun dégât, `total_deductions = 0`) — dès qu'une retenue sur dégâts s'applique, le vrai
+  // règlement passe par `recordTenantPayout` (bouton « Payer le locataire ») et n'était JAMAIS compté
+  // ici : une vraie sortie de caisse disparaissait de la trésorerie. On couvre maintenant TOUTE
+  // restitution réellement réglée (`payout_status = 'paid'`, `payout_direction = 'refund_to_tenant'`),
+  // avec ou sans retenue, datée par `payout_paid_at` (date du RÈGLEMENT) — jamais `conducted_at` (date
+  // de l'état des lieux, qui peut tomber dans un autre mois que le paiement réel, y compris dans le cas
+  // simple si la finalisation a lieu plus tard que la constatation).
+  const rentDepositsReturned = await sumCount(db, `SELECT COALESCE(SUM(payout_amount),0) total, COUNT(*) n FROM move_out_reports WHERE tenant_id = :tenantId AND payout_status = 'paid' AND payout_direction = 'refund_to_tenant' AND DATE_FORMAT(payout_paid_at,'%Y-%m') = :month`, p);
+  // Symétrique : complément encaissé auprès du locataire quand les dégâts dépassent la caution — une
+  // vraie entrée de caisse, qui n'était comptée NULLE PART avant cette correction.
+  const rentComplementsCollected = await sumCount(db, `SELECT COALESCE(SUM(payout_amount),0) total, COUNT(*) n FROM move_out_reports WHERE tenant_id = :tenantId AND payout_status = 'paid' AND payout_direction = 'collect_from_tenant' AND DATE_FORMAT(payout_paid_at,'%Y-%m') = :month`, p);
 
   const [cabinetByCategory] = await db.query(
     `SELECT category, SUM(amount) AS total, COUNT(*) AS n FROM expenses
@@ -262,6 +273,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
     otherIncomes: otherIncomes.total,
     rentDeposits: rentDeposits.total,
     extraDeposits: extraDeposits.total,
+    rentComplementsCollected: rentComplementsCollected.total,
     utilityCollected: utilityCollected.total,
     depositsRecoveredFromOwners: depTransIn.total,
   };
@@ -325,7 +337,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
       total: totalIn,
       lines: inLines,
       rent: { ...rent, fromDeposit: rentFromDeposit, cashTotal: rent.total - rentFromDeposit, byMethod: rentByMethod.map((r) => ({ method: r.method, total: n(r.total), count: n(r.n) })) },
-      counts: { openingDebt: openingDebt.count, prorata: prorata.count, entryFees: entryFees.count, lateFees: lateFees.count, saleCommissions: saleCommissions.count, otherIncomes: otherIncomes.count, rentDeposits: rentDeposits.count, extraDeposits: extraDeposits.count, utilityCollected: utilityCollected.count },
+      counts: { openingDebt: openingDebt.count, prorata: prorata.count, entryFees: entryFees.count, lateFees: lateFees.count, saleCommissions: saleCommissions.count, otherIncomes: otherIncomes.count, rentDeposits: rentDeposits.count, extraDeposits: extraDeposits.count, rentComplementsCollected: rentComplementsCollected.count, utilityCollected: utilityCollected.count },
     },
     outflows: {
       total: totalOut,

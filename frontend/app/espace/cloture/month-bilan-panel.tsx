@@ -25,6 +25,7 @@ export const INFLOW_LABELS: Record<string, string> = {
   otherIncomes: "Autres entrées (honoraires, intérêts, remboursements…)",
   rentDeposits: "Dépôts de garantie reçus (cautions de loyer)",
   extraDeposits: "Cautions supplémentaires reçues",
+  rentComplementsCollected: "Compléments encaissés (dégâts au-delà de la caution)",
   depositsRecoveredFromOwners: "Cautions récupérées auprès des propriétaires",
   utilityCollected: "Charges SONEB/SBEE payées par les locataires",
 };
@@ -34,7 +35,7 @@ export const OUTFLOW_LABELS: Record<string, string> = {
   propertyExpenses: "Dépenses de Biens (avancées pour le propriétaire)",
   cabinetExpenses: "Dépenses de fonctionnement de l'entreprise",
   fixedAssets: "Achats d'immobilisations",
-  rentDepositsReturned: "Dépôts de garantie restitués (cautions de loyer)",
+  rentDepositsReturned: "Dépôts de garantie restitués (cautions de loyer, avec ou sans retenue)",
   extraDepositsReturned: "Cautions supplémentaires restituées",
   depositsTransferredToOwners: "Cautions remises aux propriétaires",
 };
