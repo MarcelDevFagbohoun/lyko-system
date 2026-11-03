@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { ArrowLeft, FileText, FileDown } from "lucide-react";
+import { ArrowLeft, FileText, FileDown, Lock, Stamp } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
 import {
@@ -18,8 +18,6 @@ import {
   type LeaseContractData,
 } from "@/lib/api/renters";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { FinalizeSection } from "@/components/inspections/finalize-section";
-import { SignatureBlock } from "@/components/inspections/signature-block";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -100,7 +98,7 @@ function ContratContent() {
         {!contract ? (
           <StartCard leaseId={leaseId} accessToken={accessToken} canManage={canManage} onStarted={(c, p) => { setContract(c); setPreview(p); }} />
         ) : contract.status === "finalized" ? (
-          <FinalizedView lease={lease} contract={contract} preview={preview} accessToken={accessToken} />
+          <FinalizedView lease={lease} contract={contract} preview={preview} />
         ) : (
           <DraftEditor
             leaseId={leaseId}
@@ -285,14 +283,13 @@ function DraftEditor({
     }
   }
 
-  async function handleFinalize(tenantSignature: Blob | null, agentSignature: Blob | null) {
-    if (!tenantSignature || !agentSignature) return;
+  async function handleFinalize() {
     if (!accessToken) return;
     setFinalizing(true);
     setFinalizeError(null);
     try {
       await persist();
-      const res = await finalizeContract(accessToken, leaseId, tenantSignature, agentSignature);
+      const res = await finalizeContract(accessToken, leaseId);
       onChange(res.contract, res.preview);
       toast.success("Contrat de bail finalisé et verrouillé.");
       onFinalized();
@@ -351,7 +348,25 @@ function DraftEditor({
               </Button>
             </div>
 
-            <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} />
+            {/* Plus de signatures à capturer (demande utilisateur, 2026-11-02) : le contrat finalisé
+                porte OBLIGATOIREMENT le cachet du DG — le serveur refuse s'il n'a pas été téléversé
+                (Mon compte). */}
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-4">
+              <div>
+                <h3 className="flex items-center gap-1.5 font-label-lg text-ink">
+                  <Stamp size={16} className="text-ink-soft" />
+                  Finaliser le contrat
+                </h3>
+                <p className="text-body-sm text-ink-muted">
+                  Une fois finalisé, le contrat est verrouillé et porte le cachet de l&apos;entreprise — il ne peut plus être modifié.
+                </p>
+              </div>
+              {finalizeError && <p className="text-body-sm text-danger-fg">{finalizeError}</p>}
+              <Button type="button" size="lg" onClick={handleFinalize} disabled={finalizing} className="self-start">
+                <Lock size={16} />
+                {finalizing ? "Finalisation…" : "Finaliser et verrouiller"}
+              </Button>
+            </div>
           </>
         )}
       </CardContent>
@@ -363,12 +378,10 @@ function FinalizedView({
   lease,
   contract,
   preview,
-  accessToken,
 }: {
   lease: Lease;
   contract: LeaseContract;
   preview: LeaseContractData;
-  accessToken: string | null;
 }) {
   return (
     <Card className="max-w-3xl">
@@ -392,10 +405,10 @@ function FinalizedView({
           <ContractArticles data={preview} />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SignatureBlock label="Signature du locataire" url={contract.tenantSignatureUrl} accessToken={accessToken} />
-          <SignatureBlock label="Signature de l'agent" url={contract.agentSignatureUrl} accessToken={accessToken} />
-        </div>
+        <p className="flex items-center gap-1.5 text-body-sm text-ink-muted">
+          <Stamp size={14} />
+          Contrat signé du cachet de l&apos;entreprise — voir le PDF téléchargeable ci-dessus.
+        </p>
       </CardContent>
     </Card>
   );

@@ -60,34 +60,36 @@ async function updateContractConditions(tenantId, leaseId, scopeAgentId, particu
 }
 
 /**
- * Verrouille le contrat et fige les données du bail dans `snapshot`.
- * `saveSignature(kind)` enregistre le fichier de signature ('tenant' | 'agent') et renvoie son chemin
- * relatif ; il n'est appelé qu'après les vérifications (brouillon), comme avant.
+ * Verrouille le contrat et fige les données du bail dans `snapshot`. Plus de signatures numériques
+ * (demande utilisateur, 2026-11-02) : le contrat finalisé porte OBLIGATOIREMENT le cachet du DG (voir
+ * `getContractPdfData` et `services/pdf.js` `streamLeaseContractPdf`) — on refuse donc de finaliser si
+ * le DG de l'entreprise n'a pas encore téléversé son cachet (Mon compte).
  */
-async function finalizeContract(tenantId, userId, leaseId, scopeAgentId, saveSignature) {
+async function finalizeContract(tenantId, userId, leaseId, scopeAgentId) {
   await loadLease(pool, tenantId, leaseId, scopeAgentId);
   const contract = await loadContractRow(tenantId, leaseId);
   assertDraft(contract, 'contrat de bail');
+
+  const [[dg]] = await pool.query(
+    "SELECT stamp_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
+    { tenantId },
+  );
+  if (!dg?.stamp_path) {
+    throw new ApiError(
+      400,
+      'Le cachet du directeur général doit être téléversé (Mon compte) avant de pouvoir signer un contrat de bail.',
+    );
+  }
 
   const snapshot = await buildContractData(tenantId, leaseId, {
     particularConditions: contract.particular_conditions,
   });
 
-  const tenantSignaturePath = await saveSignature('tenant');
-  const agentSignaturePath = await saveSignature('agent');
-
   await pool.query(
     `UPDATE lease_contracts
-     SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
-         tenant_signature_path = :tenantSig, agent_signature_path = :agentSig, snapshot = :snapshot
+     SET status = 'finalized', finalized_at = NOW(), finalized_by = :by, snapshot = :snapshot
      WHERE lease_id = :leaseId`,
-    {
-      by: userId,
-      tenantSig: tenantSignaturePath,
-      agentSig: agentSignaturePath,
-      snapshot: JSON.stringify(snapshot),
-      leaseId,
-    },
+    { by: userId, snapshot: JSON.stringify(snapshot), leaseId },
   );
 
   const row = await loadContractRow(tenantId, leaseId);
@@ -102,7 +104,7 @@ async function getContractPdfData(tenantId, leaseId, scopeAgentId) {
 
   const [[tenant]] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
   const [[dg]] = await pool.query(
-    "SELECT first_name, last_name, role, stamp_path, signature_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
+    "SELECT first_name, last_name, role, stamp_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
     { tenantId },
   );
 

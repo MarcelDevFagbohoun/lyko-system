@@ -219,7 +219,7 @@ async function getContractData(tenantId, renterId, loadContractRow) {
   // Pas d'employé "signataire" particulier depuis le portail : le DG de
   // l'entreprise signe par défaut (toujours exactement un par tenant).
   const [dgRows] = await pool.query(
-    "SELECT first_name, last_name, role, stamp_path, signature_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
+    "SELECT first_name, last_name, role, stamp_path FROM users WHERE tenant_id = :tenantId AND role = 'dg' LIMIT 1",
     { tenantId },
   );
   const issuer = dgRows[0] || { first_name: tenant?.company_name ?? "L'entreprise", last_name: '' };

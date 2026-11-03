@@ -6,14 +6,15 @@
  * document bilatéral structuré par articles, calculés à partir des données RÉELLES du bail (jamais
  * saisis à la main) : parties, objet, durée, loyer, caution(s) — y compris les cautions supplémentaires
  * SBEE/SONEB/peinture (étape 43) —, obligations, conditions particulières (seule partie personnalisable,
- * par bail). Signé par les DEUX parties (locataire + agent), même cycle brouillon → finalisation que les
- * états des lieux : en brouillon, les articles reflètent toujours les données LIVE du bail (aperçu à
- * jour) ; une fois finalisé, un `snapshot` figé fait foi pour toujours, même si le bail change ensuite.
+ * par bail). Même cycle brouillon → finalisation que les états des lieux : en brouillon, les articles
+ * reflètent toujours les données LIVE du bail (aperçu à jour) ; une fois finalisé, un `snapshot` figé
+ * fait foi pour toujours, même si le bail change ensuite. Plus de signatures numériques (demande
+ * utilisateur, 2026-11-02) : le contrat finalisé porte OBLIGATOIREMENT le cachet du DG, apposé sur le
+ * PDF (`services/pdf.js`), jamais une image de signature.
  */
 
 const { pool } = require('../config/db');
 const { listLeaseDeposits } = require('./leaseDeposits');
-const { toProtectedFileUrl } = require('../utils/uploads');
 const { RENT_TIMINGS } = require('../constants/rentTiming');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
@@ -88,8 +89,6 @@ function toPublicContract(row) {
     id: row.id,
     status: row.status,
     particularConditions: row.particular_conditions,
-    tenantSignatureUrl: row.tenant_signature_path ? toProtectedFileUrl(row.tenant_signature_path) : null,
-    agentSignatureUrl: row.agent_signature_path ? toProtectedFileUrl(row.agent_signature_path) : null,
     finalizedAt: row.finalized_at,
     finalizedBy: toActor(row.finalizer_first_name, row.finalizer_last_name, row.finalizer_role),
     createdBy: toActor(row.creator_first_name, row.creator_last_name, row.creator_role),

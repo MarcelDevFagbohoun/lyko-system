@@ -1,10 +1,11 @@
 'use strict';
 
 /**
- * Suppression (pas seulement remplacement) de l'avatar, du cachet et de la signature — demande
- * utilisateur, 2026-10-30 : « il n'y a pas une possibilité de supprimer une signature ou cachet ».
- * Deux niveaux : personnel (`PATCH /api/auth/my-profile`, table `users`) et entreprise
- * (`PATCH /api/settings`, table `tenants`, DG uniquement). Voir routes/auth.js et routes/settings.js.
+ * Suppression (pas seulement remplacement) de l'avatar et du cachet — demande utilisateur,
+ * 2026-10-30 : « il n'y a pas une possibilité de supprimer une signature ou cachet » (il n'y a plus
+ * de « signature » séparée depuis le 2026-11-02 : seul le cachet subsiste). Deux niveaux : personnel
+ * (`PATCH /api/auth/my-profile`, table `users`) et entreprise (`PATCH /api/settings`, table `tenants`,
+ * DG uniquement). Voir routes/auth.js et routes/settings.js.
  */
 
 const { test, before, after } = require('node:test');
@@ -38,10 +39,9 @@ const bearer = (id, tenantId, role = 'dg') => ({
   Authorization: `Bearer ${signAccessToken({ sub: id, tenantId, role })}`,
 });
 
-test('PATCH /api/auth/my-profile — téléverse puis supprime le cachet et la signature personnels', async () => {
+test('PATCH /api/auth/my-profile — téléverse puis supprime le cachet personnel', async () => {
   const form = new FormData();
   form.append('stamp', new Blob([PNG_BYTES], { type: 'image/png' }), 'cachet.png');
-  form.append('signature', new Blob([PNG_BYTES], { type: 'image/png' }), 'signature.png');
   const uploaded = await fetch(`${baseUrl}/api/auth/my-profile`, {
     method: 'PATCH',
     headers: bearer(fx.dgId, fx.tenantId),
@@ -49,13 +49,11 @@ test('PATCH /api/auth/my-profile — téléverse puis supprime le cachet et la s
   });
   assert.equal(uploaded.status, 200);
 
-  const [[afterUpload]] = await pool.query('SELECT stamp_path, signature_path FROM users WHERE id = :id', { id: fx.dgId });
+  const [[afterUpload]] = await pool.query('SELECT stamp_path FROM users WHERE id = :id', { id: fx.dgId });
   assert.ok(afterUpload.stamp_path);
-  assert.ok(afterUpload.signature_path);
 
   const removeForm = new FormData();
   removeForm.append('removeStamp', 'true');
-  removeForm.append('removeSignature', 'true');
   const removed = await fetch(`${baseUrl}/api/auth/my-profile`, {
     method: 'PATCH',
     headers: bearer(fx.dgId, fx.tenantId),
@@ -63,9 +61,8 @@ test('PATCH /api/auth/my-profile — téléverse puis supprime le cachet et la s
   });
   assert.equal(removed.status, 200);
 
-  const [[afterRemoval]] = await pool.query('SELECT stamp_path, signature_path FROM users WHERE id = :id', { id: fx.dgId });
+  const [[afterRemoval]] = await pool.query('SELECT stamp_path FROM users WHERE id = :id', { id: fx.dgId });
   assert.equal(afterRemoval.stamp_path, null);
-  assert.equal(afterRemoval.signature_path, null);
 });
 
 test('PATCH /api/auth/my-profile — un nouveau fichier l’emporte sur une suppression demandée pour le même champ', async () => {
@@ -93,10 +90,9 @@ test('PATCH /api/auth/my-profile — un nouveau fichier l’emporte sur une supp
   });
 });
 
-test('PATCH /api/settings — téléverse puis supprime le cachet et la signature de l’entreprise (DG uniquement)', async () => {
+test('PATCH /api/settings — téléverse puis supprime le cachet de l’entreprise (DG uniquement)', async () => {
   const form = new FormData();
   form.append('stamp', new Blob([PNG_BYTES], { type: 'image/png' }), 'cachet-entreprise.png');
-  form.append('signature', new Blob([PNG_BYTES], { type: 'image/png' }), 'signature-entreprise.png');
   const uploaded = await fetch(`${baseUrl}/api/settings`, {
     method: 'PATCH',
     headers: bearer(fx.dgId, fx.tenantId),
@@ -104,13 +100,11 @@ test('PATCH /api/settings — téléverse puis supprime le cachet et la signatur
   });
   assert.equal(uploaded.status, 200);
 
-  const [[afterUpload]] = await pool.query('SELECT stamp_path, signature_path FROM tenants WHERE id = :id', { id: fx.tenantId });
+  const [[afterUpload]] = await pool.query('SELECT stamp_path FROM tenants WHERE id = :id', { id: fx.tenantId });
   assert.ok(afterUpload.stamp_path);
-  assert.ok(afterUpload.signature_path);
 
   const removeForm = new FormData();
   removeForm.append('removeStamp', 'true');
-  removeForm.append('removeSignature', 'true');
   const removed = await fetch(`${baseUrl}/api/settings`, {
     method: 'PATCH',
     headers: bearer(fx.dgId, fx.tenantId),
@@ -118,12 +112,11 @@ test('PATCH /api/settings — téléverse puis supprime le cachet et la signatur
   });
   assert.equal(removed.status, 200);
 
-  const [[afterRemoval]] = await pool.query('SELECT stamp_path, signature_path FROM tenants WHERE id = :id', { id: fx.tenantId });
+  const [[afterRemoval]] = await pool.query('SELECT stamp_path FROM tenants WHERE id = :id', { id: fx.tenantId });
   assert.equal(afterRemoval.stamp_path, null);
-  assert.equal(afterRemoval.signature_path, null);
 });
 
-test('PATCH /api/settings — un rôle non-DG ne peut pas modifier le cachet/signature de l’entreprise', async () => {
+test('PATCH /api/settings — un rôle non-DG ne peut pas modifier le cachet de l’entreprise', async () => {
   const form = new FormData();
   form.append('removeStamp', 'true');
   const res = await fetch(`${baseUrl}/api/settings`, {

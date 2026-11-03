@@ -139,11 +139,11 @@ function toPublicUser(user, { permissions = [], mustChangePassword } = {}) {
     mustChangePassword: !!(mustChangePassword ?? user.must_change_password),
     jobTitle: user.job_title ?? null,
     permissions,
-    // Cachet/signature personnels (apposés sur les quittances des paiements
-    // qu'il encaisse lui-même) — jamais ceux de l'entreprise, gérés à part
-    // dans Réglages (DG uniquement).
+    // Cachet personnel (apposé sur les quittances des paiements qu'il
+    // encaisse lui-même) — jamais celui de l'entreprise, géré à part dans
+    // Réglages (DG uniquement). Plus de « signature » téléversée séparément
+    // (demande utilisateur, 2026-11-02) : seul le cachet subsiste.
     stampUrl: user.stamp_path ? toProtectedFileUrl(user.stamp_path) : null,
-    signatureUrl: user.signature_path ? toProtectedFileUrl(user.signature_path) : null,
     // Photo de profil — purement visuelle dans l'app, jamais sur un document PDF.
     avatarUrl: user.avatar_path ? toProtectedFileUrl(user.avatar_path) : null,
   };
@@ -734,31 +734,29 @@ router.post('/change-password', requireAuth, changePasswordLimiter, async (req, 
   }
 });
 
-// PATCH /api/auth/my-profile — photo de profil, cachet et signature
-// personnels (n'importe quel employé, pas seulement le DG : c'est celui qui
-// encaisse un loyer qui doit pouvoir apposer son propre cachet/signature —
-// voir services/pdf.js `streamReceiptPdf`). À défaut, la quittance retombe
-// sur le cachet/signature de l'entreprise. La photo, elle, est purement
-// visuelle dans l'app — jamais sur un document PDF.
+// PATCH /api/auth/my-profile — photo de profil et cachet personnels
+// (n'importe quel employé, pas seulement le DG : c'est celui qui encaisse un
+// loyer qui doit pouvoir apposer son propre cachet — voir services/pdf.js
+// `streamReceiptPdf`). À défaut, la quittance retombe sur le cachet de
+// l'entreprise. La photo, elle, est purement visuelle dans l'app — jamais
+// sur un document PDF. Plus de « signature » téléversée séparément (demande
+// utilisateur, 2026-11-02) : seul le cachet subsiste.
 router.patch(
   '/my-profile',
   requireAuth,
   upload.fields([
     { name: 'avatar', maxCount: 1 },
     { name: 'stamp', maxCount: 1 },
-    { name: 'signature', maxCount: 1 },
   ]),
   async (req, res, next) => {
     try {
       const avatarFile = req.files?.avatar?.[0];
       const stampFile = req.files?.stamp?.[0];
-      const signatureFile = req.files?.signature?.[0];
       // Suppression sans retéléverser (demande utilisateur, 2026-10-30) : un nouveau fichier pour un
       // champ prévaut toujours sur une demande de suppression du même champ.
       const removeAvatar = req.body?.removeAvatar === 'true' && !avatarFile;
       const removeStamp = req.body?.removeStamp === 'true' && !stampFile;
-      const removeSignature = req.body?.removeSignature === 'true' && !signatureFile;
-      if (!avatarFile && !stampFile && !signatureFile && !removeAvatar && !removeStamp && !removeSignature) {
+      if (!avatarFile && !stampFile && !removeAvatar && !removeStamp) {
         throw new ApiError(400, 'Aucun fichier reçu');
       }
 
@@ -766,7 +764,7 @@ router.patch(
       const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}/employees/${req.user.id}`);
       await fs.mkdir(dir, { recursive: true });
       const [[current]] = await pool.query(
-        'SELECT avatar_path, stamp_path, signature_path FROM users WHERE id = :id LIMIT 1',
+        'SELECT avatar_path, stamp_path FROM users WHERE id = :id LIMIT 1',
         { id: req.user.id },
       );
 
@@ -794,17 +792,6 @@ router.patch(
         if (current?.stamp_path) oldPaths.push(current.stamp_path);
         fields.push('stamp_path = NULL');
       }
-      if (signatureFile) {
-        if (current?.signature_path) oldPaths.push(current.signature_path);
-        const ext = assertUploadType(signatureFile, { label: 'Signature' });
-        const rel = `tenants/${req.user.tenantId}/employees/${req.user.id}/${randomFileName('signature', ext)}`;
-        await fs.writeFile(path.join(UPLOADS_ROOT, rel), signatureFile.buffer);
-        fields.push('signature_path = :signaturePath');
-        params.signaturePath = rel;
-      } else if (removeSignature) {
-        if (current?.signature_path) oldPaths.push(current.signature_path);
-        fields.push('signature_path = NULL');
-      }
 
       if (fields.length > 0) {
         await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = :id`, params);
@@ -812,7 +799,7 @@ router.patch(
       await Promise.all(oldPaths.map((rel) => fs.unlink(path.join(UPLOADS_ROOT, rel)).catch(() => {})));
 
       const [rows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', { id: req.user.id });
-      logger.info('Profil personnel mis à jour (photo/cachet/signature)', { tenantId: req.user.tenantId, userId: req.user.id });
+      logger.info('Profil personnel mis à jour (photo/cachet)', { tenantId: req.user.tenantId, userId: req.user.id });
       res.json({ user: toPublicUser(rows[0]) });
     } catch (err) {
       next(err);

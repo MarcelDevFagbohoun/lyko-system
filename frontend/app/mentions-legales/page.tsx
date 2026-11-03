@@ -17,12 +17,6 @@ export default function MentionsLegalesPage() {
           {LEGAL.email && <li>Contact : {LEGAL.email}</li>}
         </ul>
       </Section>
-      <Section title="Hébergement">
-        <p>
-          Le service est hébergé sur des serveurs sécurisés ; les coordonnées exactes de l&apos;hébergeur sont
-          communiquées sur demande à l&apos;adresse de contact ci-dessus.
-        </p>
-      </Section>
       <Section title="Paiements">
         <p>
           Les paiements en ligne sont traités par FedaPay, prestataire de paiement agréé. {LEGAL.name} ne conserve

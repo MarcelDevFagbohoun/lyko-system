@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Stamp, PenTool, User as UserIcon, Camera, Phone, KeyRound, ChevronRight, Trash2, Undo2, ShieldCheck, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Stamp, User as UserIcon, Camera, Phone, KeyRound, ChevronRight, Trash2, Undo2, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, API_URL } from "@/lib/api/client";
 import { RequireAuth } from "@/components/auth/require-auth";
@@ -16,9 +16,10 @@ import { cn } from "@/lib/utils";
 /**
  * Mon compte (étape 47, redesign 2026-10-30 — demande utilisateur : « comme pour Google ») : une
  * carte de profil (bandeau + photo qui déborde dessus, à la manière d'une page de compte Google),
- * puis le cachet et la signature personnels apposés sur les quittances des paiements encaissés par
- * l'employé lui-même (à défaut, ceux de l'entreprise s'appliquent — Réglages, DG uniquement), chacun
- * modifiable OU supprimable sans retéléverser (demande utilisateur, 2026-10-30), et l'accès volontaire
+ * puis le cachet personnel apposé sur les quittances des paiements encaissés par l'employé lui-même
+ * (à défaut, celui de l'entreprise s'applique — Réglages, DG uniquement), modifiable OU supprimable
+ * sans retéléverser (demande utilisateur, 2026-10-30 ; plus de « signature » séparée depuis le
+ * 2026-11-02 : seul le cachet subsiste), et l'accès volontaire
  * au changement de mot de passe (jusqu'ici uniquement forcé à la première connexion).
  */
 export function MonCompteView() {
@@ -74,7 +75,6 @@ function MonCompteContent() {
   const { user, tenant, accessToken, updateMyProfile } = useAuth();
   const avatar = useImagePicker();
   const stamp = useImagePicker();
-  const signature = useImagePicker();
 
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
@@ -90,14 +90,11 @@ function MonCompteContent() {
       await updateMyProfile({
         avatar: avatar.file ?? undefined,
         stamp: stamp.file ?? undefined,
-        signature: signature.file ?? undefined,
         removeAvatar: avatar.removed,
         removeStamp: stamp.removed,
-        removeSignature: signature.removed,
       });
       avatar.reset();
       stamp.reset();
-      signature.reset();
       setSaved(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer les modifications.");
@@ -116,11 +113,10 @@ function MonCompteContent() {
 
   const currentAvatar = avatar.preview ?? (!avatar.removed && user.avatarUrl ? `${API_URL}${user.avatarUrl}` : null);
   const currentStamp = stamp.preview ?? (!stamp.removed && user.stampUrl ? `${API_URL}${user.stampUrl}` : null);
-  const currentSignature = signature.preview ?? (!signature.removed && user.signatureUrl ? `${API_URL}${user.signatureUrl}` : null);
   const roleLabel = tenant?.roleTitles[user.role] ?? user.role;
   const hasChanges = !!(
-    avatar.file || stamp.file || signature.file ||
-    (avatar.removed && user.avatarUrl) || (stamp.removed && user.stampUrl) || (signature.removed && user.signatureUrl)
+    avatar.file || stamp.file ||
+    (avatar.removed && user.avatarUrl) || (stamp.removed && user.stampUrl)
   );
 
   return (
@@ -184,8 +180,8 @@ function MonCompteContent() {
             </CardContent>
           </Card>
 
-          {/* Cachet et signature : liste de deux lignes dans une seule carte (plutôt que deux cartes
-              côte à côte) — chacune avec sa miniature, un bouton pour modifier et un pour supprimer. */}
+          {/* Cachet personnel — seul apposé désormais (plus de « signature » séparée, demande
+              utilisateur, 2026-11-02). */}
           <Card className="!p-0">
             <div className="divide-y divide-border">
               <SignatureRow
@@ -197,16 +193,6 @@ function MonCompteContent() {
                 picker={stamp}
                 placeholderIcon={Stamp}
                 hasStored={!!user.stampUrl}
-              />
-              <SignatureRow
-                icon={PenTool}
-                title="Ma signature"
-                description="Apposée près de votre nom sur ces mêmes quittances."
-                src={currentSignature}
-                accessToken={accessToken}
-                picker={signature}
-                placeholderIcon={PenTool}
-                hasStored={!!user.signatureUrl}
               />
             </div>
           </Card>

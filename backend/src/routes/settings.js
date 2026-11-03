@@ -37,7 +37,6 @@ function toPublicSettings(tenant) {
     // Activités affichées dans l'en-tête des documents (contrats, états des lieux, quittances...).
     activities: parseActivities(tenant.activities),
     stampUrl: tenant.stamp_path ? toProtectedFileUrl(tenant.stamp_path) : null,
-    signatureUrl: tenant.signature_path ? toProtectedFileUrl(tenant.signature_path) : null,
     // Nom des 3 postes chez cette entreprise (Réglages) — menu déroulant
     // fermé, voir constants/roles.js. Affiché partout, y compris à la
     // connexion employé (voir GET /api/auth/role-titles, public).
@@ -87,7 +86,6 @@ router.patch(
   '/',
   upload.fields([
     { name: 'stamp', maxCount: 1 },
-    { name: 'signature', maxCount: 1 },
   ]),
   async (req, res, next) => {
     const parsed = updateSettingsSchema.safeParse(req.body);
@@ -199,24 +197,21 @@ router.patch(
       }
 
       const stampFile = req.files?.stamp?.[0];
-      const signatureFile = req.files?.signature?.[0];
-      // Un nouveau fichier téléversé pour un champ prévaut toujours sur une demande de suppression du
-      // même champ dans la même requête (le formulaire ne peut de toute façon pas combiner les deux).
+      // Un nouveau fichier téléversé prévaut toujours sur une demande de suppression du même champ
+      // dans la même requête.
       const removeStamp = data.removeStamp && !stampFile;
-      const removeSignature = data.removeSignature && !signatureFile;
 
-      // Chemins actuels : pour supprimer l'ancien fichier après remplacement
+      // Chemin actuel : pour supprimer l'ancien fichier après remplacement
       // (les noms sont désormais aléatoires — étape 12 — donc non réutilisés).
       const oldPaths = [];
-      if (stampFile || signatureFile || removeStamp || removeSignature) {
+      if (stampFile || removeStamp) {
         const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}`);
         await fs.mkdir(dir, { recursive: true });
         const [[current]] = await pool.query(
-          'SELECT stamp_path, signature_path FROM tenants WHERE id = :id LIMIT 1',
+          'SELECT stamp_path FROM tenants WHERE id = :id LIMIT 1',
           { id: req.user.tenantId },
         );
-        if ((stampFile || removeStamp) && current?.stamp_path) oldPaths.push(current.stamp_path);
-        if ((signatureFile || removeSignature) && current?.signature_path) oldPaths.push(current.signature_path);
+        if (current?.stamp_path) oldPaths.push(current.stamp_path);
       }
       if (stampFile) {
         const ext = assertUploadType(stampFile, { label: 'Cachet' });
@@ -226,15 +221,6 @@ router.patch(
         params.stampPath = rel;
       } else if (removeStamp) {
         fields.push('stamp_path = NULL');
-      }
-      if (signatureFile) {
-        const ext = assertUploadType(signatureFile, { label: 'Signature' });
-        const rel = `tenants/${req.user.tenantId}/${randomFileName('signature', ext)}`;
-        await fs.writeFile(path.join(UPLOADS_ROOT, rel), signatureFile.buffer);
-        fields.push('signature_path = :signaturePath');
-        params.signaturePath = rel;
-      } else if (removeSignature) {
-        fields.push('signature_path = NULL');
       }
 
       if (fields.length > 0) {

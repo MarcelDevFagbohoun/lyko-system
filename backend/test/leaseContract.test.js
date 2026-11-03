@@ -75,8 +75,6 @@ test('loadContractRow / toPublicContract — null tant que rien n\'est démarré
   const pub = toPublicContract(row);
   assert.equal(pub.status, 'draft');
   assert.equal(pub.particularConditions, null);
-  assert.equal(pub.tenantSignatureUrl, null);
-  assert.equal(pub.agentSignatureUrl, null);
   assert.equal(pub.createdBy.name, 'DG Test');
 
   await pool.query('DELETE FROM lease_contracts WHERE id = :id', { id: result.insertId });

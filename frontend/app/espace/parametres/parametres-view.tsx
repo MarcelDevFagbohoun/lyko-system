@@ -8,7 +8,6 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Stamp,
-  PenTool,
   CreditCard,
   ExternalLink,
 } from "lucide-react";
@@ -71,8 +70,6 @@ function ParametresContent() {
 
   const [stampFile, setStampFile] = React.useState<File | null>(null);
   const [stampPreview, setStampPreview] = React.useState<string | null>(null);
-  const [signatureFile, setSignatureFile] = React.useState<File | null>(null);
-  const [signaturePreview, setSignaturePreview] = React.useState<string | null>(null);
   const [activities, setActivities] = React.useState<string[]>([]);
   const [dgTitle, setDgTitle] = React.useState("");
   const [comptableTitle, setComptableTitle] = React.useState("");
@@ -135,15 +132,6 @@ function ParametresContent() {
       return file ? URL.createObjectURL(file) : null;
     });
   }
-  function handleSignatureChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setSignatureFile(file);
-    setSignaturePreview((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return file ? URL.createObjectURL(file) : null;
-    });
-  }
-
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!accessToken) return;
@@ -153,7 +141,6 @@ function ParametresContent() {
     try {
       const res = await updateSettings(accessToken, {
         stamp: stampFile ?? undefined,
-        signature: signatureFile ?? undefined,
         activities,
         dgTitle,
         comptableTitle,
@@ -177,7 +164,6 @@ function ParametresContent() {
       });
       setSettings(res.settings);
       setStampFile(null);
-      setSignatureFile(null);
       setFedapaySecretKey("");
       setFedapayWebhookSecret("");
       setSaved(true);
@@ -215,8 +201,6 @@ function ParametresContent() {
   }
 
   const currentStamp = stampPreview ?? (settings.stampUrl ? `${API_URL}${settings.stampUrl}` : null);
-  const currentSignature =
-    signaturePreview ?? (settings.signatureUrl ? `${API_URL}${settings.signatureUrl}` : null);
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -315,57 +299,35 @@ function ParametresContent() {
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Cachet de l&apos;entreprise</CardTitle>
-                <CardDescription>Apposé automatiquement sur le contrat de bail et la quittance générés.</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col items-center gap-3">
-                <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
-                  {currentStamp && accessToken ? (
-                    <AuthenticatedImage
-                      src={currentStamp}
-                      accessToken={accessToken}
-                      alt="Cachet"
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  ) : (
-                    <Stamp size={28} className="text-ink-faint" />
-                  )}
-                </div>
-                <label className="cursor-pointer font-label-sm text-primary hover:underline">
-                  {currentStamp ? "Remplacer le cachet" : "Téléverser un cachet"}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleStampChange} className="hidden" />
-                </label>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Signature</CardTitle>
-                <CardDescription>Apposée automatiquement près de « Pour l&apos;entreprise, ».</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col items-center gap-3">
-                <div className="flex h-28 w-full items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
-                  {currentSignature && accessToken ? (
-                    <AuthenticatedImage
-                      src={currentSignature}
-                      accessToken={accessToken}
-                      alt="Signature"
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  ) : (
-                    <PenTool size={28} className="text-ink-faint" />
-                  )}
-                </div>
-                <label className="cursor-pointer font-label-sm text-primary hover:underline">
-                  {currentSignature ? "Remplacer la signature" : "Téléverser une signature"}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleSignatureChange} className="hidden" />
-                </label>
-              </CardContent>
-            </Card>
-          </div>
+          {/* Plus de « signature » séparée (demande utilisateur, 2026-11-02) : c'est OBLIGATOIREMENT
+              ce cachet (celui du DG) qui est apposé sur le contrat de bail — sans lui, impossible de
+              finaliser un contrat (voir services/leaseContractActions.js côté serveur). */}
+          <Card className="max-w-sm">
+            <CardHeader>
+              <CardTitle>Cachet de l&apos;entreprise</CardTitle>
+              <CardDescription>
+                Obligatoire pour signer un contrat de bail ; apposé aussi sur les quittances générées.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center gap-3">
+              <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted">
+                {currentStamp && accessToken ? (
+                  <AuthenticatedImage
+                    src={currentStamp}
+                    accessToken={accessToken}
+                    alt="Cachet"
+                    className="max-h-full max-w-full object-contain"
+                  />
+                ) : (
+                  <Stamp size={28} className="text-ink-faint" />
+                )}
+              </div>
+              <label className="cursor-pointer font-label-sm text-primary hover:underline">
+                {currentStamp ? "Remplacer le cachet" : "Téléverser un cachet"}
+                <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleStampChange} className="hidden" />
+              </label>
+            </CardContent>
+          </Card>
           </CardToneProvider>
 
           <SectionLabel cadre="patrimoine" />

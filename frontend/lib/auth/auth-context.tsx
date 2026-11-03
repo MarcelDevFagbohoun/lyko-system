@@ -15,10 +15,9 @@ export type AuthUser = {
   // Intitulé de poste choisi par l'admin à la création du compte (ex. « Secrétaire »).
   jobTitle?: string | null;
   permissions: string[];
-  // Cachet/signature personnels (apposés sur les quittances des paiements
-  // que cet employé encaisse lui-même) — voir /espace/mon-compte.
+  // Cachet personnel (apposé sur les quittances des paiements que cet
+  // employé encaisse lui-même) — voir /espace/mon-compte.
   stampUrl: string | null;
-  signatureUrl: string | null;
   // Photo de profil — purement visuelle dans l'app, jamais sur un document PDF.
   avatarUrl: string | null;
 };
@@ -78,10 +77,8 @@ type AuthContextValue = AuthState & {
   updateMyProfile: (input: {
     avatar?: File;
     stamp?: File;
-    signature?: File;
     removeAvatar?: boolean;
     removeStamp?: boolean;
-    removeSignature?: boolean;
   }) => Promise<void>;
   refreshUser: () => Promise<void>;
 };
@@ -264,18 +261,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async (input: {
       avatar?: File;
       stamp?: File;
-      signature?: File;
       removeAvatar?: boolean;
       removeStamp?: boolean;
-      removeSignature?: boolean;
     }) => {
       const fd = new FormData();
       if (input.avatar) fd.append("avatar", input.avatar);
       else if (input.removeAvatar) fd.append("removeAvatar", "true");
       if (input.stamp) fd.append("stamp", input.stamp);
       else if (input.removeStamp) fd.append("removeStamp", "true");
-      if (input.signature) fd.append("signature", input.signature);
-      else if (input.removeSignature) fd.append("removeSignature", "true");
       await apiFetch("/api/auth/my-profile", {
         method: "PATCH",
         accessToken: accessTokenRef.current ?? undefined,
