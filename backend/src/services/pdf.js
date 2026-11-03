@@ -1435,45 +1435,76 @@ function streamMoveInPdf(res, { tenant, renter, property, lease, report, verific
  * main. Trois cases à cocher par élément (Bon état / Mauvais état / Sous réserve — mêmes trois états que
  * la saisie en ligne), une ligne d'observations, et (sortie uniquement) une ligne de retenue.
  */
+/**
+ * Grille en tableau compact (demande utilisateur, 2026-11-03 : « réduire le nombre de pages, 9 → 4 ») —
+ * même esprit que `drawInspectionZones` (le tableau du PV rempli) plutôt que l'ancienne présentation en
+ * grandes cartes empilées (4 lignes/élément, ~80-90pt) qui gonflait le document à 7-9 pages pour rien :
+ * une seule ligne par élément (~28pt), cases BE/ME/SR et ligne d'observation/retenue sur la même rangée.
+ */
 function drawBlankChecklistZones(doc, zones, y, { showRetenue }) {
-  const ROW_H = showRetenue ? 92 : 78;
+  const ROW_H = 28;
+  const cols = showRetenue
+    ? [
+        { key: 'label', title: 'Élément', x: CONTENT_LEFT, w: 150 },
+        { key: 'state', title: 'État (cocher)', x: CONTENT_LEFT + 150, w: 135 },
+        { key: 'obs', title: 'Observations', x: CONTENT_LEFT + 285, w: 140 },
+        { key: 'amount', title: 'Retenue (FCFA)', x: CONTENT_LEFT + 425, w: 70 },
+      ]
+    : [
+        { key: 'label', title: 'Élément', x: CONTENT_LEFT, w: 170 },
+        { key: 'state', title: 'État (cocher)', x: CONTENT_LEFT + 170, w: 155 },
+        { key: 'obs', title: 'Observations', x: CONTENT_LEFT + 325, w: 170 },
+      ];
+  const col = Object.fromEntries(cols.map((c) => [c.key, c]));
+  const PAD = 6;
+
+  function drawZoneHeader(zone, yy, continued) {
+    doc.roundedRect(CONTENT_LEFT, yy, CONTENT_WIDTH, 20, 4).fill(PRIMARY_BG);
+    doc.rect(CONTENT_LEFT, yy, 3, 20).fill(PRIMARY);
+    doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(PRIMARY).text(`${zone.label}${continued ? ' (suite)' : ''}`, CONTENT_LEFT + 10, yy + 5, { width: 400, lineBreak: false });
+    yy += 20;
+    doc.rect(CONTENT_LEFT, yy, CONTENT_WIDTH, 16).fill(PRIMARY);
+    for (const c of cols) {
+      doc.font(FONT_SANS_BOLD).fontSize(7.5).fillColor('#FFFFFF').text(c.title, c.x + PAD, yy + 4.5, { width: c.w - PAD * 2, lineBreak: false });
+    }
+    yy += 16;
+    return yy;
+  }
+
   for (const zone of zones) {
-    y = ensureSpace(doc, y, 44);
-    doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, 24, 4).fill(PRIMARY_BG);
-    doc.rect(CONTENT_LEFT, y, 3, 24).fill(PRIMARY);
-    doc.font(FONT_SANS_BOLD).fontSize(10.5).fillColor(PRIMARY).text(zone.label, CONTENT_LEFT + 12, y + 7, { width: 400, lineBreak: false });
-    y += 32;
+    y = ensureSpace(doc, y, 50);
+    y = drawZoneHeader(zone, y, false);
 
     for (const item of zone.items) {
-      y = ensureSpace(doc, y, ROW_H);
-      doc.roundedRect(CONTENT_LEFT, y, CONTENT_WIDTH, ROW_H - 8, 5).lineWidth(0.8).strokeColor(BORDER).stroke();
-      const PAD = 10;
-      let ly = y + 9;
-      doc.font(FONT_SANS_BOLD).fontSize(9.5).fillColor(INK).text(item.label, CONTENT_LEFT + PAD, ly, { width: CONTENT_WIDTH - PAD * 2, lineBreak: false });
-      ly += 17;
+      if (y + ROW_H > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = drawZoneHeader(zone, doc.page.margins.top, true);
+      }
+      const top = y + 7;
+      doc.font(FONT_SANS_BOLD).fontSize(8.5).fillColor(INK).text(item.label, col.label.x + PAD, top, { width: col.label.w - PAD * 2, height: 12, lineBreak: false, ellipsis: true });
 
       // Trois cases à cocher (☐), mêmes trois états que la saisie en ligne (BE/ME/SR) — dessinées comme
-      // de vrais petits carrés (jamais un simple caractère ☐, peu fiable selon la police/le moteur PDF).
-      let cx = CONTENT_LEFT + PAD;
+      // de vrais petits carrés (jamais un simple caractère ☐, peu fiable selon la police/le moteur PDF),
+      // toutes les trois sur la même ligne pour tenir dans une rangée de tableau.
+      let cx = col.state.x + PAD;
       for (const code of ['BE', 'ME', 'SR']) {
-        doc.rect(cx, ly + 1, 9, 9).lineWidth(0.9).strokeColor(INK_SOFT).stroke();
-        doc.font(FONT_SANS).fontSize(8.5).fillColor(INK_SOFT).text(CONDITION_LABELS[code], cx + 14, ly, { lineBreak: false });
-        cx += 14 + doc.widthOfString(CONDITION_LABELS[code]) + 26;
+        doc.rect(cx, top + 0.5, 7, 7).lineWidth(0.8).strokeColor(INK_SOFT).stroke();
+        doc.font(FONT_SANS).fontSize(7.5).fillColor(INK_SOFT).text(code, cx + 9, top, { lineBreak: false });
+        cx += 9 + doc.widthOfString(code) + 11;
       }
-      ly += 20;
 
-      doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Observations :', CONTENT_LEFT + PAD, ly, { lineBreak: false });
-      doc.moveTo(CONTENT_LEFT + PAD + 68, ly + 7).lineTo(CONTENT_LEFT + CONTENT_WIDTH - PAD, ly + 7).lineWidth(0.6).strokeColor(BORDER_STRONG).stroke();
-      ly += 18;
-
+      // Observations/retenue : une simple ligne à remplir à la main (jamais besoin de plusieurs lignes
+      // sur une fiche VIERGE — l'agent écrit en petit, et le PV en ligne reste l'endroit pour le détail).
+      doc.moveTo(col.obs.x + PAD, top + 9).lineTo(col.obs.x + col.obs.w - PAD, top + 9).lineWidth(0.5).strokeColor(BORDER_STRONG).stroke();
       if (showRetenue) {
-        doc.font(FONT_SANS).fontSize(8).fillColor(MUTED).text('Retenue (FCFA) :', CONTENT_LEFT + PAD, ly, { lineBreak: false });
-        doc.moveTo(CONTENT_LEFT + PAD + 78, ly + 7).lineTo(CONTENT_LEFT + 260, ly + 7).lineWidth(0.6).strokeColor(BORDER_STRONG).stroke();
+        doc.moveTo(col.amount.x + PAD, top + 9).lineTo(col.amount.x + col.amount.w - PAD, top + 9).lineWidth(0.5).strokeColor(BORDER_STRONG).stroke();
       }
 
+      doc.rect(CONTENT_LEFT, y, CONTENT_WIDTH, ROW_H).lineWidth(0.5).strokeColor(BORDER_STRONG).stroke();
+      for (const c of cols.slice(1)) doc.moveTo(c.x, y).lineTo(c.x, y + ROW_H).lineWidth(0.5).strokeColor(BORDER_STRONG).stroke();
       y += ROW_H;
     }
-    y += 6;
+    y += 8;
   }
   return y;
 }
