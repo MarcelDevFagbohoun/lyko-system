@@ -127,6 +127,16 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
   // ── SORTIES ────────────────────────────────────────────────────────────────────────────────
   const ownerPayouts = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM owner_payouts WHERE tenant_id = :tenantId AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
   const chargeRemittances = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM owner_charge_remittances WHERE tenant_id = :tenantId AND deleted_at IS NULL AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
+  // Correction (audit du flux financier, 2026-11-03) : `chargeRemittances` ci-dessus reste le total
+  // remis au propriétaire toutes formes confondues (utilisé plus bas dans `charges.remitted`, qui
+  // répond à « combien a été reversé au propriétaire », pas « combien est sorti de la caisse »). Pour
+  // la TRÉSORERIE réelle (ce bloc, voir `outLines` plus bas), seul `kind = 'cash'` est une vraie sortie
+  // d'argent : depuis la migration 115, un reversement de charges (`kind = 'balance'`) est un simple
+  // crédit du solde du propriétaire — rien ne sort de la caisse avant le vrai versement, compté par
+  // ailleurs dans `ownerPayouts`. Sans cette distinction, la même sortie d'argent était comptée deux
+  // fois (ici ET dans `ownerPayouts` au moment du vrai versement), sous-évaluant la trésorerie réelle de
+  // chaque mois où une charge SONEB/SBEE est reversée — figé tel quel dans le bilan à la clôture.
+  const chargeRemittancesCash = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM owner_charge_remittances WHERE tenant_id = :tenantId AND deleted_at IS NULL AND kind = 'cash' AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
   const propertyExpenses = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM expenses WHERE tenant_id = :tenantId AND deleted_at IS NULL AND property_id IS NOT NULL AND payment_status = 'paid' AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
   const cabinetExpenses = await sumCount(db, `SELECT COALESCE(SUM(amount),0) total, COUNT(*) n FROM expenses WHERE tenant_id = :tenantId AND deleted_at IS NULL AND property_id IS NULL AND payment_status = 'paid' AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
   const fixedAssets = await sumCount(db, `SELECT COALESCE(SUM(acquisition_cost),0) total, COUNT(*) n FROM fixed_assets WHERE tenant_id = :tenantId AND payment_status = 'paid' AND DATE_FORMAT(paid_at,'%Y-%m') = :month`, p);
@@ -279,7 +289,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
   };
   const outLines = {
     ownerPayouts: ownerPayouts.total,
-    chargeRemittances: chargeRemittances.total,
+    chargeRemittances: chargeRemittancesCash.total,
     propertyExpenses: propertyExpenses.total,
     cabinetExpenses: cabinetExpenses.total,
     fixedAssets: fixedAssets.total,
@@ -295,7 +305,14 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
   const cellsNet = cells.reduce((s, c) => s + c.recetteNette, 0);
   const cellsCommission = cells.reduce((s, c) => s + c.commission, 0);
   const escrowDelta = owners.reduce((s, o) => s + (o.closingBalance - o.openingBalance), 0);
-  const expectedDelta = cellsNet - (commissionAtCollection ? cellsCommission : 0) - ownerPayouts.total;
+  // Correction (audit du flux financier, 2026-11-03) : `getEscrowBalances` (services/commission.js)
+  // crédite le solde du propriétaire du montant des reversements de charges `kind = 'balance'` — donc
+  // `escrowDelta` monte de ce montant dès qu'il y en a dans le mois. Sans en tenir compte ici,
+  // `expectedDelta` ne bougeait pas, et ce contrôle s'allumait à TORT (`ok: false`) à chaque mois
+  // comportant un reversement de charges normal, sans aucune anomalie réelle — un faux positif
+  // systématique qui masque la valeur du contrôle pour un vrai écart futur.
+  const chargeCreditsToBalance = chargeRemittances.total - chargeRemittancesCash.total;
+  const expectedDelta = cellsNet - (commissionAtCollection ? cellsCommission : 0) - ownerPayouts.total + chargeCreditsToBalance;
   const controls = light ? [] : [
     {
       key: 'flux_proprietaires',
@@ -306,7 +323,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
     },
     {
       key: 'sequestre',
-      label: 'Variation des soldes séquestre = recette nette − commission − versements',
+      label: 'Variation des soldes séquestre = recette nette − commission − versements + charges créditées au solde',
       ok: escrowDelta === expectedDelta,
       expected: expectedDelta,
       actual: escrowDelta,
@@ -342,7 +359,7 @@ async function getMonthBilan(tenantId, month, { scopeAgentId = null, db = pool, 
     outflows: {
       total: totalOut,
       lines: outLines,
-      counts: { ownerPayouts: ownerPayouts.count, chargeRemittances: chargeRemittances.count, propertyExpenses: propertyExpenses.count, cabinetExpenses: cabinetExpenses.count, fixedAssets: fixedAssets.count },
+      counts: { ownerPayouts: ownerPayouts.count, chargeRemittances: chargeRemittancesCash.count, propertyExpenses: propertyExpenses.count, cabinetExpenses: cabinetExpenses.count, fixedAssets: fixedAssets.count },
     },
     treasury: { in: totalIn, out: totalOut, net: totalIn - totalOut },
     cabinet: { ...cabinetRev.breakdown, netIncome: cabinetRev.netCabinetIncome },

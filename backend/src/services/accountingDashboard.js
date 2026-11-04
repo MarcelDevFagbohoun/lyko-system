@@ -28,9 +28,13 @@ const { getMonthBilan } = require('./monthBilan');
 async function computeAccountingDashboard(user, { from, to }) {
   const params = { tenantId: user.tenantId, from, to };
 
+  // Un loyer réglé « sur la caution » (payment_method = 'caution', sortie de locataire) ne fait
+  // ENTRER aucun argent nouveau : la caution était déjà détenue (même correctif que
+  // `monthBilan.js` → `rentFromDeposit`). Exclu ici pour ne pas gonfler `rentCollected`/`netCashFlow`.
   const [[rentRow]] = await pool.query(
     `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS n
-     FROM rent_payments WHERE tenant_id = :tenantId AND paid_at BETWEEN :from AND :to AND deleted_at IS NULL`,
+     FROM rent_payments WHERE tenant_id = :tenantId AND paid_at BETWEEN :from AND :to AND deleted_at IS NULL
+       AND payment_method <> 'caution'`,
     params,
   );
   const [[payoutRow]] = await pool.query(

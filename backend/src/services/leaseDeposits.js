@@ -128,13 +128,20 @@ async function getUnpaidUtilityBalance(conn, tenantId, leaseId, utilityType) {
  */
 async function settleUnpaidUtilityCharges(conn, { tenantId, leaseId, utilityType, maxAmount, paidAt, createdBy }) {
   if (maxAmount <= 0) return 0;
+  // Verrou requis par le contrat de `recordUtilityPayment` (« appelant responsable du verrou FOR UPDATE
+  // sur utility_charges »), manquant ici avant sa correction (audit du flux financier, 2026-11-03) :
+  // sans lui, un locataire réglant la même facture en ligne (lien FedaPay) au moment exact où son état
+  // des lieux de sortie la règle via la caution pouvait la faire payer au-delà de son montant, ou que
+  // la caution finance un montant déjà réglé par ailleurs. `FOR UPDATE` verrouille d'un coup toutes les
+  // factures lues ci-dessous.
   const [charges] = await conn.query(
     `SELECT uc.*, COALESCE(pt.paid_total, 0) AS paid_total
      FROM utility_charges uc
      LEFT JOIN (SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id) pt ON pt.charge_id = uc.id
      WHERE uc.tenant_id = :tenantId AND uc.lease_id = :leaseId AND uc.utility_type = :utilityType
        AND uc.deleted_at IS NULL AND uc.status <> 'payee'
-     ORDER BY uc.billed_at ASC, uc.id ASC`,
+     ORDER BY uc.billed_at ASC, uc.id ASC
+     FOR UPDATE`,
     { tenantId, leaseId, utilityType },
   );
   let remaining = maxAmount;

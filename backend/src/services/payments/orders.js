@@ -66,11 +66,15 @@ async function loadOrder(tenantId, orderId, db = pool) {
   return row;
 }
 
-async function assertWithinLimits(tenant, amount) {
+// `db` doit être une connexion dont la transaction tient déjà le verrou `tenants` (posé par
+// `createOrder` avant d'appeler cette fonction) — sans quoi ce contrôle relit un total qui ne voit pas
+// un ordre concurrent pas encore commité, et deux ordres peuvent ensemble dépasser le plafond
+// configuré (corrigé le 2026-11-03).
+async function assertWithinLimits(tenant, amount, db = pool) {
   if (amount > Number(tenant.payments_per_order_limit)) {
     throw new ApiError(422, `Montant supérieur au plafond par paiement (${Number(tenant.payments_per_order_limit)} FCFA).`);
   }
-  const [[row]] = await pool.query(
+  const [[row]] = await db.query(
     "SELECT COALESCE(SUM(amount), 0) AS total FROM payment_orders WHERE tenant_id = :tenantId AND status <> 'failed' AND DATE(created_at) = CURDATE()",
     { tenantId: tenant.id },
   );
@@ -80,10 +84,12 @@ async function assertWithinLimits(tenant, amount) {
 }
 
 /** Résout bénéficiaire, montant, libellé et contexte selon l'objet — toute donnée vient de la base, jamais du client. */
-async function resolvePurpose(tenantId, input) {
+async function resolvePurpose(tenantId, input, db = pool) {
   if (input.purpose === 'salaire') {
-    const [[employee]] = await pool.query(
-      "SELECT id, first_name, last_name, email, status FROM users WHERE id = :id AND tenant_id = :tenantId LIMIT 1",
+    // Verrou anti-double-ordre (audit du 2026-11-03) : posé par l'appelant (`createOrder`) via `db` =
+    // une connexion en transaction ouverte jusqu'à l'INSERT du nouvel ordre — voir le commentaire là-bas.
+    const [[employee]] = await db.query(
+      "SELECT id, first_name, last_name, email, status FROM users WHERE id = :id AND tenant_id = :tenantId FOR UPDATE",
       { id: input.userId, tenantId },
     );
     if (!employee) throw new ApiError(404, 'Employé introuvable');
@@ -93,11 +99,26 @@ async function resolvePurpose(tenantId, input) {
     const payroll = computePayroll(await loadPayrollSettings(pool, tenantId), { gross, deduction: input.deductionAmount });
     const net = payroll.net;
     if (input.deductionAmount > gross || net <= 0) throw new ApiError(422, 'Le net à payer doit être supérieur à 0.');
-    const [[existing]] = await pool.query(
+    const [[existing]] = await db.query(
       "SELECT id FROM payslips WHERE tenant_id = :tenantId AND user_id = :userId AND period = :period AND deleted_at IS NULL LIMIT 1",
       { tenantId, userId: input.userId, period: input.period },
     );
     if (existing) throw new ApiError(409, `Le salaire de ${input.period} a déjà été payé à cet employé.`);
+    // Bug corrigé (audit du 2026-11-03) : `payslips` n'est créée qu'à l'APPLICATION de l'ordre (bien
+    // après l'envoi réel à FedaPay, voir `applyOrder`) — le contrôle ci-dessus ne voit donc RIEN tant
+    // qu'un premier ordre pour cet employé/cette période est seulement « en cours » (créé, en train
+    // d'être envoyé, ou envoyé mais pas encore appliqué). Sans ce second contrôle, un deuxième ordre
+    // concurrent passait les deux vérifications et était, lui aussi, réellement envoyé à FedaPay —
+    // l'employé payé deux fois. `status NOT IN ('failed')` couvre 'created'/'processing'/'sent' : tout
+    // sauf un ordre dont on sait avec certitude que l'argent n'est jamais parti.
+    const [[inFlight]] = await db.query(
+      `SELECT id FROM payment_orders
+       WHERE tenant_id = :tenantId AND purpose = 'salaire' AND beneficiary_user_id = :userId AND status <> 'failed'
+         AND JSON_UNQUOTE(JSON_EXTRACT(context_json, '$.period')) = :period
+       LIMIT 1`,
+      { tenantId, userId: input.userId, period: input.period },
+    );
+    if (inFlight) throw new ApiError(409, `Un ordre de paiement du salaire de ${input.period} pour cet employé est déjà en cours.`);
     const name = `${employee.first_name} ${employee.last_name}`;
     return {
       amount: net,
@@ -141,18 +162,30 @@ async function resolvePurpose(tenantId, input) {
     // `payout_amount`/`payout_direction` à la finalisation (migration 139, demande utilisateur
     // 2026-11-03). `beneficiary_type` réutilise 'other' (aucune colonne dédiée) — le libellé/`context`
     // suffisent à retrouver l'opération depuis `applyOrder`.
-    const [[report]] = await pool.query(
+    // Même verrou que pour 'salaire' ci-dessus, même raison : `payout_status` ne passe à 'paid' qu'à
+    // l'APPLICATION de l'ordre, pas à sa création — sans FOR UPDATE ici, deux ordres concurrents pour
+    // le même bail passaient tous les deux cette vérification et étaient tous les deux envoyés.
+    const [[report]] = await db.query(
       `SELECT mo.id, mo.payout_status, mo.payout_direction, mo.payout_amount, r.first_name, r.last_name
        FROM move_out_reports mo
        JOIN leases l ON l.id = mo.lease_id
        JOIN renters r ON r.id = l.renter_id
-       WHERE mo.lease_id = :leaseId AND mo.tenant_id = :tenantId AND mo.status = 'finalized' LIMIT 1`,
+       WHERE mo.lease_id = :leaseId AND mo.tenant_id = :tenantId AND mo.status = 'finalized'
+       LIMIT 1 FOR UPDATE`,
       { leaseId: input.leaseId, tenantId },
     );
     if (!report) throw new ApiError(404, 'PV de sortie introuvable ou non finalisé pour ce bail.');
     if (report.payout_status !== 'pending' || report.payout_direction !== 'refund_to_tenant') {
       throw new ApiError(400, 'Aucune restitution de caution en attente pour ce locataire.');
     }
+    const [[inFlight]] = await db.query(
+      `SELECT id FROM payment_orders
+       WHERE tenant_id = :tenantId AND purpose = 'remboursement_caution_locataire' AND status <> 'failed'
+         AND JSON_UNQUOTE(JSON_EXTRACT(context_json, '$.moveOutReportId')) = :reportId
+       LIMIT 1`,
+      { tenantId, reportId: String(report.id) },
+    );
+    if (inFlight) throw new ApiError(409, 'Un ordre de restitution de caution pour ce locataire est déjà en cours.');
     // La caution peut être entièrement absorbée par les dégâts (rien à rendre, `payout_amount = 0`) —
     // la retenue doit tout de même être traitée (crédit propriétaire), mais FedaPay ne peut pas envoyer
     // un paiement de 0 FCFA : ce cas passe obligatoirement par l'enregistrement manuel
@@ -209,31 +242,52 @@ async function createOrder({ user, req }, rawInput) {
   const phone = normalizeBeninPhone(input.phone);
   if (!phone) throw new ApiError(422, 'Numéro Mobile Money invalide (format béninois attendu).');
 
-  const resolved = await resolvePurpose(user.tenantId, input);
-  await assertWithinLimits(tenant, resolved.amount);
-
+  // Verrou anti-double-ordre ET anti-dépassement de plafond (audit du 2026-11-03, voir les commentaires
+  // dans `resolvePurpose`/`assertWithinLimits`) : TOUTE création d'ordre verrouille maintenant la ligne
+  // `tenants` (`FOR UPDATE`) avant de vérifier le plafond journalier et d'insérer — sans quoi deux
+  // ordres créés presque en même temps (n'importe quelle finalité) pouvaient chacun lire un total du
+  // jour qui ne tenait pas compte de l'autre, et ensemble dépasser le plafond configuré. Pour 'salaire'
+  // et 'remboursement_caution_locataire' spécifiquement, `resolvePurpose` verrouille EN PLUS la
+  // ressource propre à l'évènement (l'employé, le PV de sortie) dans cette même transaction.
+  const conn = await pool.getConnection();
   const reference = newReference();
   let orderId;
+  let resolved;
   try {
-    const [result] = await pool.query(
-      `INSERT INTO payment_orders
-         (tenant_id, reference, purpose, amount, beneficiary_type, beneficiary_user_id, beneficiary_owner_id, beneficiary_name,
-          beneficiary_phone, beneficiary_email, operator, label, context_json, idempotency_key, created_by)
-       VALUES (:tenantId, :reference, :purpose, :amount, :type, :userId, :ownerId, :name, :phone, :email, :operator, :label, :context, :key, :createdBy)`,
-      {
-        tenantId: user.tenantId, reference, purpose: input.purpose, amount: resolved.amount,
-        type: resolved.beneficiary.type, userId: resolved.beneficiary.userId, ownerId: resolved.beneficiary.ownerId,
-        name: resolved.beneficiary.name, phone, email: resolved.beneficiary.email, operator: input.operator,
-        label: resolved.label, context: JSON.stringify(resolved.context), key: input.idempotencyKey, createdBy: user.id,
-      },
-    );
-    orderId = result.insertId;
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') {
-      const [[existing]] = await pool.query('SELECT * FROM payment_orders WHERE tenant_id = :tenantId AND idempotency_key = :key LIMIT 1', { tenantId: user.tenantId, key: input.idempotencyKey });
-      if (existing) return { order: existing, replayed: true };
+    await conn.beginTransaction();
+    await conn.query('SELECT id FROM tenants WHERE id = :id FOR UPDATE', { id: user.tenantId });
+    resolved = await resolvePurpose(user.tenantId, input, conn);
+    await assertWithinLimits(tenant, resolved.amount, conn);
+    try {
+      const [result] = await conn.query(
+        `INSERT INTO payment_orders
+           (tenant_id, reference, purpose, amount, beneficiary_type, beneficiary_user_id, beneficiary_owner_id, beneficiary_name,
+            beneficiary_phone, beneficiary_email, operator, label, context_json, idempotency_key, created_by)
+         VALUES (:tenantId, :reference, :purpose, :amount, :type, :userId, :ownerId, :name, :phone, :email, :operator, :label, :context, :key, :createdBy)`,
+        {
+          tenantId: user.tenantId, reference, purpose: input.purpose, amount: resolved.amount,
+          type: resolved.beneficiary.type, userId: resolved.beneficiary.userId, ownerId: resolved.beneficiary.ownerId,
+          name: resolved.beneficiary.name, phone, email: resolved.beneficiary.email, operator: input.operator,
+          label: resolved.label, context: JSON.stringify(resolved.context), key: input.idempotencyKey, createdBy: user.id,
+        },
+      );
+      orderId = result.insertId;
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        const [[existing]] = await pool.query('SELECT * FROM payment_orders WHERE tenant_id = :tenantId AND idempotency_key = :key LIMIT 1', { tenantId: user.tenantId, key: input.idempotencyKey });
+        if (existing) {
+          await conn.rollback();
+          return { order: existing, replayed: true };
+        }
+      }
+      throw err;
     }
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback().catch(() => {});
     throw err;
+  } finally {
+    conn.release();
   }
   if (input.purpose === 'salaire' && input.saveNumber) {
     await pool.query('UPDATE users SET momo_phone = :phone, momo_operator = :operator WHERE id = :id AND tenant_id = :tenantId', { phone, operator: input.operator, id: input.userId, tenantId: user.tenantId });

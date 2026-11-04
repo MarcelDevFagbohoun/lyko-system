@@ -187,12 +187,21 @@ async function addLine(pool, tenantId, reconciliationId, input, accountId) {
     });
     if (already[0]) throw new ApiError(409, 'Ce mouvement est déjà pointé.');
 
-    const [result] = await pool.query(
-      `INSERT INTO gl_bank_reconciliation_lines (reconciliation_id, entry_line_id, bank_amount, bank_date, is_matched)
-       VALUES (:reconciliationId, :entryLineId, :amount, :date, 1)`,
-      { reconciliationId, entryLineId: input.entryLineId, amount: rows[0].amount, date: isoDate(rows[0].entry_date) },
-    );
-    return result.insertId;
+    // Ce contrôle seul ne suffit pas contre deux requêtes concurrentes (double-clic, deux onglets) : la
+    // contrainte UNIQUE `uq_gl_bank_reconciliation_lines_entry_line` (migration 142, audit du flux
+    // financier 2026-11-03) est le vrai filet de sécurité — on capture son rejet pour renvoyer le même
+    // message métier plutôt qu'une erreur SQL brute.
+    try {
+      const [result] = await pool.query(
+        `INSERT INTO gl_bank_reconciliation_lines (reconciliation_id, entry_line_id, bank_amount, bank_date, is_matched)
+         VALUES (:reconciliationId, :entryLineId, :amount, :date, 1)`,
+        { reconciliationId, entryLineId: input.entryLineId, amount: rows[0].amount, date: isoDate(rows[0].entry_date) },
+      );
+      return result.insertId;
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') throw new ApiError(409, 'Ce mouvement est déjà pointé.');
+      throw err;
+    }
   }
 
   const [result] = await pool.query(
@@ -203,16 +212,28 @@ async function addLine(pool, tenantId, reconciliationId, input, accountId) {
   return result.insertId;
 }
 
-/** Retire une ligne (annule un pointage, ou supprime une ligne bancaire saisie par erreur). */
+/**
+ * Retire une ligne (annule un pointage, ou supprime une ligne bancaire saisie par erreur).
+ * Renvoie la ligne supprimée (pour que l'appelant la journalise — voir routes/gl/glBankReconciliation.js :
+ * corrigé le 2026-11-03, cette suppression ne laissait AUCUNE trace d'audit, contrairement à la
+ * finalisation d'un rapprochement).
+ */
 async function removeLine(pool, tenantId, reconciliationId, lineId) {
   const reconciliation = await loadReconciliation(pool, tenantId, reconciliationId);
   if (reconciliation.status !== 'en_cours') throw new ApiError(409, 'Ce rapprochement est déjà clôturé.');
+
+  const [[line]] = await pool.query(
+    'SELECT * FROM gl_bank_reconciliation_lines WHERE id = :lineId AND reconciliation_id = :reconciliationId LIMIT 1',
+    { lineId, reconciliationId },
+  );
+  if (!line) throw new ApiError(404, 'Ligne introuvable.');
 
   const [result] = await pool.query(
     'DELETE FROM gl_bank_reconciliation_lines WHERE id = :lineId AND reconciliation_id = :reconciliationId',
     { lineId, reconciliationId },
   );
   if (result.affectedRows === 0) throw new ApiError(404, 'Ligne introuvable.');
+  return line;
 }
 
 async function updateStatementBalance(pool, tenantId, reconciliationId, statementBalance) {

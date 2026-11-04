@@ -34,6 +34,9 @@ async function rent({ tenantId, from, to }) {
      JOIN property_units u ON u.id = l.unit_id JOIN properties p ON p.id = u.property_id
      LEFT JOIN users ru ON ru.id = rp.recorded_by
      WHERE rp.tenant_id = :tenantId AND rp.paid_at BETWEEN :from AND :to AND rp.deleted_at IS NULL
+       -- Un loyer réglé « sur la caution » ne fait entrer aucun argent nouveau (même correctif que
+       -- \`accountingDashboard.js\` dont ce détail doit rester cohérent avec le total \`rentCollected\`).
+       AND rp.payment_method <> 'caution'
      ORDER BY rp.paid_at, rp.id`,
     { tenantId, from, to },
   );

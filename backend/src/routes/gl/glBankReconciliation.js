@@ -110,7 +110,18 @@ router.delete('/:id/lines/:lineId', canAdvanced, async (req, res, next) => {
   const lineId = Number(req.params.lineId);
   if (!Number.isInteger(id) || !Number.isInteger(lineId)) return next(new ApiError(400, 'Identifiant invalide'));
   try {
-    await removeLine(pool, req.user.tenantId, id, lineId);
+    const deletedLine = await removeLine(pool, req.user.tenantId, id, lineId);
+    // Audit (corrigé le 2026-11-03) : cette suppression n'était tracée nulle part, contrairement
+    // à la clôture d'un rapprochement — on garde la ligne supprimée en `before_json`.
+    await logGlAudit(pool, {
+      tenantId: req.user.tenantId,
+      userId: req.user.id,
+      ipAddress: req.ip,
+      action: 'bank_reconciliation_line_removed',
+      entityTable: 'gl_bank_reconciliation_lines',
+      entityId: lineId,
+      before: deletedLine,
+    });
     res.status(204).send();
   } catch (err) {
     next(err);

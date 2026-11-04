@@ -591,6 +591,19 @@ async function prepareLeaseTerms(conn, tenantId, unit, data) {
 async function insertLeaseWithEntries(conn, { tenantId, userId, renterId, renterName, data, terms }) {
   const { rent, rentTiming, isCalendaireLease, entryProration, prorata, entryProrataAmount } = terms;
 
+  // Verrou anti-double-attribution (audit du flux financier, 2026-11-03) : `loadAvailableUnit` (appelée
+  // par `createRenter`/`createLease` avant `beginTransaction`) ne fait qu'une lecture non verrouillée —
+  // deux créations concurrentes sur la même unité libre pouvaient toutes les deux passer ce contrôle et
+  // insérer chacune un bail actif. On reverrouille et revérifie ici, juste avant d'insérer le bail, à
+  // l'intérieur de la transaction : la deuxième création concurrente voit alors forcément l'unité déjà
+  // prise et échoue proprement, au lieu de produire deux baux actifs sur un seul logement.
+  const [[lockedUnit]] = await conn.query('SELECT status FROM property_units WHERE id = :unitId AND tenant_id = :tenantId FOR UPDATE', {
+    unitId: data.unitId, tenantId,
+  });
+  if (!lockedUnit || lockedUnit.status !== 'libre') {
+    throw new ApiError(409, `Cette unité n'est plus libre (statut : ${lockedUnit ? lockedUnit.status : 'introuvable'}).`);
+  }
+
   const [leaseResult] = await conn.query(
     `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_due_offset_days, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
        VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :dueOffsetDays, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,

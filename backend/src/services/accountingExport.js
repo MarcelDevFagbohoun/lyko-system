@@ -40,7 +40,11 @@ async function buildAccountingExport(tenantId, { from, to }) {
      JOIN property_units u ON u.id = l.unit_id
      JOIN properties p ON p.id = u.property_id
      LEFT JOIN users ru ON ru.id = rp.recorded_by
-     WHERE rp.tenant_id = :tenantId AND rp.paid_at BETWEEN :from AND :to AND rp.deleted_at IS NULL`,
+     WHERE rp.tenant_id = :tenantId AND rp.paid_at BETWEEN :from AND :to AND rp.deleted_at IS NULL
+       -- Un loyer réglé « sur la caution » (sortie de locataire) ne fait entrer aucun argent nouveau :
+       -- la caution était déjà détenue (même correctif que \`monthBilan.js\` / \`accountingDashboard.js\`).
+       -- Sans ce filtre, le « Solde net » de cet export comptait une entrée de trésorerie fictive.
+       AND rp.payment_method <> 'caution'`,
     params,
   );
 
@@ -85,13 +89,20 @@ async function buildAccountingExport(tenantId, { from, to }) {
 
   // Reversements au propriétaire des charges SONEB/SBEE encaissées (étape 31) :
   // la contrepartie, en sortie, des « Charge SONEB/SBEE réglée » ci-dessus.
+  // Correction (audit du flux financier, 2026-11-03) : depuis la migration 115, un reversement de
+  // charges est un simple crédit du SOLDE du propriétaire (`kind = 'balance'`) — aucun argent ne sort
+  // réellement de la caisse à ce moment-là (le vrai décaissement arrive plus tard, séparément, via
+  // `owner_payouts`, déjà listé ci-dessus). Seuls les anciens reversements réellement payés avant cette
+  // migration (`kind = 'cash'`) sont une vraie sortie de trésorerie. Sans ce filtre, cet export comptait
+  // DEUX FOIS la même sortie d'argent (une fois ici, une fois dans `owner_payouts` au moment du vrai
+  // versement) et affichait un « Solde net » faux à chaque entreprise utilisant les charges SONEB/SBEE.
   const [chargeRemittanceRows] = await pool.query(
     `SELECT cr.paid_at, cr.amount, cr.payment_method, cr.period_label, o.name AS owner_name,
             ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
      FROM owner_charge_remittances cr
      JOIN owners o ON o.id = cr.owner_id
      LEFT JOIN users ru ON ru.id = cr.recorded_by
-     WHERE cr.tenant_id = :tenantId AND cr.deleted_at IS NULL AND cr.paid_at BETWEEN :from AND :to`,
+     WHERE cr.tenant_id = :tenantId AND cr.deleted_at IS NULL AND cr.kind = 'cash' AND cr.paid_at BETWEEN :from AND :to`,
     params,
   );
 
