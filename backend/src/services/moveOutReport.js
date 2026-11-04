@@ -14,6 +14,7 @@ const { assertPeriodOpen, assertPeriodOpenLocked } = require('./accountingPeriod
 const { getOrCreateIssuance } = require('./documentIssuance');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { extourneEcriture } = require('./gl/glReversalService');
+const { assertManualPaymentAllowed } = require('./payments/manualGuard');
 const {
   listLeaseDeposits,
   checkAdditionalDepositRefunds,
@@ -935,6 +936,17 @@ async function recordTenantPayout(tenantId, userId, leaseId, scopeAgentId, { met
     await loadLease(conn, tenantId, leaseId, scopeAgentId); // vérifie le périmètre agent (404/403 si hors portée)
     const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
     assertFinalized(report, 'état des lieux de sortie');
+    // Corrigé (audit de sécurité du 2026-11-04) : ce chemin manuel contournait le garde-fou FedaPay —
+    // avec FedaPay activé, une VRAIE restitution de caution (`refund_to_tenant`, montant > 0) pouvait
+    // être déclarée « payée » ici sans que l'argent soit réellement envoyé, alors que le même garde-fou
+    // bloque déjà ce contournement pour le salaire (`routes/payslips.js`) et le reversement propriétaire
+    // (`services/owners.js::createPayout`). Le cas `payout_amount = 0` (caution entièrement absorbée
+    // par les dégâts, rien à envoyer) reste exempté — FedaPay ne peut pas envoyer 0 FCFA, voir le
+    // commentaire dans `services/payments/orders.js::resolvePurpose`. `collect_from_tenant` (complément
+    // ENCAISSÉ auprès du locataire, pas un envoi FedaPay) n'est pas non plus concerné.
+    if (report.payout_direction === 'refund_to_tenant' && Number(report.payout_amount) > 0) {
+      await assertManualPaymentAllowed(tenantId, 'la restitution de caution au locataire');
+    }
     if (report.payout_status !== 'pending') {
       throw new ApiError(400, "Aucun décaissement en attente pour cette sortie.");
     }
