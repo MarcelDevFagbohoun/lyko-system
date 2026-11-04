@@ -38,6 +38,7 @@ import {
   type GlFiscalYear,
 } from "@/lib/api/gl";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -119,7 +120,13 @@ function GlAvanceeContent() {
   return (
     <div className="flex flex-col gap-5 p-4 sm:p-6">
       <div className="flex flex-col gap-1">
-        <h1 className="font-display text-headline-lg text-ink">Comptabilité avancée</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="font-display text-headline-lg text-ink">Comptabilité avancée</h1>
+          {/* Demande utilisateur (2026-11-04) : SYSCOHADA n'est pas encore ouvert aux entreprises
+              (voir platform_settings, migration 141) — ce badge le rappelle visuellement sur cette
+              page, en plus du verrou qui bloque déjà toute activation côté serveur. */}
+          <Badge variant="warning">En cours de développement</Badge>
+        </div>
         <p className="text-body-sm text-ink-soft">
           Journal, grand livre, balance et écritures en partie double (SYSCOHADA) — pour un usage de comptable.
         </p>

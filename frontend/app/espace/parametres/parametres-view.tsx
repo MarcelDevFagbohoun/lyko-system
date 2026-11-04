@@ -5,12 +5,7 @@
 import { ASSISTANT_ENABLED } from "@/lib/features";
 import * as React from "react";
 import Link from "next/link";
-import {
-  ArrowLeft,
-  Stamp,
-  CreditCard,
-  ExternalLink,
-} from "lucide-react";
+import { ArrowLeft, Stamp } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, API_URL } from "@/lib/api/client";
 import { getSettings, updateSettings, type TenantSettings } from "@/lib/api/settings";
@@ -74,13 +69,6 @@ function ParametresContent() {
   const [dgTitle, setDgTitle] = React.useState("");
   const [comptableTitle, setComptableTitle] = React.useState("");
   const [agentTitle, setAgentTitle] = React.useState("");
-  const [fedapayCollectEnabled, setFedapayCollectEnabled] = React.useState(false);
-  const [fedapayWebhookSecret, setFedapayWebhookSecret] = React.useState("");
-  const [fedapayEnabled, setFedapayEnabled] = React.useState(false);
-  const [fedapaySandbox, setFedapaySandbox] = React.useState(true);
-  const [fedapaySecretKey, setFedapaySecretKey] = React.useState("");
-  const [paymentsPerOrderLimit, setPaymentsPerOrderLimit] = React.useState("500000");
-  const [paymentsDailyLimit, setPaymentsDailyLimit] = React.useState("2000000");
   const [defaultRentTiming, setDefaultRentTiming] = React.useState<RentTiming>("avance");
   const [defaultEntryProration, setDefaultEntryProration] = React.useState<"aucun" | "prorata">("aucun");
   const [chargesEnabled, setChargesEnabled] = React.useState(true);
@@ -104,11 +92,6 @@ function ParametresContent() {
         setDgTitle(res.settings.roleTitles.dg);
         setComptableTitle(res.settings.roleTitles.comptable);
         setAgentTitle(res.settings.roleTitles.agent);
-        setFedapayEnabled(res.settings.fedapayEnabled);
-        setFedapayCollectEnabled(res.settings.fedapayCollectEnabled);
-        setFedapaySandbox(res.settings.fedapaySandbox);
-        setPaymentsPerOrderLimit(String(res.settings.paymentsPerOrderLimit));
-        setPaymentsDailyLimit(String(res.settings.paymentsDailyLimit));
         setDefaultRentTiming(res.settings.defaultRentTiming);
         setDefaultEntryProration(res.settings.defaultEntryProration);
         setChargesEnabled(res.settings.chargesEnabled !== false);
@@ -145,13 +128,6 @@ function ParametresContent() {
         dgTitle,
         comptableTitle,
         agentTitle,
-        fedapayEnabled,
-        fedapayCollectEnabled,
-        fedapayWebhookSecret,
-        fedapaySandbox,
-        fedapaySecretKey,
-        paymentsPerOrderLimit: Number(paymentsPerOrderLimit) || undefined,
-        paymentsDailyLimit: Number(paymentsDailyLimit) || undefined,
         defaultRentTiming,
         defaultEntryProration,
         chargesEnabled,
@@ -164,8 +140,6 @@ function ParametresContent() {
       });
       setSettings(res.settings);
       setStampFile(null);
-      setFedapaySecretKey("");
-      setFedapayWebhookSecret("");
       setSaved(true);
       // Le badge (barre latérale), le journal, les documents... lisent le
       // libellé via le contexte d'auth (`tenant.roleTitles`), pas cet écran :
@@ -504,117 +478,11 @@ function ParametresContent() {
           </Card>
           </CardToneProvider>
 
-          <SectionLabel cadre="finances" />
-          <CardToneProvider tone={CADRES.finances.tone}>
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <CreditCard size={18} className={CADRES.finances.text} />
-                <CardTitle>Paiements en ligne (FedaPay)</CardTitle>
-              </div>
-              <CardDescription>
-                FedaPay sert à tout : vos locataires paient leur loyer et leurs charges en ligne (Mobile Money, carte), et vous
-                payez les salaires, reversez les loyers aux propriétaires et effectuez d&apos;autres paiements. Chaque envoi
-                d&apos;argent demande votre mot de passe, respecte les plafonds et est tracé. Désactivé, tout continue comme avant.{" "}
-                <a
-                  href="https://fedapay.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-primary hover:underline"
-                >
-                  Créer un compte FedaPay <ExternalLink size={12} />
-                </a>
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <label className="flex items-center gap-2.5">
-                <input
-                  type="checkbox"
-                  checked={fedapayCollectEnabled}
-                  onChange={(e) => setFedapayCollectEnabled(e.target.checked)}
-                  className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
-                />
-                <span className="font-label-md text-ink">Encaisser les loyers et charges en ligne (locataires)</span>
-              </label>
-              <label className="flex items-center gap-2.5">
-                <input
-                  type="checkbox"
-                  checked={fedapayEnabled}
-                  onChange={(e) => setFedapayEnabled(e.target.checked)}
-                  className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
-                />
-                <span className="font-label-md text-ink">Activer les paiements sortants</span>
-              </label>
-
-              {(fedapayEnabled || fedapayCollectEnabled) && (
-                <>
-                  <label className="flex items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      checked={fedapaySandbox}
-                      onChange={(e) => setFedapaySandbox(e.target.checked)}
-                      className="h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
-                    />
-                    <span className="text-body-sm text-ink-soft">
-                      Mode test (sandbox) — aucun vrai argent n&apos;est envoyé tant que c&apos;est coché
-                    </span>
-                  </label>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                    <Field
-                      label="Clé secrète FedaPay"
-                      htmlFor="fedapaySecretKey"
-                      hint={settings.fedapayConfigured ? "Déjà enregistrée — laissez vide pour la conserver" : "Chiffrée, jamais réaffichée"}
-                    >
-                      <input
-                        id="fedapaySecretKey"
-                        type="password"
-                        autoComplete="new-password"
-                        value={fedapaySecretKey}
-                        onChange={(e) => setFedapaySecretKey(e.target.value)}
-                        placeholder={settings.fedapayConfigured ? "••••••••" : undefined}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      />
-                    </Field>
-                    <Field
-                      label="Secret du webhook (optionnel)"
-                      htmlFor="fedapayWebhookSecret"
-                      hint={settings.fedapayWebhookConfigured ? "Déjà enregistré — laissez vide pour le conserver" : "Confirmation automatique des paiements locataires"}
-                    >
-                      <input
-                        id="fedapayWebhookSecret"
-                        type="password"
-                        autoComplete="new-password"
-                        value={fedapayWebhookSecret}
-                        onChange={(e) => setFedapayWebhookSecret(e.target.value)}
-                        placeholder={settings.fedapayWebhookConfigured ? "••••••••" : undefined}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      />
-                    </Field>
-                    <Field label="Plafond par paiement (FCFA)" htmlFor="paymentsPerOrderLimit">
-                      <input
-                        id="paymentsPerOrderLimit"
-                        inputMode="numeric"
-                        value={paymentsPerOrderLimit}
-                        onChange={(e) => setPaymentsPerOrderLimit(e.target.value.replace(/\D/g, ""))}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      />
-                    </Field>
-                    <Field label="Plafond par jour (FCFA)" htmlFor="paymentsDailyLimit">
-                      <input
-                        id="paymentsDailyLimit"
-                        inputMode="numeric"
-                        value={paymentsDailyLimit}
-                        onChange={(e) => setPaymentsDailyLimit(e.target.value.replace(/\D/g, ""))}
-                        className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      />
-                    </Field>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-          </CardToneProvider>
+          {/* Section « Paiements en ligne (FedaPay) » retirée (demande utilisateur, 2026-11-04) :
+              FedaPay n'est pas encore ouvert (verrou plateforme à 0, voir platform_settings) — cette
+              carte de réglages n'a donc plus sa place tant que le module n'est pas prêt à être proposé
+              aux entreprises. Les champs/état associés ont été retirés avec elle ; à réintroduire en
+              même temps que la carte le jour où FedaPay revient. */}
 
           <Card>
             <CardFooter className="justify-end">
