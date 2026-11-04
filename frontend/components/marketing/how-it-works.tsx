@@ -2,15 +2,15 @@ import { SectionHeading } from "@/components/marketing/section-heading";
 import { Reveal } from "@/components/marketing/reveal";
 
 const STEPS = [
-  { number: "1", title: "Créez votre espace", text: "En quelques minutes." },
-  { number: "2", title: "Installez votre équipe", text: "Biens, équipe, locataires." },
-  { number: "3", title: "Pilotez et encaissez", text: "Tout depuis un seul endroit." },
+  { number: "1", title: "Créez votre espace", text: "Quelques minutes suffisent, sans engagement." },
+  { number: "2", title: "Installez votre équipe", text: "Vos biens, vos propriétaires, vos locataires et vos employés." },
+  { number: "3", title: "Pilotez et encaissez", text: "Tout depuis un seul endroit, à jour en temps réel." },
 ] as const;
 
 export function HowItWorks() {
   return (
     <section id="comment-ca-marche" className="content-shell py-14 sm:py-20">
-      <SectionHeading eyebrow="Démarrer" title="Prêt en 3 étapes" />
+      <SectionHeading eyebrow="Démarrer" title="Prêt en 3 étapes, pas en 3 semaines" />
       <div className="relative mt-12 grid grid-cols-1 gap-8 sm:grid-cols-3">
         <span aria-hidden className="absolute left-[16%] right-[16%] top-7 hidden h-0.5 bg-gradient-to-r from-primary/20 via-primary to-primary/20 sm:block" />
         {STEPS.map((step, i) => (

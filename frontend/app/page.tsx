@@ -1,6 +1,7 @@
 import { SiteHeader } from "@/components/marketing/site-header";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { Features } from "@/components/marketing/features";
+import { PainPoints } from "@/components/marketing/pain-points";
 import { Hero } from "@/components/marketing/hero";
 import { TeamPhoto } from "@/components/marketing/team-photo";
 import { HowItWorks } from "@/components/marketing/how-it-works";
@@ -10,9 +11,11 @@ import { ContactSection } from "@/components/marketing/contact-section";
 import { Reveal } from "@/components/marketing/reveal";
 
 /**
- * Landing page publique — accessible sans connexion. Parcours : promesse (héros) → aperçu bref des
- * fonctionnalités (sans détail, pour ne pas servir de modèle à la copie) → photo d'équipe (si présente) →
- * démarrage → questions → appel à l'action. Aucun témoignage ni chiffre de performance inventé.
+ * Landing page publique — accessible sans connexion. Parcours : promesse (héros) → le visiteur se
+ * reconnaît dans des frictions concrètes (pain points, sans chiffre inventé) → aperçu bref des
+ * fonctionnalités en réponse (sans détail, pour ne pas servir de modèle à la copie) → photo d'équipe
+ * (si présente) → démarrage → questions → appel à l'action. Aucun témoignage ni chiffre de performance
+ * inventé.
  * Les tarifs ne sont volontairement plus montrés ici (demande utilisateur, 2026-10-30) : on les montre
  * après la valeur, pas avant — ils restent accessibles en un clic depuis le menu et le pied de page (/tarifs).
  */
@@ -48,6 +51,7 @@ export default function LandingPage() {
       <SiteHeader />
       <main className="flex-1">
         <Hero />
+        <Reveal><PainPoints /></Reveal>
         <Reveal><Features /></Reveal>
         <Reveal><TeamPhoto /></Reveal>
         <Reveal><HowItWorks /></Reveal>

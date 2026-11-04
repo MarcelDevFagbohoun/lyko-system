@@ -4,12 +4,12 @@ import { Reveal } from "@/components/marketing/reveal";
 
 /** Promesses courtes et percutantes, sans détail des fonctions (le détail se découvre dans le produit). */
 const ITEMS = [
-  { icon: Users, title: "Une équipe alignée", text: "Chacun son espace, tout le monde au même rythme." },
-  { icon: Home, title: "Des clients rassurés", text: "Propriétaires et locataires informés, sans vous appeler." },
-  { icon: MessageCircle, title: "Zéro relance oubliée", text: "Un rappel par WhatsApp, un clic, et c'est parti." },
-  { icon: Calculator, title: "Charges sans prise de tête", text: "SONEB, SBEE : suivi et refacturation sans calcul à la main." },
-  { icon: Smartphone, title: "Payé plus vite", text: "Vos loyers arrivent, vous gardez la main." },
-  { icon: ShieldCheck, title: "Tout sous contrôle", text: "Chaque action est protégée et tracée." },
+  { icon: Users, title: "Une équipe alignée", text: "DG, comptable, agent : chacun son espace, tout le monde au même rythme." },
+  { icon: Home, title: "Des clients rassurés", text: "Propriétaires et locataires informés, sans qu'ils aient à vous appeler." },
+  { icon: MessageCircle, title: "Zéro relance oubliée", text: "Un rappel de loyer en retard par WhatsApp, en un clic." },
+  { icon: Calculator, title: "Charges sans prise de tête", text: "SONEB, SBEE : suivi et refacturation automatiques, bail par bail." },
+  { icon: Smartphone, title: "Partout avec vous", text: "Ordinateur au bureau, téléphone sur le terrain : toujours à jour." },
+  { icon: ShieldCheck, title: "Tout sous contrôle", text: "Chaque encaissement, chaque versement est tracé et retrouvable." },
 ] as const;
 
 export function Features() {
@@ -18,7 +18,7 @@ export function Features() {
       <span aria-hidden className="motion-safe:animate-float-slow pointer-events-none absolute -left-20 top-20 hidden h-64 w-64 rounded-full bg-primary/10 blur-3xl lg:block" />
       <span aria-hidden className="motion-safe:animate-float-slow pointer-events-none absolute -right-20 bottom-10 hidden h-64 w-64 rounded-full bg-info/10 blur-3xl [animation-delay:-5s] lg:block" />
       <div className="content-shell relative">
-        <SectionHeading eyebrow="Pourquoi nous" title="Gérez plus, stressez moins" description="Tout ce qu'il faut pour que votre activité tourne toute seule." />
+        <SectionHeading eyebrow="La solution" title="Tout ça, un seul logiciel le fait pour vous" description="Pensé pour le Bénin, dès le premier jour : FCFA, Mobile Money, SONEB, SBEE, WhatsApp." />
         <div className="mt-10 grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3">
           {ITEMS.map(({ icon: Icon, title, text }, i) => (
             <Reveal key={title} delay={i * 80}>
