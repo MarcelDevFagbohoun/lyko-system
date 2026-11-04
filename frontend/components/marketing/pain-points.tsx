@@ -21,7 +21,7 @@ export function PainPoints() {
       <SectionHeading
         eyebrow="Le quotidien, sans logiciel"
         title="Vous reconnaissez ça ?"
-        description="C'est le lot de beaucoup de cabinets de gestion locative au Bénin — ça ne devrait pas l'être."
+        description="C'est le lot de beaucoup d'entreprises et d'agences de gestion locative au Bénin — ça ne devrait pas l'être."
       />
       <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
         {PAINS.map(({ icon: Icon, text }, i) => (
