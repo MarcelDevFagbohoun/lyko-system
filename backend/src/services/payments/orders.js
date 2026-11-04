@@ -143,9 +143,15 @@ async function resolvePurpose(tenantId, input, db = pool) {
     // pour que deux ordres simultanés ne puissent pas dépasser ensemble ce qui est réellement dû. Même calcul que
     // `assertPayoutWithinBalance` (versement manuel, routes/owners.js) — une seule source de vérité partagée
     // depuis l'audit du 2026-10-23, pour que les deux chemins se voient mutuellement.
-    const balances = await getEscrowBalances(tenantId);
+    // Corrigé (revue indépendante du 2026-11-04) : passe explicitement `db` (= `conn`, la transaction
+    // qui tient déjà le verrou `tenants` posé par `createOrder`) au lieu de laisser ces deux lectures
+    // sur `pool` implicitement — avant ce correctif, la protection contre un double reversement
+    // concurrent ne tenait QUE parce que `tenants` était verrouillé plus haut et que tout ordre
+    // concurrent avait donc déjà commité avant cette lecture ; une dépendance correcte mais non
+    // explicite, fragile si ce verrou venait un jour à être retiré sans qu'on comprenne pourquoi.
+    const balances = await getEscrowBalances(tenantId, db);
     const balance = balances.get(owner.id)?.balance ?? 0;
-    const reserved = await getReservedOwnerPayouts(tenantId, owner.id);
+    const reserved = await getReservedOwnerPayouts(tenantId, owner.id, db);
     if (input.amount > balance - reserved) {
       throw new ApiError(422, `Le montant dépasse le solde disponible pour ce propriétaire (${Math.max(0, balance - reserved)} FCFA).`);
     }
@@ -165,6 +171,12 @@ async function resolvePurpose(tenantId, input, db = pool) {
     // Même verrou que pour 'salaire' ci-dessus, même raison : `payout_status` ne passe à 'paid' qu'à
     // l'APPLICATION de l'ordre, pas à sa création — sans FOR UPDATE ici, deux ordres concurrents pour
     // le même bail passaient tous les deux cette vérification et étaient tous les deux envoyés.
+    // Précision (revue indépendante du 2026-11-04) : un SELECT multi-tables avec FOR UPDATE verrouille
+    // en MySQL les lignes de TOUTES les tables jointes présentes dans le résultat — donc aussi la ligne
+    // `leases` et la ligne `renters` concernées, pas seulement `move_out_reports`. Sans conséquence ici
+    // (le verrou `tenants` posé par `createOrder` sérialise déjà tout pour ce tenant), mais à garder en
+    // tête si ce verrou élargi venait un jour à entrer en conflit avec un autre chemin verrouillant
+    // `leases`/`renters` dans un ordre différent.
     const [[report]] = await db.query(
       `SELECT mo.id, mo.payout_status, mo.payout_direction, mo.payout_amount, r.first_name, r.last_name
        FROM move_out_reports mo
@@ -255,9 +267,14 @@ async function createOrder({ user, req }, rawInput) {
   let resolved;
   try {
     await conn.beginTransaction();
-    await conn.query('SELECT id FROM tenants WHERE id = :id FOR UPDATE', { id: user.tenantId });
+    // Corrigé (revue indépendante du 2026-11-04) : `tenant` (chargé plus haut via `pool`, avant la
+    // transaction) pouvait porter des plafonds déjà périmés si la configuration était modifiée pendant
+    // qu'un ordre se créait — le verrou `FOR UPDATE` posé ici n'avait alors aucun effet sur la
+    // fraîcheur des plafonds eux-mêmes. On relit `tenant` depuis la ligne verrouillée avant de vérifier
+    // les plafonds, pour qu'`assertWithinLimits` utilise toujours la configuration la plus à jour.
+    const [[lockedTenant]] = await conn.query('SELECT * FROM tenants WHERE id = :id FOR UPDATE', { id: user.tenantId });
     resolved = await resolvePurpose(user.tenantId, input, conn);
-    await assertWithinLimits(tenant, resolved.amount, conn);
+    await assertWithinLimits(lockedTenant, resolved.amount, conn);
     try {
       const [result] = await conn.query(
         `INSERT INTO payment_orders

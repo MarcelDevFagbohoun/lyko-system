@@ -827,7 +827,13 @@ async function reopenMoveOut(tenantId, userId, leaseId, reason) {
     // Argent déjà réellement mouvementé (« Payer le locataire »/« Encaisser le complément ») — une
     // réouverture rejouerait aveuglément les retenues/signatures sans jamais pouvoir annuler ce paiement
     // déjà parti (demande utilisateur implicite : la traçabilité du décaissement doit rester fiable).
-    if (report.payout_status === 'paid' && report.total_deductions > 0) {
+    // Corrigé (revue indépendante du 2026-11-04) : le `&& total_deductions > 0` laissait rouvrir sans
+    // blocage une restitution intégrale déjà payée (pas de retenue, donc condition fausse) alors que
+    // l'argent était bel et bien déjà parti — même risque que pour une retenue. Seul `payout_status`
+    // compte : dès que le décaissement est réglé, la fiche ne doit plus pouvoir être rouverte, quel
+    // que soit le montant des déductions (ferme aussi le risque de double comptage en trésorerie sur
+    // deux mois différents si la fiche était rouverte puis refinalisée).
+    if (report.payout_status === 'paid') {
       throw new ApiError(409, 'Le paiement de sortie a déjà été effectué pour ce locataire — cette fiche ne peut plus être rouverte.');
     }
 

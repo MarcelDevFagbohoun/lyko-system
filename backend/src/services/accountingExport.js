@@ -122,6 +122,28 @@ async function buildAccountingExport(tenantId, { from, to }) {
     params,
   );
 
+  // Caution restituée au locataire sortant / complément encaissé auprès de lui quand les dégâts
+  // dépassent la caution (ajouté le 2026-11-04, revue indépendante) : ces deux mouvements de
+  // trésorerie réels (voir `monthBilan.js` → `rentDepositsReturned`/`rentComplementsCollected`,
+  // déjà corrects) ne figuraient dans AUCUNE ligne de cet export — un comptable externe rapprochant
+  // ce registre avec la trésorerie du module Comptabilité ne pouvait jamais retomber juste sur ces
+  // mois-là. Daté par `payout_paid_at` (date du RÈGLEMENT), jamais `conducted_at`.
+  const [moveOutPayoutRows] = await pool.query(
+    `SELECT mo.payout_paid_at AS paid_at, mo.payout_amount AS amount, mo.payout_method AS payment_method,
+            mo.payout_direction,
+            r.first_name AS renter_first_name, r.last_name AS renter_last_name,
+            u.code AS unit_code, p.code AS property_code,
+            ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name
+     FROM move_out_reports mo
+     JOIN leases l ON l.id = mo.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     JOIN property_units u ON u.id = l.unit_id
+     JOIN properties p ON p.id = u.property_id
+     LEFT JOIN users ru ON ru.id = mo.payout_paid_by
+     WHERE mo.tenant_id = :tenantId AND mo.payout_status = 'paid' AND mo.payout_paid_at BETWEEN :from AND :to`,
+    params,
+  );
+
   const categoryLabels = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
   const utilityLabels = { soneb: 'SONEB (Eau)', sbee: 'SBEE (Électricité)' };
   const recorderName = (r) => (r.recorder_first_name ? `${r.recorder_first_name} ${r.recorder_last_name}` : '');
@@ -201,6 +223,20 @@ async function buildAccountingExport(tenantId, { from, to }) {
       categorie: 'Frais d’agence',
       debit: null,
       credit: Number(r.amount),
+      mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
+      enregistrePar: recorderName(r),
+    });
+  }
+  for (const r of moveOutPayoutRows) {
+    const isRefund = r.payout_direction === 'refund_to_tenant';
+    rows.push({
+      date: isoDate(r.paid_at),
+      type: isRefund ? 'Caution restituée au locataire sortant' : 'Complément de caution encaissé (dégâts)',
+      tiers: `${r.renter_first_name} ${r.renter_last_name}`,
+      bien: `${r.property_code} · ${r.unit_code}`,
+      categorie: 'État des lieux de sortie',
+      debit: isRefund ? Number(r.amount) : null,
+      credit: isRefund ? null : Number(r.amount),
       mode: PAYMENT_METHOD_LABELS[r.payment_method] ?? r.payment_method,
       enregistrePar: recorderName(r),
     });

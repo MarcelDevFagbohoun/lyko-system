@@ -95,7 +95,18 @@ router.patch(
     }
     const data = parsed.data;
 
+    // Corrigé (revue indépendante du 2026-11-04) : l'activation de FedaPay (envoi/encaissement)
+    // lisait l'état courant du tenant sans verrou avant de vérifier le gate plateforme
+    // (`assertCanActivate`) — deux requêtes d'activation concurrentes pouvaient chacune lire
+    // `alreadyOn = false` et passer le contrôle ensemble. On verrouille la ligne `tenants` pour toute
+    // la durée de cette mise à jour (lecture ET écriture), même si l'essentiel des champs ici n'ont
+    // rien à voir avec FedaPay — c'est la seule ligne concernée, donc aucun coût de contention réel.
+    const conn = await pool.getConnection();
     try {
+      await conn.beginTransaction();
+      const [[lockedTenant]] = await conn.query('SELECT * FROM tenants WHERE id = :id FOR UPDATE', { id: req.user.tenantId });
+      if (!lockedTenant) throw new ApiError(404, 'Entreprise introuvable');
+
       const fields = [];
       const params = { id: req.user.tenantId };
 
@@ -137,22 +148,20 @@ router.patch(
       }
       if (data.fedapayCollectEnabled !== undefined) {
         if (data.fedapayCollectEnabled) {
-          const [[current]] = await pool.query('SELECT fedapay_secret_key_enc, fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
-          if (!(data.fedapaySecretKey || current?.fedapay_secret_key_enc)) {
+          if (!(data.fedapaySecretKey || lockedTenant.fedapay_secret_key_enc)) {
             throw new ApiError(400, "Renseignez la clé secrète FedaPay avant d'activer le paiement en ligne.");
           }
-          await assertCanActivate('fedapay', !!current?.fedapay_collect_enabled, pool);
+          await assertCanActivate('fedapay', !!lockedTenant.fedapay_collect_enabled, conn);
         }
         fields.push('fedapay_collect_enabled = :fedapayCollectEnabled');
         params.fedapayCollectEnabled = data.fedapayCollectEnabled;
       }
       if (data.fedapayEnabled !== undefined) {
         if (data.fedapayEnabled) {
-          const [[current]] = await pool.query('SELECT fedapay_secret_key_enc, fedapay_enabled FROM tenants WHERE id = :id LIMIT 1', { id: req.user.tenantId });
-          if (!(data.fedapaySecretKey || current?.fedapay_secret_key_enc)) {
+          if (!(data.fedapaySecretKey || lockedTenant.fedapay_secret_key_enc)) {
             throw new ApiError(400, "Renseignez la clé secrète FedaPay avant d'activer les paiements sortants.");
           }
-          await assertCanActivate('fedapay', !!current?.fedapay_enabled, pool);
+          await assertCanActivate('fedapay', !!lockedTenant.fedapay_enabled, conn);
         }
         fields.push('fedapay_enabled = :fedapayEnabled');
         params.fedapayEnabled = data.fedapayEnabled;
@@ -210,11 +219,7 @@ router.patch(
       if (stampFile || removeStamp) {
         const dir = path.join(UPLOADS_ROOT, `tenants/${req.user.tenantId}`);
         await fs.mkdir(dir, { recursive: true });
-        const [[current]] = await pool.query(
-          'SELECT stamp_path FROM tenants WHERE id = :id LIMIT 1',
-          { id: req.user.tenantId },
-        );
-        if (current?.stamp_path) oldPaths.push(current.stamp_path);
+        if (lockedTenant.stamp_path) oldPaths.push(lockedTenant.stamp_path);
       }
       if (stampFile) {
         const ext = assertUploadType(stampFile, { label: 'Cachet' });
@@ -227,8 +232,9 @@ router.patch(
       }
 
       if (fields.length > 0) {
-        await pool.query(`UPDATE tenants SET ${fields.join(', ')} WHERE id = :id`, params);
+        await conn.query(`UPDATE tenants SET ${fields.join(', ')} WHERE id = :id`, params);
       }
+      await conn.commit();
 
       // Nettoyage des anciens fichiers remplacés (best-effort, hors chemin critique).
       await Promise.all(
@@ -241,7 +247,10 @@ router.patch(
       logger.info('Paramètres entreprise mis à jour', { tenantId: req.user.tenantId, by: req.user.id });
       res.json({ settings: toPublicSettings(rows[0]) });
     } catch (err) {
+      await conn.rollback().catch(() => {});
       next(err);
+    } finally {
+      conn.release();
     }
   },
 );
