@@ -15,7 +15,6 @@ import {
   Wallet,
   Receipt,
   Banknote,
-  Calculator,
   BellRing,
   Briefcase,
   CreditCard,
@@ -118,7 +117,6 @@ export function EspaceSidebar() {
   const canProprietaires = isDg || user.permissions.includes("proprietaires");
   const canPlaintes = isDg || user.permissions.includes("plaintes");
   const canAccounting = isDg || user.permissions.includes("comptabilite");
-  const canAccountingAdvanced = isDg || user.permissions.includes("comptabilite_avancee");
   const chargesOn = tenant?.chargesEnabled !== false;
   const canCharges = chargesOn && (isDg || user.permissions.includes("charges"));
   const canSeePayments = isDg || user.permissions.includes("reversements_proprietaires") || user.permissions.includes("depenses_enregistrer");
@@ -172,7 +170,9 @@ export function EspaceSidebar() {
         canAccounting && { href: "/espace/comptabilite", label: "Trésorerie & recettes", icon: Wallet, hint: "Comptabilité de trésorerie : encaissements de loyers, décaissements et solde de caisse." },
         canAccounting && { href: "/espace/cloture", label: "Clôture mensuelle", icon: Lock, hint: "Arrêté des comptes du mois : bilan, contrôles de cohérence, verrouillage de la période." },
         canAccounting && { href: "/espace/comptabilite#depenses", label: "Charges d'exploitation", icon: Banknote, hint: "Dépenses de fonctionnement de l'entreprise et dépenses avancées pour le compte des propriétaires." },
-        canAccountingAdvanced && { href: "/espace/comptabilite-avancee", label: "Comptabilité générale", icon: Calculator, hint: "Partie double SYSCOHADA : plan comptable, journaux, grand livre, balance, états financiers." },
+        // Entrée "Comptabilité générale" (SYSCOHADA) retirée du menu (demande utilisateur, 2026-11-04,
+        // module en cours de développement) — la page reste accessible directement par son URL
+        // (/espace/comptabilite-avancee), qui affiche désormais un badge "En cours de développement".
         canCharges && { href: "/espace/charges", label: "Charges locatives", icon: Receipt, hint: "Factures SONEB/SBEE refacturées aux locataires et reversées aux propriétaires." },
         // Salaires (demande utilisateur, 2026-10-18) : réservé au DG, jamais délégable via une
         // permission — la rémunération du personnel reste une donnée sensible (même principe que

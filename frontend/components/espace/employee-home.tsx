@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import {
-  ArrowRight, BellRing, Building2, Calculator, ClipboardList, Landmark, ListTodo, MessageSquareWarning,
+  ArrowRight, BellRing, Building2, ClipboardList, Landmark, ListTodo, MessageSquareWarning,
   Receipt, Send, Stamp, Tag, Users, Wallet, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -62,7 +62,8 @@ export function EmployeeHome() {
     { href: "/espace/planning", label: "Mes tâches", description: "Ce qui vous est confié", icon: ListTodo, cadre: "operations", show: true },
     { href: "/espace/comptabilite", label: "Trésorerie & recettes", description: "Encaissements et solde de caisse", icon: Wallet, cadre: "finances", show: has("comptabilite") },
     { href: "/espace/charges", label: "Charges locatives", description: "Factures SONEB / SBEE", icon: Receipt, cadre: "finances", show: chargesOn && has("charges") },
-    { href: "/espace/comptabilite-avancee", label: "Comptabilité générale", description: "Journaux, grand livre, balance", icon: Calculator, cadre: "finances", show: has("comptabilite_avancee") },
+    // Entrée "Comptabilité générale" (SYSCOHADA) retirée (demande utilisateur, 2026-11-04, module en
+    // cours de développement) — voir espace-sidebar.tsx pour la même suppression côté menu principal.
     { href: "/espace/paiements", label: "Paiements", description: "Salaires, reversements, reçus", icon: Send, cadre: "finances", show: canSeePayments },
     { href: "/espace/historique", label: "Mon historique", description: "Vos opérations récentes", icon: ClipboardList, cadre: "administration", show: true },
     { href: "/espace/mon-compte", label: "Mon compte", description: "Cachet, signature et mot de passe", icon: Stamp, cadre: "administration", show: true },
