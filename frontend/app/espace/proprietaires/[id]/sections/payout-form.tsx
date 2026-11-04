@@ -110,16 +110,14 @@ export function PayoutForm({
       </div>
       <p className="text-body-xs text-ink-muted">
         Ce formulaire enregistre un versement déjà réglé (espèces, virement…).
-        {canUseFedapayPage ? (
+        {canUseFedapayPage && (
           <>
-            {" "}Pour l&apos;envoyer réellement en Mobile Money via FedaPay,{" "}
+            {" "}Vous pouvez aussi{" "}
             <Link href="/espace/paiements" className="text-primary hover:underline">
-              utilisez la page Paiements
+              utiliser la page Paiements
             </Link>{" "}
-            — le versement y est enregistré automatiquement une fois confirmé.
+            pour un suivi centralisé avec reçu.
           </>
-        ) : (
-          " Pour l'envoyer réellement en Mobile Money via FedaPay, demandez au DG ou au comptable."
         )}
       </p>
 

@@ -19,14 +19,14 @@ export const metadata: Metadata = {
     template: "%s · Africa Immo Management",
   },
   description:
-    "Logiciel de gestion locative pour entreprises et agences immobilières au Bénin : loyers, charges SONEB/SBEE, relances WhatsApp, quittances, relevés propriétaires et comptabilité SYSCOHADA.",
+    "Logiciel de gestion locative pour entreprises et agences immobilières au Bénin : loyers, charges SONEB/SBEE, relances WhatsApp, quittances et relevés propriétaires.",
   openGraph: {
     type: "website",
     locale: "fr_BJ",
     siteName: "Africa Immo Management",
     title: "Africa Immo Management : la gestion locative pensée pour le Bénin",
     description:
-      "Encaissez à temps, rendez des comptes justes à vos propriétaires : loyers, charges SONEB/SBEE, quittances et comptabilité SYSCOHADA.",
+      "Encaissez à temps, rendez des comptes justes à vos propriétaires : loyers, charges SONEB/SBEE et quittances.",
   },
   manifest: "/manifest.webmanifest",
   applicationName: "Africa Immo Management",

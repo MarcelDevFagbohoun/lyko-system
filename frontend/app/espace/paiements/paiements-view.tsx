@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { FileDown, Send, ShieldCheck, Trash2, Banknote } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
@@ -144,9 +143,7 @@ function PaiementsContent() {
               </>
             ) : (
               <span>
-                Vous enregistrez les paiements déjà effectués ; un récapitulatif est demandé avant chaque enregistrement. Pour payer directement en
-                Mobile Money, le directeur général peut activer FedaPay dans{" "}
-                <Link className="text-primary hover:underline" href="/espace/parametres">Paramètres</Link>.
+                Vous enregistrez les paiements déjà effectués ; un récapitulatif est demandé avant chaque enregistrement.
               </span>
             )}
           </div>

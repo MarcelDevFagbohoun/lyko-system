@@ -9,7 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn, formatFcfa } from "@/lib/utils";
 
-const ORDER_FEATURES = ["core", "tenant_collect", "payroll", "payouts", "owner_portal", "sale_properties", "advanced_accounting", "audit_full"];
+// "tenant_collect" (paiement locataire FedaPay), "payouts" (paiements sortants FedaPay) et
+// "advanced_accounting" (SYSCOHADA) retirés de l'affichage (demande utilisateur, 2026-11-04,
+// modules en cours de développement) — ne pas promettre sur la page Tarifs/Abonnement une
+// fonctionnalité actuellement invisible partout ailleurs dans l'interface. Les features restent
+// dans `plan.features` côté catalogue (constants/plans.js) : rien ne change aux droits réels, seul
+// l'affichage de la liste est filtré ici.
+const ORDER_FEATURES = ["core", "payroll", "owner_portal", "sale_properties", "audit_full"];
 
 /**
  * Grille des offres. `onChoose(plan, months)` : affiche un bouton par durée (espace connecté) ; sans lui, un seul bouton

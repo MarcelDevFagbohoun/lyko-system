@@ -16,7 +16,7 @@ export const FAQ_ITEMS = [
   {
     question: "Comment mes locataires paient-ils ?",
     answer:
-      "Vous enregistrez les paiements reçus en espèces, par Mobile Money, virement ou chèque. Si votre entreprise le souhaite, elle peut aussi activer le paiement en ligne (Mobile Money ou carte) via FedaPay, avec son propre compte marchand.",
+      "Vous enregistrez les paiements reçus en espèces, par Mobile Money, virement ou chèque, avec reçu automatique.",
   },
   {
     question: "Mes propriétaires ont-ils accès aux informations ?",
@@ -24,9 +24,9 @@ export const FAQ_ITEMS = [
       "Ils consultent un portail personnel, sans mot de passe, accessible par un lien que vous leur donnez : recette du mois, commission, versements et relevé PDF. Le portail est en lecture seule.",
   },
   {
-    question: "La comptabilité SYSCOHADA est-elle obligatoire ?",
+    question: "Faites-vous de la comptabilité SYSCOHADA ?",
     answer:
-      "Non. La comptabilité simple (recettes, dépenses, clôture mensuelle, exports) est toujours disponible. Le module SYSCOHADA est optionnel : la direction l'active depuis les Réglages quand elle en a besoin.",
+      "La comptabilité simple (recettes, dépenses, clôture mensuelle, exports) est disponible dès aujourd'hui. Un module de comptabilité en partie double SYSCOHADA est en cours de développement.",
   },
   {
     question: "Et si un employé se trompe dans une saisie ?",

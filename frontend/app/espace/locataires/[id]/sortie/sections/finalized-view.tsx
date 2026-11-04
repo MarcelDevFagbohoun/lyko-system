@@ -463,7 +463,7 @@ function PayoutSection({
         </h3>
         <p className="text-body-sm text-ink-muted">
           {direction === "refund_to_tenant"
-            ? `${formatFcfa(amount)} à restituer au locataire (restitution manuelle, hors FedaPay).`
+            ? `${formatFcfa(amount)} à restituer au locataire.`
             : `${formatFcfa(amount)} restant dû par le locataire, au-delà de sa caution.`}
         </p>
       </div>
