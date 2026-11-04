@@ -2,14 +2,43 @@ import { Calculator, Home, MessageCircle, ShieldCheck, Smartphone, Users } from 
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { Reveal } from "@/components/marketing/reveal";
 
-/** Promesses courtes et percutantes, sans détail des fonctions (le détail se découvre dans le produit). */
+/**
+ * Promesses concrètes avec un détail vérifiable chacune (demande utilisateur,
+ * 2026-11-04 : des cartes plus détaillées, qui donnent vraiment envie) —
+ * jamais de chiffre ou de témoignage inventé, uniquement ce que le produit
+ * fait réellement aujourd'hui.
+ */
 const ITEMS = [
-  { icon: Users, title: "Une équipe alignée", text: "DG, comptable, agent : chacun son espace, tout le monde au même rythme." },
-  { icon: Home, title: "Des clients rassurés", text: "Propriétaires et locataires informés, sans qu'ils aient à vous appeler." },
-  { icon: MessageCircle, title: "Zéro relance oubliée", text: "Un rappel de loyer en retard par WhatsApp, en un clic." },
-  { icon: Calculator, title: "Charges sans prise de tête", text: "SONEB, SBEE : suivi et refacturation automatiques, bail par bail." },
-  { icon: Smartphone, title: "Partout avec vous", text: "Ordinateur au bureau, téléphone sur le terrain : toujours à jour." },
-  { icon: ShieldCheck, title: "Tout sous contrôle", text: "Chaque encaissement, chaque versement est tracé et retrouvable." },
+  {
+    icon: Users,
+    title: "Une équipe alignée",
+    text: "DG, comptable, agent : chacun son espace et ses accès, sans tout voir ni tout casser. Chaque action reste tracée au nom de son auteur.",
+  },
+  {
+    icon: Home,
+    title: "Des clients rassurés",
+    text: "Un lien privé pour chaque propriétaire : loyers encaissés, reversements et soldes à jour. Le locataire reçoit son reçu automatiquement après paiement.",
+  },
+  {
+    icon: MessageCircle,
+    title: "Zéro relance oubliée",
+    text: "Le logiciel repère lui-même les loyers en retard et envoie le rappel par WhatsApp, sans que vous ayez à y penser.",
+  },
+  {
+    icon: Calculator,
+    title: "Charges sans prise de tête",
+    text: "Numéro de compteur SONEB et SBEE par logement : charges suivies et refacturées automatiquement, bail par bail, chaque mois.",
+  },
+  {
+    icon: Smartphone,
+    title: "Partout avec vous",
+    text: "Pensé pour le téléphone autant que pour l'ordinateur : ouvrez un dossier sur le terrain, aussi vite qu'au bureau.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Tout sous contrôle",
+    text: "Chaque encaissement génère un reçu, chaque mouvement est horodaté et attribué — retrouvable en quelques secondes, même des mois plus tard.",
+  },
 ] as const;
 
 export function Features() {
