@@ -77,6 +77,12 @@ function ParametresContent() {
   const [utilityPassThroughPercent, setUtilityPassThroughPercent] = React.useState("100");
   const [commissionTiming, setCommissionTiming] = React.useState<"encaissement" | "reversement">("encaissement");
   const [expenseAlertThreshold, setExpenseAlertThreshold] = React.useState("");
+  const [leaseContractTemplate, setLeaseContractTemplate] = React.useState("");
+  // Distingue « le champ affiche le modèle par défaut parce que rien n'a encore été personnalisé » de
+  // « l'entreprise a cliqué sur Réinitialiser » — sans ça, enregistrer la page sans avoir touché à ce
+  // champ figerait par erreur le modèle par défaut du jour comme modèle personnalisé de l'entreprise,
+  // l'empêchant de profiter d'une future amélioration du modèle par défaut.
+  const [templateReset, setTemplateReset] = React.useState(false);
 
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
@@ -100,6 +106,10 @@ function ParametresContent() {
         setUtilityPassThroughPercent(String(res.settings.utilityPassThroughPercent));
         setCommissionTiming(res.settings.commissionTiming);
         setExpenseAlertThreshold(res.settings.expenseAlertThreshold != null ? String(res.settings.expenseAlertThreshold) : "");
+        // Pas encore personnalisé : on pré-remplit avec le modèle par défaut (plutôt qu'un champ vide)
+        // pour que l'entreprise parte de ce qui est déjà en vigueur, à adapter plutôt qu'à réécrire.
+        setLeaseContractTemplate(res.settings.leaseContractTemplate ?? res.settings.defaultLeaseContractTemplate);
+        setTemplateReset(false);
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Impossible de charger les paramètres."));
   }, [accessToken]);
@@ -116,7 +126,7 @@ function ParametresContent() {
   }
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!accessToken) return;
+    if (!accessToken || !settings) return;
     setSaving(true);
     setSaved(false);
     setError(null);
@@ -136,8 +146,15 @@ function ParametresContent() {
         utilityPassThroughPercent: Math.min(100, Math.max(0, Number(utilityPassThroughPercent) || 0)),
         commissionTiming,
         expenseAlertThreshold: expenseAlertThreshold ? Number(expenseAlertThreshold) : null,
+        leaseContractTemplate: templateReset
+          ? null
+          : settings.leaseContractTemplate != null || leaseContractTemplate.trim() !== settings.defaultLeaseContractTemplate.trim()
+            ? leaseContractTemplate
+            : undefined,
       });
       setSettings(res.settings);
+      setLeaseContractTemplate(res.settings.leaseContractTemplate ?? res.settings.defaultLeaseContractTemplate);
+      setTemplateReset(false);
       setStampFile(null);
       setSaved(true);
       // Le badge (barre latérale), le journal, les documents... lisent le
@@ -346,6 +363,53 @@ function ParametresContent() {
                   <option value="prorata">Facturer le prorata d&apos;entrée</option>
                 </select>
               </Field>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Modèle du contrat de bail</CardTitle>
+              <CardDescription>
+                Le texte des articles du contrat de bail (parties, objet, loyer, caution…), personnalisable
+                à volonté. Utilisez les balises <code>{"{{jeton}}"}</code> ci-dessous, elles seront
+                remplacées par les données réelles de chaque bail. Un titre d&apos;article commence une
+                ligne par <code>## </code>. Les conditions particulières restent saisies bail par bail,
+                séparément. Les contrats déjà signés ne sont jamais affectés par un changement ici.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <textarea
+                value={leaseContractTemplate}
+                onChange={(e) => {
+                  setLeaseContractTemplate(e.target.value);
+                  setTemplateReset(false);
+                }}
+                rows={16}
+                className="w-full rounded border border-border-strong bg-surface px-3 py-2 font-mono text-body-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setLeaseContractTemplate(settings.defaultLeaseContractTemplate);
+                    setTemplateReset(true);
+                  }}
+                >
+                  Réinitialiser au modèle par défaut
+                </Button>
+              </div>
+              <details className="rounded-lg border border-border bg-surface-muted px-3 py-2">
+                <summary className="cursor-pointer font-label-sm text-ink-soft">Balises disponibles</summary>
+                <ul className="mt-2 flex flex-col gap-1 text-body-xs text-ink-muted">
+                  {settings.leaseContractTemplatePlaceholders.map((p) => (
+                    <li key={p.token}>
+                      <code className="text-ink">{`{{${p.token}}}`}</code> — {p.description}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             </CardContent>
           </Card>
 

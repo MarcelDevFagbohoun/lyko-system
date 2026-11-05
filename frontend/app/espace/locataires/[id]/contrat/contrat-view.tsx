@@ -21,7 +21,6 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatFcfa } from "@/lib/utils";
 import { useToast } from "@/lib/toast/toast-context";
 import { useCan } from "@/lib/auth/use-can";
 
@@ -165,63 +164,34 @@ function StartCard({
   );
 }
 
+/**
+ * Découpe `renderedText` en articles `{ title, body }`, même convention `## Titre` que le backend
+ * (`services/leaseContractTemplate.js` `parseContractBlocks`) — c'est le backend qui a déjà rendu le
+ * texte (modèle de l'entreprise, personnalisable en Paramètres, ou modèle par défaut) ; ce composant
+ * ne fait que l'afficher, jamais de calcul de données ici.
+ */
+function parseContractBlocks(renderedText: string): { title: string; body: string }[] {
+  const lines = (renderedText || "").replace(/\r\n/g, "\n").split("\n");
+  const articles: { title: string; bodyLines: string[] }[] = [];
+  let current: { title: string; bodyLines: string[] } | null = null;
+  for (const line of lines) {
+    const m = /^##\s+(.*)$/.exec(line.trim());
+    if (m) {
+      current = { title: m[1].trim(), bodyLines: [] };
+      articles.push(current);
+    } else if (current) {
+      current.bodyLines.push(line);
+    }
+  }
+  return articles
+    .map((a) => ({ title: a.title, body: a.bodyLines.join("\n").trim().replace(/\n{3,}/g, "\n\n") }))
+    .filter((a) => a.title && a.body);
+}
+
 /** Rendu à l'écran des mêmes articles que le PDF (`services/pdf.js` `streamLeaseContractPdf`) — texte
  * uniquement, pour relecture avant signature ; le PDF reste la seule version imprimable/signée. */
 function ContractArticles({ data }: { data: LeaseContractData }) {
-  const depositLines: string[] = [];
-  if (data.lease.depositAmount > 0) depositLines.push(`une caution de loyer de ${formatFcfa(data.lease.depositAmount)}`);
-  for (const d of data.additionalDeposits) depositLines.push(`une caution ${d.typeLabel} de ${formatFcfa(d.amount)}`);
-
-  const articles: { title: string; body: string }[] = [
-    {
-      title: "Les parties",
-      body:
-        `Entre les soussignés : d'une part, ${data.owner.name}${data.owner.address ? `, domicilié à ${data.owner.address}` : ""}, ` +
-        `propriétaire du bien désigné à l'article 2, représenté aux fins des présentes par l'entreprise, ci-après dénommé « le Bailleur » ; ` +
-        `et d'autre part, ${data.renter.firstName} ${data.renter.lastName}, joignable au ${data.renter.phone}, ci-après dénommé « le Locataire ».`,
-    },
-    {
-      title: "Objet du contrat",
-      body:
-        `Le Bailleur donne à bail au Locataire le bien désigné « ${data.unit.designationLabel} » (${data.unit.code}) au sein de ` +
-        `l'immeuble ${data.property.code} (${data.property.typeLabel})${data.property.address ? `, sis ${data.property.address}` : ""}, ` +
-        `livré ${data.unit.furnished ? "meublé" : "non meublé"}.`,
-    },
-    {
-      title: "Durée et prise d'effet",
-      body: `Le présent bail prend effet le ${data.lease.startDate}, pour une durée indéterminée.`,
-    },
-    {
-      title: "Loyer et modalités de paiement",
-      body:
-        `Le loyer mensuel est fixé à ${formatFcfa(data.lease.monthlyRent)}, payable ${data.lease.rentTimingLabel.toLowerCase()}, ` +
-        (data.lease.rentDueDay != null
-          ? `au plus tard le ${data.lease.rentDueDay} de chaque mois.`
-          : data.lease.rentDueOffsetDays
-            ? `au plus tard ${data.lease.rentDueOffsetDays} jour${data.lease.rentDueOffsetDays > 1 ? "s" : ""} après le début de chaque période.`
-            : "au plus tard le premier jour de chaque période.") +
-        (data.lease.entryFeeAmount > 0 ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)} restent acquis à l'entreprise.` : ""),
-    },
-    {
-      title: "Caution(s)",
-      body:
-        depositLines.length > 0
-          ? `Le Locataire verse, à la signature, ${depositLines.join(", ")}. Chaque caution est restituable en fin de bail, déduction faite des dégradations et/ou impayés constatés à la sortie.`
-          : "Aucune caution n'est exigée à la signature du présent bail.",
-    },
-    {
-      title: "Obligations du Locataire",
-      body: "Payer le loyer et les charges aux échéances convenues, occuper les lieux paisiblement, les entretenir et les rendre en fin de bail dans l'état constaté à l'entrée, sauf vétusté normale.",
-    },
-    {
-      title: "Obligations du Bailleur",
-      body: "Délivrer un logement décent, assurer la jouissance paisible des lieux et restituer la ou les cautions dans les conditions de l'article 5.",
-    },
-    {
-      title: "Résiliation",
-      body: "Chaque partie peut résilier le bail moyennant un préavis raisonnable notifié par écrit ; un état des lieux contradictoire est établi à la sortie.",
-    },
-  ];
+  const articles = parseContractBlocks(data.renderedText);
   if (data.particularConditions && data.particularConditions.trim()) {
     articles.push({ title: "Conditions particulières", body: data.particularConditions });
   }
@@ -229,7 +199,7 @@ function ContractArticles({ data }: { data: LeaseContractData }) {
   return (
     <div className="flex flex-col gap-4">
       {articles.map((a, i) => (
-        <div key={a.title}>
+        <div key={`${i}-${a.title}`}>
           <p className="font-label-sm text-primary">Article {i + 1} — {a.title}</p>
           <p className="whitespace-pre-wrap text-body-sm text-ink-soft">{a.body}</p>
         </div>

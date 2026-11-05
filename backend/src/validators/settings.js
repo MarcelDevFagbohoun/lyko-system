@@ -99,6 +99,16 @@ const updateSettingsSchema = z.object({
     .union([z.boolean(), z.enum(['true', 'false'])])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+
+  // Texte des articles du contrat de bail, personnalisable par entreprise (demande utilisateur,
+  // 2026-11-05) — voir services/leaseContractTemplate.js. Chaîne vide envoyée volontairement =
+  // réinitialiser au modèle par défaut (NULL en base), même convention que `activitiesField` ci-dessus.
+  leaseContractTemplate: z
+    .string()
+    .trim()
+    .max(50_000, 'Modèle de contrat trop long (50 000 caractères max)')
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v || null)),
 });
 
 module.exports = { updateSettingsSchema };

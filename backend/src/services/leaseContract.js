@@ -96,6 +96,15 @@ function toPublicContract(row) {
   };
 }
 
+/** Champs de l'entreprise nécessaires au rendu du modèle de contrat (identité + modèle personnalisé). */
+async function loadTenantContractFields(tenantId, db = pool) {
+  const [[row]] = await db.query(
+    'SELECT company_name, rccm, ifu, lease_contract_template FROM tenants WHERE id = :tenantId LIMIT 1',
+    { tenantId },
+  );
+  return row ?? {};
+}
+
 async function loadContractRow(tenantId, leaseId, db = pool) {
   const [rows] = await db.query(
     `SELECT lc.*, cu.first_name AS creator_first_name, cu.last_name AS creator_last_name, cu.role AS creator_role,
@@ -112,5 +121,6 @@ async function loadContractRow(tenantId, leaseId, db = pool) {
 module.exports = {
   buildContractData,
   loadContractRow,
+  loadTenantContractFields,
   toPublicContract,
 };

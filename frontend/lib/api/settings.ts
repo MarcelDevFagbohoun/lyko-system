@@ -35,6 +35,11 @@ export type TenantSettings = {
   commissionTiming: "encaissement" | "reversement";
   /** Seuil d'alerte sur les grosses dépenses (FCFA), null = aucune alerte. */
   expenseAlertThreshold: number | null;
+  /** Texte des articles du contrat de bail personnalisé par l'entreprise ; null = pas encore personnalisé (voir `defaultLeaseContractTemplate`). */
+  leaseContractTemplate: string | null;
+  /** Modèle par défaut (texte avec balises `{{jeton}}`) — point de départ si l'entreprise veut l'adapter. */
+  defaultLeaseContractTemplate: string;
+  leaseContractTemplatePlaceholders: { token: string; description: string }[];
 };
 
 export function getSettings(accessToken: string) {
@@ -66,6 +71,8 @@ export function updateSettings(
     commissionTiming?: "encaissement" | "reversement";
     /** null = supprimer le seuil. */
     expenseAlertThreshold?: number | null;
+    /** null ou chaîne vide = réinitialiser au modèle par défaut. */
+    leaseContractTemplate?: string | null;
   },
 ) {
   const fd = new FormData();
@@ -93,6 +100,7 @@ export function updateSettings(
   if (input.utilityPassThroughPercent !== undefined) fd.append("utilityPassThroughPercent", String(input.utilityPassThroughPercent));
   if (input.commissionTiming !== undefined) fd.append("commissionTiming", input.commissionTiming);
   if (input.expenseAlertThreshold !== undefined) fd.append("expenseAlertThreshold", input.expenseAlertThreshold === null ? "" : String(input.expenseAlertThreshold));
+  if (input.leaseContractTemplate !== undefined) fd.append("leaseContractTemplate", input.leaseContractTemplate ?? "");
 
   return apiFetch<{ settings: TenantSettings }>("/api/settings", {
     method: "PATCH",

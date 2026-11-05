@@ -9,16 +9,24 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { loadLease } = require('./rentPayments');
-const { buildContractData, loadContractRow } = require('./leaseContract');
+const { buildContractData, loadContractRow, loadTenantContractFields } = require('./leaseContract');
+const { renderContractText, DEFAULT_CONTRACT_TEMPLATE, renderContractTemplate, buildTemplatePlaceholders } = require('./leaseContractTemplate');
 const { assertDraft } = require('./inspectionReports');
+
+/** Aperçu LIVE : données du bail + texte des articles rendu avec le modèle courant de l'entreprise. */
+async function buildLivePreview(tenantId, leaseId, particularConditions) {
+  const [data, tenantFields] = await Promise.all([
+    buildContractData(tenantId, leaseId, { particularConditions }),
+    loadTenantContractFields(tenantId),
+  ]);
+  return { ...data, renderedText: renderContractText(tenantFields, data) };
+}
 
 /** Contrat (ligne brute, ou null) + aperçu LIVE des données du bail. */
 async function getContract(tenantId, leaseId, scopeAgentId) {
   await loadLease(pool, tenantId, leaseId, scopeAgentId);
   const row = await loadContractRow(tenantId, leaseId);
-  const preview = await buildContractData(tenantId, leaseId, {
-    particularConditions: row?.particular_conditions ?? null,
-  });
+  const preview = await buildLivePreview(tenantId, leaseId, row?.particular_conditions ?? null);
   return { row, preview };
 }
 
@@ -37,7 +45,7 @@ async function startContract(tenantId, userId, leaseId, scopeAgentId) {
   );
 
   const row = await loadContractRow(tenantId, leaseId);
-  const preview = await buildContractData(tenantId, leaseId, { particularConditions: null });
+  const preview = await buildLivePreview(tenantId, leaseId, null);
   return { row, preview };
 }
 
@@ -53,9 +61,7 @@ async function updateContractConditions(tenantId, leaseId, scopeAgentId, particu
   });
 
   const row = await loadContractRow(tenantId, leaseId);
-  const preview = await buildContractData(tenantId, leaseId, {
-    particularConditions: row.particular_conditions,
-  });
+  const preview = await buildLivePreview(tenantId, leaseId, row.particular_conditions);
   return { row, preview };
 }
 
@@ -81,9 +87,13 @@ async function finalizeContract(tenantId, userId, leaseId, scopeAgentId) {
     );
   }
 
-  const snapshot = await buildContractData(tenantId, leaseId, {
-    particularConditions: contract.particular_conditions,
-  });
+  const [data, tenantFields] = await Promise.all([
+    buildContractData(tenantId, leaseId, { particularConditions: contract.particular_conditions }),
+    loadTenantContractFields(tenantId),
+  ]);
+  // Figé pour toujours : le texte des articles au moment de la signature, jamais recalculé depuis le
+  // modèle de l'entreprise après coup, même si celui-ci est modifié plus tard (voir en-tête du fichier).
+  const snapshot = { ...data, renderedText: renderContractText(tenantFields, data) };
 
   await pool.query(
     `UPDATE lease_contracts
@@ -111,10 +121,20 @@ async function getContractPdfData(tenantId, leaseId, scopeAgentId) {
   // `snapshot` est une colonne JSON — le pilote mysql2 la relit déjà comme un objet JS natif, jamais
   // une chaîne à parser (contrairement à un champ TEXT contenant du JSON) : `JSON.parse` planterait ici
   // ("[object Object]" n'est pas un JSON valide).
-  const data =
-    contract.status === 'finalized'
-      ? contract.snapshot
-      : await buildContractData(tenantId, leaseId, { particularConditions: contract.particular_conditions });
+  let data;
+  if (contract.status === 'finalized') {
+    data = contract.snapshot;
+    // Contrat finalisé AVANT cette fonctionnalité : son `snapshot` n'a pas encore de `renderedText`.
+    // On le reconstitue avec le modèle PAR DÉFAUT (jamais le modèle personnalisé courant, inexistant à
+    // l'époque de la signature) appliqué à ses données figées — reproduit fidèlement ce qui a été
+    // réellement signé, sans migration de données nécessaire.
+    if (!data.renderedText) {
+      data = { ...data, renderedText: renderContractTemplate(DEFAULT_CONTRACT_TEMPLATE, buildTemplatePlaceholders(data, tenant)) };
+    }
+  } else {
+    const liveData = await buildContractData(tenantId, leaseId, { particularConditions: contract.particular_conditions });
+    data = { ...liveData, renderedText: renderContractText(tenant, liveData) };
+  }
 
   return { lease, contract, tenant, dg, data };
 }

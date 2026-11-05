@@ -11,6 +11,7 @@ const { resolveRoleLabels } = require('../constants/roles');
 const { paymentPeriodKey, periodEndOf } = require('./rentTracking');
 const config = require('../config/env');
 const D = require('./pdfDesign');
+const { parseContractBlocks } = require('./leaseContractTemplate');
 
 const EXPENSE_CATEGORY_LABELS = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c.label]));
 const UTILITY_TYPE_LABELS = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, t.label]));
@@ -758,99 +759,18 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
   });
   doc.y = y + 10;
 
-  const ownerAddressPart = data.owner.address ? `, domicilié à ${data.owner.address}` : '';
-  drawContractArticle(
-    doc,
-    1,
-    'Les parties',
-    `Entre les soussignés : d'une part, ${data.owner.name}${ownerAddressPart}, propriétaire du bien désigné ` +
-      `à l'article 2, représenté aux fins des présentes par l'entreprise ${tenant.company_name} ` +
-      `(RCCM ${tenant.rccm}, IFU ${tenant.ifu}), ci-après dénommé « le Bailleur » ; et d'autre part, ` +
-      `${data.renter.firstName} ${data.renter.lastName}, joignable au ${data.renter.phone}, ci-après ` +
-      `dénommé « le Locataire ». Il a été convenu ce qui suit.`,
-  );
-
-  const meterParts = [];
-  if (data.unit.sonebMeterNumber) meterParts.push(`compteur SONEB n° ${data.unit.sonebMeterNumber}`);
-  if (data.unit.sbeeMeterNumber) meterParts.push(`compteur SBEE n° ${data.unit.sbeeMeterNumber}`);
-  drawContractArticle(
-    doc,
-    2,
-    'Objet du contrat',
-    `Le Bailleur donne à bail au Locataire, qui accepte, le bien désigné « ${data.unit.designationLabel} » ` +
-      `(${data.unit.code}) au sein de l'immeuble ${data.property.code} (${data.property.typeLabel})` +
-      `${data.property.address ? `, sis ${data.property.address}` : ''}, livré ${data.unit.furnished ? 'meublé' : 'non meublé'}` +
-      `${meterParts.length > 0 ? `, équipé des compteurs suivants : ${meterParts.join(', ')}` : ''}. Le Locataire déclare avoir ` +
-      `visité les lieux et les accepter en l'état constaté par l'état des lieux d'entrée établi séparément.`,
-  );
-
-  drawContractArticle(
-    doc,
-    3,
-    'Durée et prise d’effet',
-    `Le présent bail prend effet le ${formatDateFr(data.lease.startDate)}, pour une durée indéterminée. ` +
-      `Chaque partie peut y mettre fin dans les conditions prévues à l'article 8 ci-après.`,
-  );
-
-  drawContractArticle(
-    doc,
-    4,
-    'Loyer et modalités de paiement',
-    `Le loyer mensuel est fixé à ${formatFcfa(data.lease.monthlyRent)}, payable ${data.lease.rentTimingLabel.toLowerCase()}, ` +
-      (data.lease.rentDueDay != null
-        ? `au plus tard le ${data.lease.rentDueDay} de chaque mois concerné.`
-        : `au plus tard ${rentDueOffsetPhrase(data.lease.rentDueOffsetDays)} chaque période concernée.`) +
-      (data.lease.entryFeeAmount > 0
-        ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)}, dus une seule fois à la signature, ` +
-          `restent intégralement acquis à l'entreprise et ne sont pas restituables.`
-        : ''),
-  );
-
-  const depositLines = [];
-  if (data.lease.depositAmount > 0) depositLines.push(`une caution de loyer de ${formatFcfa(data.lease.depositAmount)}`);
-  for (const d of data.additionalDeposits) depositLines.push(`une caution ${d.typeLabel} de ${formatFcfa(d.amount)}`);
-  drawContractArticle(
-    doc,
-    5,
-    'Caution(s)',
-    depositLines.length > 0
-      ? `Le Locataire verse, à la signature, ${depositLines.join(', ')}. Chaque caution est intégralement restituable ` +
-        `en fin de bail, déduction faite des dégradations et/ou impayés constatés à la sortie (état des lieux ` +
-        `contradictoire), dans les conditions détaillées sur le décompte remis au Locataire à cette occasion.`
-      : `Aucune caution n'est exigée à la signature du présent bail.`,
-  );
-
-  drawContractArticle(
-    doc,
-    6,
-    'Obligations du Locataire',
-    `Le Locataire s'engage à : payer le loyer et les charges aux échéances convenues ; occuper les lieux ` +
-      `personnellement et paisiblement, sans les sous-louer ni les céder sans l'accord écrit préalable du ` +
-      `Bailleur ; entretenir le logement et le rendre, à son départ, dans l'état constaté à son entrée, sauf ` +
-      `vétusté normale ; signaler sans délai toute dégradation ou panne constatée ; permettre l'accès au ` +
-      `logement pour toute visite ou réparation justifiée, sur préavis raisonnable.`,
-  );
-
-  drawContractArticle(
-    doc,
-    7,
-    'Obligations du Bailleur',
-    `Le Bailleur s'engage à : délivrer un logement décent et en bon état d'usage ; assurer la jouissance ` +
-      `paisible des lieux au Locataire ; prendre en charge les grosses réparations qui ne résultent pas d'un ` +
-      `défaut d'entretien du Locataire ; restituer la ou les cautions dans les conditions de l'article 5.`,
-  );
-
-  drawContractArticle(
-    doc,
-    8,
-    'Résiliation',
-    `Chaque partie peut résilier le présent bail moyennant un préavis raisonnable notifié par écrit à l'autre ` +
-      `partie. À la sortie du Locataire, un état des lieux contradictoire est établi ; le décompte de la ou des ` +
-      `cautions en découle, selon les conditions de l'article 5.`,
-  );
+  // Texte des articles : rendu depuis le modèle de l'entreprise (ou le modèle par défaut), voir
+  // `services/leaseContractTemplate.js` — `data.renderedText` est déjà calculé par
+  // `leaseContractActions.js` (live en brouillon, figé dans `snapshot` une fois finalisé).
+  let articleNumber = 0;
+  for (const article of parseContractBlocks(data.renderedText)) {
+    articleNumber += 1;
+    drawContractArticle(doc, articleNumber, article.title, article.body);
+  }
 
   if (data.particularConditions && data.particularConditions.trim()) {
-    drawContractArticle(doc, 9, 'Conditions particulières', normalizeLineBreaks(data.particularConditions));
+    articleNumber += 1;
+    drawContractArticle(doc, articleNumber, 'Conditions particulières', normalizeLineBreaks(data.particularConditions));
   }
 
   // --- Cachet de l'entreprise, jamais coupé entre deux pages. ---
@@ -2353,4 +2273,5 @@ module.exports = {
   formatMonthLabel,
   formatPeriodLabel,
   formatDateFr,
+  rentDueOffsetPhrase,
 };

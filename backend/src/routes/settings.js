@@ -14,6 +14,7 @@ const { encryptSecret } = require('../utils/encryption');
 const { assertCanActivate } = require('../services/platformFeatureGates');
 const logger = require('../utils/logger');
 const { parseActivities } = require('../utils/activities');
+const { DEFAULT_CONTRACT_TEMPLATE, CONTRACT_TEMPLATE_PLACEHOLDERS } = require('../services/leaseContractTemplate');
 
 const router = Router();
 // Réglages de l'entreprise : réservés au DG (au même titre que la gestion des employés).
@@ -68,6 +69,12 @@ function toPublicSettings(tenant) {
     utilityPassThroughPercent: Number(tenant.gl_utility_passthrough_percent ?? 100),
     commissionTiming: tenant.gl_commission_timing ?? 'encaissement',
     expenseAlertThreshold: tenant.gl_expense_alert_threshold != null ? Number(tenant.gl_expense_alert_threshold) : null,
+    // Texte des articles du contrat de bail (demande utilisateur, 2026-11-05) — `null` = pas encore
+    // personnalisé, le modèle par défaut (`defaultLeaseContractTemplate`) est alors utilisé pour le
+    // rendu réel ET comme point de départ si l'entreprise veut l'adapter plutôt que repartir de zéro.
+    leaseContractTemplate: tenant.lease_contract_template,
+    defaultLeaseContractTemplate: DEFAULT_CONTRACT_TEMPLATE,
+    leaseContractTemplatePlaceholders: CONTRACT_TEMPLATE_PLACEHOLDERS,
   };
 }
 
@@ -206,6 +213,11 @@ router.patch(
       if (data.expenseAlertThreshold !== undefined) {
         fields.push('gl_expense_alert_threshold = :expenseAlertThreshold');
         params.expenseAlertThreshold = data.expenseAlertThreshold;
+      }
+
+      if (data.leaseContractTemplate !== undefined) {
+        fields.push('lease_contract_template = :leaseContractTemplate');
+        params.leaseContractTemplate = data.leaseContractTemplate;
       }
 
       const stampFile = req.files?.stamp?.[0];

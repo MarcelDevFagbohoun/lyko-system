@@ -709,6 +709,8 @@ export type LeaseContractData = {
   };
   additionalDeposits: AdditionalDepositSummary[];
   particularConditions: string | null;
+  /** Texte des articles (hors « Conditions particulières »), rendu depuis le modèle de l'entreprise — voir Paramètres. */
+  renderedText: string;
 };
 export type LeaseContract = {
   id: number;
