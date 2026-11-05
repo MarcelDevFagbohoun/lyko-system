@@ -19,15 +19,6 @@ const { getPeriodClosability } = require('../src/services/accountingPeriods');
 const { createBareFixture, createFixture, teardown } = require('./gl/fixtures');
 const { insertBatch } = require('./utilityFixtures');
 
-// En-tête PNG minimal (`detectFileType`, utils/uploads.js) : signatures acceptées uniquement en image.
-const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
-function fakeSignatureForm(extra) {
-  const form = new FormData();
-  for (const [k, v] of Object.entries(extra)) form.set(k, v);
-  form.set('tenantSignature', new Blob([PNG_BYTES], { type: 'image/png' }), 'sig-locataire.png');
-  form.set('agentSignature', new Blob([PNG_BYTES], { type: 'image/png' }), 'sig-agent.png');
-  return form;
-}
 
 /** Fiche de sortie prête à finaliser : toutes les conditions à 'BE' (aucune retenue) — le scénario le
  * plus simple pour tester la vérification de clôture, indépendant de la logique de facturation. */
@@ -223,8 +214,8 @@ test(
     try {
       const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
         method: 'POST',
-        headers: { Authorization: bearer(fx.dgId, fx.tenantId).Authorization },
-        body: fakeSignatureForm({ refundPaymentMethod: 'especes' }),
+        headers: { Authorization: bearer(fx.dgId, fx.tenantId).Authorization, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refundPaymentMethod: 'especes' }),
       });
       assert.equal(res.status, 403);
 
@@ -247,8 +238,8 @@ test(
 
     const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
       method: 'POST',
-      headers: { Authorization: bearer(fx.dgId, fx.tenantId).Authorization },
-      body: fakeSignatureForm({ refundPaymentMethod: 'especes' }),
+      headers: { Authorization: bearer(fx.dgId, fx.tenantId).Authorization, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refundPaymentMethod: 'especes' }),
     });
     assert.equal(res.status, 200);
     const [[lease]] = await pool.query('SELECT status FROM leases WHERE id = :id', { id: leaseId });
@@ -275,8 +266,8 @@ test(
 
       const finalizeRes = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
         method: 'POST',
-        headers: { Authorization: bearer(glFx.dgId, glFx.tenantId).Authorization },
-        body: fakeSignatureForm({ refundPaymentMethod: 'especes' }),
+        headers: { Authorization: bearer(glFx.dgId, glFx.tenantId).Authorization, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refundPaymentMethod: 'especes' }),
       });
       assert.equal(finalizeRes.status, 200, "la finalisation elle-même doit réussir (mois d'origine ouvert)");
 

@@ -2,31 +2,25 @@
 
 import * as React from "react";
 import { Lock } from "lucide-react";
-import { SignaturePad, type SignaturePadHandle } from "./signature-pad";
-import { useAuth } from "@/lib/auth/auth-context";
 import { Button } from "@/components/ui/button";
 
 /**
- * Section de finalisation (étape 13, idée n°9) : deux signatures (locataire,
- * agent) obligatoires, puis verrouillage définitif de la fiche. `onFinalize`
- * reçoit les deux signatures en PNG ; les erreurs serveur (état manquant sur
- * un élément, etc.) remontent via `error`.
+ * Section de finalisation (étape 13, idée n°9 ; signature électronique retirée le 2026-11-05 — jamais
+ * utilisée en pratique, le PV se signe à la main après impression). `onFinalize` reçoit les réserves du
+ * locataire ; les erreurs serveur (état manquant sur un élément, etc.) remontent via `error`.
  */
 export function FinalizeSection({
   onFinalize,
   submitting,
   error,
   tenantName,
-  printedSignatures = false,
   mode = "finalize",
 }: {
-  onFinalize: (tenantSignature: Blob | null, agentSignature: Blob | null, tenantReserves: string) => void | Promise<void>;
+  onFinalize: (tenantReserves: string) => void | Promise<void>;
   submitting: boolean;
   error: string | null;
-  /** Nom du locataire, affiché sous sa zone de signature (étape 56). */
+  /** Nom du locataire, affiché sur la fiche d'impression (étape 56). */
   tenantName?: string;
-  /** États des lieux : pas de signature numérique, le PV imprimé est signé à la main par les deux parties. */
-  printedSignatures?: boolean;
   /**
    * Circuit de validation DG (demande utilisateur, 2026-11-03) : un employé « soumet » (le PV reste un
    * brouillon modifiable, en attente de validation) au lieu de « finaliser » (verrouillage définitif,
@@ -35,32 +29,12 @@ export function FinalizeSection({
    */
   mode?: "finalize" | "submit";
 }) {
-  const { user } = useAuth();
-  const agentName = user ? `${user.firstName} ${user.lastName}` : undefined;
-  const tenantPadRef = React.useRef<SignaturePadHandle | null>(null);
-  const agentPadRef = React.useRef<SignaturePadHandle | null>(null);
   const [localError, setLocalError] = React.useState<string | null>(null);
   const [tenantReserves, setTenantReserves] = React.useState("");
 
   async function handleFinalize() {
-    if (printedSignatures) {
-      setLocalError(null);
-      await onFinalize(null, null, tenantReserves.trim());
-      return;
-    }
-    const tenantPad = tenantPadRef.current;
-    const agentPad = agentPadRef.current;
-    if (!tenantPad || !agentPad || tenantPad.isEmpty() || agentPad.isEmpty()) {
-      setLocalError("Les deux signatures (locataire et agent) sont requises pour finaliser.");
-      return;
-    }
     setLocalError(null);
-    const [tenantBlob, agentBlob] = await Promise.all([tenantPad.getBlob(), agentPad.getBlob()]);
-    if (!tenantBlob || !agentBlob) {
-      setLocalError("Signature illisible, réessayez.");
-      return;
-    }
-    await onFinalize(tenantBlob, agentBlob, tenantReserves.trim());
+    await onFinalize(tenantReserves.trim());
   }
 
   return (
@@ -91,17 +65,10 @@ export function FinalizeSection({
         </div>
       )}
 
-      {printedSignatures ? (
-        <p className="text-body-sm text-ink-muted">
-          Après finalisation, imprimez le procès-verbal (PDF) : le locataire{tenantName ? ` (${tenantName})` : ""} et l&apos;entreprise le datent
-          et le signent à la main dans les cadres prévus.
-        </p>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <SignaturePad ref={tenantPadRef} label="Signature du locataire" signerName={tenantName} />
-          <SignaturePad ref={agentPadRef} label="Signature de l'agent" signerName={agentName} />
-        </div>
-      )}
+      <p className="text-body-sm text-ink-muted">
+        Après finalisation, imprimez le procès-verbal (PDF) : le locataire{tenantName ? ` (${tenantName})` : ""} et l&apos;entreprise le datent
+        et le signent à la main dans les cadres prévus.
+      </p>
 
       <Button type="button" size="lg" onClick={handleFinalize} disabled={submitting} className="self-start">
         <Lock size={16} />

@@ -130,8 +130,8 @@ async function deleteMoveInPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemK
   return row;
 }
 
-/** Verrouille la fiche (tous les états renseignés ; signatures numériques facultatives). */
-async function finalizeMoveIn(tenantId, userId, leaseId, scopeAgentId, { tenantSignatureFile, agentSignatureFile, tenantReservesInput }) {
+/** Verrouille la fiche (tous les états renseignés). */
+async function finalizeMoveIn(tenantId, userId, leaseId, scopeAgentId, { tenantReservesInput }) {
   await loadLease(pool, tenantId, leaseId, scopeAgentId);
   const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
   assertDraft(report, 'état des lieux d’entrée');
@@ -142,8 +142,6 @@ async function finalizeMoveIn(tenantId, userId, leaseId, scopeAgentId, { tenantS
     throw new ApiError(400, `État manquant pour : ${missing.join(', ')}`);
   }
 
-  const tenantSignaturePath = tenantSignatureFile ? await saveInspectionFile(tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature') : null;
-  const agentSignaturePath = agentSignatureFile ? await saveInspectionFile(tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature') : null;
   // Réserves du locataire (étape 48) — notées par l'agent à l'oral au
   // moment de la signature, si le locataire n'est pas d'accord sur un
   // point précis ; jamais un accès en écriture du locataire lui-même.
@@ -163,14 +161,11 @@ async function finalizeMoveIn(tenantId, userId, leaseId, scopeAgentId, { tenantS
   await pool.query(
     `UPDATE move_in_reports
      SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
-         tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
          tenant_reserves = :tenantReserves,
          correction_changes = :correctionChanges, pre_reopen_snapshot = NULL
      WHERE lease_id = :leaseId`,
     {
       by: userId,
-      tenantSig: tenantSignaturePath,
-      agentSig: agentSignaturePath,
       tenantReserves,
       leaseId,
       correctionChanges: correctionChanges ? JSON.stringify(correctionChanges) : null,
@@ -180,7 +175,7 @@ async function finalizeMoveIn(tenantId, userId, leaseId, scopeAgentId, { tenantS
   return row;
 }
 
-/** Rouvre une fiche finalisée (DG, motif obligatoire) ; invalide les signatures. */
+/** Rouvre une fiche finalisée (DG, motif obligatoire). */
 async function reopenMoveIn(tenantId, userId, leaseId, reason) {
   await loadLease(pool, tenantId, leaseId, null);
   const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
@@ -190,14 +185,11 @@ async function reopenMoveIn(tenantId, userId, leaseId, reason) {
   await pool.query(
     `UPDATE move_in_reports
      SET status = 'draft', finalized_at = NULL, finalized_by = NULL,
-         tenant_signature_path = NULL, agent_signature_path = NULL,
          reopened_at = NOW(), reopened_by = :by, reopen_reason = :reason,
          pre_reopen_snapshot = :snapshot, correction_changes = NULL
      WHERE lease_id = :leaseId`,
     { by: userId, reason: reason, leaseId, snapshot: JSON.stringify(snapshot) },
   );
-  await deleteInspectionFile(report.tenant_signature_path);
-  await deleteInspectionFile(report.agent_signature_path);
   const row = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
   return row;
 }

@@ -23,7 +23,6 @@ import { RequireAuth } from "@/components/auth/require-auth";
 import { InspectionForm } from "@/components/inspections/inspection-form";
 import { InspectionReadOnly } from "@/components/inspections/inspection-readonly";
 import { FinalizeSection } from "@/components/inspections/finalize-section";
-import { SignatureBlock } from "@/components/inspections/signature-block";
 import { ReopenReportButton } from "@/components/inspections/reopen-button";
 import { BlankFormEditorButton } from "@/components/inspections/blank-form-editor";
 import { Button } from "@/components/ui/button";
@@ -231,7 +230,7 @@ function DraftEditor({
     }
   }
 
-  async function handleFinalize(tenantSignature: Blob | null, agentSignature: Blob | null, tenantReserves: string) {
+  async function handleFinalize(tenantReserves: string) {
     if (!accessToken) return;
     // La finalisation exige les données déjà enregistrées côté serveur — on
     // sauvegarde silencieusement le brouillon courant juste avant, pour ne
@@ -240,7 +239,7 @@ function DraftEditor({
     setFinalizeError(null);
     try {
       await updateMoveInReport(accessToken, leaseId, { zones, generalNotes: generalNotes.trim() || undefined });
-      const res = await finalizeMoveInReport(accessToken, leaseId, tenantSignature, agentSignature, tenantReserves || undefined);
+      const res = await finalizeMoveInReport(accessToken, leaseId, tenantReserves || undefined);
       onReportChange(res.report);
       toast.success("État des lieux d'entrée finalisé et verrouillé.");
       onFinalized();
@@ -256,7 +255,7 @@ function DraftEditor({
       <CardHeader>
         <CardTitle>État des lieux d&apos;entrée — brouillon</CardTitle>
         <CardDescription>
-          {lease.unit.designationLabel} ({lease.unit.code}) · évaluez chaque élément, puis finalisez avec les signatures.
+          {lease.unit.designationLabel} ({lease.unit.code}) · évaluez chaque élément, puis finalisez.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
@@ -287,7 +286,7 @@ function DraftEditor({
           </Button>
         </div>
 
-        <FinalizeSection printedSignatures onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
+        <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
       </CardContent>
     </Card>
   );
@@ -340,16 +339,9 @@ function FinalizedView({
           </div>
         )}
 
-        {report.tenantSignatureUrl || report.agentSignatureUrl ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} accessToken={accessToken} />
-            <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} accessToken={accessToken} />
-          </div>
-        ) : (
-          <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm text-ink-muted">
-            Imprimez le PV : le locataire et l&apos;entreprise le datent et le signent à la main dans les cadres prévus.
-          </p>
-        )}
+        <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm text-ink-muted">
+          Imprimez le PV : le locataire et l&apos;entreprise le datent et le signent à la main dans les cadres prévus.
+        </p>
         {report.finalizedAt && (
           <p className="text-body-xs text-ink-muted">
             Finalisée le {new Date(report.finalizedAt).toLocaleDateString("fr-FR")}

@@ -908,11 +908,10 @@ function uploadedFile(publicUrl) {
 
 /**
  * PV de sortie & décompte de caution (section 6, Sorties de locataires ;
- * refondu étape 13 idée n°9 avec la grille par zones + signatures). `report`
- * est la forme publique (`toPublicMoveOutReport`) : `zones`, `conductedAt`
- * (chaîne AAAA-MM-JJ), `tenantSignatureUrl`/`agentSignatureUrl`, etc. —
- * jamais la ligne SQL brute. Le rapport est figé à la finalisation (montants
- * stockés, jamais recalculés ici).
+ * refondu étape 13 idée n°9 avec la grille par zones). `report` est la forme
+ * publique (`toPublicMoveOutReport`) : `zones`, `conductedAt` (chaîne
+ * AAAA-MM-JJ), etc. — jamais la ligne SQL brute. Le rapport est figé à la
+ * finalisation (montants stockés, jamais recalculés ici).
  */
 const ADDITIONAL_DEPOSIT_PAYMENT_METHOD_LABELS = {
   especes: 'Espèces',
@@ -1303,7 +1302,7 @@ function streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveIn
   y = drawGeneralNotes(doc, report.generalNotes, y);
   y = drawTenantReserves(doc, report.tenantReserves, y);
   y = drawReopenedNotice(doc, report, y);
-  drawSignatureBlock(doc, report, y, { tenantName, agentName, companyName: tenant.company_name });
+  drawPrintSignatureBoxes(doc, y, { tenantName, agentName, companyName: tenant.company_name });
 
   drawFooter(doc, { verificationCode });
   doc.end();
@@ -1335,11 +1334,6 @@ function drawReopenedNotice(doc, report, y) {
   return y + height + 6;
 }
 
-/**
- * Bloc de signatures (locataire + agent), partagé entre les PV d'entrée et de sortie — refait à
- * l'étape 56 : deux cartes côte à côte, mention « Lu et approuvé », signature centrée sur une ligne
- * d'appui, nom du signataire et date de signature. Jamais coupé par un saut de page.
- */
 /** Deux cadres vides (locataire / cabinet) à signer à la main après impression, jamais coupés entre deux pages. */
 function drawPrintSignatureBoxes(doc, y, { tenantName, agentName, companyName }) {
   const H = 130;
@@ -1363,19 +1357,6 @@ function drawPrintSignatureBoxes(doc, y, { tenantName, agentName, companyName })
     doc.font(FONT_SANS).fontSize(7.5).fillColor(FAINT).text('Signature', x + 10, y + H - 16, { width: W - 20, lineBreak: false });
   });
   return y + H + 12;
-}
-
-function drawSignatureBlock(doc, report, y, { tenantName = null, agentName = null, companyName = null } = {}) {
-  // Rapports déjà signés électroniquement avant ce changement : on garde leurs signatures. Sinon, cadres vides.
-  if (!report.tenantSignatureUrl && !report.agentSignatureUrl) {
-    return drawPrintSignatureBoxes(doc, y, { tenantName, agentName, companyName });
-  }
-  const signedOn = report.finalizedAt ? formatDateFr(report.finalizedAt.slice(0, 10)) : null;
-  const end = D.drawSignatureCards(doc, y, [
-    { title: 'Le locataire', name: tenantName, date: signedOn, signatureFile: uploadedFile(report.tenantSignatureUrl), hint: 'Signature précédée de « Lu et approuvé »' },
-    { title: 'Le bailleur / mandataire', name: agentName, date: signedOn, signatureFile: uploadedFile(report.agentSignatureUrl), hint: 'Signature précédée de « Lu et approuvé »' },
-  ]);
-  return end;
 }
 
 /**
@@ -1420,7 +1401,7 @@ function streamMoveInPdf(res, { tenant, renter, property, lease, report, verific
   y = drawGeneralNotes(doc, report.generalNotes, y);
   y = drawTenantReserves(doc, report.tenantReserves, y);
   y = drawReopenedNotice(doc, report, y);
-  drawSignatureBlock(doc, report, y, { tenantName, agentName, companyName: tenant.company_name });
+  drawPrintSignatureBoxes(doc, y, { tenantName, agentName, companyName: tenant.company_name });
 
   drawFooter(doc, { verificationCode });
   doc.end();

@@ -127,8 +127,6 @@ export type InspectionReport = {
   /** Notée par l'agent à l'oral au moment de la signature (étape 48) — jamais un accès en écriture du locataire. */
   tenantReserves: string | null;
   finalizedAt: string | null;
-  tenantSignatureUrl: string | null;
-  agentSignatureUrl: string | null;
   conductedBy: Actor;
   finalizedBy: Actor;
   /** Réouverture pour correction (étape 48, DG uniquement) — dernier événement seulement. */
@@ -795,29 +793,16 @@ export function updateMoveInReport(accessToken: string, leaseId: number, input: 
   });
 }
 
-export function finalizeMoveInReport(
-  accessToken: string,
-  leaseId: number,
-  tenantSignature: Blob | null,
-  agentSignature: Blob | null,
-  tenantReserves?: string,
-) {
-  const fd = new FormData();
-  if (tenantSignature) fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
-  if (agentSignature) fd.append("agentSignature", agentSignature, "signature-agent.png");
-  if (tenantReserves) fd.append("tenantReserves", tenantReserves);
+export function finalizeMoveInReport(accessToken: string, leaseId: number, tenantReserves?: string) {
   return apiFetch<{ report: MoveInReport }>(`${inspectionReportPath("move-in", leaseId)}/finalize`, {
     method: "POST",
     accessToken,
-    body: fd,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tenantReserves }),
   });
 }
 
-/**
- * Réouverture d'une fiche finalisée (étape 48, DG uniquement) — motif
- * obligatoire, tracé au journal d'activité. Invalide les deux signatures
- * existantes : il faudra resigner avant de refinaliser.
- */
+/** Réouverture d'une fiche finalisée (étape 48, DG uniquement) — motif obligatoire, tracé au journal d'activité. */
 export function reopenMoveInReport(accessToken: string, leaseId: number, reason: string) {
   return apiFetch<{ report: MoveInReport }>(`${inspectionReportPath("move-in", leaseId)}/reopen`, {
     method: "POST",
@@ -879,32 +864,27 @@ export function updateMoveOutReport(accessToken: string, leaseId: number, input:
 export function finalizeMoveOutReport(
   accessToken: string,
   leaseId: number,
-  tenantSignature: Blob | null,
-  agentSignature: Blob | null,
   refundPaymentMethod?: PaymentMethod,
   additionalDepositRefundMethods?: Partial<Record<AdditionalDepositType, PaymentMethod>>,
   tenantReserves?: string,
   balance?: { resolution: BalanceResolution; paymentMethod?: string; note?: string },
 ) {
-  const fd = new FormData();
-  if (tenantSignature) fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
-  if (agentSignature) fd.append("agentSignature", agentSignature, "signature-agent.png");
-  if (balance) {
-    fd.append("balanceResolution", balance.resolution);
-    if (balance.paymentMethod) fd.append("balancePaymentMethod", balance.paymentMethod);
-    if (balance.note) fd.append("balanceNote", balance.note);
-  }
-  if (refundPaymentMethod) fd.append("refundPaymentMethod", refundPaymentMethod);
-  if (additionalDepositRefundMethods?.sbee) fd.append("refundMethodSbee", additionalDepositRefundMethods.sbee);
-  if (additionalDepositRefundMethods?.soneb) fd.append("refundMethodSoneb", additionalDepositRefundMethods.soneb);
-  if (additionalDepositRefundMethods?.peinture) fd.append("refundMethodPeinture", additionalDepositRefundMethods.peinture);
-  if (tenantReserves) fd.append("tenantReserves", tenantReserves);
   return apiFetch<{ report: MoveOutReport; depositAccountingNote: string | null; additionalDeposits: AdditionalDeposit[] }>(
     `${inspectionReportPath("move-out", leaseId)}/finalize`,
     {
       method: "POST",
       accessToken,
-      body: fd,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        refundPaymentMethod,
+        refundMethodSbee: additionalDepositRefundMethods?.sbee,
+        refundMethodSoneb: additionalDepositRefundMethods?.soneb,
+        refundMethodPeinture: additionalDepositRefundMethods?.peinture,
+        tenantReserves,
+        balanceResolution: balance?.resolution,
+        balancePaymentMethod: balance?.paymentMethod,
+        balanceNote: balance?.note,
+      }),
     },
   );
 }
@@ -921,17 +901,12 @@ export function reopenMoveOutReport(accessToken: string, leaseId: number, reason
 
 /**
  * Soumet le PV pour validation DG (demande utilisateur, 2026-11-03) — un employé (pas le DG lui-même)
- * soumet son PV au lieu de le finaliser directement ; signatures prises ici (`printedSignatures`, donc
- * `null`/`null` dans l'usage actuel), jamais redemandées à la validation. Peut être resoumis après un rejet.
+ * soumet son PV au lieu de le finaliser directement. Peut être resoumis après un rejet.
  */
-export function submitMoveOutReport(accessToken: string, leaseId: number, tenantSignature: Blob | null, agentSignature: Blob | null) {
-  const fd = new FormData();
-  if (tenantSignature) fd.append("tenantSignature", tenantSignature, "signature-locataire.png");
-  if (agentSignature) fd.append("agentSignature", agentSignature, "signature-agent.png");
+export function submitMoveOutReport(accessToken: string, leaseId: number) {
   return apiFetch<{ report: MoveOutReport }>(`${inspectionReportPath("move-out", leaseId)}/submit`, {
     method: "POST",
     accessToken,
-    body: fd,
   });
 }
 

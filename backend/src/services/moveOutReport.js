@@ -249,13 +249,10 @@ async function updateMoveOutDraft(tenantId, leaseId, scopeAgentId, data, actorUs
 /**
  * Soumet le PV pour validation DG (demande utilisateur, 2026-11-03) — un employé (role <> 'dg') ne
  * finalise plus seul : il soumet, le DG est notifié, peut modifier (tracé) puis valider ou rejeter avec
- * une note. Les signatures locataire/agent (capture manuscrite, distincte du cachet — voir la demande du
- * 2026-11-02) sont déjà prises ICI, au moment où le locataire est physiquement présent ; la validation
- * DG ne les redemande pas (voir `finalizeMoveOut`, qui garde les signatures déjà enregistrées si aucun
- * nouveau fichier n'est fourni). Peut être resoumis plusieurs fois (après un rejet) — chaque soumission
- * ajoute une entrée à `review_history`, jamais réécrite.
+ * une note. Peut être resoumis plusieurs fois (après un rejet) — chaque soumission ajoute une entrée à
+ * `review_history`, jamais réécrite.
  */
-async function submitMoveOutReport(tenantId, userId, leaseId, scopeAgentId, { tenantSignatureFile, agentSignatureFile } = {}) {
+async function submitMoveOutReport(tenantId, userId, leaseId, scopeAgentId) {
   const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
   const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   assertDraft(report, 'état des lieux de sortie');
@@ -273,24 +270,14 @@ async function submitMoveOutReport(tenantId, userId, leaseId, scopeAgentId, { te
     throw new ApiError(400, `État manquant pour : ${missing.join(', ')}`);
   }
 
-  const tenantSignaturePath = tenantSignatureFile
-    ? await saveInspectionFile(tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature')
-    : report.tenant_signature_path;
-  const agentSignaturePath = agentSignatureFile
-    ? await saveInspectionFile(tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature')
-    : report.agent_signature_path;
-
   const by = await actorLabel(pool, userId);
   await pool.query(
     `UPDATE move_out_reports
      SET review_status = 'submitted', submitted_at = NOW(), submitted_by = :by,
-         tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
          review_note = NULL, review_history = :history
      WHERE lease_id = :leaseId`,
     {
       by: userId,
-      tenantSig: tenantSignaturePath,
-      agentSig: agentSignaturePath,
       history: appendReviewHistory(report.review_history, { type: 'submitted', by }),
       leaseId,
     },
@@ -422,7 +409,7 @@ async function deleteMoveOutPhoto(tenantId, leaseId, scopeAgentId, zoneKey, item
 }
 
 /** Verrouille la fiche, fige le décompte de caution, termine le bail et libère l'unité — une seule transaction. */
-async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenantSignatureFile, agentSignatureFile, body }) {
+async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { body }) {
   const conn = await pool.getConnection();
   try {
     const lease = await loadLease(conn, tenantId, leaseId, scopeAgentId);
@@ -431,7 +418,7 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
     // Une fiche déjà rouverte une fois (étape 48, correction DG) a déjà
     // terminé le bail et libéré l'unité lors de sa PREMIÈRE finalisation —
     // on ne rejoue jamais ces effets de bord une seconde fois, seul le
-    // contenu de la fiche (grille, retenues, signatures) est corrigé.
+    // contenu de la fiche (grille, retenues) est corrigé.
     const isCorrection = !!report.reopened_at;
     if (!isCorrection && lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
 
@@ -583,15 +570,6 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
       throw new ApiError(400, 'Mode de règlement requis pour la restitution de la caution');
     }
 
-    // Garde les signatures déjà enregistrées (prises à la SOUMISSION, voir `submitMoveOutReport`) si la
-    // validation DG n'en fournit pas de nouvelles — ne les efface plus silencieusement (bug qu'aurait
-    // introduit le nouveau circuit de validation sans ce repli).
-    const tenantSignaturePath = tenantSignatureFile
-      ? await saveInspectionFile(tenantId, leaseId, tenantSignatureFile, 'signature-locataire', 'Signature')
-      : report.tenant_signature_path;
-    const agentSignaturePath = agentSignatureFile
-      ? await saveInspectionFile(tenantId, leaseId, agentSignatureFile, 'signature-agent', 'Signature')
-      : report.agent_signature_path;
     const tenantReserves =
       typeof body?.tenantReserves === 'string' && body.tenantReserves.trim()
         ? body.tenantReserves.trim().slice(0, 2000)
@@ -656,7 +634,6 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
     await conn.query(
       `UPDATE move_out_reports
        SET status = 'finalized', finalized_at = NOW(), finalized_by = :by,
-           tenant_signature_path = :tenantSig, agent_signature_path = :agentSig,
            tenant_reserves = :tenantReserves,
            total_deductions = :totalDeductions, net_refund = :netRefund, refund_payment_method = :refundMethod,
            peinture_overflow_amount = :peintureOverflow, rent_arrears_amount = :rentArrearsAmount,
@@ -670,8 +647,6 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { tenant
        WHERE lease_id = :leaseId`,
       {
         by: userId,
-        tenantSig: tenantSignaturePath,
-        agentSig: agentSignaturePath,
         tenantReserves,
         totalDeductions,
         netRefund,
@@ -826,7 +801,7 @@ async function reopenMoveOut(tenantId, userId, leaseId, reason) {
     const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
     assertFinalized(report, 'état des lieux de sortie');
     // Argent déjà réellement mouvementé (« Payer le locataire »/« Encaisser le complément ») — une
-    // réouverture rejouerait aveuglément les retenues/signatures sans jamais pouvoir annuler ce paiement
+    // réouverture rejouerait aveuglément les retenues sans jamais pouvoir annuler ce paiement
     // déjà parti (demande utilisateur implicite : la traçabilité du décaissement doit rester fiable).
     // Corrigé (revue indépendante du 2026-11-04) : le `&& total_deductions > 0` laissait rouvrir sans
     // blocage une restitution intégrale déjà payée (pas de retenue, donc condition fausse) alors que
@@ -877,7 +852,6 @@ async function reopenMoveOut(tenantId, userId, leaseId, reason) {
     await conn.query(
       `UPDATE move_out_reports
        SET status = 'draft', finalized_at = NULL, finalized_by = NULL,
-           tenant_signature_path = NULL, agent_signature_path = NULL,
            reopened_at = NOW(), reopened_by = :by, reopen_reason = :reason,
            pre_reopen_snapshot = :snapshot, correction_changes = NULL
        WHERE lease_id = :leaseId`,
@@ -892,8 +866,6 @@ async function reopenMoveOut(tenantId, userId, leaseId, reason) {
     await conn.query('UPDATE leases SET archived_at = NULL, archived_by = NULL WHERE id = :id', { id: leaseId });
 
     await conn.commit();
-    await deleteInspectionFile(report.tenant_signature_path);
-    await deleteInspectionFile(report.agent_signature_path);
     const row = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
     const additionalDeposits = await listLeaseDeposits(tenantId, leaseId);
     return { row, additionalDeposits };

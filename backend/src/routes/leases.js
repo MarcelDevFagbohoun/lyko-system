@@ -48,15 +48,10 @@ const canRegularizeGl = requirePermission('comptabilite');
 // Enregistrer un versement de locataire : permission dédiée (la simple fiche locataire ne suffit plus).
 const canPayments = requirePermission('loyers_encaisser');
 
-// Photo par élément d'état des lieux : mêmes contraintes que les photos de
-// Bien (étape 5/9). Signatures (finalisation) : PNG issu d'un canvas, léger.
+// Photo par élément d'état des lieux : mêmes contraintes que les photos de Bien (étape 5/9).
 const photoUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 3 * 1024 * 1024 },
-});
-const signaturesUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 1 * 1024 * 1024 },
 });
 
 
@@ -490,44 +485,26 @@ router.delete('/:leaseId/move-in-report/items/:zoneKey/:itemKey/photo/:photoInde
 });
 
 // POST /api/leases/:leaseId/move-in-report/finalize — verrouille la fiche
-// (exige tous les états renseignés + les deux signatures).
-router.post(
-  '/:leaseId/move-in-report/finalize',
-  canEtatsDesLieux,
-  signaturesUpload.fields([
-    { name: 'tenantSignature', maxCount: 1 },
-    { name: 'agentSignature', maxCount: 1 },
-  ]),
-  async (req, res, next) => {
-    const leaseId = Number(req.params.leaseId);
-    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+// (exige tous les états renseignés) ; se signe à la main après impression.
+router.post('/:leaseId/move-in-report/finalize', canEtatsDesLieux, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
 
-    // Signatures numériques facultatives : l'état des lieux se signe à la main après impression.
-    const tenantSignatureFile = req.files?.tenantSignature?.[0];
-    const agentSignatureFile = req.files?.agentSignature?.[0];
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const row = await moveInReport.finalizeMoveIn(req.user.tenantId, req.user.id, leaseId, scopeAgentId, {
+      tenantReservesInput: req.body?.tenantReserves,
+    });
 
-    try {
-      const scopeAgentId = await resolvePropertyScope(req.user);
-      const row = await moveInReport.finalizeMoveIn(req.user.tenantId, req.user.id, leaseId, scopeAgentId, {
-        tenantSignatureFile,
-        agentSignatureFile,
-        tenantReservesInput: req.body?.tenantReserves,
-      });
-
-
-      logger.info('État des lieux d’entrée finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
-      res.json({ report: toPublicInspectionReport(row) });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+    logger.info('État des lieux d’entrée finalisé', { tenantId: req.user.tenantId, leaseId, by: req.user.id });
+    res.json({ report: toPublicInspectionReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // POST /api/leases/:leaseId/move-in-report/reopen — DG uniquement, motif
-// obligatoire : rouvre une fiche finalisée pour corriger une erreur de
-// saisie. Invalide les deux signatures existantes (il faudra resigner avant
-// de refinaliser) — une signature engage sur un contenu précis, jamais sur
-// un contenu qui pourrait changer sans qu'elle le sache.
+// obligatoire : rouvre une fiche finalisée pour corriger une erreur de saisie.
 router.post('/:leaseId/move-in-report/reopen', canReopenInspection, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
   if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
@@ -638,34 +615,19 @@ router.patch('/:leaseId/move-out-report', canEtatsDesLieux, async (req, res, nex
 
 // POST /api/leases/:leaseId/move-out-report/submit — circuit de validation DG (demande utilisateur,
 // 2026-11-03) : un employé (pas le DG lui-même) soumet son PV pour validation au lieu de le finaliser
-// directement — signatures locataire/agent prises ICI (locataire physiquement présent), jamais redemandées
-// à la validation (voir `finalizeMoveOut`). Peut être resoumis plusieurs fois après un rejet.
-router.post(
-  '/:leaseId/move-out-report/submit',
-  canEtatsDesLieux,
-  signaturesUpload.fields([
-    { name: 'tenantSignature', maxCount: 1 },
-    { name: 'agentSignature', maxCount: 1 },
-  ]),
-  async (req, res, next) => {
-    const leaseId = Number(req.params.leaseId);
-    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+// directement. Peut être resoumis plusieurs fois après un rejet.
+router.post('/:leaseId/move-out-report/submit', canEtatsDesLieux, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
 
-    const tenantSignatureFile = req.files?.tenantSignature?.[0];
-    const agentSignatureFile = req.files?.agentSignature?.[0];
-
-    try {
-      const scopeAgentId = await resolvePropertyScope(req.user);
-      const { row } = await moveOutReport.submitMoveOutReport(req.user.tenantId, req.user.id, leaseId, scopeAgentId, {
-        tenantSignatureFile,
-        agentSignatureFile,
-      });
-      res.json({ report: toPublicMoveOutReport(row) });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const { row } = await moveOutReport.submitMoveOutReport(req.user.tenantId, req.user.id, leaseId, scopeAgentId);
+    res.json({ report: toPublicMoveOutReport(row) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // POST /api/leases/:leaseId/move-out-report/reject — DG uniquement, note obligatoire : le PV repasse en
 // brouillon modifiable par l'employé, qui est notifié ; peut être resoumis plusieurs fois.
@@ -722,53 +684,42 @@ router.delete('/:leaseId/move-out-report/items/:zoneKey/:itemKey/photo/:photoInd
 });
 
 // POST /api/leases/:leaseId/move-out-report/finalize — verrouille la fiche
-// (exige tous les états renseignés + les deux signatures), recalcule le
-// décompte de caution à partir des données persistées, termine le bail et
-// libère l'unité — tout dans la même transaction.
-router.post(
-  '/:leaseId/move-out-report/finalize',
-  canEtatsDesLieux,
-  signaturesUpload.fields([
-    { name: 'tenantSignature', maxCount: 1 },
-    { name: 'agentSignature', maxCount: 1 },
-  ]),
-  async (req, res, next) => {
-    const leaseId = Number(req.params.leaseId);
-    if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+// (exige tous les états renseignés), recalcule le décompte de caution à
+// partir des données persistées, termine le bail et libère l'unité — tout
+// dans la même transaction.
+router.post('/:leaseId/move-out-report/finalize', canEtatsDesLieux, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
 
-    const tenantSignatureFile = req.files?.tenantSignature?.[0];
-    const agentSignatureFile = req.files?.agentSignature?.[0];
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const { row, depositAccountingNote, additionalDeposits, totalDeductions, netRefund } = await moveOutReport.finalizeMoveOut(
+      req.user.tenantId,
+      req.user.id,
+      leaseId,
+      scopeAgentId,
+      { body: req.body },
+    );
 
-    try {
-      const scopeAgentId = await resolvePropertyScope(req.user);
-      const { row, depositAccountingNote, additionalDeposits, totalDeductions, netRefund } = await moveOutReport.finalizeMoveOut(
-        req.user.tenantId,
-        req.user.id,
-        leaseId,
-        scopeAgentId,
-        { tenantSignatureFile, agentSignatureFile, body: req.body },
-      );
-
-      logger.info('Sortie de locataire finalisée', {
-        tenantId: req.user.tenantId,
-        leaseId,
-        totalDeductions,
-        netRefund,
-        by: req.user.id,
-      });
-      res.json({ report: toPublicMoveOutReport(row), depositAccountingNote, additionalDeposits });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+    logger.info('Sortie de locataire finalisée', {
+      tenantId: req.user.tenantId,
+      leaseId,
+      totalDeductions,
+      netRefund,
+      by: req.user.id,
+    });
+    res.json({ report: toPublicMoveOutReport(row), depositAccountingNote, additionalDeposits });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // POST /api/leases/:leaseId/move-out-report/reopen — DG uniquement, motif
 // obligatoire. Contrairement à l'entrée, la sortie a des effets de bord
 // déjà survenus (bail terminé, unité libérée, cautions supplémentaires
 // réglées) : la réouverture NE LES DÉFAIT PAS (ce sont des faits, pas des
-// erreurs de saisie) — seul le CONTENU de la fiche (grille, retenues,
-// signatures) redevient modifiable. Si une écriture "caution restituée"
+// erreurs de saisie) — seul le CONTENU de la fiche (grille, retenues)
+// redevient modifiable. Si une écriture "caution restituée"
 // avait été postée automatiquement, elle est extournée (jamais modifiée ni
 // supprimée directement) : la refinalisation en postera une nouvelle si le
 // nouveau calcul le justifie encore.

@@ -21,7 +21,6 @@ import { compareInspectionReports, type ItemComparison } from "@/lib/inspection-
 import { CONDITION_LABELS } from "@/lib/constants/inspection";
 import { formatFcfa } from "@/lib/utils";
 import { InspectionReadOnly } from "@/components/inspections/inspection-readonly";
-import { SignatureBlock } from "@/components/inspections/signature-block";
 import { ExitStatementTable } from "@/components/inspections/exit-statement";
 import { ReopenReportButton } from "@/components/inspections/reopen-button";
 import { Field, Input } from "@/components/ui/input";
@@ -268,16 +267,9 @@ export function FinalizedView({
           </div>
         )}
 
-        {report.tenantSignatureUrl || report.agentSignatureUrl ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <SignatureBlock label="Signature du locataire" url={report.tenantSignatureUrl} accessToken={accessToken} />
-            <SignatureBlock label="Signature de l'agent" url={report.agentSignatureUrl} accessToken={accessToken} />
-          </div>
-        ) : (
-          <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm text-ink-muted">
-            Imprimez le PV : le locataire et l&apos;entreprise le datent et le signent à la main dans les cadres prévus.
-          </p>
-        )}
+        <p className="rounded-lg border border-border bg-surface-muted px-3 py-2 text-body-sm text-ink-muted">
+          Imprimez le PV : le locataire et l&apos;entreprise le datent et le signent à la main dans les cadres prévus.
+        </p>
       </CardContent>
     </Card>
   );

@@ -214,7 +214,7 @@ export function DraftEditor({
     }
   }
 
-  async function handleFinalize(tenantSignature: Blob | null, agentSignature: Blob | null, tenantReserves: string) {
+  async function handleFinalize(tenantReserves: string) {
     if (!accessToken) return;
     if (netRefund > 0 && !refundPaymentMethod) {
       setFinalizeError("Indiquez comment la caution sera restituée avant de finaliser.");
@@ -245,8 +245,6 @@ export function DraftEditor({
       const res = await finalizeMoveOutReport(
         accessToken,
         leaseId,
-        tenantSignature,
-        agentSignature,
         netRefund > 0 ? (refundPaymentMethod as PaymentMethod) : undefined,
         additionalDepositRefundMethods as Partial<Record<AdditionalDepositType, PaymentMethod>>,
         tenantReserves || undefined,
@@ -278,7 +276,7 @@ export function DraftEditor({
     setSubmitError(null);
     try {
       await persist();
-      const res = await submitMoveOutReport(accessToken, leaseId, null, null);
+      const res = await submitMoveOutReport(accessToken, leaseId);
       onReportChange(res.report);
       toast.success("PV soumis pour validation à la direction générale.");
     } catch (err) {
@@ -501,11 +499,11 @@ export function DraftEditor({
 
         {authorIsDg ? (
           // PV conduit par le DG lui-même : finalisation directe, comme avant ce circuit de validation.
-          <FinalizeSection printedSignatures onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
+          <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
         ) : isDg ? (
           report.reviewStatus === "submitted" ? (
             <div className="flex flex-col gap-4">
-              <FinalizeSection printedSignatures onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
+              <FinalizeSection onFinalize={handleFinalize} submitting={finalizing} error={finalizeError} tenantName={renterName} />
               <RejectSection onReject={handleReject} submitting={rejecting} error={rejectError} />
             </div>
           ) : (
@@ -518,7 +516,7 @@ export function DraftEditor({
           )
         ) : (
           // Employé : jamais de finalisation directe, toujours via soumission pour validation DG.
-          <FinalizeSection printedSignatures mode="submit" onFinalize={handleSubmit} submitting={submitting} error={submitError} tenantName={renterName} />
+          <FinalizeSection mode="submit" onFinalize={handleSubmit} submitting={submitting} error={submitError} tenantName={renterName} />
         )}
       </CardContent>
     </Card>

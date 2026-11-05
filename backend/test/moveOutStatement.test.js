@@ -19,15 +19,6 @@ const { cloneMasterZones } = require('../src/services/inspection');
 const { listPortfolioArrears } = require('../src/services/rentTracking');
 const { createBareFixture, createFixture, teardown } = require('./gl/fixtures');
 
-const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
-function fakeSignatureForm(extra) {
-  const form = new FormData();
-  for (const [k, v] of Object.entries(extra)) form.set(k, v);
-  form.set('tenantSignature', new Blob([PNG_BYTES], { type: 'image/png' }), 'sig-locataire.png');
-  form.set('agentSignature', new Blob([PNG_BYTES], { type: 'image/png' }), 'sig-agent.png');
-  return form;
-}
-
 async function insertActiveLease(fx, { unitCode, depositAmount, monthlyRent = 40000, startDate = '2026-01-01', renterSuffix = '' }) {
   const [unit] = await pool.query(
     "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:t, :p, :code, 'studio', 'loue', :rent, :by)",

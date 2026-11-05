@@ -2,7 +2,7 @@
 
 /**
  * Helpers communs aux états des lieux d'entrée et de sortie : lecture de la fiche (avec les acteurs),
- * garde-fous brouillon/finalisé, et fichiers (photos, signatures) rangés sous uploads/.
+ * garde-fous brouillon/finalisé, et fichiers (photos) rangés sous uploads/.
  */
 
 const path = require('path');

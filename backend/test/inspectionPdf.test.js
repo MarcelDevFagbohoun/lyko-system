@@ -70,8 +70,6 @@ test('streamMoveInPdf — PDF valide, sans colonne de retenue (constat, pas de f
     generalNotes: null,
     tenantReserves: null,
     reopenedAt: null,
-    tenantSignatureUrl: null,
-    agentSignatureUrl: null,
   };
   const pdf = await capturePdf((res) => streamMoveInPdf(res, { tenant, renter, property, lease, report }));
   const text = pdfText(pdf);
@@ -91,8 +89,6 @@ test('streamMoveInPdf — réserves du locataire mises en avant, réouverture me
     generalNotes: null,
     tenantReserves: "Le locataire n'est pas d'accord sur l'état de la porte.",
     reopenedAt: '2026-02-01T10:00:00.000Z',
-    tenantSignatureUrl: null,
-    agentSignatureUrl: null,
   };
   const text = pdfText(await capturePdf((res) => streamMoveInPdf(res, { tenant, renter, property, lease, report })));
   assert.match(text, /RÉSERVES DU LOCATAIRE/);
@@ -126,8 +122,6 @@ test('streamMoveOutPdf — transition Bon état vers Mauvais état, facturation,
     totalDeductions: 25000,
     netRefund: 35000,
     refundPaymentMethod: 'mobile_money',
-    tenantSignatureUrl: null,
-    agentSignatureUrl: null,
   };
   const text = pdfText(
     await capturePdf((res) => streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveInZones, additionalDeposits: [] })),
@@ -155,8 +149,6 @@ test('streamMoveOutPdf — sans remboursement dû (caution absorbée), aucune me
     totalDeductions: 60000,
     netRefund: 0,
     refundPaymentMethod: null,
-    tenantSignatureUrl: null,
-    agentSignatureUrl: null,
   };
   const text = pdfText(await capturePdf((res) => streamMoveOutPdf(res, { tenant, renter, property, lease, report, moveInZones: [], additionalDeposits: [] })));
   assert.doesNotMatch(text, /Réglé par/);

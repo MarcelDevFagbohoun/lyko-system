@@ -19,14 +19,7 @@ const { cloneMasterZones } = require('../src/services/inspection');
 const { listPortfolioArrears } = require('../src/services/rentTracking');
 const { createBareFixture, createFixture, teardown } = require('./gl/fixtures');
 
-const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
-function fakeSignatureForm(extra) {
-  const form = new FormData();
-  for (const [k, v] of Object.entries(extra)) form.set(k, v);
-  form.set('tenantSignature', new Blob([PNG_BYTES], { type: 'image/png' }), 'sig-locataire.png');
-  form.set('agentSignature', new Blob([PNG_BYTES], { type: 'image/png' }), 'sig-agent.png');
-  return form;
-}
+const jsonHeaders = { 'Content-Type': 'application/json' };
 
 async function insertActiveLease(fx, { unitCode, depositAmount, monthlyRent = 40000, startDate = '2026-01-01', renterSuffix = '' }) {
   const [unit] = await pool.query(
@@ -84,8 +77,8 @@ test('finalize sortie — 3 mois de loyer impayés déduits de la caution, enreg
 
   const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
     method: 'POST',
-    headers: bearer(fx.dgId, fx.tenantId),
-    body: fakeSignatureForm({ refundPaymentMethod: 'especes' }),
+    headers: { ...bearer(fx.dgId, fx.tenantId), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refundPaymentMethod: 'especes' }),
   });
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -126,8 +119,8 @@ test('finalize sortie — aucun impayé : rentArrearsAmount reste à 0, comporte
 
   const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
     method: 'POST',
-    headers: bearer(fx.dgId, fx.tenantId),
-    body: fakeSignatureForm({ refundPaymentMethod: 'especes' }),
+    headers: { ...bearer(fx.dgId, fx.tenantId), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refundPaymentMethod: 'especes' }),
   });
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -154,8 +147,8 @@ test('finalize sortie — caution insuffisante pour tout couvrir : les dégradat
 
   const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
     method: 'POST',
-    headers: bearer(fx.dgId, fx.tenantId),
-    body: fakeSignatureForm({ balanceResolution: 'repairs_by_tenant' }), // netRefund = 0, reste dû → choix exigé
+    headers: { ...bearer(fx.dgId, fx.tenantId), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ balanceResolution: 'repairs_by_tenant' }), // netRefund = 0, reste dû → choix exigé
   });
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -180,8 +173,8 @@ test('finalize sortie — comptabilité avancée active : aucune écriture GL au
 
     const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
       method: 'POST',
-      headers: bearer(glFx.dgId, glFx.tenantId),
-      body: fakeSignatureForm({ refundPaymentMethod: 'especes', balanceResolution: 'repairs_by_tenant' }),
+      headers: { ...bearer(glFx.dgId, glFx.tenantId), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refundPaymentMethod: 'especes', balanceResolution: 'repairs_by_tenant' }),
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -205,8 +198,8 @@ test('finalize sortie — une correction (réouverture) ne rejoue jamais le règ
 
   const first = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
     method: 'POST',
-    headers: bearer(fx.dgId, fx.tenantId),
-    body: fakeSignatureForm({ refundPaymentMethod: 'especes', balanceResolution: 'repairs_by_tenant' }),
+    headers: { ...bearer(fx.dgId, fx.tenantId), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refundPaymentMethod: 'especes', balanceResolution: 'repairs_by_tenant' }),
   });
   assert.equal(first.status, 200);
 
@@ -219,8 +212,8 @@ test('finalize sortie — une correction (réouverture) ne rejoue jamais le règ
 
   const second = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
     method: 'POST',
-    headers: bearer(fx.dgId, fx.tenantId),
-    body: fakeSignatureForm({ refundPaymentMethod: 'especes' }),
+    headers: { ...bearer(fx.dgId, fx.tenantId), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refundPaymentMethod: 'especes' }),
   });
   assert.equal(second.status, 200);
   const body = await second.json();
