@@ -242,7 +242,11 @@ router.post('/register', registerLimiter, upload.single('logo'), async (req, res
       email: data.email,
     });
     if (existingEmail.length > 0) {
-      throw new ApiError(409, 'Cet email est déjà associé à un compte administrateur.');
+      // Message volontairement générique (ne précise pas le rôle) : révéler qu'un email
+      // appartient spécifiquement à un compte administrateur permettrait à quelqu'un de sonder
+      // des adresses une à une pour repérer les comptes DG, des cibles de choix pour du phishing.
+      // Cohérent avec le message déjà utilisé dans employees.js pour le même type de conflit.
+      throw new ApiError(409, 'Cet email est déjà associé à un compte.');
     }
 
     await conn.beginTransaction();
