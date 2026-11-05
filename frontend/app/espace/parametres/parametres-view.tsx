@@ -27,7 +27,6 @@ import { ActivitiesCard } from "@/components/espace/activities-card";
 import { StartDateCard } from "@/components/accounting/start-date-card";
 import { CADRES, type Cadre } from "@/lib/module-theme";
 import { AuthenticatedImage } from "@/components/ui/authenticated-image";
-import { AdvancedAccountingSection } from "./sections/advanced-accounting";
 import { AssistantSection } from "./sections/assistant-section";
 import { InspectionCatalogSection } from "./sections/inspection-catalog";
 
@@ -191,21 +190,16 @@ function ParametresContent() {
           </p>
         </div>
 
-        {/* Action immédiate (active/suspend tout de suite, avec reprise de
-            l'historique) — volontairement HORS du formulaire ci-dessous, qui
+        {/* Réglages nécessaires au fonctionnement général du logiciel (pas spécifiques à la comptabilité
+            avancée SYSCOHADA, retirée de cette page) — volontairement HORS du formulaire ci-dessous, qui
             ne fait qu'enregistrer des champs au clic sur "Enregistrer". */}
-        <SectionLabel cadre="finances" />
-        <CardToneProvider tone={CADRES.finances.tone}>
-          <div className="flex flex-col gap-6">
-            <StartDateCard accessToken={accessToken} isDg />
-            <AdvancedAccountingSection accessToken={accessToken} />
-            <InspectionCatalogSection accessToken={accessToken} />
-          </div>
-        </CardToneProvider>
-
         <SectionLabel cadre="administration" />
         <CardToneProvider tone={CADRES.administration.tone}>
-          {ASSISTANT_ENABLED && <AssistantSection accessToken={accessToken} />}
+          <div className="flex flex-col gap-6">
+            <StartDateCard accessToken={accessToken} isDg />
+            <InspectionCatalogSection accessToken={accessToken} />
+            {ASSISTANT_ENABLED && <AssistantSection accessToken={accessToken} />}
+          </div>
         </CardToneProvider>
 
         <form onSubmit={handleSave} className="flex flex-col gap-6">
@@ -497,11 +491,9 @@ function ParametresContent() {
   );
 }
 
-// ── Comptabilité avancée (SYSCOHADA) — mode de comptabilité de l'entreprise ─
-// Décision explicite de l'utilisateur : « c'est [le DG] qui doit autoriser
-// son comptable d'utiliser une comptabilité simple, ou une comptabilité
-// avancée » — ce contrôle vit ici, dans Paramètres (pas dans l'espace
-// Comptabilité avancée lui-même, qui n'affiche plus qu'un statut en lecture
-// seule + un lien vers cette page). Une fois activée ici, le DG autorise
-// ENSUITE tel ou tel comptable à l'utiliser depuis sa fiche employé
-// (case « Comptabilité avancée (SYSCOHADA) » déjà existante, Employés).
+// ── Comptabilité avancée (SYSCOHADA) ──────────────────────────────────────
+// Carte d'activation/suspension retirée de Paramètres (demande utilisateur, 2026-11-05) : le module
+// reste de toute façon verrouillé côté plateforme (platform_feature_gates, migration 141) tant qu'il
+// n'est pas ouvert aux entreprises — voir comptabilite-avancee-view.tsx, qui l'indique. Les réglages qui
+// restent nécessaires au fonctionnement général du logiciel (date de démarrage comptable, catalogue des
+// dégradations) sont désormais dans le groupe « Administration » ci-dessus, pas liés à SYSCOHADA.

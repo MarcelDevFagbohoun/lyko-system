@@ -78,7 +78,7 @@ export function InspectionCatalogSection({ accessToken }: { accessToken: string 
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <Receipt size={18} className={CADRES.finances.text} />
+          <Receipt size={18} className={CADRES.administration.text} />
           <CardTitle>Catalogue de facturation (états des lieux)</CardTitle>
         </div>
         <CardDescription>

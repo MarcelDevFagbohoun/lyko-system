@@ -15,7 +15,6 @@
  */
 
 import * as React from "react";
-import Link from "next/link";
 import {
   BookOpen,
   Wallet,
@@ -141,18 +140,10 @@ function GlAvanceeContent() {
           <CardHeader>
             <CardTitle>Comptabilité avancée non activée</CardTitle>
             <CardDescription>
-              {isDg
-                ? "Activez-la depuis Paramètres — c'est là que se décide le mode de comptabilité de l'entreprise, et que vous autorisez ensuite vos comptables à l'utiliser (fiche employé)."
-                : "La comptabilité avancée SYSCOHADA n'a pas encore été activée pour votre entreprise. Seul le DG peut l'activer, depuis Paramètres."}
+              La comptabilité avancée SYSCOHADA n&apos;est pas encore ouverte aux entreprises (module en cours de
+              développement). La comptabilité simple continue de fonctionner normalement, activée ou non.
             </CardDescription>
           </CardHeader>
-          {isDg && (
-            <CardContent>
-              <Link href="/espace/parametres">
-                <Button size="sm">Aller dans Paramètres</Button>
-              </Link>
-            </CardContent>
-          )}
         </Card>
       ) : (
         <>
@@ -163,12 +154,9 @@ function GlAvanceeContent() {
                   <p className="font-label-md text-warning-fg">Comptabilité avancée suspendue</p>
                   <p className="text-body-sm text-ink-soft">
                     Les nouvelles opérations ne génèrent plus d&apos;écriture. L&apos;historique déjà généré reste
-                    consultable ci-dessous. Réactivez-la depuis Paramètres.
+                    consultable ci-dessous.
                   </p>
                 </div>
-                <Link href="/espace/parametres">
-                  <Button variant="warning" size="sm">Ouvrir Paramètres</Button>
-                </Link>
               </CardContent>
             </Card>
           )}
