@@ -10,6 +10,9 @@ export type FormState = {
   phone: string;
   email: string;
   profession: string;
+  /** Contact d'un proche (personne à prévenir) — facultatif (demande utilisateur, 2026-11-05). */
+  emergencyContactName: string;
+  emergencyContactPhone: string;
   monthlyRent: string;
   depositAmount: string;
   depositPaymentMethod: string;
@@ -34,6 +37,8 @@ export const INITIAL: FormState = {
   phone: "",
   email: "",
   profession: "",
+  emergencyContactName: "",
+  emergencyContactPhone: "",
   monthlyRent: "",
   depositAmount: "",
   depositPaymentMethod: "",

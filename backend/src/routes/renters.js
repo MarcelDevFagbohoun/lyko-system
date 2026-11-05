@@ -118,6 +118,8 @@ function toPublicRenter(row) {
     email: row.email,
     profession: row.profession,
     notes: row.notes,
+    emergencyContactName: row.emergency_contact_name,
+    emergencyContactPhone: row.emergency_contact_phone,
     notesUpdatedBy: toActor(row.notes_updater_first_name, row.notes_updater_last_name, row.notes_updater_role),
     notesUpdatedAt: row.notes_updated_at,
     createdBy: toActor(row.renter_creator_first_name, row.renter_creator_last_name, row.renter_creator_role),

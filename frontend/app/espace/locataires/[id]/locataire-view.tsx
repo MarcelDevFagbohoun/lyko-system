@@ -162,6 +162,11 @@ function LocataireContent() {
               {renter.email ? ` · ${renter.email}` : ""}
               {renter.profession ? ` · ${renter.profession}` : ""}
             </p>
+            {(renter.emergencyContactName || renter.emergencyContactPhone) && (
+              <p className="text-body-sm text-ink-faint">
+                Contact d&apos;un proche : {[renter.emergencyContactName, renter.emergencyContactPhone].filter(Boolean).join(" · ")}
+              </p>
+            )}
             <Attribution actor={renter.createdBy} verb="Fiche créée par" at={renter.createdAt} className="mt-1 block" />
           </div>
           {activeLease && (

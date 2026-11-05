@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { ApiError } from "@/lib/api/client";
 import { updateRenter, generatePortalLink, type Renter } from "@/lib/api/renters";
-import { buildWhatsAppHref } from "@/lib/validation/auth";
+import { buildWhatsAppHref, normalizeBeninPhone } from "@/lib/validation/auth";
 import { useToast } from "@/lib/toast/toast-context";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
@@ -170,6 +170,8 @@ export function EditRenterForm({
   const [lastName, setLastName] = React.useState(renter.lastName);
   const [email, setEmail] = React.useState(renter.email ?? "");
   const [profession, setProfession] = React.useState(renter.profession ?? "");
+  const [emergencyContactName, setEmergencyContactName] = React.useState(renter.emergencyContactName ?? "");
+  const [emergencyContactPhone, setEmergencyContactPhone] = React.useState(renter.emergencyContactPhone ?? "");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const toast = useToast();
@@ -178,6 +180,10 @@ export function EditRenterForm({
     e.preventDefault();
     if (!accessToken) return;
     if (!firstName.trim() || !lastName.trim()) return setError("Prénom et nom requis.");
+    // Facultatif (demande utilisateur, 2026-11-05) : validé seulement s'il est renseigné.
+    if (emergencyContactPhone.trim() && !normalizeBeninPhone(emergencyContactPhone)) {
+      return setError("Numéro du contact d'un proche invalide (ex. 0161234567).");
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -190,6 +196,8 @@ export function EditRenterForm({
         // serait jamais effacé.
         email: email.trim(),
         profession: profession.trim(),
+        emergencyContactName: emergencyContactName.trim(),
+        emergencyContactPhone: emergencyContactPhone.trim(),
       });
       onSaved(res.renter);
       toast.success("Modifications enregistrées.");
@@ -229,6 +237,23 @@ export function EditRenterForm({
             </Field>
             <Field label="Profession (optionnel)" htmlFor="editProfession">
               <Input id="editProfession" value={profession} onChange={(e) => setProfession(e.target.value)} />
+            </Field>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Contact d'un proche - nom (optionnel)" htmlFor="editEmergencyContactName">
+              <Input
+                id="editEmergencyContactName"
+                value={emergencyContactName}
+                onChange={(e) => setEmergencyContactName(e.target.value)}
+              />
+            </Field>
+            <Field label="Contact d'un proche - téléphone (optionnel)" htmlFor="editEmergencyContactPhone" hint="Ex. 0161234567">
+              <Input
+                id="editEmergencyContactPhone"
+                value={emergencyContactPhone}
+                onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                inputMode="tel"
+              />
             </Field>
           </div>
           <div className="flex items-center gap-2">

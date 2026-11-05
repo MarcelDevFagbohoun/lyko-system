@@ -98,6 +98,10 @@ export function useNewRenterForm() {
     if (!form.phone) e.phone = "Numéro requis";
     else if (!normalizeBeninPhone(form.phone)) e.phone = "Numéro béninois invalide (ex. 0161234567)";
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = "Email invalide";
+    // Facultatif (demande utilisateur, 2026-11-05) : validé seulement s'il est renseigné.
+    if (form.emergencyContactPhone && !normalizeBeninPhone(form.emergencyContactPhone)) {
+      e.emergencyContactPhone = "Numéro béninois invalide (ex. 0161234567)";
+    }
     const rent = Number(form.monthlyRent);
     if (!form.monthlyRent || !Number.isFinite(rent) || rent <= 0) e.monthlyRent = "Loyer invalide";
     const deposit = Number(form.depositAmount || "0");
@@ -152,6 +156,8 @@ export function useNewRenterForm() {
         phone: form.phone.trim(),
         email: form.email.trim() || undefined,
         profession: form.profession.trim() || undefined,
+        emergencyContactName: form.emergencyContactName.trim() || undefined,
+        emergencyContactPhone: form.emergencyContactPhone.trim() || undefined,
         unitId: selectedUnit.id,
         monthlyRent: Number(form.monthlyRent),
         depositAmount: Number(form.depositAmount || "0"),

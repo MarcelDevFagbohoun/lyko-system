@@ -715,8 +715,8 @@ async function createRenter(tenantId, userId, scopeAgentId, data) {
     await conn.beginTransaction();
 
     const [renterResult] = await conn.query(
-      `INSERT INTO renters (tenant_id, first_name, last_name, phone, email, profession, notes, created_by)
-       VALUES (:tenantId, :firstName, :lastName, :phone, :email, :profession, :notes, :createdBy)`,
+      `INSERT INTO renters (tenant_id, first_name, last_name, phone, email, profession, notes, emergency_contact_name, emergency_contact_phone, created_by)
+       VALUES (:tenantId, :firstName, :lastName, :phone, :email, :profession, :notes, :emergencyContactName, :emergencyContactPhone, :createdBy)`,
       {
         tenantId,
         firstName: data.firstName,
@@ -725,6 +725,8 @@ async function createRenter(tenantId, userId, scopeAgentId, data) {
         email: data.email,
         profession: data.profession,
         notes: data.notes,
+        emergencyContactName: data.emergencyContactName ?? null,
+        emergencyContactPhone: data.emergencyContactPhone ?? null,
         createdBy: userId,
       },
     );
@@ -816,6 +818,8 @@ async function updateRenter(tenantId, id, scopeAgentId, data) {
   if (data.lastName !== undefined) { fields.push('last_name = :lastName'); params.lastName = data.lastName; }
   if (data.email !== undefined) { fields.push('email = :email'); params.email = data.email; }
   if (data.profession !== undefined) { fields.push('profession = :profession'); params.profession = data.profession; }
+  if (data.emergencyContactName !== undefined) { fields.push('emergency_contact_name = :emergencyContactName'); params.emergencyContactName = data.emergencyContactName; }
+  if (data.emergencyContactPhone !== undefined) { fields.push('emergency_contact_phone = :emergencyContactPhone'); params.emergencyContactPhone = data.emergencyContactPhone; }
 
   if (fields.length > 0) {
     await pool.query(`UPDATE renters SET ${fields.join(', ')} WHERE id = :id AND tenant_id = :tenantId`, params);

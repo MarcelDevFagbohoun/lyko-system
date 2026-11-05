@@ -316,6 +316,9 @@ export type Renter = {
   email: string | null;
   profession: string | null;
   notes: string | null;
+  /** Contact d'un proche (personne à prévenir) — facultatif (demande utilisateur, 2026-11-05). */
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
   notesUpdatedBy: Actor;
   notesUpdatedAt: string | null;
   createdBy: Actor;
@@ -360,6 +363,9 @@ export type CreateRenterInput = {
   email?: string;
   profession?: string;
   notes?: string;
+  /** Contact d'un proche (personne à prévenir) — facultatif (demande utilisateur, 2026-11-05). */
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
   unitId: number;
   // Loyer optionnel : reprend celui de l'unité si omis.
   monthlyRent?: number;
@@ -443,6 +449,8 @@ export type UpdateRenterInput = Partial<{
   lastName: string;
   email: string | null;
   profession: string | null;
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
 }>;
 
 export function updateRenter(accessToken: string, id: number, input: UpdateRenterInput) {

@@ -1,7 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
-const { phoneSchema, nameSchema } = require('./auth');
+const { phoneSchema, nameSchema, normalizeBeninPhone } = require('./auth');
 const { RENT_TIMING_KEYS } = require('../constants/rentTiming');
 const { idempotencyKeySchema } = require('./idempotency');
 const { ADDITIONAL_DEPOSIT_TYPES } = require('../constants/leaseDeposits');
@@ -24,6 +24,24 @@ const optionalText = (max) =>
     .optional()
     .or(z.literal(''))
     .transform((v) => (v ? v : null));
+
+// Contact d'un proche (personne à prévenir) — facultatif, ni le nom ni le numéro ne sont obligatoires
+// (demande utilisateur, 2026-11-05). Même format béninois que le téléphone du locataire quand il est
+// renseigné, mais jamais exigé.
+const optionalPhoneSchema = z
+  .string()
+  .trim()
+  .optional()
+  .or(z.literal(''))
+  .transform((val, ctx) => {
+    if (!val) return null;
+    const normalized = normalizeBeninPhone(val);
+    if (!normalized) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Numéro béninois invalide (10 chiffres, ex. 0161234567)' });
+      return z.NEVER;
+    }
+    return normalized;
+  });
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date invalide (AAAA-MM-JJ)');
 const monthSchema = z.string().regex(/^\d{4}-\d{2}$/, 'Mois invalide (AAAA-MM)');
@@ -128,6 +146,9 @@ const createRenterSchema = z
     email: emailSchema,
     profession: optionalText(150),
     notes: optionalText(2000),
+    // Contact d'un proche à prévenir — facultatif (demande utilisateur, 2026-11-05).
+    emergencyContactName: optionalText(150),
+    emergencyContactPhone: optionalPhoneSchema,
 
     unitId: z.coerce.number().int('Unité requise').positive('Unité requise'),
     // Loyer optionnel : reprend celui de l'unité si absent (mais ajustable au bail).
@@ -193,6 +214,8 @@ const updateRenterSchema = z.object({
   lastName: nameSchema.optional(),
   email: emailSchema.optional(),
   profession: optionalText(150).optional(),
+  emergencyContactName: optionalText(150).optional(),
+  emergencyContactPhone: optionalPhoneSchema.optional(),
 });
 
 // Note interne libre sur un locataire — schéma séparé de `updateRenterSchema` ci-dessus : voir

@@ -28,6 +28,29 @@ export function IdentityFields({ form, set, touched, setTouched, errors }: FormS
             <Field label="Profession (optionnel)" htmlFor="profession">
               <Input id="profession" value={form.profession} onChange={(e) => set("profession", e.target.value)} />
             </Field>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Contact d'un proche - nom (optionnel)" htmlFor="emergencyContactName">
+                <Input
+                  id="emergencyContactName"
+                  value={form.emergencyContactName}
+                  onChange={(e) => set("emergencyContactName", e.target.value)}
+                />
+              </Field>
+              <Field
+                label="Contact d'un proche - téléphone (optionnel)"
+                htmlFor="emergencyContactPhone"
+                hint="Ex. 0161234567"
+                error={touched.emergencyContactPhone ? errors.emergencyContactPhone : undefined}
+              >
+                <Input
+                  id="emergencyContactPhone"
+                  value={form.emergencyContactPhone}
+                  onChange={(e) => set("emergencyContactPhone", e.target.value)}
+                  onBlur={() => setTouched((t) => ({ ...t, emergencyContactPhone: true }))}
+                  inputMode="tel"
+                />
+              </Field>
+            </div>
           </div>
     </>
   );
