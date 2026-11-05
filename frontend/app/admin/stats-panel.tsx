@@ -11,7 +11,7 @@ import { monthLabel } from "@/lib/chart-utils";
 import { MonthlyBars, type ChartSegment } from "@/components/charts/monthly-bars";
 import { CumulLines } from "@/components/charts/cumul-lines";
 
-const PLAN_LABEL: Record<string, string> = { demarrage: "Démarrage", pro: "Pro", entreprise: "Entreprise", interne: "Interne", partenaire: "Partenaire" };
+const PLAN_LABEL: Record<string, string> = { demarrage: "Démarrage", pro: "Pro", entreprise: "Entreprise", interne: "Interne", partenaire: "Partenaire", "essai-gratuit": "Essai gratuit" };
 const KIND_LABEL: Record<string, string> = { purchase: "Premiers achats", renewal: "Renouvellements", upgrade: "Changements d'offre" };
 const REASON_LABEL: Record<string, string> = { declined: "Refusé par l'opérateur", canceled: "Annulé par le client", abandoned: "Abandonné", incomplete: "Non terminé (plus de 2 h)", anomaly: "Anomalie : montant différent", unknown: "Autre" };
 const RANGES = [6, 12, 24];
@@ -172,6 +172,7 @@ export function StatsPanel({ token, onLogout, onOpenIssues }: { token: string; o
                 ["Total", data.tenants.total],
                 ["Nouvelles ce mois", data.tenants.newThisMonth],
                 ["Abonnées", data.tenants.paying],
+                ["Essai gratuit", data.tenants.trial],
                 ["Partenaires", data.tenants.partners],
                 ["Internes", data.tenants.internal],
                 ["Expirées", data.tenants.expired],

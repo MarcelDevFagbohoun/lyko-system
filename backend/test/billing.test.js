@@ -12,12 +12,13 @@ const { createApp } = require('../src/app');
 const { signAccessToken } = require('../src/utils/jwt');
 const { FOUNDER_OFFER } = require('../src/constants/plans');
 const { runSubscriptionJob } = require('../src/jobs/subscriptionJob');
+const planCatalog = require('../src/services/planCatalog');
 
 const WEBHOOK_SECRET = 'whsec_platform_test';
 const realFetch = global.fetch;
 const txs = new Map();
 let nextTx = 9000;
-let fx; let server; let base;
+let fx; let server; let base; let originalCatalogSettings;
 
 function mock() {
   global.fetch = async (url, init = {}) => {
@@ -62,6 +63,15 @@ before(async () => {
   fx = await createBareFixture();
   await pool.query("INSERT INTO tenant_subscriptions (tenant_id, plan_key, status) VALUES (:t, NULL, 'pending_payment') ON DUPLICATE KEY UPDATE plan_key = NULL, status = 'pending_payment'", { t: fx.tenantId });
   await pool.query('UPDATE users SET email = :e WHERE id = :id', { e: 'dg-test@example.com', id: fx.dgId });
+  // Ces tests portent sur le mécanisme de paiement des offres payantes, pas sur la visibilité (essai gratuit) :
+  // on force les 3 offres payantes actives, indépendamment de la valeur par défaut du back-office.
+  [[originalCatalogSettings]] = await pool.query('SELECT data FROM catalog_settings WHERE id = 1');
+  const c = await planCatalog.getCatalog();
+  await pool.query(
+    'INSERT INTO catalog_settings (id, data) VALUES (1, :d) ON DUPLICATE KEY UPDATE data = VALUES(data)',
+    { d: JSON.stringify({ ...c, enabledPlans: { ...c.enabledPlans, demarrage: true, pro: true, entreprise: true } }) },
+  );
+  planCatalog.invalidate();
   server = createApp().listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -70,6 +80,9 @@ after(async () => {
   global.fetch = realFetch;
   server.close();
   await pool.query('DELETE FROM subscription_payments WHERE tenant_id = :t', { t: fx.tenantId });
+  if (originalCatalogSettings) await pool.query('UPDATE catalog_settings SET data = :d WHERE id = 1', { d: originalCatalogSettings.data });
+  else await pool.query('DELETE FROM catalog_settings WHERE id = 1');
+  planCatalog.invalidate();
   await teardown(fx.tenantId);
   await closePool();
 });

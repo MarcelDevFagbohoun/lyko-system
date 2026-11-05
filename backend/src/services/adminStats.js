@@ -153,8 +153,9 @@ async function getStats(monthsParam) {
        COALESCE(SUM(${BJ('t.created_at')} >= ${THIS_MONTH}), 0) AS new_this_month,
        COALESCE(SUM(s.plan_key = 'partenaire' AND s.status = 'active' AND s.current_period_end > UTC_TIMESTAMP()), 0) AS partners,
        COALESCE(SUM(s.plan_key IN ('demarrage','pro','entreprise') AND s.status = 'active' AND s.current_period_end > UTC_TIMESTAMP()), 0) AS paying,
+       COALESCE(SUM(s.plan_key = 'essai-gratuit' AND s.status = 'active' AND s.current_period_end > UTC_TIMESTAMP()), 0) AS trial,
        COALESCE(SUM(s.plan_key = 'interne' AND s.status = 'active'), 0) AS internal,
-       COALESCE(SUM(s.plan_key IN ('demarrage','pro','entreprise','partenaire') AND (s.status <> 'active' OR s.current_period_end <= UTC_TIMESTAMP())), 0) AS expired,
+       COALESCE(SUM(s.plan_key IN ('demarrage','pro','entreprise','partenaire','essai-gratuit') AND (s.status <> 'active' OR s.current_period_end <= UTC_TIMESTAMP())), 0) AS expired,
        COALESCE(SUM(s.plan_key IN ('demarrage','pro','entreprise') AND s.status = 'active' AND s.current_period_end > UTC_TIMESTAMP() AND s.current_period_end <= DATE_ADD(UTC_TIMESTAMP(), INTERVAL 14 DAY)), 0) AS expiring_14
      FROM tenants t LEFT JOIN tenant_subscriptions s ON s.tenant_id = t.id`,
   );
@@ -195,7 +196,7 @@ async function getStats(monthsParam) {
     byKind: byKind.map((r) => ({ kind: r.kind, payments: Number(r.n), amount: Number(r.amount) })),
     failureReasons: failReasons.map((r) => ({ reason: r.reason, count: Number(r.n) })),
     tenants: {
-      total: Number(tenants.total), newThisMonth: Number(tenants.new_this_month), paying: Number(tenants.paying), partners: Number(tenants.partners),
+      total: Number(tenants.total), newThisMonth: Number(tenants.new_this_month), paying: Number(tenants.paying), trial: Number(tenants.trial), partners: Number(tenants.partners),
       internal: Number(tenants.internal), expired: Number(tenants.expired), expiring14: Number(tenants.expiring_14),
     },
     plans: plans.map((r) => ({ planKey: r.plan_key, count: Number(r.n) })),

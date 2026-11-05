@@ -19,7 +19,7 @@ const { activatePayment } = require('../services/billing');
 const partners = require('../services/partnerSubscription');
 const adminStats = require('../services/adminStats');
 const { parsePartnerRights } = require('../services/entitlements');
-const { PARTNER_SELECTABLE_FEATURES } = require('../constants/plans');
+const { PARTNER_SELECTABLE_FEATURES, PLANS } = require('../constants/plans');
 const platformFeatureGates = require('../services/platformFeatureGates');
 const logger = require('../utils/logger');
 const totp = require('../services/totp');
@@ -172,7 +172,7 @@ router.get('/tenants', async (_req, res, next) => {
     );
     const catalog = await catalogService.getCatalog();
     const over = (r) => {
-      const lim = r.plan_key === 'partenaire' ? parsePartnerRights(r.partner_features, r.partner_limits).limits : catalog.plans?.[r.plan_key]?.limits;
+      const lim = r.plan_key === 'partenaire' ? parsePartnerRights(r.partner_features, r.partner_limits).limits : (catalog.plans?.[r.plan_key] ?? PLANS[r.plan_key])?.limits;
       if (!lim || r.plan_key === 'interne') return [];
       return [['units', 'n_units', 'unités'], ['owners', 'n_owners', 'propriétaires'], ['users', 'n_users', 'utilisateurs']]
         .filter(([k, c]) => lim[k] !== null && lim[k] !== undefined && Number(r[c]) > lim[k])

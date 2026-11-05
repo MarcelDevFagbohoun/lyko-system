@@ -7,7 +7,7 @@ const { ApiError } = require('../middleware/error');
 const logger = require('../utils/logger');
 const fedapay = require('./payments/fedapay');
 const { encryptSecret } = require('../utils/encryption');
-const { getCatalog, getPlanAsync, promoPrice } = require('./planCatalog');
+const { getCatalog, getPlanAsync, promoPrice, isPlanEnabled } = require('./planCatalog');
 const { computeUnusedValue } = require('./subscriptionCredit');
 
 const PLAN_RANK = { demarrage: 1, pro: 2, entreprise: 3 };
@@ -41,7 +41,7 @@ function verifyPlatformWebhook(rawBody, header) {
 
 async function findOffer(planKey, months) {
   const plan = await getPlanAsync(planKey);
-  if (!plan || planKey === 'interne') return null;
+  if (!plan || planKey === 'interne' || planKey === 'essai-gratuit') return null;
   const offer = plan.offers.find((o) => o.months === months);
   return offer ? { plan, offer } : null;
 }
@@ -135,18 +135,33 @@ async function upgradeOptions(tenantId) {
   return { options };
 }
 
-/** Catalogue public (pages tarifs) : prix, limites, fonctions, places fondateur restantes. */
+/**
+ * Catalogue public (pages tarifs) : prix, limites, fonctions, places fondateur restantes.
+ * `plans` ne contient que les offres payantes ACTIVES (case « active » du back-office) : tant que seul l'essai
+ * gratuit est proposé, cette liste est vide et aucun achat ne peut être tenté sur une offre retirée. `freeTrial`
+ * est séparé pour ne jamais passer par le paiement (FedaPay) : il est accordé directement à l'inscription.
+ */
 async function publicCatalog() {
   const taken = await founderTaken();
   const catalog = await getCatalog();
   const FOUNDER_OFFER = catalog.founder;
+  const trial = await getPlanAsync('essai-gratuit');
   return {
     // `price` = montant réellement payé (promotion déduite) ; `listPrice` = prix catalogue, barré à l'affichage s'il diffère.
     plans: Object.values(catalog.plans)
+      .filter((p) => catalog.enabledPlans?.[p.key] !== false)
       .map((p) => ({ key: p.key, label: p.label, featured: !!p.featured, limits: p.limits, features: p.features, offers: p.offers.map((o) => ({ months: o.months, price: promoPrice(catalog, o.price), listPrice: o.price })) })),
     promo: catalog.promo?.enabled ? { enabled: true, percent: catalog.promo.percent } : { enabled: false, percent: 0 },
     founder: { ...FOUNDER_OFFER, remaining: FOUNDER_OFFER.enabled ? Math.max(0, FOUNDER_OFFER.maxCompanies - taken) : 0 },
     refundWindowDays: catalog.refundWindowDays,
+    freeTrial: {
+      enabled: await isPlanEnabled('essai-gratuit'),
+      planKey: trial.key,
+      label: trial.label,
+      months: trial.offers[0].months,
+      limits: trial.limits,
+      features: trial.features,
+    },
   };
 }
 

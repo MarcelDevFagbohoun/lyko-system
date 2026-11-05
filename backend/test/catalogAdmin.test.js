@@ -76,6 +76,8 @@ test('changer les prix : appliqué aux achats futurs, tarif fondateur désactiva
   c.plans.pro.offers[0].price = 70000;
   c.plans.demarrage.offers.push({ months: 3, price: 30000 });
   c.founder.price = 55000;
+  // Visibilité page Tarifs (essai gratuit) indépendante du prix : ces offres doivent rester proposées pour le test.
+  c.enabledPlans = { ...c.enabledPlans, demarrage: true, pro: true };
   assert.equal((await put(c)).status, 200);
   let q = await quote(fx.tenantId, 'pro', 4);
   assert.equal(q.normalPrice, 70000);
@@ -101,6 +103,7 @@ test('promotion : un pourcentage appliqué à toutes les offres, c’est le mont
     c.plans.pro.offers = c.plans.pro.offers.map((o) => (o.months === 4 ? { ...o, price: 65000 } : o));
     c.plans.demarrage.offers = c.plans.demarrage.offers.map((o) => (o.months === 3 ? { ...o, price: 30000 } : o));
     c.promo = promo;
+    c.enabledPlans = { ...c.enabledPlans, demarrage: true, pro: true };
     return c;
   };
   // validation du pourcentage

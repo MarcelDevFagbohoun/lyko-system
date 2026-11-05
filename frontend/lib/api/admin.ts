@@ -70,6 +70,8 @@ export type AdminCatalog = {
   founder: { enabled: boolean; planKey: PlanKey; months: number; price: number; maxCompanies: number };
   promo: { enabled: boolean; percent: number };
   refundWindowDays: number;
+  /** Visibilité par offre (page Tarifs + offre accordée à l'inscription) : case indépendante, pas un choix exclusif. */
+  enabledPlans: Record<PlanKey | "essai-gratuit", boolean>;
 };
 export const adminCatalog = (t: string) =>
   apiFetch<{ catalog: AdminCatalog; features: string[]; changes: { id: number; adminName: string | null; createdAt: string }[] }>("/api/admin/catalog", { accessToken: t });
@@ -106,7 +108,7 @@ export type AdminStats = {
   byPlan: { planKey: string; payments: number; amount: number }[];
   byKind: { kind: string; payments: number; amount: number }[];
   failureReasons: { reason: string; count: number }[];
-  tenants: { total: number; newThisMonth: number; paying: number; partners: number; internal: number; expired: number; expiring14: number };
+  tenants: { total: number; newThisMonth: number; paying: number; trial: number; partners: number; internal: number; expired: number; expiring14: number };
   plans: { planKey: string; count: number }[];
   recent: { id: number; status: string; reason: string | null; planKey: string; months: number; kind: string; amount: number; createdAt: string; paidAt: string | null; companyName: string }[];
 };

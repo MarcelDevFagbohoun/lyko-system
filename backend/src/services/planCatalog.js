@@ -15,6 +15,14 @@ const { PLANS, FEATURES, FOUNDER_OFFER, REFUND_WINDOW_DAYS } = require('../const
 
 const EDITABLE = ['demarrage', 'pro', 'entreprise'];
 const ALWAYS_ON = ['core', 'tenant_collect'];
+// Offres pouvant être activées/désactivées pour les abonnements (visibilité page Tarifs + offre accordée à
+// l'inscription), indépendamment les unes des autres (pas un choix exclusif comme `featured`). L'essai gratuit
+// n'a ni prix ni fonctions éditables : seule sa case active/inactive compte.
+const VISIBLE_KEYS = [...EDITABLE, 'essai-gratuit'];
+// Par défaut (aucune surcharge admin en base) : seul l'essai gratuit est proposé pour les nouvelles inscriptions,
+// les 3 offres payantes restent dans le code mais ne sont pas proposées tant que l'administrateur ne les
+// réactive pas depuis le back-office (décision du 2026-11-05 : remplacer les offres payantes par l'essai gratuit).
+const DEFAULT_ENABLED = { demarrage: false, pro: false, entreprise: false, 'essai-gratuit': true };
 const CACHE_MS = 10_000;
 let cache = null;
 
@@ -26,7 +34,13 @@ function defaults() {
     const p = PLANS[k];
     plans[k] = { key: k, label: p.label, featured: !!p.featured, limits: clone(p.limits), features: [...p.features], offers: clone(p.offers) };
   }
-  return { plans, founder: { enabled: true, ...clone(FOUNDER_OFFER) }, promo: { enabled: false, percent: 0 }, refundWindowDays: REFUND_WINDOW_DAYS };
+  return {
+    plans,
+    founder: { enabled: true, ...clone(FOUNDER_OFFER) },
+    promo: { enabled: false, percent: 0 },
+    refundWindowDays: REFUND_WINDOW_DAYS,
+    enabledPlans: clone(DEFAULT_ENABLED),
+  };
 }
 
 function merge(base, over) {
@@ -40,6 +54,7 @@ function merge(base, over) {
   if (over.founder) out.founder = { ...out.founder, ...over.founder };
   if (over.promo) out.promo = { ...out.promo, ...over.promo };
   if (over.refundWindowDays !== undefined) out.refundWindowDays = over.refundWindowDays;
+  if (over.enabledPlans) out.enabledPlans = { ...out.enabledPlans, ...over.enabledPlans };
   return out;
 }
 
@@ -57,11 +72,18 @@ async function getCatalog() {
 }
 function invalidate() { cache = null; }
 
-/** Une offre du catalogue effectif ; « interne » vient toujours du code (accès complet, non modifiable). */
+/** Une offre du catalogue effectif ; « interne », « partenaire » et « essai-gratuit » viennent toujours du code (non modifiables). */
 async function getPlanAsync(key) {
-  if (key === 'interne' || key === 'partenaire') return PLANS[key];
+  if (key === 'interne' || key === 'partenaire' || key === 'essai-gratuit') return PLANS[key];
   const c = await getCatalog();
   return c.plans[key] ?? null;
+}
+
+/** L'offre `key` est-elle actuellement proposée pour un nouvel abonnement (page Tarifs, inscription) ? */
+async function isPlanEnabled(key) {
+  if (!VISIBLE_KEYS.includes(key)) return false;
+  const c = await getCatalog();
+  return c.enabledPlans?.[key] !== false;
 }
 
 /** Prix à payer après la promotion en cours (arrondi au franc). Sans promotion active, le prix catalogue. */
@@ -120,6 +142,11 @@ function validate(input) {
   const pr = input.promo ?? {};
   out.promo = pr.enabled ? { enabled: true, percent: intIn(pr.percent, 1, 90, 'Pourcentage de la promotion') } : { enabled: false, percent: 0 };
   out.refundWindowDays = intIn(input.refundWindowDays, 0, 90, 'Délai de remboursement');
+  // Visibilité par offre (case à cocher indépendante, pas un choix exclusif) : tout ce qui n'est pas explicitement
+  // à `false` reste actif, pour qu'une offre oubliée dans l'envoi du back-office ne se désactive pas par accident.
+  const ep = input.enabledPlans ?? {};
+  out.enabledPlans = {};
+  for (const k of VISIBLE_KEYS) out.enabledPlans[k] = ep[k] !== false;
   return out;
 }
 
@@ -166,4 +193,4 @@ async function listChanges() {
   return rows.map((r) => ({ id: r.id, adminName: r.admin_name, createdAt: r.created_at }));
 }
 
-module.exports = { promoPrice, getCatalog, getPlanAsync, saveCatalog, resetCatalog, listChanges, invalidate, FEATURES };
+module.exports = { promoPrice, getCatalog, getPlanAsync, isPlanEnabled, saveCatalog, resetCatalog, listChanges, invalidate, FEATURES, VISIBLE_KEYS };

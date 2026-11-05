@@ -9,7 +9,7 @@
 const config = require('../config/env');
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
-const { getPlanAsync } = require('./planCatalog');
+const { getPlanAsync, isPlanEnabled } = require('./planCatalog');
 const { verifyAccessToken } = require('../utils/jwt');
 
 const COUNTERS = {
@@ -165,13 +165,29 @@ async function listActiveTenantIds() {
   return rows.map((r) => r.id);
 }
 
-/** Ligne d'abonnement initiale d'une nouvelle entreprise (dans la transaction d'inscription). */
+/**
+ * Ligne d'abonnement initiale d'une nouvelle entreprise (dans la transaction d'inscription).
+ * Si l'essai gratuit est l'offre active (back-office), l'entreprise démarre directement active, pour la durée de
+ * son unique offre (1 mois), sans paiement. Coupure automatique à l'échéance : comportement identique à une offre
+ * payante arrivée à son terme (`getEntitlements` ne traite pas `essai-gratuit` différemment de `demarrage`/`pro`/
+ * `entreprise` une fois expirée — seule `interne` ne expire jamais).
+ */
 async function createInitialSubscription(conn, tenantId) {
-  if (config.features.subscriptionsEnforced) {
-    await conn.query("INSERT INTO tenant_subscriptions (tenant_id, plan_key, status) VALUES (:tenantId, NULL, 'pending_payment')", { tenantId });
-  } else {
+  if (!config.features.subscriptionsEnforced) {
     await conn.query("INSERT INTO tenant_subscriptions (tenant_id, plan_key, status) VALUES (:tenantId, 'interne', 'active')", { tenantId });
+    return;
   }
+  if (await isPlanEnabled('essai-gratuit')) {
+    const trial = await getPlanAsync('essai-gratuit');
+    const months = trial.offers[0].months;
+    await conn.query(
+      `INSERT INTO tenant_subscriptions (tenant_id, plan_key, status, period_months, started_at, current_period_end)
+       VALUES (:tenantId, 'essai-gratuit', 'active', :months, NOW(), DATE_ADD(NOW(), INTERVAL :months MONTH))`,
+      { tenantId, months },
+    );
+    return;
+  }
+  await conn.query("INSERT INTO tenant_subscriptions (tenant_id, plan_key, status) VALUES (:tenantId, NULL, 'pending_payment')", { tenantId });
 }
 
 module.exports = { parsePartnerRights, listOverLimits, getUsage, listActiveTenantIds, enforceActiveSubscription, getEntitlements, assertFeature, requireFeature, assertWithinLimit, createInitialSubscription };

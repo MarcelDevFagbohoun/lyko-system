@@ -54,6 +54,17 @@ const PLANS = {
       { months: 12, price: 520000 },
     ],
   },
+  // Essai gratuit : 1 mois, toutes les fonctionnalités, accordé automatiquement à l'inscription tant qu'il est
+  // l'offre active (voir planCatalog.js `enabledPlans` et entitlements.js `createInitialSubscription`). Coupure
+  // automatique à l'échéance comme une offre payante (même mécanique current_period_end). Non modifiable par
+  // l'administrateur (ni prix, ni durée, ni fonctions) : seule sa visibilité (actif/inactif) se règle dans le back-office.
+  'essai-gratuit': {
+    key: 'essai-gratuit',
+    label: 'Essai gratuit',
+    limits: { units: null, owners: null, users: 20 },
+    features: [...FEATURES.filter((f) => f !== 'ai_assistant'), 'ai_assistant'],
+    offers: [{ months: 1, price: 0 }],
+  },
   // Entreprises existantes avant le SaaS (dont Cabinet M Conseils) : tout, sans limite, sans expiration.
   interne: {
     key: 'interne',

@@ -5,11 +5,14 @@ export type PlanKey = "demarrage" | "pro" | "entreprise";
 export type PlanOffer = { months: number; price: number; listPrice?: number };
 export type PlanLimits = { units: number | null; owners: number | null; users: number | null };
 export type PublicPlan = { key: PlanKey; label: string; featured: boolean; limits: PlanLimits; features: string[]; offers: PlanOffer[] };
+/** Essai gratuit : accordé automatiquement à l'inscription (jamais par paiement), affiché à part des offres payantes. */
+export type FreeTrial = { enabled: boolean; planKey: "essai-gratuit"; label: string; months: number; limits: PlanLimits; features: string[] };
 export type Catalog = {
   plans: PublicPlan[];
   founder: { planKey: PlanKey; months: number; price: number; maxCompanies: number; remaining: number };
   promo?: { enabled: boolean; percent: number };
   refundWindowDays: number;
+  freeTrial: FreeTrial;
 };
 
 export type Subscription = {

@@ -114,6 +114,7 @@ function AbonnementContent() {
 
   const noPlan = !!sub && !sub.active && sub.planKey !== "interne";
   const isInterne = sub?.planKey === "interne";
+  const isTrial = sub?.planKey === "essai-gratuit" && sub.active;
   const isPartner = !!sub?.isPartner && sub.active;
   const currentPlan = sub?.active && !isInterne && !isPartner ? catalog?.plans.find((p) => p.key === sub.planKey) ?? null : null;
   const reviewing = refunds.some((r) => ["requested", "approved", "details_received", "processing", "failed"].includes(r.status));
@@ -193,6 +194,22 @@ function AbonnementContent() {
           </Card>
         )}
 
+        {isTrial && sub && (
+          <Card className="border-primary ring-1 ring-primary">
+            <CardHeader>
+              <CardTitle>Essai gratuit en cours</CardTitle>
+              <CardDescription>
+                Toutes les fonctionnalités sont disponibles pendant votre mois d&apos;essai
+                {sub.currentPeriodEnd ? <> — il se termine le {formatDateLabel(sub.currentPeriodEnd.slice(0, 10))}</> : null}
+                {sub.daysLeft != null ? ` (${sub.daysLeft} jour${sub.daysLeft > 1 ? "s" : ""} restant${sub.daysLeft > 1 ? "s" : ""})` : null}.
+                {catalog && catalog.plans.length > 0
+                  ? " Choisissez une offre ci-dessous pour continuer sans interruption à l'échéance."
+                  : " L'accès sera coupé automatiquement à l'échéance si aucune offre payante n'est encore proposée."}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+
         {isPartner && sub && <PartnerSummary sub={sub} />}
         {currentPlan && sub && <SubscriptionSummary plan={currentPlan} sub={sub} />}
 
@@ -202,7 +219,7 @@ function AbonnementContent() {
           </div>
         )}
 
-        {catalog && !isInterne && !isPartner && (
+        {catalog && !isInterne && !isPartner && catalog.plans.length > 0 && (
           <section aria-labelledby="offres-title" className="flex flex-col gap-4">
             <div>
               <h2 id="offres-title" className="font-display text-headline-md text-ink">

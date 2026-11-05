@@ -11,6 +11,7 @@ const { createApp } = require('../src/app');
 const { signAccessToken } = require('../src/utils/jwt');
 const { PLANS } = require('../src/constants/plans');
 const { getEntitlements, assertFeature, assertWithinLimit } = require('../src/services/entitlements');
+const planCatalog = require('../src/services/planCatalog');
 
 let fx; let server; let base;
 const setSub = (plan, status = 'active', endSql = 'DATE_ADD(NOW(), INTERVAL 30 DAY)') =>
@@ -49,19 +50,44 @@ test('catalogue : prix fixés par la direction', () => {
   assert.ok(!PLANS.demarrage.features.includes('ai_assistant'));
 });
 
-test('inscription : sans application des abonnements => offre interne ; avec => en attente de paiement', async () => {
+test('inscription : sans application des abonnements => offre interne ; avec => essai gratuit actif tant qu\'il est proposé', async () => {
   const { createInitialSubscription } = require('../src/services/entitlements');
   const conn = await pool.getConnection();
   try {
-    for (const [enforced, plan, status] of [[false, 'interne', 'active'], [true, null, 'pending_payment']]) {
+    for (const [enforced, plan, status] of [[false, 'interne', 'active'], [true, 'essai-gratuit', 'active']]) {
       config.features.subscriptionsEnforced = enforced;
       await conn.query('DELETE FROM tenant_subscriptions WHERE tenant_id = :t', { t: fx.tenantId });
       await createInitialSubscription(conn, fx.tenantId);
-      const [[r]] = await conn.query('SELECT plan_key, status FROM tenant_subscriptions WHERE tenant_id = :t', { t: fx.tenantId });
+      const [[r]] = await conn.query('SELECT plan_key, status, current_period_end FROM tenant_subscriptions WHERE tenant_id = :t', { t: fx.tenantId });
       assert.equal(r.plan_key, plan);
       assert.equal(r.status, status);
+      if (plan === 'essai-gratuit') assert.ok(r.current_period_end > new Date());
     }
   } finally { config.features.subscriptionsEnforced = true; conn.release(); }
+});
+
+test('inscription : essai gratuit désactivé par l\'administrateur => en attente de paiement (comportement d\'avant)', async () => {
+  const { createInitialSubscription } = require('../src/services/entitlements');
+  const [[original]] = await pool.query('SELECT data FROM catalog_settings WHERE id = 1');
+  const conn = await pool.getConnection();
+  try {
+    const c = await planCatalog.getCatalog();
+    await pool.query(
+      'INSERT INTO catalog_settings (id, data) VALUES (1, :d) ON DUPLICATE KEY UPDATE data = VALUES(data)',
+      { d: JSON.stringify({ ...c, enabledPlans: { ...c.enabledPlans, 'essai-gratuit': false } }) },
+    );
+    planCatalog.invalidate();
+    await conn.query('DELETE FROM tenant_subscriptions WHERE tenant_id = :t', { t: fx.tenantId });
+    await createInitialSubscription(conn, fx.tenantId);
+    const [[r]] = await conn.query('SELECT plan_key, status FROM tenant_subscriptions WHERE tenant_id = :t', { t: fx.tenantId });
+    assert.equal(r.plan_key, null);
+    assert.equal(r.status, 'pending_payment');
+  } finally {
+    conn.release();
+    if (original) await pool.query('UPDATE catalog_settings SET data = :d WHERE id = 1', { d: original.data });
+    else await pool.query('DELETE FROM catalog_settings WHERE id = 1');
+    planCatalog.invalidate();
+  }
 });
 
 test('sans abonnement (pending_payment) : accès refusé', async () => {

@@ -88,6 +88,14 @@ export function CatalogEditor({ token }: { token: string }) {
                   <input type="checkbox" checked={p.featured} onChange={(e) => setDraft((d) => d && ({ ...d, plans: Object.fromEntries(PLAN_ORDER.map((pk) => [pk, { ...d.plans[pk], featured: e.target.checked && pk === k }])) as AdminCatalog["plans"] }))} />
                   Offre recommandée (mise en avant)
                 </label>
+                <label className="flex items-center gap-2 text-body-sm text-ink-soft">
+                  <input
+                    type="checkbox"
+                    checked={draft.enabledPlans[k] !== false}
+                    onChange={(e) => setDraft((d) => d && ({ ...d, enabledPlans: { ...d.enabledPlans, [k]: e.target.checked } }))}
+                  />
+                  Offre active (proposée pour les nouveaux abonnements)
+                </label>
 
                 <div className="flex flex-col gap-2">
                   <p className="font-label-md text-ink">Durées et prix (FCFA)</p>
@@ -131,6 +139,27 @@ export function CatalogEditor({ token }: { token: string }) {
           );
         })}
       </div>
+
+      <Card className={draft.enabledPlans["essai-gratuit"] !== false ? "border-primary ring-1 ring-primary" : undefined}>
+        <CardHeader>
+          <CardTitle>Essai gratuit</CardTitle>
+          <CardDescription>
+            1 mois, toutes les fonctionnalités, accordé automatiquement à l&apos;inscription — ni prix ni durée modifiables ici.
+            Tant qu&apos;il est actif et qu&apos;aucune offre payante ne l&apos;est, c&apos;est la seule offre proposée aux nouvelles entreprises
+            (celles déjà abonnées ne sont pas affectées).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <label className="flex items-center gap-2 text-body-sm text-ink-soft">
+            <input
+              type="checkbox"
+              checked={draft.enabledPlans["essai-gratuit"] !== false}
+              onChange={(e) => setDraft((d) => d && ({ ...d, enabledPlans: { ...d.enabledPlans, "essai-gratuit": e.target.checked } }))}
+            />
+            Essai gratuit actif (proposé aux nouvelles entreprises)
+          </label>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
