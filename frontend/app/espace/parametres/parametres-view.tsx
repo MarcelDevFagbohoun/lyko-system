@@ -373,7 +373,9 @@ function ParametresContent() {
                 Le texte des articles du contrat de bail (parties, objet, loyer, caution…), personnalisable
                 à volonté. Utilisez les balises <code>{"{{jeton}}"}</code> ci-dessous, elles seront
                 remplacées par les données réelles de chaque bail. Un titre d&apos;article commence une
-                ligne par <code>## </code>. Les conditions particulières restent saisies bail par bail,
+                ligne par <code>## </code>. Entourez un mot ou un groupe de mots de{" "}
+                <code>**deux astérisques**</code> pour l&apos;afficher en <strong>gras</strong>, aussi bien
+                à l&apos;écran que sur le PDF. Les conditions particulières restent saisies bail par bail,
                 séparément. Les contrats déjà signés ne sont jamais affectés par un changement ici.
               </CardDescription>
             </CardHeader>

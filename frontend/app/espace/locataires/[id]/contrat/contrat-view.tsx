@@ -188,6 +188,27 @@ function parseContractBlocks(renderedText: string): { title: string; body: strin
     .filter((a) => a.title && a.body);
 }
 
+/**
+ * Affiche un texte en respectant la même mise en gras minimale que le PDF (`**mot**` → gras — voir
+ * `services/leaseContractTemplate.js` et `pdf.js` `drawFormattedText`, demande utilisateur 2026-11-06).
+ */
+function FormattedBody({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g).filter((s) => s.length > 0);
+  return (
+    <p className="whitespace-pre-wrap text-body-sm text-ink-soft">
+      {parts.map((part, i) =>
+        part.startsWith("**") && part.endsWith("**") ? (
+          <strong key={i} className="font-semibold text-ink">
+            {part.slice(2, -2)}
+          </strong>
+        ) : (
+          <React.Fragment key={i}>{part}</React.Fragment>
+        ),
+      )}
+    </p>
+  );
+}
+
 /** Rendu à l'écran des mêmes articles que le PDF (`services/pdf.js` `streamLeaseContractPdf`) — texte
  * uniquement, pour relecture avant signature ; le PDF reste la seule version imprimable/signée. */
 function ContractArticles({ data }: { data: LeaseContractData }) {
@@ -201,7 +222,7 @@ function ContractArticles({ data }: { data: LeaseContractData }) {
       {articles.map((a, i) => (
         <div key={`${i}-${a.title}`}>
           <p className="font-label-sm text-primary">Article {i + 1} — {a.title}</p>
-          <p className="whitespace-pre-wrap text-body-sm text-ink-soft">{a.body}</p>
+          <FormattedBody text={a.body} />
         </div>
       ))}
     </div>

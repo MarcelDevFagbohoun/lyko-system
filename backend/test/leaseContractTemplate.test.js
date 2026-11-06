@@ -106,6 +106,35 @@ test('renderContractText — retombe sur le modèle par défaut quand aucun mod�
   assert.match(withCustom, /Texte personnalisé J D\./);
 });
 
+test('DEFAULT_CONTRACT_TEMPLATE — la mise en gras (**mot**) traverse intacte le rendu des balises', () => {
+  const placeholders = buildTemplatePlaceholders(
+    {
+      owner: { name: 'Propriétaire Test', address: null },
+      renter: { firstName: 'Jean', lastName: 'Dupont', phone: '0100000000' },
+      property: { code: 'IMM-01', address: null, typeLabel: 'Immeuble' },
+      unit: { code: 'U1', designationLabel: 'Studio', furnished: false, sonebMeterNumber: null, sbeeMeterNumber: null },
+      lease: {
+        startDate: '2026-01-01',
+        monthlyRent: 50000,
+        rentDueDay: 5,
+        rentDueOffsetDays: null,
+        rentTiming: 'avance',
+        rentTimingLabel: "Payé d'avance",
+        depositAmount: 50000,
+        entryFeeAmount: 0,
+      },
+      additionalDeposits: [],
+      particularConditions: null,
+    },
+    { company_name: 'ACME SARL', rccm: 'RCCM-X', ifu: 'IFU-X' },
+  );
+  const rendered = renderContractTemplate(DEFAULT_CONTRACT_TEMPLATE, placeholders);
+  // Le montant du loyer (balise entourée de ** dans le modèle) doit rester en gras après substitution.
+  assert.match(rendered, /\*\*[^*]*50 000[^*]*\*\*/);
+  // La clause de caution (déjà composée dans buildTemplatePlaceholders) met le montant en gras elle-même.
+  assert.match(rendered, /\*\*[^*]*50 000[^*]*\*\*.*caution/);
+});
+
 test('CONTRACT_TEMPLATE_PLACEHOLDERS — chaque jeton documenté apparaît bien dans le modèle par défaut', () => {
   for (const { token } of CONTRACT_TEMPLATE_PLACEHOLDERS) {
     assert.match(DEFAULT_CONTRACT_TEMPLATE, new RegExp(`\\{\\{\\s*${token}\\s*\\}\\}`), `jeton {{${token}}} absent du modèle par défaut`);

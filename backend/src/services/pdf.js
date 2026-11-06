@@ -706,6 +706,25 @@ function drawContractParties(doc, y, { owner, ownerNote, renter, renterNote, row
   return y + 8;
 }
 
+/**
+ * Écrit un texte en respectant une mise en gras simple à la Markdown (`**mot en gras**`), demandée par
+ * l'utilisateur (2026-11-06) pour le modèle de contrat — voir `services/leaseContractTemplate.js`. Une
+ * seule « phrase » PDFKit enchaînée (`continued: true`) qui ne fait que changer de police entre les
+ * segments, pour que la justification/le retour à la ligne restent ceux d'un paragraphe normal.
+ */
+function drawFormattedText(doc, text, x, y, { width, align = 'justify', lineGap = 2.5, fontSize = 10.5, color = CK.INK } = {}) {
+  const parts = String(text || '').split(/(\*\*[^*]+\*\*)/g).filter((s) => s.length > 0);
+  if (parts.length === 0) return;
+  parts.forEach((part, i) => {
+    const isBold = part.startsWith('**') && part.endsWith('**');
+    const content = isBold ? part.slice(2, -2) : part;
+    const isLast = i === parts.length - 1;
+    doc.font(isBold ? SERIF_BOLD : SERIF).fontSize(fontSize).fillColor(color);
+    if (i === 0) doc.text(content, x, y, { width, align, lineGap, continued: !isLast });
+    else doc.text(content, { continued: !isLast });
+  });
+}
+
 /** « ARTICLE N » (petites capitales espacées), titre en gras, puis le corps justifié — jamais un titre orphelin en bas de page. */
 function drawContractArticle(doc, number, title, body) {
   if (doc.y > doc.page.height - doc.page.margins.bottom - 80) doc.addPage();
@@ -713,7 +732,7 @@ function drawContractArticle(doc, number, title, body) {
   doc.moveDown(0.15);
   doc.font(SERIF_BOLD).fontSize(12.5).fillColor(CK.INK).text(title, 50, doc.y, { width: 495 });
   doc.moveDown(0.3);
-  doc.font(SERIF).fontSize(10.5).fillColor(CK.INK).text(body, 50, doc.y, { width: 495, align: 'justify', lineGap: 2.5 });
+  drawFormattedText(doc, body, 50, doc.y, { width: 495 });
   doc.moveDown(1.1);
 }
 

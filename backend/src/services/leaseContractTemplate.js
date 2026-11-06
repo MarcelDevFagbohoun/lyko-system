@@ -31,19 +31,24 @@
  * lecture, rendus avec `DEFAULT_CONTRACT_TEMPLATE` — jamais le modèle personnalisé courant de
  * l'entreprise, qui n'existait pas à l'époque — appliqué à leurs données figées : cela reproduit
  * fidèlement ce qui a été réellement signé, sans nécessiter de migration de données.
+ *
+ * Mise en forme (demande utilisateur, 2026-11-06) : `**un mot ou groupe de mots**` s'affiche en GRAS,
+ * aussi bien dans le PDF (`pdf.js` `drawFormattedText`) que dans l'aperçu web (`contrat-view.tsx`) —
+ * même convention Markdown minimale des deux côtés, volontairement limitée au gras (pas d'italique, de
+ * listes à puces ni de liens : un contrat doit rester simple et prévisible à relire).
  */
 
 const DEFAULT_CONTRACT_TEMPLATE = `## Les parties
-Entre les soussignés : d'une part, {{nom_bailleur}}{{clause_adresse_bailleur}}, propriétaire du bien désigné à l'article 2, représenté aux fins des présentes par l'entreprise {{nom_entreprise}} (RCCM {{rccm_entreprise}}, IFU {{ifu_entreprise}}), ci-après dénommé « le Bailleur » ; et d'autre part, {{nom_locataire}}, joignable au {{telephone_locataire}}, ci-après dénommé « le Locataire ». Il a été convenu ce qui suit.
+Entre les soussignés : d'une part, **{{nom_bailleur}}**{{clause_adresse_bailleur}}, propriétaire du bien désigné à l'article 2, représenté aux fins des présentes par l'entreprise {{nom_entreprise}} (RCCM {{rccm_entreprise}}, IFU {{ifu_entreprise}}), ci-après dénommé **« le Bailleur »** ; et d'autre part, **{{nom_locataire}}**, joignable au {{telephone_locataire}}, ci-après dénommé **« le Locataire »**. Il a été convenu ce qui suit.
 
 ## Objet du contrat
-Le Bailleur donne à bail au Locataire, qui accepte, le bien désigné « {{designation_logement}} » ({{code_logement}}) au sein de l'immeuble {{code_immeuble}} ({{type_immeuble}}){{clause_adresse_bien}}, livré {{meuble_ou_non}}{{clause_compteurs}}. Le Locataire déclare avoir visité les lieux et les accepter en l'état constaté par l'état des lieux d'entrée établi séparément.
+Le Bailleur donne à bail au Locataire, qui accepte, le bien désigné **« {{designation_logement}} »** ({{code_logement}}) au sein de l'immeuble {{code_immeuble}} ({{type_immeuble}}){{clause_adresse_bien}}, livré {{meuble_ou_non}}{{clause_compteurs}}. Le Locataire déclare avoir visité les lieux et les accepter en l'état constaté par l'état des lieux d'entrée établi séparément.
 
 ## Durée et prise d'effet
-Le présent bail prend effet le {{date_debut_bail}}, pour une durée indéterminée. Chaque partie peut y mettre fin dans les conditions prévues à l'article 8 ci-après.
+Le présent bail prend effet le **{{date_debut_bail}}**, pour une durée indéterminée. Chaque partie peut y mettre fin dans les conditions prévues à l'article 8 ci-après.
 
 ## Loyer et modalités de paiement
-Le loyer mensuel est fixé à {{loyer_mensuel}}, payable {{convention_paiement_loyer}}, {{clause_echeance_loyer}}{{clause_frais_agence}}
+Le loyer mensuel est fixé à **{{loyer_mensuel}}**, payable {{convention_paiement_loyer}}, {{clause_echeance_loyer}}{{clause_frais_agence}}
 
 ## Caution(s)
 {{clause_cautions}}
@@ -94,8 +99,8 @@ function buildTemplatePlaceholders(data, tenantFields) {
   if (data.unit.sbeeMeterNumber) meterParts.push(`compteur SBEE n° ${data.unit.sbeeMeterNumber}`);
 
   const depositLines = [];
-  if (data.lease.depositAmount > 0) depositLines.push(`une caution de loyer de ${formatFcfa(data.lease.depositAmount)}`);
-  for (const d of data.additionalDeposits) depositLines.push(`une caution ${d.typeLabel} de ${formatFcfa(d.amount)}`);
+  if (data.lease.depositAmount > 0) depositLines.push(`une caution de loyer de **${formatFcfa(data.lease.depositAmount)}**`);
+  for (const d of data.additionalDeposits) depositLines.push(`une caution ${d.typeLabel} de **${formatFcfa(d.amount)}**`);
 
   return {
     nom_bailleur: data.owner.name,
@@ -121,7 +126,7 @@ function buildTemplatePlaceholders(data, tenantFields) {
         : `au plus tard ${rentDueOffsetPhrase(data.lease.rentDueOffsetDays)} chaque période concernée.`),
     clause_frais_agence:
       data.lease.entryFeeAmount > 0
-        ? ` Des frais d'agence de ${formatFcfa(data.lease.entryFeeAmount)}, dus une seule fois à la signature, ` +
+        ? ` Des frais d'agence de **${formatFcfa(data.lease.entryFeeAmount)}**, dus une seule fois à la signature, ` +
           `restent intégralement acquis à l'entreprise et ne sont pas restituables.`
         : '',
     clause_cautions:
