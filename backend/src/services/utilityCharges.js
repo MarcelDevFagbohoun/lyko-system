@@ -12,6 +12,7 @@ const { ApiError } = require('../middleware/error');
 const { claimIdempotencyKey, DUPLICATE_MESSAGE } = require('./paymentGuards');
 const { assertPeriodOpen, assertPeriodOpenLocked } = require('./accountingPeriods');
 const { assertLeaseInScope } = require('./scope');
+const { assertLeaseNotArchived } = require('./leaseGuards');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { notifyUtilityPaymentRecorded } = require('./payments/notify');
@@ -53,10 +54,13 @@ async function loadActiveLease(tenantId, leaseId, scopeAgentId) {
   return lease;
 }
 
-/** Charge une facture de l'entreprise courante (non supprimée) dans la portée de l'agent, ou lève 404. */
+/** Charge une facture de l'entreprise courante (non supprimée) dans la portée de l'agent, ou lève 404.
+ * `l.archived_at` est systématiquement sélectionné : lu par les sites D'ÉCRITURE ci-dessous (jamais
+ * par `listChargePayments`, une lecture) pour refuser toute action sur le dossier d'un locataire déjà
+ * archivé — voir `services/leaseGuards.js`. */
 async function loadCharge(conn, tenantId, id, scopeAgentId) {
   const [rows] = await conn.query(
-    `SELECT uc.*, p.agent_id AS property_agent_id
+    `SELECT uc.*, p.agent_id AS property_agent_id, l.archived_at
      FROM utility_charges uc
      JOIN leases l ON l.id = uc.lease_id
      JOIN property_units u ON u.id = l.unit_id
@@ -278,6 +282,7 @@ async function updateCharge(tenantId, id, scopeAgentId, data) {
   const conn = await pool.getConnection();
   try {
     const existing = await loadCharge(pool, tenantId, id, scopeAgentId);
+    assertLeaseNotArchived(existing);
     await assertPeriodOpen(tenantId, existing.billed_at);
     if (data.billedAt !== undefined) {
       await assertPeriodOpen(tenantId, data.billedAt);
@@ -441,6 +446,7 @@ async function recordManualPayment(tenantId, userId, id, scopeAgentId, data) {
   const conn = await pool.getConnection();
   try {
     const charge = await loadCharge(conn, tenantId, id, scopeAgentId);
+    assertLeaseNotArchived(charge);
     if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée.');
     await assertPeriodOpen(tenantId, charge.billed_at);
 
@@ -503,6 +509,7 @@ async function deleteCharge(tenantId, userId, id, scopeAgentId, reason) {
   const conn = await pool.getConnection();
   try {
     const existing = await loadCharge(pool, tenantId, id, scopeAgentId);
+    assertLeaseNotArchived(existing);
     await assertPeriodOpen(tenantId, existing.billed_at);
     if ((await getPaidTotal(id)) > 0) {
       throw new ApiError(409, 'Un paiement a déjà été enregistré sur cette facture — impossible de la supprimer.');
@@ -525,6 +532,7 @@ async function deleteCharge(tenantId, userId, id, scopeAgentId, reason) {
 /** Génère un lien de paiement FedaPay pour le solde restant d'une facture (révélé une seule fois). */
 async function createPaymentLink(tenantId, userId, id, scopeAgentId) {
   const charge = await loadCharge(pool, tenantId, id, scopeAgentId);
+  assertLeaseNotArchived(charge);
   if (charge.status === 'payee') throw new ApiError(400, 'Cette facture est déjà entièrement réglée.');
 
   const [[tenant]] = await pool.query('SELECT fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {

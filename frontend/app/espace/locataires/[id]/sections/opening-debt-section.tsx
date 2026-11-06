@@ -30,10 +30,14 @@ export function OpeningDebtSection({
   lease,
   accessToken,
   onSettled,
+  readOnly = false,
 }: {
   lease: Lease;
   accessToken: string | null;
   onSettled: () => void;
+  // Bail archivé (demande utilisateur, 2026-11-06) : montant dû toujours CONSULTABLE, mais plus aucun
+  // règlement ne peut être enregistré depuis cette fiche.
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const remaining = lease.openingDebtRemaining ?? lease.openingDebtAmount;
@@ -79,7 +83,7 @@ export function OpeningDebtSection({
     <SectionTile tone="violet">
       <div className="flex items-center justify-between gap-2">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Impayés existants à l&apos;entrée</span>
-        {remaining > 0 && (
+        {remaining > 0 && !readOnly && (
           <Button variant="warning" size="sm" onClick={() => setOpen((v) => !v)}>
             {open ? "Fermer" : "Régler"}
           </Button>

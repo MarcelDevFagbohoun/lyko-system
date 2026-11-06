@@ -20,10 +20,14 @@ export function ComplaintsSection({
   leaseId,
   renterId,
   accessToken,
+  readOnly = false,
 }: {
   leaseId: number;
   renterId: number;
   accessToken: string | null;
+  // Bail archivé (demande utilisateur, 2026-11-06) : plaintes toujours CONSULTABLES, mais plus aucune
+  // nouvelle plainte ne peut être signalée depuis cette fiche.
+  readOnly?: boolean;
 }) {
   const canView = useCan("plaintes");
   const [complaints, setComplaints] = React.useState<Complaint[] | null>(null);
@@ -39,12 +43,14 @@ export function ComplaintsSection({
     <SectionTile tone="rose">
       <div className="flex items-center justify-between">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Plaintes & incidents</span>
-        <Link href={`/espace/plaintes/nouveau?renterId=${renterId}`}>
-          <Button variant="warning" size="sm">
-            <Plus size={14} />
-            Signaler un incident
-          </Button>
-        </Link>
+        {!readOnly && (
+          <Link href={`/espace/plaintes/nouveau?renterId=${renterId}`}>
+            <Button variant="warning" size="sm">
+              <Plus size={14} />
+              Signaler un incident
+            </Button>
+          </Link>
+        )}
       </div>
 
       {complaints === null ? (

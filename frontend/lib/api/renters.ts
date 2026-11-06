@@ -295,6 +295,9 @@ export type Lease = {
   startDate: string;
   endDate: string | null;
   status: "active" | "ended";
+  /** Archivage du locataire sortant (migration 140) — `null` tant que non archivé. Un bail archivé
+   * reste consultable en détail mais plus aucune action n'y est permise (voir `LeaseCard` { readOnly }). */
+  archivedAt: string | null;
   unit: LeaseUnit;
   payments: Payment[];
   arrears: Arrears | null;

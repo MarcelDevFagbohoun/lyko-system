@@ -17,17 +17,19 @@ export function RelanceHistory({
   relances,
   accessToken,
   onChanged,
+  readOnly = false,
 }: {
   relances: Relance[] | null;
   accessToken: string | null;
   onChanged: () => void;
+  readOnly?: boolean;
 }) {
   if (relances === null) return <p className="text-body-sm text-ink-muted">Chargement…</p>;
   if (relances.length === 0) return <p className="text-body-sm text-ink-muted">Aucune relance enregistrée pour le moment.</p>;
   return (
     <div className="flex flex-col gap-2">
       {relances.map((r) => (
-        <RelanceRow key={r.id} relance={r} accessToken={accessToken} onChanged={onChanged} />
+        <RelanceRow key={r.id} relance={r} accessToken={accessToken} onChanged={onChanged} readOnly={readOnly} />
       ))}
     </div>
   );
@@ -37,10 +39,12 @@ function RelanceRow({
   relance,
   accessToken,
   onChanged,
+  readOnly = false,
 }: {
   relance: Relance;
   accessToken: string | null;
   onChanged: () => void;
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = React.useState(false);
   const [note, setNote] = React.useState(relance.outcomeNote ?? "");
@@ -97,15 +101,17 @@ function RelanceRow({
       ) : relance.outcomeNote ? (
         <div className="mt-1 flex items-start justify-between gap-2">
           <p className="text-body-sm text-ink-soft">{relance.outcomeNote}</p>
-          <button type="button" onClick={() => setEditing(true)} className="shrink-0 text-body-xs text-primary hover:underline">
-            Modifier
-          </button>
+          {!readOnly && (
+            <button type="button" onClick={() => setEditing(true)} className="shrink-0 text-body-xs text-primary hover:underline">
+              Modifier
+            </button>
+          )}
         </div>
-      ) : (
+      ) : !readOnly ? (
         <button type="button" onClick={() => setEditing(true)} className="mt-1 block text-body-xs text-primary hover:underline">
           + Ajouter un retour
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

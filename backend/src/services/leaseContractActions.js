@@ -9,6 +9,7 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { loadLease } = require('./rentPayments');
+const { assertLeaseNotArchived } = require('./leaseGuards');
 const { buildContractData, loadContractRow, loadTenantContractFields } = require('./leaseContract');
 const { renderContractText, DEFAULT_CONTRACT_TEMPLATE, renderContractTemplate, buildTemplatePlaceholders } = require('./leaseContractTemplate');
 const { assertDraft } = require('./inspectionReports');
@@ -32,7 +33,7 @@ async function getContract(tenantId, leaseId, scopeAgentId) {
 
 /** Démarre le brouillon du contrat (une fois par bail). */
 async function startContract(tenantId, userId, leaseId, scopeAgentId) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
 
   const [existing] = await pool.query('SELECT id FROM lease_contracts WHERE lease_id = :leaseId LIMIT 1', {
     leaseId,
@@ -51,7 +52,7 @@ async function startContract(tenantId, userId, leaseId, scopeAgentId) {
 
 /** Enregistre les conditions particulières (refusé une fois le contrat finalisé). */
 async function updateContractConditions(tenantId, leaseId, scopeAgentId, particularConditions) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const contract = await loadContractRow(tenantId, leaseId);
   assertDraft(contract, 'contrat de bail');
 
@@ -72,7 +73,7 @@ async function updateContractConditions(tenantId, leaseId, scopeAgentId, particu
  * le DG de l'entreprise n'a pas encore téléversé son cachet (Mon compte).
  */
 async function finalizeContract(tenantId, userId, leaseId, scopeAgentId) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const contract = await loadContractRow(tenantId, leaseId);
   assertDraft(contract, 'contrat de bail');
 

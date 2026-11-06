@@ -10,6 +10,7 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { loadLease } = require('./rentPayments');
+const { assertLeaseNotArchived } = require('./leaseGuards');
 const { getOrCreateIssuance } = require('./documentIssuance');
 const {
   cloneMasterZones,
@@ -37,7 +38,7 @@ async function getMoveInReport(tenantId, leaseId, scopeAgentId) {
 
 /** Démarre le BROUILLON (une fois par bail), amorcé avec les zones/éléments standards. */
 async function startMoveInReport(tenantId, userId, leaseId, scopeAgentId, conductedAt) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
 
   const [existing] = await pool.query('SELECT id FROM move_in_reports WHERE lease_id = :leaseId LIMIT 1', {
     leaseId,
@@ -62,7 +63,7 @@ async function startMoveInReport(tenantId, userId, leaseId, scopeAgentId, conduc
 
 /** Enregistre le brouillon (zones, éléments, notes). Refusé une fois finalisée. */
 async function updateMoveInDraft(tenantId, leaseId, scopeAgentId, data) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
   assertDraft(report, 'état des lieux d’entrée');
 
@@ -83,7 +84,7 @@ async function updateMoveInDraft(tenantId, leaseId, scopeAgentId, data) {
 
 /** Ajoute une photo (3 maximum) à un élément du brouillon. */
 async function addMoveInPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemKey, file) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
   assertDraft(report, 'état des lieux d’entrée');
 
@@ -110,7 +111,7 @@ async function addMoveInPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemKey,
 
 /** Supprime une photo d'un élément du brouillon. */
 async function deleteMoveInPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemKey, photoIndex) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
   assertDraft(report, 'état des lieux d’entrée');
 
@@ -132,7 +133,7 @@ async function deleteMoveInPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemK
 
 /** Verrouille la fiche (tous les états renseignés). */
 async function finalizeMoveIn(tenantId, userId, leaseId, scopeAgentId, { tenantReservesInput }) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const report = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
   assertDraft(report, 'état des lieux d’entrée');
 

@@ -23,10 +23,14 @@ export function ChargesSection({
   leaseId,
   renterId,
   accessToken,
+  readOnly = false,
 }: {
   leaseId: number;
   renterId: number;
   accessToken: string | null;
+  // Bail archivé (demande utilisateur, 2026-11-06) : charges toujours CONSULTABLES, mais plus aucune
+  // nouvelle charge ne peut être créée depuis cette fiche.
+  readOnly?: boolean;
 }) {
   const canView = useCan("charges");
   const [charges, setCharges] = React.useState<UtilityCharge[] | null>(null);
@@ -42,12 +46,14 @@ export function ChargesSection({
     <SectionTile tone="cyan">
       <div className="flex items-center justify-between">
         <span className="font-label-sm uppercase tracking-wider text-ink-muted">Charges SONEB & SBEE</span>
-        <Link href={`/espace/charges/nouveau?renterId=${renterId}`}>
-          <Button variant="info" size="sm">
-            <Plus size={14} />
-            Nouvelle charge
-          </Button>
-        </Link>
+        {!readOnly && (
+          <Link href={`/espace/charges/nouveau?renterId=${renterId}`}>
+            <Button variant="info" size="sm">
+              <Plus size={14} />
+              Nouvelle charge
+            </Button>
+          </Link>
+        )}
       </div>
 
       {charges === null ? (

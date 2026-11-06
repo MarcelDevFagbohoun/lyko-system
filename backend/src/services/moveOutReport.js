@@ -9,6 +9,7 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { loadLease } = require('./rentPayments');
+const { assertLeaseNotArchived } = require('./leaseGuards');
 const { computeArrears, allocateRentPayment, computeRentOwed } = require('./rentTracking');
 const { assertPeriodOpen, assertPeriodOpenLocked } = require('./accountingPeriods');
 const { getOrCreateIssuance } = require('./documentIssuance');
@@ -128,6 +129,7 @@ async function getMoveOutReport(tenantId, leaseId, scopeAgentId) {
 /** Démarre le BROUILLON, amorcé avec les zones de la fiche d'entrée (ou les zones standards). */
 async function startMoveOutReport(tenantId, userId, leaseId, scopeAgentId, conductedAt) {
   const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(lease);
   if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
 
   const [existing] = await pool.query('SELECT id FROM move_out_reports WHERE lease_id = :leaseId LIMIT 1', {
@@ -164,7 +166,7 @@ async function startMoveOutReport(tenantId, userId, leaseId, scopeAgentId, condu
  * les mêmes helpers que la correction post-finalisation (`diffInspectionReport`), jamais réécrite.
  */
 async function updateMoveOutDraft(tenantId, leaseId, scopeAgentId, data, actorUserId = null) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   assertDraft(report, 'état des lieux de sortie');
   const trackChanges = actorUserId && ['submitted', 'rejected'].includes(report.review_status);
@@ -254,6 +256,7 @@ async function updateMoveOutDraft(tenantId, leaseId, scopeAgentId, data, actorUs
  */
 async function submitMoveOutReport(tenantId, userId, leaseId, scopeAgentId) {
   const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(lease);
   const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   assertDraft(report, 'état des lieux de sortie');
 
@@ -300,6 +303,7 @@ async function submitMoveOutReport(tenantId, userId, leaseId, scopeAgentId) {
  */
 async function rejectMoveOutReview(tenantId, userId, leaseId, note) {
   const lease = await loadLease(pool, tenantId, leaseId, null);
+  assertLeaseNotArchived(lease);
   const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   assertDraft(report, 'état des lieux de sortie');
   if (report.review_status !== 'submitted') {
@@ -363,7 +367,7 @@ async function archiveMoveOut(tenantId, userId, leaseId, scopeAgentId) {
 
 /** Ajoute une photo (3 maximum) à un élément du brouillon. */
 async function addMoveOutPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemKey, file) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   assertDraft(report, 'état des lieux de sortie');
 
@@ -388,7 +392,7 @@ async function addMoveOutPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemKey
 
 /** Supprime une photo d'un élément du brouillon. */
 async function deleteMoveOutPhoto(tenantId, leaseId, scopeAgentId, zoneKey, itemKey, photoIndex) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   assertDraft(report, 'état des lieux de sortie');
 
@@ -413,6 +417,7 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { body }
   const conn = await pool.getConnection();
   try {
     const lease = await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    assertLeaseNotArchived(lease);
     const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
     assertDraft(report, 'état des lieux de sortie');
     // Une fiche déjà rouverte une fois (étape 48, correction DG) a déjà
@@ -879,7 +884,7 @@ async function reopenMoveOut(tenantId, userId, leaseId, reason) {
 
 /** Marque comme réglée la régularisation comptable manuelle d'une caution avec retenue. */
 async function regularizeMoveOutGl(tenantId, userId, leaseId, scopeAgentId) {
-  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(await loadLease(pool, tenantId, leaseId, scopeAgentId));
   const report = await loadInspectionReportRow(pool, 'move_out_reports', leaseId);
   assertFinalized(report, 'état des lieux de sortie');
   if (Number(report.total_deductions) <= 0) {
@@ -905,7 +910,7 @@ async function regularizeMoveOutGl(tenantId, userId, leaseId, scopeAgentId) {
 async function recordTenantPayout(tenantId, userId, leaseId, scopeAgentId, { method, note } = {}) {
   const conn = await pool.getConnection();
   try {
-    await loadLease(conn, tenantId, leaseId, scopeAgentId); // vérifie le périmètre agent (404/403 si hors portée)
+    assertLeaseNotArchived(await loadLease(conn, tenantId, leaseId, scopeAgentId)); // vérifie le périmètre agent (404/403 si hors portée)
     const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
     assertFinalized(report, 'état des lieux de sortie');
     // Corrigé (audit de sécurité du 2026-11-04) : ce chemin manuel contournait le garde-fou FedaPay —
@@ -1050,7 +1055,7 @@ async function recordTenantPayout(tenantId, userId, leaseId, scopeAgentId, { met
 async function chargeRepairFee(tenantId, userId, leaseId, scopeAgentId, { amount, note } = {}) {
   const conn = await pool.getConnection();
   try {
-    await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    assertLeaseNotArchived(await loadLease(conn, tenantId, leaseId, scopeAgentId));
     const report = await loadInspectionReportRow(conn, 'move_out_reports', leaseId);
     assertFinalized(report, 'état des lieux de sortie');
     if (report.payout_status !== 'paid') {

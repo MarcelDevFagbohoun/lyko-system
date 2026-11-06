@@ -10,6 +10,7 @@
 const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { assertLeaseInScope } = require('./scope');
+const { assertLeaseNotArchived } = require('./leaseGuards');
 const { toActor } = require('../utils/actor');
 const { sendPushToUser } = require('./push/sendPush');
 const logger = require('../utils/logger');
@@ -41,7 +42,7 @@ function toPublicRelance(row) {
 /** Vérifie qu'une facture de charge appartient à l'entreprise courante et à la portée de l'agent, ou lève 404. */
 async function assertChargeInScope(tenantId, chargeId, scopeAgentId) {
   const [rows] = await pool.query(
-    `SELECT p.agent_id AS property_agent_id
+    `SELECT p.agent_id AS property_agent_id, l.archived_at
      FROM utility_charges uc
      JOIN leases l ON l.id = uc.lease_id
      JOIN property_units u ON u.id = l.unit_id
@@ -53,14 +54,16 @@ async function assertChargeInScope(tenantId, chargeId, scopeAgentId) {
   if (scopeAgentId != null && Number(rows[0].property_agent_id) !== Number(scopeAgentId)) {
     throw new ApiError(404, 'Facture introuvable');
   }
+  return rows[0];
 }
 
+/** Renvoie le bail (ou la facture) ciblé, avec son `archived_at` — les appelants d'ÉCRITURE
+ * (`recordRelance`, `setOutcome`) l'utilisent pour refuser toute relance sur un dossier archivé. */
 async function assertEntityInScope(tenantId, entityType, entityId, scopeAgentId) {
   if (entityType === 'bail') {
-    await assertLeaseInScope(tenantId, entityId, scopeAgentId);
-  } else {
-    await assertChargeInScope(tenantId, entityId, scopeAgentId);
+    return await assertLeaseInScope(tenantId, entityId, scopeAgentId);
   }
+  return await assertChargeInScope(tenantId, entityId, scopeAgentId);
 }
 
 /**
@@ -103,7 +106,8 @@ async function notifyRelanceSent(tenantId, userId, entityType, entityId) {
 
 /** Enregistre une relance envoyée (date du jour, auteur) — appelé au clic sur « Relancer ». */
 async function recordRelance(tenantId, userId, scopeAgentId, { entityType, entityId }) {
-  await assertEntityInScope(tenantId, entityType, entityId, scopeAgentId);
+  const entity = await assertEntityInScope(tenantId, entityType, entityId, scopeAgentId);
+  assertLeaseNotArchived(entity);
   const [result] = await pool.query(
     'INSERT INTO relance_log (tenant_id, entity_type, entity_id, sent_at, sent_by) VALUES (:tenantId, :entityType, :entityId, CURDATE(), :by)',
     { tenantId, entityType, entityId, by: userId },
@@ -154,7 +158,8 @@ async function setOutcome(tenantId, userId, scopeAgentId, relanceId, note) {
     { id: relanceId, tenantId },
   );
   if (!existing[0]) throw new ApiError(404, 'Relance introuvable');
-  await assertEntityInScope(tenantId, existing[0].entity_type, existing[0].entity_id, scopeAgentId);
+  const entity = await assertEntityInScope(tenantId, existing[0].entity_type, existing[0].entity_id, scopeAgentId);
+  assertLeaseNotArchived(entity);
 
   await pool.query(
     'UPDATE relance_log SET outcome_note = :note, outcome_recorded_at = NOW(), outcome_recorded_by = :by WHERE id = :id AND tenant_id = :tenantId',

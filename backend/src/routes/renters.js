@@ -103,6 +103,11 @@ function toPublicLease(row) {
     startDate: isoDate(row.start_date),
     endDate: isoDate(row.end_date),
     status: row.lease_status ?? row.status,
+    // Archivage du locataire sortant (migration 140, demande utilisateur 2026-11-06) — `null` tant que
+    // non archivé. Le frontend s'en sert pour afficher le détail complet d'un bail archivé en LECTURE
+    // SEULE (voir `lease-cards.tsx` `LeaseCard` { readOnly }), plutôt que la simple carte résumé
+    // précédente : rien n'est masqué, mais plus aucune action n'est permise une fois ce champ posé.
+    archivedAt: row.archived_at ? isoDate(row.archived_at) : null,
     createdBy: toActor(row.lease_creator_first_name, row.lease_creator_last_name, row.lease_creator_role),
     createdAt: row.lease_created_at ?? row.created_at,
     unit: toPublicUnitSummary(row),

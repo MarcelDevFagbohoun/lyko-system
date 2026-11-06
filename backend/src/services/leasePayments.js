@@ -20,6 +20,7 @@ const { genererEcriture, isModuleActive } = require('./gl/glPostingService');
 const { getOrCreateIssuance, ensureShareToken } = require('./documentIssuance');
 const { generatePortalToken, hashToken } = require('../utils/tokens');
 const { loadLease, recordRentPayment } = require('./rentPayments');
+const { assertLeaseNotArchived } = require('./leaseGuards');
 
 // Un lien de paiement expire par défaut sous 48h — assez pour laisser le
 // temps au locataire de le recevoir et payer, sans rester valide indéfiniment.
@@ -30,6 +31,7 @@ async function endLease(tenantId, leaseId, scopeAgentId, endDate) {
   const conn = await pool.getConnection();
   try {
     const lease = await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    assertLeaseNotArchived(lease);
     if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est déjà terminé');
 
     if (Number(lease.deposit_amount) > 0 && lease.deposit_status === 'held') {
@@ -87,7 +89,8 @@ async function listLeasePayments(tenantId, leaseId, scopeAgentId) {
 async function cancelPayment(tenantId, userId, leaseId, paymentId, scopeAgentId, reason) {
   const conn = await pool.getConnection();
   try {
-    await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    const leaseForCancel = await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    assertLeaseNotArchived(leaseForCancel);
 
     const [paymentRows] = await conn.query(
       'SELECT * FROM rent_payments WHERE id = :paymentId AND lease_id = :leaseId AND tenant_id = :tenantId LIMIT 1',
@@ -179,6 +182,7 @@ async function createPayment(tenantId, userId, leaseId, scopeAgentId, data) {
   const conn = await pool.getConnection();
   try {
     const lease = await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    assertLeaseNotArchived(lease);
     if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé, impossible d\'ajouter un paiement');
     await assertPeriodOpen(tenantId, data.paidAt);
 
@@ -320,6 +324,7 @@ async function payLateFee(tenantId, userId, leaseId, lateFeeId, scopeAgentId, da
   const conn = await pool.getConnection();
   try {
     const lease = await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    assertLeaseNotArchived(lease);
     await assertPeriodOpen(tenantId, data.paidAt);
 
     const [lateFeeRows] = await conn.query(
@@ -396,6 +401,7 @@ async function createLateFee(tenantId, userId, leaseId, scopeAgentId, data) {
   const conn = await pool.getConnection();
   try {
     const lease = await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    assertLeaseNotArchived(lease);
     if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé, impossible d\'appliquer une pénalité');
 
     const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id', {
@@ -469,6 +475,7 @@ async function payOpeningDebt(tenantId, userId, leaseId, scopeAgentId, data) {
   const conn = await pool.getConnection();
   try {
     const lease = await loadLease(conn, tenantId, leaseId, scopeAgentId);
+    assertLeaseNotArchived(lease);
     await assertPeriodOpen(tenantId, data.paidAt);
 
     const [renterRows] = await conn.query('SELECT first_name, last_name FROM renters WHERE id = :id', {
@@ -617,6 +624,7 @@ async function getReceiptShareToken(tenantId, leaseId, paymentId, scopeAgentId) 
 /** Génère un lien de paiement FedaPay (loyer) ; seule l'empreinte du token est conservée. */
 async function createRentPaymentLink(tenantId, userId, leaseId, scopeAgentId, requestedAmount) {
   const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  assertLeaseNotArchived(lease);
   if (lease.status !== 'active') throw new ApiError(400, 'Ce bail est terminé');
 
   const [[tenant]] = await pool.query('SELECT fedapay_collect_enabled FROM tenants WHERE id = :id LIMIT 1', {

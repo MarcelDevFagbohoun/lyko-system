@@ -197,6 +197,7 @@ export function LeaseCard({
   canReadDocs,
   isDg,
   onChanged,
+  readOnly = false,
 }: {
   lease: Lease;
   renterId: number;
@@ -210,7 +211,14 @@ export function LeaseCard({
   // `canManage`, qui ne couvre que locataires).
   canReadDocs: boolean;
   onChanged: () => void;
+  // Locataire archivé (demande utilisateur, 2026-11-06, migration 140) : tout le détail de ce bail
+  // (paiements, plaintes, charges, impayés, relances, pénalités, état des lieux) reste affiché — rien
+  // n'est masqué — mais plus AUCUNE action d'écriture n'est proposée ici. Le serveur refuse de toute
+  // façon ces écritures (voir `services/leaseGuards.js`) ; ceci n'est que le reflet côté affichage.
+  readOnly?: boolean;
 }) {
+  const effectiveManage = canManage && !readOnly;
+  const effectivePay = canPay && !readOnly;
   return (
     <Card tone="blue" accent>
       <CardHeader>
@@ -333,15 +341,17 @@ export function LeaseCard({
                   <span className="text-ink-muted">État des lieux d&apos;entrée non réalisé</span>
                 )}
               </div>
-              <Link href={`/espace/locataires/${renterId}/etat-des-lieux?leaseId=${lease.id}`}>
-                <Button variant="ghost" size="sm">
-                  {lease.moveInReport?.status === "finalized"
-                    ? "Voir l'état des lieux"
-                    : lease.moveInReport
-                      ? "Continuer le brouillon"
-                      : "Réaliser l'état des lieux"}
-                </Button>
-              </Link>
+              {!readOnly && (
+                <Link href={`/espace/locataires/${renterId}/etat-des-lieux?leaseId=${lease.id}`}>
+                  <Button variant="ghost" size="sm">
+                    {lease.moveInReport?.status === "finalized"
+                      ? "Voir l'état des lieux"
+                      : lease.moveInReport
+                        ? "Continuer le brouillon"
+                        : "Réaliser l'état des lieux"}
+                  </Button>
+                </Link>
+              )}
             </div>
 
             {/* État des lieux de sortie : ne peut être "finalized" tant que le bail est
@@ -362,15 +372,15 @@ export function LeaseCard({
           </SectionTile>
         )}
 
-        <ComplaintsSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} />
+        <ComplaintsSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} readOnly={readOnly} />
 
-        <ChargesSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} />
+        <ChargesSection leaseId={lease.id} renterId={renterId} accessToken={accessToken} readOnly={readOnly} />
 
-        {canPay && <LateFeesSection leaseId={lease.id} accessToken={accessToken} canManage={canPay} />}
+        {canPay && <LateFeesSection leaseId={lease.id} accessToken={accessToken} canManage={effectivePay} />}
 
-        <RelancesSection leaseId={lease.id} accessToken={accessToken} />
+        <RelancesSection leaseId={lease.id} accessToken={accessToken} readOnly={readOnly} />
 
-        {canPay && <OpeningDebtSection lease={lease} accessToken={accessToken} onSettled={onChanged} />}
+        {canPay && <OpeningDebtSection lease={lease} accessToken={accessToken} onSettled={onChanged} readOnly={readOnly} />}
 
         {canManage && <BalanceSnapshotsSection leaseId={lease.id} accessToken={accessToken} />}
 
@@ -380,12 +390,12 @@ export function LeaseCard({
           renterPhone={renterPhone}
           accessToken={accessToken}
           canManage={canReadDocs}
-          canRecord={canPay}
+          canRecord={effectivePay}
           isDg={isDg}
           onRecorded={onChanged}
         />
       </CardContent>
-      {canManage && (
+      {effectiveManage && (
         <CardFooter className="justify-end">
           <Link href={`/espace/locataires/${renterId}/sortie?leaseId=${lease.id}`}>
             <Button variant="destructive" size="sm">

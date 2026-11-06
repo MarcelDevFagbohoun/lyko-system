@@ -39,6 +39,7 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { useCan } from "@/lib/auth/use-can";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { LeaseCard, NewLeaseCard } from "./sections/lease-cards";
 import { EditRenterForm, PortalLinkCard } from "./sections/renter-cards";
 
@@ -73,6 +74,9 @@ function LocataireContent() {
   const [leases, setLeases] = React.useState<Lease[] | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [editingRenter, setEditingRenter] = React.useState(false);
+  // Locataire archivé (demande utilisateur, 2026-11-06) : dossier complet déplié à la demande, pas
+  // affiché en permanence pour chaque bail archivé (un locataire peut en avoir plusieurs).
+  const [expandedArchivedLeaseId, setExpandedArchivedLeaseId] = React.useState<number | null>(null);
 
   const load = React.useCallback(() => {
     if (!accessToken || !Number.isInteger(renterId)) return;
@@ -255,6 +259,7 @@ function LocataireContent() {
                 // `services/leaseDeposits.js`) ; cette carte l'affiche désormais plutôt que de s'en
                 // tenir à une simple ligne de dates.
                 const totalPaid = l.payments.reduce((sum, p) => sum + p.amount, 0);
+                const isExpanded = expandedArchivedLeaseId === l.id;
                 return (
                   <div key={l.id} className="flex flex-col gap-2 py-3">
                     <div className="flex items-center justify-between gap-2">
@@ -279,6 +284,19 @@ function LocataireContent() {
                         ) : (
                           <Badge variant="neutral">Terminé</Badge>
                         )}
+                        {/* Dossier complet (demande utilisateur, 2026-11-06) : une fois archivé, tout le
+                            détail (paiements, plaintes, charges, impayés, relances…) reste consultable en
+                            lecture seule — déplié à la demande plutôt qu'affiché systématiquement. */}
+                        {l.archivedAt && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setExpandedArchivedLeaseId(isExpanded ? null : l.id)}
+                          >
+                            {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            {isExpanded ? "Masquer le dossier" : "Voir le dossier complet"}
+                          </Button>
+                        )}
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-xs text-ink-soft">
@@ -298,6 +316,23 @@ function LocataireContent() {
                         </button>
                       )}
                     </div>
+                    {isExpanded && l.archivedAt && (
+                      <div className="pt-2">
+                        <LeaseCard
+                          lease={l}
+                          renterId={renter.id}
+                          renterFirstName={renter.firstName}
+                          renterPhone={renter.phone}
+                          accessToken={accessToken}
+                          canManage={canManage}
+                          canPay={canPay}
+                          canReadDocs={canReadDocs}
+                          isDg={isDg}
+                          onChanged={load}
+                          readOnly
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}

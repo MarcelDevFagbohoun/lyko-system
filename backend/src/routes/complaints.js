@@ -24,6 +24,7 @@ const { UNIT_DESIGNATIONS } = require('../constants/properties');
 const { toActor } = require('../utils/actor');
 const { assertUploadType, randomFileName, toProtectedFileUrl } = require('../utils/uploads');
 const { resolvePropertyScope } = require('../services/scope');
+const { assertLeaseNotArchived } = require('../services/leaseGuards');
 const { claimIdempotencyKey } = require('../services/paymentGuards');
 const { notifyLeaseStaff } = require('../services/push/notifyLeaseEvent');
 const logger = require('../utils/logger');
@@ -312,11 +313,13 @@ router.post('/', upload.array('photos', MAX_PHOTOS_PER_COMPLAINT), async (req, r
 /**
  * Charge une plainte de l'entreprise courante, ou lève 404. `scopeAgentId`
  * (étape 14) : un agent restreint n'accède qu'aux plaintes dont le Bien lui
- * est attribué.
+ * est attribué. Appelée UNIQUEMENT par les routes d'écriture ci-dessous (modifier, changer de statut,
+ * ajouter un suivi, générer le lien de suivi) : lève systématiquement si le bail est archivé (demande
+ * utilisateur, 2026-11-06) — plus aucune action possible sur le dossier d'un locataire archivé.
  */
 async function loadComplaint(conn, tenantId, id, scopeAgentId = null) {
   const [rows] = await conn.query(
-    `SELECT c.*, p.agent_id AS property_agent_id
+    `SELECT c.*, p.agent_id AS property_agent_id, l.archived_at
      FROM complaints c
      JOIN leases l ON l.id = c.lease_id
      JOIN property_units u ON u.id = l.unit_id
@@ -328,6 +331,7 @@ async function loadComplaint(conn, tenantId, id, scopeAgentId = null) {
   if (scopeAgentId != null && Number(rows[0].property_agent_id) !== Number(scopeAgentId)) {
     throw new ApiError(404, 'Plainte introuvable');
   }
+  assertLeaseNotArchived(rows[0]);
   return rows[0];
 }
 

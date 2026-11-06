@@ -11,7 +11,17 @@ import { RelanceHistory } from "@/components/relances/relance-history";
  * détails des relances ». En lecture seule ici (l'envoi se fait depuis le Centre de relance) ; le
  * retour (réponse du locataire) reste ajoutable/modifiable depuis cette fiche.
  */
-export function RelancesSection({ leaseId, accessToken }: { leaseId: number; accessToken: string | null }) {
+export function RelancesSection({
+  leaseId,
+  accessToken,
+  readOnly = false,
+}: {
+  leaseId: number;
+  accessToken: string | null;
+  // Bail archivé (demande utilisateur, 2026-11-06) : historique toujours CONSULTABLE, mais plus aucun
+  // retour (réponse du locataire) n'est ajoutable/modifiable depuis cette fiche.
+  readOnly?: boolean;
+}) {
   const [relances, setRelances] = React.useState<Relance[] | null>(null);
 
   const load = React.useCallback(() => {
@@ -30,7 +40,7 @@ export function RelancesSection({ leaseId, accessToken }: { leaseId: number; acc
   return (
     <SectionTile tone="orange">
       <span className="font-label-sm uppercase tracking-wider text-ink-muted">Relances envoyées</span>
-      <RelanceHistory relances={relances} accessToken={accessToken} onChanged={load} />
+      <RelanceHistory relances={relances} accessToken={accessToken} onChanged={load} readOnly={readOnly} />
     </SectionTile>
   );
 }
