@@ -77,13 +77,24 @@ async function loadProperty(conn, tenantId, propertyId, scopeAgentId = null) {
   return rows[0];
 }
 
-/** Vérifie que le propriétaire appartient à l'entreprise courante, ou lève 404. */
+/**
+ * Vérifie que le propriétaire appartient à l'entreprise courante (404 sinon) ET que son mandat est
+ * toujours actif (demande utilisateur, 2026-11-06 — « même chose pour les propriétaires » : un Bien ne
+ * doit jamais pouvoir être (ré)attribué à un propriétaire archivé sans passer par la réactivation
+ * explicite de son mandat, voir `services/owners.js` `reactivateMandate`). Bug corrigé : jusqu'ici
+ * `createProperty`/`updateProperty` ne vérifiaient que l'existence du propriétaire, jamais son mandat —
+ * on pouvait donc silencieusement faire réapparaître du patrimoine chez un propriétaire censé être en
+ * lecture seule.
+ */
 async function assertOwnerExists(conn, tenantId, ownerId) {
-  const [rows] = await conn.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
+  const [rows] = await conn.query('SELECT id, mandate_ended_at FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
     id: ownerId,
     tenantId,
   });
   if (!rows[0]) throw new ApiError(404, 'Propriétaire introuvable');
+  if (rows[0].mandate_ended_at) {
+    throw new ApiError(409, 'Le mandat de ce propriétaire est terminé — réactivez-le avant de lui attribuer un Bien.');
+  }
 }
 
 async function nextPropertyCode(conn, tenantId) {

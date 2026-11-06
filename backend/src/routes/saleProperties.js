@@ -145,11 +145,17 @@ router.post('/', async (req, res, next) => {
 
   try {
     if (data.ownerId) {
-      const [ownerRows] = await pool.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
+      // Mandat terminé (demande utilisateur, 2026-11-06 — « même chose pour les propriétaires ») : même
+      // garde que `services/properties.js` `assertOwnerExists` pour les Biens locatifs — un propriétaire
+      // archivé ne doit pas pouvoir recevoir un nouveau Bien à vendre sans réactivation explicite.
+      const [ownerRows] = await pool.query('SELECT id, mandate_ended_at FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
         id: data.ownerId,
         tenantId: req.user.tenantId,
       });
       if (!ownerRows[0]) throw new ApiError(404, 'Propriétaire introuvable');
+      if (ownerRows[0].mandate_ended_at) {
+        throw new ApiError(409, 'Le mandat de ce propriétaire est terminé — réactivez-le avant de lui attribuer un Bien.');
+      }
     }
 
     const [result] = await pool.query(
@@ -197,11 +203,15 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     if (data.ownerId) {
-      const [ownerRows] = await pool.query('SELECT id FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
+      // Même garde qu'à la création ci-dessus (demande utilisateur, 2026-11-06).
+      const [ownerRows] = await pool.query('SELECT id, mandate_ended_at FROM owners WHERE id = :id AND tenant_id = :tenantId LIMIT 1', {
         id: data.ownerId,
         tenantId: req.user.tenantId,
       });
       if (!ownerRows[0]) throw new ApiError(404, 'Propriétaire introuvable');
+      if (ownerRows[0].mandate_ended_at) {
+        throw new ApiError(409, 'Le mandat de ce propriétaire est terminé — réactivez-le avant de lui attribuer un Bien.');
+      }
     }
 
     const fields = ['updated_by = :updatedBy', 'updated_at = NOW()'];

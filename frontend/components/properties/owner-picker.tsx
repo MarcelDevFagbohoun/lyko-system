@@ -138,6 +138,10 @@ export function OwnerPicker({
           <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-surface shadow-md">
             {results
               .filter((o) => !query || o.name.toLowerCase().includes(query.toLowerCase()))
+              // Mandat terminé (demande utilisateur, 2026-11-06) : un propriétaire archivé ne doit plus
+              // pouvoir recevoir de nouveau Bien tant que son mandat n'est pas réactivé (voir
+              // `services/properties.js` `assertOwnerExists`) — inutile de le proposer ici.
+              .filter((o) => !o.mandateEndedAt)
               .map((o) => (
                 <button
                   key={o.id}
