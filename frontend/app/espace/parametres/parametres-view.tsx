@@ -83,6 +83,7 @@ function ParametresContent() {
   // champ figerait par erreur le modèle par défaut du jour comme modèle personnalisé de l'entreprise,
   // l'empêchant de profiter d'une future amélioration du modèle par défaut.
   const [templateReset, setTemplateReset] = React.useState(false);
+  const [contractBlankLetterhead, setContractBlankLetterhead] = React.useState(false);
 
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
@@ -110,6 +111,7 @@ function ParametresContent() {
         // pour que l'entreprise parte de ce qui est déjà en vigueur, à adapter plutôt qu'à réécrire.
         setLeaseContractTemplate(res.settings.leaseContractTemplate ?? res.settings.defaultLeaseContractTemplate);
         setTemplateReset(false);
+        setContractBlankLetterhead(res.settings.contractBlankLetterhead);
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Impossible de charger les paramètres."));
   }, [accessToken]);
@@ -151,10 +153,12 @@ function ParametresContent() {
           : settings.leaseContractTemplate != null || leaseContractTemplate.trim() !== settings.defaultLeaseContractTemplate.trim()
             ? leaseContractTemplate
             : undefined,
+        contractBlankLetterhead,
       });
       setSettings(res.settings);
       setLeaseContractTemplate(res.settings.leaseContractTemplate ?? res.settings.defaultLeaseContractTemplate);
       setTemplateReset(false);
+      setContractBlankLetterhead(res.settings.contractBlankLetterhead);
       setStampFile(null);
       setSaved(true);
       // Le badge (barre latérale), le journal, les documents... lisent le
@@ -380,6 +384,22 @@ function ParametresContent() {
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={contractBlankLetterhead}
+                  onChange={(e) => setContractBlankLetterhead(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                />
+                <span>
+                  <span className="font-label-md text-ink">En-tête du PDF vierge (papier à en-tête)</span>
+                  <span className="block text-body-xs text-ink-muted">
+                    Coché : le haut de la page reste entièrement blanc (ni nom d&apos;entreprise, ni logo, ni
+                    RCCM/IFU) pour que vous imprimiez le contrat sur votre propre papier à en-tête
+                    déjà pré-imprimé, avec tous vos logos.
+                  </span>
+                </span>
+              </label>
               <textarea
                 value={leaseContractTemplate}
                 onChange={(e) => {

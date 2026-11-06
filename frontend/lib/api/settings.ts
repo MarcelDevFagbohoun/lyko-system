@@ -40,6 +40,8 @@ export type TenantSettings = {
   /** Modèle par défaut (texte avec balises `{{jeton}}`) — point de départ si l'entreprise veut l'adapter. */
   defaultLeaseContractTemplate: string;
   leaseContractTemplatePlaceholders: { token: string; description: string }[];
+  /** En-tête vierge du PDF du contrat (pour impression sur papier à en-tête déjà pré-imprimé par l'entreprise). */
+  contractBlankLetterhead: boolean;
 };
 
 export function getSettings(accessToken: string) {
@@ -73,6 +75,7 @@ export function updateSettings(
     expenseAlertThreshold?: number | null;
     /** null ou chaîne vide = réinitialiser au modèle par défaut. */
     leaseContractTemplate?: string | null;
+    contractBlankLetterhead?: boolean;
   },
 ) {
   const fd = new FormData();
@@ -101,6 +104,7 @@ export function updateSettings(
   if (input.commissionTiming !== undefined) fd.append("commissionTiming", input.commissionTiming);
   if (input.expenseAlertThreshold !== undefined) fd.append("expenseAlertThreshold", input.expenseAlertThreshold === null ? "" : String(input.expenseAlertThreshold));
   if (input.leaseContractTemplate !== undefined) fd.append("leaseContractTemplate", input.leaseContractTemplate ?? "");
+  if (input.contractBlankLetterhead !== undefined) fd.append("contractBlankLetterhead", String(input.contractBlankLetterhead));
 
   return apiFetch<{ settings: TenantSettings }>("/api/settings", {
     method: "PATCH",

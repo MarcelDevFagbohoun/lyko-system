@@ -75,6 +75,9 @@ function toPublicSettings(tenant) {
     leaseContractTemplate: tenant.lease_contract_template,
     defaultLeaseContractTemplate: DEFAULT_CONTRACT_TEMPLATE,
     leaseContractTemplatePlaceholders: CONTRACT_TEMPLATE_PLACEHOLDERS,
+    // En-tête vierge du PDF du contrat de bail (demande utilisateur, 2026-11-06) — impression sur
+    // papier à en-tête déjà pré-imprimé par l'entreprise (potentiellement plusieurs logos).
+    contractBlankLetterhead: Boolean(tenant.contract_blank_letterhead),
   };
 }
 
@@ -218,6 +221,11 @@ router.patch(
       if (data.leaseContractTemplate !== undefined) {
         fields.push('lease_contract_template = :leaseContractTemplate');
         params.leaseContractTemplate = data.leaseContractTemplate;
+      }
+
+      if (data.contractBlankLetterhead !== undefined) {
+        fields.push('contract_blank_letterhead = :contractBlankLetterhead');
+        params.contractBlankLetterhead = data.contractBlankLetterhead ? 1 : 0;
       }
 
       const stampFile = req.files?.stamp?.[0];

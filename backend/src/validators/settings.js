@@ -109,6 +109,13 @@ const updateSettingsSchema = z.object({
     .max(50_000, 'Modèle de contrat trop long (50 000 caractères max)')
     .optional()
     .transform((v) => (v === undefined ? undefined : v || null)),
+
+  // En-tête vierge du contrat de bail (demande utilisateur, 2026-11-06) — pour impression sur papier à
+  // en-tête déjà pré-imprimé par l'entreprise.
+  contractBlankLetterhead: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
 });
 
 module.exports = { updateSettingsSchema };

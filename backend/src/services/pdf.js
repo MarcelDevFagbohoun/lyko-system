@@ -633,9 +633,36 @@ const SERIF_ITALIC = 'Times-Italic';
 const CK = { INK: '#1C1917', MUTED: '#78716C', RULE: '#D6D3D1', ALERT: '#9A3412' };
 
 /** En-tête de contrat : société à gauche, référence à droite, double filet, titre centré espacé, sous-titre en italique. */
-function drawContractHeader(doc, tenant, { title, subtitle, refLines = [] }) {
+/**
+ * `blankLetterhead` (demande utilisateur, 2026-11-06, Paramètres → `contract_blank_letterhead`) :
+ * laisse le haut de la page totalement vierge — aucun nom d'entreprise, logo, RCCM/IFU, activités ni
+ * filet — pour que l'entreprise imprime le contrat sur SON PROPRE papier à en-tête déjà pré-imprimé
+ * (qui peut porter plusieurs logos, partenaires compris), sans que notre identité ne s'y superpose. Le
+ * titre et les références redescendent d'autant pour laisser cet espace réellement blanc.
+ */
+function drawContractHeader(doc, tenant, { title, subtitle, refLines = [], blankLetterhead = false }) {
   const left = 50;
   const width = 495;
+
+  if (blankLetterhead) {
+    const top = 150; // espace blanc réservé au papier à en-tête physique de l'entreprise.
+    refLines.slice(0, 3).forEach(([label, value], i) => {
+      const v = String(value ?? '—');
+      const yy = top + i * 13;
+      const vw = doc.font(SERIF_BOLD).fontSize(8.5).widthOfString(v);
+      doc.font(SERIF_BOLD).fontSize(8.5).fillColor(CK.INK).text(v, left + width - vw, yy, { lineBreak: false });
+      doc.font(SERIF).fontSize(8.5).fillColor(CK.MUTED).text(`${label} : `, 365, yy, { width: width + left - vw - 369, align: 'right', lineBreak: false });
+    });
+    doc.font(SERIF_BOLD).fontSize(24).fillColor(CK.INK).text(title, left, top + 42, { width, align: 'center', characterSpacing: 3, lineBreak: false });
+    if (subtitle) doc.font(SERIF_ITALIC).fontSize(12).fillColor(CK.MUTED).text(subtitle, left, top + 74, { width, align: 'center', lineBreak: false });
+    doc.moveTo(left + width / 2 - 24, top + 98).lineTo(left + width / 2 + 24, top + 98).lineWidth(0.8).strokeColor(CK.INK).stroke();
+    doc._aimTitle = title;
+    doc._aimContext = refLines[0] ? String(refLines[0][1] ?? '') : '';
+    doc._aimLight = true;
+    doc.y = top + 120;
+    return doc.y;
+  }
+
   let textX = left;
   const logoFile = D.imageIfExists(tenant.logo_path);
   if (logoFile) {
@@ -759,6 +786,7 @@ function streamLeaseContractPdf(res, { tenant, data, contract, issuer, leaseId, 
       ],
       ...(verificationCode ? [['Code de vérification', verificationCode]] : []),
     ],
+    blankLetterhead: Boolean(tenant.contract_blank_letterhead),
   });
 
   // --- Récapitulatif : les parties et les faits essentiels en un coup d'œil. ---
