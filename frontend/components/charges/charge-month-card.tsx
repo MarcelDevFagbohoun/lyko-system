@@ -16,7 +16,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : 
  * ce qui est déjà réglé, ce qu'il reste à recevoir — et, à part, l'argent reçu
  * dans le mois (toutes factures) et ce qui traîne encore des mois précédents.
  */
-export function ChargeMonthCard() {
+export function ChargeMonthCard({ refreshKey }: { refreshKey?: number } = {}) {
   const { accessToken } = useAuth();
   const [data, setData] = React.useState<ChargeMonthSummary | null>(null);
 
@@ -25,7 +25,8 @@ export function ChargeMonthCard() {
     getChargeMonthSummary(accessToken)
       .then(setData)
       .catch(() => setData(null));
-  }, [accessToken]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, refreshKey]);
 
   if (!data) return null;
 

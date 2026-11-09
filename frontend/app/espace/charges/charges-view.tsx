@@ -84,6 +84,12 @@ function ChargesContent() {
   // période ne correspond pas à un mois civil — la date de la facture est comparée aux bornes.
   const [closedPeriods, setClosedPeriods] = React.useState<{ periodStart: string; periodEnd: string }[]>([]);
   const [error, setError] = React.useState<string | null>(null);
+  // Bug corrigé (audit fonctionnel, 2026-11-09) : la carte « Charges du mois » (ChargeMonthCard)
+  // chargeait son résumé une seule fois au montage, indépendamment de `load()` — après avoir réglé
+  // ou créé une facture, « Réglé »/« Reste à recevoir » restaient figés à leurs anciennes valeurs
+  // jusqu'au rechargement complet de la page. On lui passe désormais cette clé, incrémentée à chaque
+  // `load()`, pour qu'elle refasse son propre appel en même temps que la liste des factures.
+  const [summaryRefreshKey, setSummaryRefreshKey] = React.useState(0);
 
   const load = React.useCallback(() => {
     if (!accessToken) return;
@@ -93,7 +99,10 @@ function ChargesContent() {
       propertyId: propertyId ?? undefined,
       q: query || undefined,
     })
-      .then((res) => setCharges(res.charges))
+      .then((res) => {
+        setCharges(res.charges);
+        setSummaryRefreshKey((k) => k + 1);
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger les charges."));
   }, [accessToken, tab, utilityType, propertyId, query]);
 
@@ -185,7 +194,7 @@ function ChargesContent() {
 
         <UtilityAlertsCard hideWhenEmpty />
 
-        <ChargeMonthCard />
+        <ChargeMonthCard refreshKey={summaryRefreshKey} />
 
         {charges && charges.some((c) => c.status !== "payee") && (
           <Card>
