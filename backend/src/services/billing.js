@@ -94,7 +94,10 @@ async function quote(tenantId, planKey, months, conn = pool) {
   let price = promoPrice(catalogNow, found.offer.price); // promotion de l'administrateur : c'est ce montant qui est payé
   let founder = false;
   const FOUNDER_OFFER = catalogNow.founder;
-  if (FOUNDER_OFFER.enabled && FOUNDER_OFFER.price < price && isFirst && kind === 'purchase' && planKey === FOUNDER_OFFER.planKey && months === FOUNDER_OFFER.months) {
+  // Le tarif fondateur vaut pour le tout premier achat payant : un passage depuis l'essai gratuit (toujours actif à
+  // l'inscription, donc techniquement classé « upgrade ») reste un premier achat, pas une montée en gamme payante.
+  const foundersPurchaseKind = kind === 'purchase' || (kind === 'upgrade' && fromPlan === 'essai-gratuit');
+  if (FOUNDER_OFFER.enabled && FOUNDER_OFFER.price < price && isFirst && foundersPurchaseKind && planKey === FOUNDER_OFFER.planKey && months === FOUNDER_OFFER.months) {
     const [[mine]] = await conn.query("SELECT COUNT(*) AS n FROM subscription_payments WHERE tenant_id = :tenantId AND founder_price = 1 AND status = 'pending' AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)", { tenantId });
     const taken = (await founderTaken(conn)) - (Number(mine.n) > 0 ? 1 : 0);
     if (taken < FOUNDER_OFFER.maxCompanies) {
