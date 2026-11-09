@@ -19,7 +19,7 @@ export function SubscriptionSummary({ plan, sub }: { plan: PublicPlan; sub: Subs
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle>Offre {plan.label}</CardTitle>
           <Badge variant={endingSoon ? "warning" : "success"}>{endingSoon ? "Se termine bientôt" : "Actif"}</Badge>
-          {sub.founderPrice && <Badge variant="info">Tarif fondateur</Badge>}
+          {sub.founderPrice && <Badge variant="info">Tarif de lancement</Badge>}
         </div>
         <CardDescription>
           {sub.currentPeriodEnd ? `Valable jusqu'au ${formatDateLabel(sub.currentPeriodEnd.slice(0, 10))}` : "Sans échéance"}

@@ -14,7 +14,7 @@ const PLAN_ORDER: PlanKey[] = ["demarrage", "pro", "entreprise"];
 const LIMIT_LABELS: Record<"units" | "owners" | "users", string> = { units: "Unités", owners: "Propriétaires", users: "Utilisateurs" };
 
 /**
- * Éditeur des offres : prix par durée, limites, fonctions incluses, tarif fondateur, délai de remboursement.
+ * Éditeur des offres : prix par durée, limites, fonctions incluses, tarif de lancement, délai de remboursement.
  * Un prix modifié ne s'applique qu'aux achats futurs ; limites et fonctions s'appliquent tout de suite à toutes les
  * entreprises de l'offre (sans rien supprimer de l'existant).
  */
@@ -164,7 +164,7 @@ export function CatalogEditor({ token }: { token: string }) {
       <Card>
         <CardHeader>
           <CardTitle>Offre promotionnelle</CardTitle>
-          <CardDescription>Un pourcentage de réduction appliqué à toutes les offres et à toutes les durées. Dès l&apos;enregistrement, le montant réduit est celui que les clients paient. Si le tarif fondateur est encore plus bas, c&apos;est lui qui s&apos;applique (pas de cumul).</CardDescription>
+          <CardDescription>Un pourcentage de réduction appliqué à toutes les offres et à toutes les durées. Dès l&apos;enregistrement, le montant réduit est celui que les clients paient. Si le tarif de lancement est encore plus bas, c&apos;est lui qui s&apos;applique (pas de cumul).</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <label className="flex items-center gap-2 text-body-sm text-ink-soft">
@@ -191,13 +191,13 @@ export function CatalogEditor({ token }: { token: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Tarif fondateur et garantie</CardTitle>
+          <CardTitle>Tarif de lancement et garantie</CardTitle>
           <CardDescription>Remise sur le premier achat d&apos;une durée donnée, pour les premières entreprises seulement.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <label className="flex items-center gap-2 text-body-sm text-ink-soft">
             <input type="checkbox" checked={f.enabled} onChange={(e) => setDraft({ ...draft, founder: { ...f, enabled: e.target.checked } })} />
-            Tarif fondateur actif
+            Tarif de lancement actif
           </label>
           <div className="grid gap-3 sm:grid-cols-4">
             <Field label="Offre" htmlFor="fp">
@@ -206,7 +206,7 @@ export function CatalogEditor({ token }: { token: string }) {
               </select>
             </Field>
             <Field label="Durée (mois)" htmlFor="fm"><Input id="fm" inputMode="numeric" value={f.months} onChange={(e) => setDraft({ ...draft, founder: { ...f, months: Number(e.target.value) || 0 } })} /></Field>
-            <Field label="Prix fondateur (FCFA)" htmlFor="fpr"><Input id="fpr" inputMode="numeric" value={f.price} onChange={(e) => setDraft({ ...draft, founder: { ...f, price: Number(e.target.value.replace(/\s/g, "")) || 0 } })} /></Field>
+            <Field label="Prix de lancement (FCFA)" htmlFor="fpr"><Input id="fpr" inputMode="numeric" value={f.price} onChange={(e) => setDraft({ ...draft, founder: { ...f, price: Number(e.target.value.replace(/\s/g, "")) || 0 } })} /></Field>
             <Field label="Nombre de places" htmlFor="fn"><Input id="fn" inputMode="numeric" value={f.maxCompanies} onChange={(e) => setDraft({ ...draft, founder: { ...f, maxCompanies: Number(e.target.value) || 0 } })} /></Field>
           </div>
           <Field label="Délai de remboursement (jours)" htmlFor="rw" hint="S'applique aux prochains premiers paiements.">

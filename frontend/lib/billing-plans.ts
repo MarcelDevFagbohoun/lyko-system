@@ -51,7 +51,7 @@ export function limitsSummary(limits: { units: number | null; owners: number | n
 
 /**
  * Prix affiché d'une durée : le montant réellement payé et, s'il est plus bas que le prix catalogue, ce dernier à barrer.
- * Même règle que le serveur : le tarif fondateur ne s'applique que s'il est inférieur au prix promotionnel (pas de cumul).
+ * Même règle que le serveur : le tarif de lancement ne s'applique que s'il est inférieur au prix promotionnel (pas de cumul).
  */
 export function offerPricing(
   offer: { price: number; listPrice?: number },

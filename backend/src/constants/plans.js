@@ -87,7 +87,7 @@ const PLANS = {
 // Fonctions qu'un administrateur peut cocher pour un partenaire (`core` toujours incluse ; l'assistant IA est reporté).
 const PARTNER_SELECTABLE_FEATURES = FEATURES.filter((f) => f !== 'core' && f !== 'ai_assistant');
 
-// Tarif fondateur : remise sur le PREMIER achat de l'offre Pro (4 mois) pour les N premières entreprises ; le prix
+// Tarif de lancement : remise sur le PREMIER achat de l'offre Pro (4 mois) pour les N premières entreprises ; le prix
 // normal revient au renouvellement. Appliqué côté serveur à l'étape facturation.
 const FOUNDER_OFFER = { planKey: 'pro', months: 4, price: 49000, maxCompanies: 30 };
 

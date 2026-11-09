@@ -20,7 +20,7 @@ const ORDER_FEATURES = ["core", "payroll", "owner_portal", "sale_properties", "a
 /**
  * Grille des offres. `onChoose(plan, months)` : affiche un bouton par durée (espace connecté) ; sans lui, un seul bouton
  * « Créer mon compte » est rendu par le parent via `footer` (page publique). Les prix viennent du serveur (catalogue) —
- * le tarif fondateur n'y est affiché que tant qu'il reste des places.
+ * le tarif de lancement n'y est affiché que tant qu'il reste des places.
  */
 export function PlanCards({
   catalog,
@@ -72,7 +72,7 @@ export function PlanCards({
               })}
               {f.remaining > 0 && plan.key === f.planKey && (
                 <p className="text-body-xs text-success-fg">
-                  Tarif fondateur sur le premier achat de {offerLabel(f.months)} : plus que {f.remaining} place{f.remaining > 1 ? "s" : ""}.
+                  Tarif de lancement sur le premier achat de {offerLabel(f.months)} : plus que {f.remaining} place{f.remaining > 1 ? "s" : ""}.
                 </p>
               )}
             </div>

@@ -34,7 +34,7 @@ export function CheckoutSummary({
           </div>
           {quote.fullPrice < quote.normalPrice && (
             <div className="flex justify-between gap-3 text-success-fg">
-              <dt>{quote.founder ? "Tarif fondateur" : "Offre promotionnelle"}</dt>
+              <dt>{quote.founder ? "Tarif de lancement" : "Offre promotionnelle"}</dt>
               <dd>−{formatFcfa(quote.normalPrice - quote.fullPrice)}</dd>
             </div>
           )}

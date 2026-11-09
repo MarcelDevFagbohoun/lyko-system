@@ -129,11 +129,11 @@ function validate(input) {
   const f = input.founder ?? {};
   if (f.enabled) {
     const plan = out.plans[f.planKey];
-    if (!plan) throw new ApiError(400, 'Offre du tarif fondateur invalide');
+    if (!plan) throw new ApiError(400, 'Offre du tarif de lancement invalide');
     const offer = plan.offers.find((o) => o.months === f.months);
-    if (!offer) throw new ApiError(400, 'Le tarif fondateur doit porter sur une durée existante de cette offre');
-    const price = intIn(f.price, 1000, 10_000_000, 'Prix fondateur');
-    if (price >= offer.price) throw new ApiError(400, 'Le prix fondateur doit être inférieur au prix normal');
+    if (!offer) throw new ApiError(400, 'Le tarif de lancement doit porter sur une durée existante de cette offre');
+    const price = intIn(f.price, 1000, 10_000_000, 'Prix de lancement');
+    if (price >= offer.price) throw new ApiError(400, 'Le prix de lancement doit être inférieur au prix normal');
     out.founder = { enabled: true, planKey: f.planKey, months: f.months, price, maxCompanies: intIn(f.maxCompanies, 1, 100000, 'Nombre de places') };
   } else {
     out.founder = { ...defaults().founder, ...(f.planKey ? { planKey: f.planKey } : {}), enabled: false };

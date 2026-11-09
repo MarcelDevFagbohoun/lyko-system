@@ -302,7 +302,7 @@ router.post('/tenants/:id/partner/revoke', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Offres : prix, durées, limites, fonctions, tarif fondateur, délai de remboursement. Les prix ne touchent que les achats futurs.
+// Offres : prix, durées, limites, fonctions, tarif de lancement, délai de remboursement. Les prix ne touchent que les achats futurs.
 router.get('/catalog', async (_req, res, next) => {
   try { res.json({ catalog: await catalogService.getCatalog(), features: catalogService.FEATURES.filter((f) => f !== 'ai_assistant'), changes: await catalogService.listChanges() }); } catch (err) { next(err); }
 });

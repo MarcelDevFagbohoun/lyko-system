@@ -46,7 +46,7 @@ async function findOffer(planKey, months) {
   return offer ? { plan, offer } : null;
 }
 
-/** Nombre de places « tarif fondateur » déjà prises (achats payés + réservations récentes non terminées). */
+/** Nombre de places « tarif de lancement » déjà prises (achats payés + réservations récentes non terminées). */
 async function founderTaken(conn = pool) {
   const [[r]] = await conn.query(
     `SELECT COUNT(DISTINCT tenant_id) AS n FROM subscription_payments
@@ -56,7 +56,7 @@ async function founderTaken(conn = pool) {
 }
 
 /**
- * Prix réellement dû par cette entreprise pour cette offre (tarif fondateur inclus).
+ * Prix réellement dû par cette entreprise pour cette offre (tarif de lancement inclus).
  * Abonnement en cours : même offre = renouvellement (la période s'ajoute à la fin de la précédente) ; offre supérieure =
  * montée en gamme (le prorata des jours restants est déduit du prix) ; offre inférieure = refusée jusqu'au terme.
  */
@@ -94,7 +94,7 @@ async function quote(tenantId, planKey, months, conn = pool) {
   let price = promoPrice(catalogNow, found.offer.price); // promotion de l'administrateur : c'est ce montant qui est payé
   let founder = false;
   const FOUNDER_OFFER = catalogNow.founder;
-  // Le tarif fondateur vaut pour le tout premier achat payant : un passage depuis l'essai gratuit (toujours actif à
+  // Le tarif de lancement vaut pour le tout premier achat payant : un passage depuis l'essai gratuit (toujours actif à
   // l'inscription, donc techniquement classé « upgrade ») reste un premier achat, pas une montée en gamme payante.
   const foundersPurchaseKind = kind === 'purchase' || (kind === 'upgrade' && fromPlan === 'essai-gratuit');
   if (FOUNDER_OFFER.enabled && FOUNDER_OFFER.price < price && isFirst && foundersPurchaseKind && planKey === FOUNDER_OFFER.planKey && months === FOUNDER_OFFER.months) {
@@ -139,7 +139,7 @@ async function upgradeOptions(tenantId) {
 }
 
 /**
- * Catalogue public (pages tarifs) : prix, limites, fonctions, places fondateur restantes.
+ * Catalogue public (pages tarifs) : prix, limites, fonctions, places « tarif de lancement » restantes.
  * `plans` ne contient que les offres payantes ACTIVES (case « active » du back-office) : tant que seul l'essai
  * gratuit est proposé, cette liste est vide et aucun achat ne peut être tenté sur une offre retirée. `freeTrial`
  * est séparé pour ne jamais passer par le paiement (FedaPay) : il est accordé directement à l'inscription.

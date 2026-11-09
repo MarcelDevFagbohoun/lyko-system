@@ -543,7 +543,7 @@ function streamSubscriptionInvoicePdf(res, { client, payment, planLabel, fromPla
   y += 16;
   doc.moveTo(L, y).lineTo(R, y).lineWidth(0.7).strokeColor(BORDER_STRONG).stroke();
   y += 10;
-  const label = `Abonnement ${planLabel}${payment.founder_price ? ' (tarif fondateur)' : ''}`;
+  const label = `Abonnement ${planLabel}${payment.founder_price ? ' (tarif de lancement)' : ''}`;
   const credit = Number(payment.credit_applied) || 0;
   const fullPrice = Number(payment.amount) + credit;
   doc.font('Helvetica').fontSize(10).fillColor(INK).text(label, cols[0].x, y, { width: cols[0].w, lineBreak: false });

@@ -193,7 +193,7 @@ async function sendSubscriptionActivatedEmail({ to, dgName, companyName, plan, m
     `<tr><td></td><td colspan="2" style="padding:7px 0;border-top:1px solid #E2E8F0;font-size:14px;${strong ? 'font-weight:700;' : `color:${MUTED};`}">${label}</td><td align="right" style="padding:7px 0;border-top:1px solid #E2E8F0;font-size:14px;${strong ? 'font-weight:700;' : ''}">${value}</td></tr>`;
   const issuerLines = [LEGAL.name, LEGAL.address, LEGAL.rccm && `RCCM ${LEGAL.rccm}`, LEGAL.ifu && `IFU ${LEGAL.ifu}`].filter(Boolean);
   const clientLines = [companyName, client?.rccm && `RCCM ${client.rccm}`, client?.ifu && `IFU ${client.ifu}`, to].filter(Boolean);
-  const label = `Abonnement ${plan.label}${founder ? ' (tarif fondateur)' : ''}`;
+  const label = `Abonnement ${plan.label}${founder ? ' (tarif de lancement)' : ''}`;
   const fullPrice = Number(amount) + Number(credit);
   const html = wrapHtml(`
     <h1 style="margin:8px 0 20px;font-size:28px;line-height:1.2;color:${INK};">${upgrade ? 'Reçu de changement d’offre' : renewal ? 'Reçu de renouvellement' : 'Reçu de paiement'}</h1>

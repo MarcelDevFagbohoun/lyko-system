@@ -28,7 +28,7 @@ export function PlanPicker({
   catalog: Catalog;
   sub: Subscription | null;
   upgrades: UpgradeOption[];
-  /** Aucun paiement encore : le tarif fondateur s'applique au premier achat. */
+  /** Aucun paiement encore : le tarif de lancement s'applique au premier achat. */
   firstPurchase: boolean;
   busyKey: string | null;
   onChoose: (plan: PlanKey, months: number) => void;
@@ -125,7 +125,7 @@ function PlanCard({
             <p className="text-body-xs text-success-fg">Offre promotionnelle : −{promoPercent} %</p>
           )}
           {isFounder && (
-            <p className="text-body-xs text-success-fg">Tarif fondateur : plus que {f.remaining} place{f.remaining > 1 ? "s" : ""}.</p>
+            <p className="text-body-xs text-success-fg">Tarif de lancement : plus que {f.remaining} place{f.remaining > 1 ? "s" : ""}.</p>
           )}
           {upgrade && (
             <p className="text-body-xs text-success-fg">
