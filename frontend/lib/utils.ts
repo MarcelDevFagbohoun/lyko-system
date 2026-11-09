@@ -163,10 +163,21 @@ export function addMonth(periodKey: string): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-const MONTHS_FR = [
+export const MONTHS_FR = [
   "janvier", "février", "mars", "avril", "mai", "juin",
   "juillet", "août", "septembre", "octobre", "novembre", "décembre",
 ];
+
+/**
+ * Bornes calendaires d'un mois (1-12) : premier et dernier jour, au format AAAA-MM-JJ. Utilisé par les
+ * sélecteurs « Mois / Année » (charges SONEB/SBEE, relevés par immeuble) pour dériver periodStart/periodEnd
+ * sans jamais laisser l'utilisateur saisir une période libre à cheval sur deux mois.
+ */
+export function monthBounds(year: number, month: number): { start: string; end: string } {
+  const start = `${year}-${String(month).padStart(2, "0")}-01`;
+  const end = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  return { start, end };
+}
 
 /**
  * « 2026-09 » → « septembre 2026 ». Une clé de période non-calendaire « 2026-10-05 » (début de

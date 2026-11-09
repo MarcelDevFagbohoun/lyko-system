@@ -15,11 +15,11 @@ import {
   type UtilityType,
 } from "@/lib/api/charges";
 import { UTILITY_TYPE_LABELS, BATCH_STATUS_LABELS } from "@/lib/constants/charges";
-import { formatFcfa } from "@/lib/utils";
+import { formatFcfa, monthBounds, MONTHS_FR } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field, Input } from "@/components/ui/input";
+import { Field } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/lib/toast/toast-context";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -234,12 +234,11 @@ function NewBatchForm({
   onCreated: (batchId: number) => void;
 }) {
   const now = new Date();
-  const firstOfMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  const lastOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-
   const [utilityType, setUtilityType] = React.useState<UtilityType>(types[0]);
-  const [periodStart, setPeriodStart] = React.useState(firstOfMonth);
-  const [periodEnd, setPeriodEnd] = React.useState(lastOfMonth);
+  const [periodMonth, setPeriodMonth] = React.useState(now.getMonth() + 1);
+  const [periodYear, setPeriodYear] = React.useState(now.getFullYear());
+  // Mois calendaire complet, toujours — même règle que la facture individuelle (étape 9ter).
+  const { start: periodStart, end: periodEnd } = monthBounds(periodYear, periodMonth);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -273,11 +272,29 @@ function NewBatchForm({
             ))}
           </select>
         </Field>
-        <Field label="Début de période" htmlFor="nbStart">
-          <Input id="nbStart" type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+        <Field label="Mois" htmlFor="nbMonth" hint={`Du ${periodStart.split("-").reverse().join("/")} au ${periodEnd.split("-").reverse().join("/")}`}>
+          <select
+            id="nbMonth"
+            value={periodMonth}
+            onChange={(e) => setPeriodMonth(Number(e.target.value))}
+            className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink"
+          >
+            {MONTHS_FR.map((label, i) => (
+              <option key={label} value={i + 1}>{label.charAt(0).toUpperCase() + label.slice(1)}</option>
+            ))}
+          </select>
         </Field>
-        <Field label="Fin de période" htmlFor="nbEnd">
-          <Input id="nbEnd" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+        <Field label="Année" htmlFor="nbYear">
+          <select
+            id="nbYear"
+            value={periodYear}
+            onChange={(e) => setPeriodYear(Number(e.target.value))}
+            className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink"
+          >
+            {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
         </Field>
       </div>
       <Button type="submit" size="sm" disabled={submitting}>

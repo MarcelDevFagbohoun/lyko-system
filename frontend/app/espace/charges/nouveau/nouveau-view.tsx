@@ -9,7 +9,7 @@ import { ApiError } from "@/lib/api/client";
 import { getRenter, type Lease } from "@/lib/api/renters";
 import type { RenterListItem } from "@/lib/api/renters";
 import { createCharge, getPreviousReading, type UtilityType } from "@/lib/api/charges";
-import { formatFcfa } from "@/lib/utils";
+import { formatFcfa, monthBounds, MONTHS_FR } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { RenterLeasePicker } from "@/components/complaints/renter-lease-picker";
 import { OfflineNotice } from "@/components/system/offline-notice";
@@ -56,9 +56,13 @@ function NouveauContent() {
   const [selectedRenter, setSelectedRenter] = React.useState<RenterListItem | null>(null);
   const leaseId = hasPrefill ? prefillRenter?.lease.id ?? null : selectedRenter?.activeLease?.id ?? null;
 
+  const now = new Date();
   const [utilityType, setUtilityType] = React.useState<UtilityType>("soneb");
-  const [periodStart, setPeriodStart] = React.useState("");
-  const [periodEnd, setPeriodEnd] = React.useState("");
+  const [periodMonth, setPeriodMonth] = React.useState(now.getMonth() + 1);
+  const [periodYear, setPeriodYear] = React.useState(now.getFullYear());
+  // Un mois calendaire complet, toujours — plus de saisie libre à cheval sur deux mois (étape 9ter) :
+  // le sélecteur Mois/Année dérive systématiquement periodStart/periodEnd, jamais l'inverse.
+  const { start: periodStart, end: periodEnd } = monthBounds(periodYear, periodMonth);
   const [readingStart, setReadingStart] = React.useState("");
   const [readingStartTouched, setReadingStartTouched] = React.useState(false);
   const [readingEnd, setReadingEnd] = React.useState("");
@@ -92,8 +96,6 @@ function NouveauContent() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!accessToken || !leaseId) return setError("Sélectionnez un locataire avec bail actif.");
-    if (!periodStart || !periodEnd) return setError("Début et fin de période requis.");
-    if (periodEnd < periodStart) return setError("La fin de période doit être postérieure au début.");
     if (readingStart === "" || readingEnd === "") return setError("Les index de début et de fin sont obligatoires.");
     if (Number(readingEnd) < Number(readingStart)) return setError("L'index de fin doit être supérieur ou égal à l'index de début.");
     if (!unitPrice || Number(unitPrice) <= 0) return setError("Prix unitaire requis.");
@@ -184,11 +186,31 @@ function NouveauContent() {
               </Field>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Début de période" htmlFor="periodStart" required>
-                  <Input id="periodStart" type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+                <Field label="Mois facturé" htmlFor="periodMonth" required hint={`Du ${periodStart.split("-").reverse().join("/")} au ${periodEnd.split("-").reverse().join("/")}`}>
+                  <select
+                    id="periodMonth"
+                    value={periodMonth}
+                    onChange={(e) => setPeriodMonth(Number(e.target.value))}
+                    className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    {MONTHS_FR.map((label, i) => (
+                      <option key={label} value={i + 1} className="capitalize">
+                        {label.charAt(0).toUpperCase() + label.slice(1)}
+                      </option>
+                    ))}
+                  </select>
                 </Field>
-                <Field label="Fin de période" htmlFor="periodEnd" required>
-                  <Input id="periodEnd" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+                <Field label="Année" htmlFor="periodYear" required>
+                  <select
+                    id="periodYear"
+                    value={periodYear}
+                    onChange={(e) => setPeriodYear(Number(e.target.value))}
+                    className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
                 </Field>
               </div>
 

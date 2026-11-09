@@ -64,15 +64,18 @@ const bearer = (id, tenantId, role = 'dg') => ({
   'Content-Type': 'application/json',
 });
 
-async function createCharge(leaseId, readingStart, readingEnd) {
+// `period` (AAAA-MM) distinct par appel sur un même bail : depuis la règle anti-doublon (même bail +
+// même fluide + même mois refusé, 2026-11-09), deux factures SONEB du même bail ne peuvent plus
+// partager leur mois — même si elles ne se chevauchent pas en lecture de compteur.
+async function createCharge(leaseId, readingStart, readingEnd, period = '2026-09') {
   const res = await fetch(`${baseUrl}/api/charges`, {
     method: 'POST',
     headers: bearer(fx.dgId, fx.tenantId),
     body: JSON.stringify({
       leaseId,
       utilityType: 'soneb',
-      periodStart: '2026-09-01',
-      periodEnd: '2026-09-30',
+      periodStart: `${period}-01`,
+      periodEnd: `${period}-28`,
       readingStart,
       readingEnd,
       unitPrice: 500,
@@ -84,9 +87,10 @@ async function createCharge(leaseId, readingStart, readingEnd) {
 }
 
 test('GET /api/charges/unpaid-by-property — regroupe les factures non soldées par bien, ignore les factures réglées', async () => {
-  // Bien 1 : une facture non réglée (25 000) + une facture réglée en totalité (10 000, exclue du total).
-  const unpaid = await createCharge(fx.leaseId, 0, 50); // 50 * 500 = 25 000
-  const toBePaid = await createCharge(fx.leaseId, 50, 70); // 20 * 500 = 10 000
+  // Bien 1 : une facture non réglée (25 000) + une facture réglée en totalité (10 000, exclue du total) —
+  // deux mois distincts (même bail, même fluide : le même mois serait désormais un doublon refusé).
+  const unpaid = await createCharge(fx.leaseId, 0, 50, '2026-09'); // 50 * 500 = 25 000
+  const toBePaid = await createCharge(fx.leaseId, 50, 70, '2026-10'); // 20 * 500 = 10 000
   const payRes = await fetch(`${baseUrl}/api/charges/${toBePaid.chargeId}/payments`, {
     method: 'POST',
     headers: bearer(fx.dgId, fx.tenantId),

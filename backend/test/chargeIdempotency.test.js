@@ -38,12 +38,12 @@ const bearer = (id, tenantId, role = 'dg') => ({
   'Content-Type': 'application/json',
 });
 
-function chargePayload(idempotencyKey) {
+function chargePayload(idempotencyKey, { periodStart = '2026-09-01', periodEnd = '2026-09-30' } = {}) {
   return {
     leaseId: fx.leaseId,
     utilityType: 'soneb',
-    periodStart: '2026-09-01',
-    periodEnd: '2026-09-30',
+    periodStart,
+    periodEnd,
     readingStart: 100,
     readingEnd: 150,
     unitPrice: 500,
@@ -83,19 +83,26 @@ test(
 );
 
 test(
-  'POST /api/charges — deux requêtes avec des clés DIFFÉRENTES créent bien deux factures distinctes (pas de faux positif)',
+  'POST /api/charges — deux requêtes avec des clés DIFFÉRENTES et des MOIS DIFFÉRENTS créent bien deux ' +
+    'factures distinctes (pas de faux positif de l\'idempotence) ; même bail + même fluide + même mois ' +
+    'que la première reste, lui, un doublon refusé (règle métier distincte, voir chargeDuplicatePeriod.test.js)',
   async () => {
+    // Septembre est déjà pris par le test précédent (même bail, même fluide) — on part d'octobre.
     const first = await fetch(`${baseUrl}/api/charges`, {
       method: 'POST',
       headers: bearer(fx.dgId, fx.tenantId),
-      body: JSON.stringify(chargePayload('e1e2e3e4-e5f6-4789-a012-3456789abcde')),
+      body: JSON.stringify(
+        chargePayload('e1e2e3e4-e5f6-4789-a012-3456789abcde', { periodStart: '2026-10-01', periodEnd: '2026-10-31' }),
+      ),
     });
     assert.equal(first.status, 201);
 
     const second = await fetch(`${baseUrl}/api/charges`, {
       method: 'POST',
       headers: bearer(fx.dgId, fx.tenantId),
-      body: JSON.stringify(chargePayload('f1f2f3f4-e5f6-4789-a012-3456789abcde')),
+      body: JSON.stringify(
+        chargePayload('f1f2f3f4-e5f6-4789-a012-3456789abcde', { periodStart: '2026-11-01', periodEnd: '2026-11-30' }),
+      ),
     });
     assert.equal(second.status, 201);
   },

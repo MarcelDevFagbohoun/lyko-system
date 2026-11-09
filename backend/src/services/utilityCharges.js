@@ -22,6 +22,11 @@ const { isoDate } = require('../utils/dates');
 // Un lien de paiement expire par défaut sous 48h — même valeur que leases.js.
 const PAYMENT_LINK_TTL_HOURS = 48;
 
+const MONTH_LABELS_FR = [
+  'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+  'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre',
+];
+
 const CHARGE_SELECT = `
   uc.*,
   COALESCE(pt.paid_total, 0) AS paid_total,
@@ -79,6 +84,33 @@ async function loadCharge(conn, tenantId, id, scopeAgentId) {
 async function getChargeRow(tenantId, id, db = pool) {
   const [rows] = await db.query(`SELECT ${CHARGE_SELECT} ${CHARGE_JOINS} WHERE uc.id = :id AND uc.tenant_id = :tenantId`, { id, tenantId });
   return rows[0];
+}
+
+/**
+ * Refuse une 2e facture pour le même bail, le même fluide et le même mois calendaire (étape 9ter) —
+ * même règle que le relevé par immeuble (`utilityReadings.createBatch`), qui lui compare `period_start`
+ * à l'identique car dérivé du même sélecteur Mois/Année côté client. Ici on compare par année/mois plutôt
+ * que par égalité stricte de date : plus robuste si une ancienne facture (saisie avant ce correctif) a une
+ * `period_start` qui n'est pas le 1er du mois. `excludeId` écarte la facture courante lors d'une correction.
+ */
+async function assertNoDuplicatePeriod(conn, tenantId, leaseId, utilityType, periodStartInput, excludeId) {
+  // `periodStartInput` peut venir soit du payload client (déjà une chaîne AAAA-MM-JJ), soit d'une ligne
+  // relue en base (`existing.period_start`) — une colonne DATE MySQL revient en objet `Date` (UTC).
+  const periodStart = isoDate(periodStartInput);
+  const params = { tenantId, leaseId, utilityType, periodStart };
+  let where = `tenant_id = :tenantId AND lease_id = :leaseId AND utility_type = :utilityType AND deleted_at IS NULL
+               AND YEAR(period_start) = YEAR(:periodStart) AND MONTH(period_start) = MONTH(:periodStart)`;
+  if (excludeId != null) {
+    where += ' AND id != :excludeId';
+    params.excludeId = excludeId;
+  }
+  const [rows] = await conn.query(`SELECT id FROM utility_charges WHERE ${where} LIMIT 1`, params);
+  if (rows.length > 0) {
+    const label = utilityType === 'soneb' ? 'SONEB' : 'SBEE';
+    const [y, m] = periodStart.split('-');
+    const monthLabel = `${MONTH_LABELS_FR[Number(m) - 1]} ${y}`;
+    throw new ApiError(409, `Une facture ${label} existe déjà pour ${monthLabel} sur ce bail.`);
+  }
 }
 
 /** Index de fin de la dernière facture de ce bail pour ce fluide (préremplit l'index de début), ou null. */
@@ -244,6 +276,8 @@ async function createCharge(tenantId, userId, scopeAgentId, data) {
     await conn.beginTransaction();
     // Re-vérifie SOUS VERROU, dans la transaction — voir `assertPeriodOpenLocked`.
     await assertPeriodOpenLocked(conn, tenantId, data.billedAt);
+    // Même bail + même fluide + même mois déjà facturé ailleurs = doublon refusé (étape 9ter).
+    await assertNoDuplicatePeriod(conn, tenantId, data.leaseId, data.utilityType, data.periodStart, null);
     // Clé d'idempotence : un double-clic ne doit jamais créer deux factures identiques (`paymentGuards.js`).
     if (data.idempotencyKey) await claimIdempotencyKey(conn, tenantId, 'charge_created', data.idempotencyKey);
     const [result] = await conn.query(
@@ -327,6 +361,18 @@ async function updateCharge(tenantId, id, scopeAgentId, data) {
       await assertPeriodOpenLocked(conn, tenantId, existing.billed_at);
       if (data.billedAt !== undefined) {
         await assertPeriodOpenLocked(conn, tenantId, data.billedAt);
+      }
+      // Même règle qu'à la création : un mois/fluide changé ne doit pas venir percuter une autre
+      // facture déjà en place sur ce bail (étape 9ter).
+      if (data.periodStart !== undefined || data.utilityType !== undefined) {
+        await assertNoDuplicatePeriod(
+          conn,
+          tenantId,
+          existing.lease_id,
+          data.utilityType ?? existing.utility_type,
+          data.periodStart ?? existing.period_start,
+          id,
+        );
       }
       params.tenantId = tenantId;
       await conn.query(`UPDATE utility_charges SET ${fields.join(', ')} WHERE id = :id AND tenant_id = :tenantId`, params);
