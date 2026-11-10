@@ -303,6 +303,10 @@ export type Lease = {
   arrears: Arrears | null;
   /** Frise des 12 mois : uniquement renvoyée par GET /api/renters/:id (bail actif) — la liste la porte au niveau de l'élément. */
   rentStrip?: RentStripMonth[] | null;
+  /** Montant en FCFA de loyer en retard (bail actif uniquement, 0 sinon) — voir `UnpaidSummary`. */
+  rentOwed?: number;
+  /** Charges SONEB/SBEE non soldées de ce bail (bail actif uniquement, zéros sinon). */
+  unpaidCharges?: { unpaidCount: number; totalDue: number };
   moveInReport: MoveInReport | null;
   moveOutReport: MoveOutReport | null;
   createdBy: Actor;
@@ -350,11 +354,26 @@ export function listRenters(accessToken: string) {
   return apiFetch<{ renters: RenterListItem[] }>("/api/renters", { accessToken });
 }
 
+/**
+ * Total des impayés du bail actif (demande utilisateur, 2026-11-10) : loyer en retard + dette initiale
+ * non soldée + charges SONEB/SBEE impayées. `null` sans bail actif (rien à devoir au jour le jour).
+ */
+export type UnpaidSummary = {
+  rentOwed: number;
+  openingDebtRemaining: number;
+  chargesCount: number;
+  chargesTotal: number;
+  total: number;
+};
+
 export function getRenter(accessToken: string, id: number) {
   // `canSeeFinancials` (audit du 2026-10-23) : faux pour un employé sans permission `locataires`/
   // `comptabilite` — chaque `lease.payments`/`openingDebtPayments`/`additionalDeposits` est alors déjà
   // vide côté serveur (jamais besoin de filtrer soi-même côté client).
-  return apiFetch<{ renter: Renter; canSeeFinancials: boolean; leases: Lease[] }>(`/api/renters/${id}`, { accessToken });
+  return apiFetch<{ renter: Renter; canSeeFinancials: boolean; leases: Lease[]; unpaidSummary: UnpaidSummary | null }>(
+    `/api/renters/${id}`,
+    { accessToken },
+  );
 }
 
 export type CreateRenterInput = {

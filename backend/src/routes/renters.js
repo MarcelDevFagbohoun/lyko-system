@@ -10,7 +10,8 @@ const {
   createLeaseSchema,
 } = require('../validators/renters');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
-const { computeArrears, buildRentStrip, paymentPeriodKey } = require('../services/rentTracking');
+const { computeArrears, computeRentOwed, buildRentStrip, paymentPeriodKey } = require('../services/rentTracking');
+const { getUnpaidChargesForLease } = require('../services/utilityCharges');
 const { toPublicInspectionReport, toPublicMoveOutReport } = require('../services/inspection');
 const { toActor } = require('../utils/actor');
 const { resolvePropertyScope, assertRenterInScope } = require('../services/scope');
@@ -273,6 +274,16 @@ router.get('/:id', canRead, async (req, res, next) => {
       );
     }
 
+    // Impayés (demande utilisateur, 2026-11-10 : « calculer les impayés charge et loyer et l'afficher
+    // sur la page du locataire ») : un seul aller-retour pour les charges SONEB/SBEE du bail ACTIF (le
+    // loyer en retard n'a de sens à calculer qu'au jour le jour sur un bail en cours — un bail archivé a
+    // déjà été soldé à la sortie, voir `moveOutStatement.js`). `getUnpaidChargesForLease` renvoie des
+    // zéros s'il n'y a aucune charge impayée.
+    const activeLeaseRow = detail.leaseRows.find((r) => r.status === 'active') ?? null;
+    const unpaidCharges = activeLeaseRow
+      ? await getUnpaidChargesForLease(req.user.tenantId, activeLeaseRow.id)
+      : { unpaidCount: 0, totalDue: 0 };
+
     const leases = detail.leaseRows.map((row) => {
       const lease = toPublicLease(row);
       const payments = paymentsByLease.get(row.id) || [];
@@ -283,6 +294,13 @@ router.get('/:id', canRead, async (req, res, next) => {
       const rhythm = { mode: lease.rentDueDay != null ? 'calendaire' : 'jour_fixe' };
       const openingDebtPayments = openingDebtPaymentsByLease.get(row.id) || [];
       const openingDebtPaid = openingDebtPayments.reduce((sum, p) => sum + p.amount, 0);
+      const openingDebtRemaining = lease.openingDebtAmount - openingDebtPaid;
+      // Montant RÉEL en FCFA de loyer en retard (même calcul que le Centre de relance et le PV de
+      // sortie, `computeRentOwed`) — jusqu'ici seul le statut « en retard » / nombre de jours était
+      // exposé ici, jamais un montant chiffré.
+      const rentOwed = isActive
+        ? computeRentOwed({ lease: row, payments, rhythm }).rentOwed
+        : 0;
       return {
         ...lease,
         payments: canSeeFinancials ? payments : [],
@@ -317,18 +335,37 @@ router.get('/:id', canRead, async (req, res, next) => {
               rhythm,
             })
           : null,
+        rentOwed,
         openingDebtPaid,
-        openingDebtRemaining: lease.openingDebtAmount - openingDebtPaid,
+        openingDebtRemaining,
         openingDebtPayments: canSeeFinancials ? openingDebtPayments : [],
+        unpaidCharges: isActive ? unpaidCharges : { unpaidCount: 0, totalDue: 0 },
         moveInReport: toPublicInspectionReport(detail.moveInByLease.get(row.id)),
         moveOutReport: toPublicMoveOutReport(detail.moveOutByLease.get(row.id)),
       };
     });
 
+    // Total affiché en tête de fiche : loyer en retard + dette initiale non soldée (toutes deux
+    // uniquement sur le bail actif, voir ci-dessus) + charges SONEB/SBEE impayées de ce même bail.
+    let unpaidSummary = null;
+    if (activeLeaseRow) {
+      const activeLease = leases.find((l) => l.id === activeLeaseRow.id);
+      const rentOwed = activeLease.rentOwed;
+      const openingDebtRemaining = activeLease.openingDebtRemaining;
+      unpaidSummary = {
+        rentOwed,
+        openingDebtRemaining,
+        chargesCount: unpaidCharges.unpaidCount,
+        chargesTotal: unpaidCharges.totalDue,
+        total: rentOwed + openingDebtRemaining + unpaidCharges.totalDue,
+      };
+    }
+
     res.json({
       renter: toPublicRenter(detail.renterRow),
       canSeeFinancials,
       leases,
+      unpaidSummary,
     });
   } catch (err) {
     next(err);

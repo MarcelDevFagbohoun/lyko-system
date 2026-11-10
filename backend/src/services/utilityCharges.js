@@ -252,6 +252,23 @@ async function getPropertyChargesSummary(tenantId, scopeAgentId, propertyId) {
   return found ?? { propertyId, unpaidCount: 0, totalDue: 0 };
 }
 
+/**
+ * Charges SONEB/SBEE non soldées d'UN bail précis (fiche locataire, demande utilisateur 2026-11-10 :
+ * « calculer les impayés charge et loyer et l'afficher sur la page du locataire »). Restreint au bail
+ * donné (toujours le bail ACTIF côté appelant) — le scope agent a déjà été vérifié via le locataire lui
+ * -même (`assertRenterInScope`) avant d'arriver ici, inutile de le revérifier sur chaque charge.
+ */
+async function getUnpaidChargesForLease(tenantId, leaseId) {
+  const [[row]] = await pool.query(
+    `SELECT COUNT(*) AS unpaid_count, COALESCE(SUM(uc.amount - COALESCE(pt.paid_total, 0)), 0) AS total_due
+     FROM utility_charges uc
+     LEFT JOIN (SELECT charge_id, SUM(amount) AS paid_total FROM utility_payments GROUP BY charge_id) pt ON pt.charge_id = uc.id
+     WHERE uc.tenant_id = :tenantId AND uc.lease_id = :leaseId AND uc.deleted_at IS NULL AND uc.status <> 'payee'`,
+    { tenantId, leaseId },
+  );
+  return { unpaidCount: Number(row.unpaid_count), totalDue: Number(row.total_due) };
+}
+
 /** Total déjà réglé sur une facture. */
 async function getPaidTotal(chargeId, db = pool) {
   const [[{ paidTotal }]] = await db.query(
@@ -615,6 +632,7 @@ module.exports = {
   getMonthSummary,
   getUnpaidSummaryByProperty,
   getPropertyChargesSummary,
+  getUnpaidChargesForLease,
   createCharge,
   updateCharge,
   listChargePayments,

@@ -14,12 +14,14 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, openAuthenticatedPdf } from "@/lib/api/client";
+import { AlertTriangle } from "lucide-react";
 import {
   getRenter,
   entryReceiptPdfPath,
   moveOutReportPdfPath,
   type Renter,
   type Lease,
+  type UnpaidSummary,
 } from "@/lib/api/renters";
 import { generateLeasePaymentLink } from "@/lib/api/paymentLinks";
 import { PaymentLinkCard } from "@/components/payments/payment-link-card";
@@ -72,6 +74,7 @@ function LocataireContent() {
 
   const [renter, setRenter] = React.useState<Renter | null>(null);
   const [leases, setLeases] = React.useState<Lease[] | null>(null);
+  const [unpaidSummary, setUnpaidSummary] = React.useState<UnpaidSummary | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [editingRenter, setEditingRenter] = React.useState(false);
   // Locataire archivé (demande utilisateur, 2026-11-06) : dossier complet déplié à la demande, pas
@@ -84,6 +87,7 @@ function LocataireContent() {
       .then((res) => {
         setRenter(res.renter);
         setLeases(res.leases);
+        setUnpaidSummary(res.unpaidSummary);
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Locataire introuvable."));
   }, [accessToken, renterId]);
@@ -203,6 +207,32 @@ function LocataireContent() {
             </div>
           )}
         </div>
+        )}
+
+        {unpaidSummary && unpaidSummary.total > 0 && (
+          <Card tone="danger" accent>
+            <CardContent className="flex flex-col gap-2 pt-5">
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={18} className="shrink-0 text-danger-fg" />
+                <p className="font-label-md text-danger-fg">
+                  Impayés : {formatFcfa(unpaidSummary.total)}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-body-sm text-ink-soft">
+                {unpaidSummary.rentOwed > 0 && (
+                  <span>Loyer en retard : <strong className="text-ink">{formatFcfa(unpaidSummary.rentOwed)}</strong></span>
+                )}
+                {unpaidSummary.openingDebtRemaining > 0 && (
+                  <span>Dette initiale : <strong className="text-ink">{formatFcfa(unpaidSummary.openingDebtRemaining)}</strong></span>
+                )}
+                {unpaidSummary.chargesTotal > 0 && (
+                  <span>
+                    Charges SONEB/SBEE ({unpaidSummary.chargesCount}) : <strong className="text-ink">{formatFcfa(unpaidSummary.chargesTotal)}</strong>
+                  </span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         <Card tone="slate" accent>
