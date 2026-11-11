@@ -36,7 +36,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useCan } from "@/lib/auth/use-can";
 import { useToast } from "@/lib/toast/toast-context";
-import { REFUND_PAYMENT_METHODS, ReviewHistoryList } from "./shared";
+import { MoveOutStepper, REFUND_PAYMENT_METHODS, ReviewHistoryList } from "./shared";
 
 export function FinalizedView({
   leaseId,
@@ -120,6 +120,8 @@ export function FinalizedView({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
+        <MoveOutStepper report={report} />
+
         <div className="flex flex-wrap items-center gap-3">
           <DownloadPvButton leaseId={lease.id} />
           {user?.role === "dg" && <ReopenReportButton onReopen={handleReopen} />}

@@ -42,7 +42,7 @@ import {
 } from "@/components/ui/card";
 import { useToast } from "@/lib/toast/toast-context";
 import { BillingReportSection, ComparisonSection } from "./finalized-view";
-import { REFUND_PAYMENT_METHODS, ReviewHistoryList } from "./shared";
+import { CollapsibleSection, MoveOutStepper, REFUND_PAYMENT_METHODS, ReviewHistoryList } from "./shared";
 
 export function DraftEditor({
   leaseId,
@@ -75,6 +75,12 @@ export function DraftEditor({
   const [balance, setBalance] = React.useState<BalanceChoice>({ resolution: "", paymentMethod: "", note: "" });
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Enregistrement automatique (demande utilisateur, 2026-11-11) : évite de perdre une saisie quand
+  // l'employé oublie de cliquer sur « Enregistrer le brouillon » avant de quitter la page. Le bouton
+  // manuel reste disponible (utile avant de soumettre/finaliser, qui persistent déjà eux-mêmes).
+  const [dirty, setDirty] = React.useState(false);
+  const [lastSavedAt, setLastSavedAt] = React.useState<Date | null>(null);
+  const [autosaveError, setAutosaveError] = React.useState<string | null>(null);
   const [finalizing, setFinalizing] = React.useState(false);
   const [finalizeError, setFinalizeError] = React.useState<string | null>(null);
   const [refundPaymentMethod, setRefundPaymentMethod] = React.useState("");
@@ -115,6 +121,12 @@ export function DraftEditor({
   const peintureOverflow = peintureDeposit ? Math.max(0, (Number(peintureAmount) || 0) - peintureDeposit.amount) : 0;
   const peintureReturned = peintureDeposit ? peintureDeposit.amount - peintureDeduction : 0;
 
+  // Dernier contenu effectivement enregistré, pour l'enregistrement automatique ci-dessous — comparé
+  // par VALEUR (pas par référence) : `persist()` renvoie des `zones` recréées par le serveur, qui
+  // redéclencheraient l'effet en boucle si on se fiait seulement au changement de référence.
+  const snapshot = () => JSON.stringify({ zones, generalNotes, extraLines, peintureAmount, peintureNote });
+  const lastSavedSnapshotRef = React.useRef(snapshot());
+
   React.useEffect(() => {
     if (!accessToken) return;
     getMoveOutReport(accessToken, leaseId).then((res) => setStatement(res.statement)).catch(() => {
@@ -129,6 +141,42 @@ export function DraftEditor({
       // doit jamais bloquer la saisie de l'état des lieux.
     });
   }, [accessToken]);
+
+  // Enregistrement automatique : 2,5 s après la dernière modification RÉELLE (comparée au dernier
+  // contenu effectivement enregistré, voir `lastSavedSnapshotRef` ci-dessus), silencieux (pas de toast),
+  // et jamais pendant une soumission/finalisation déjà en cours (pour ne pas enregistrer une version
+  // concurrente pendant que `persist()` tourne déjà ailleurs).
+  React.useEffect(() => {
+    if (snapshot() === lastSavedSnapshotRef.current) {
+      setDirty(false);
+      return;
+    }
+    setDirty(true);
+    if (finalizing || submitting) return;
+    const timer = setTimeout(() => {
+      persist()
+        .then((savedReport) => {
+          // Pris sur la réponse serveur (pas la saisie locale) : `zones` est recréé par le serveur
+          // (étape 43 côté client — voir le commentaire sur `snapshot` ci-dessus), donc c'est bien
+          // CETTE forme qui se retrouvera dans l'état local après le `setZones` déjà fait par `persist()`.
+          lastSavedSnapshotRef.current = JSON.stringify({
+            zones: savedReport.zones,
+            generalNotes,
+            extraLines,
+            peintureAmount,
+            peintureNote,
+          });
+          setDirty(false);
+          setLastSavedAt(new Date());
+          setAutosaveError(null);
+        })
+        .catch((err) => {
+          setAutosaveError(err instanceof ApiError ? err.message : "Échec de l'enregistrement automatique.");
+        });
+    }, 2500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zones, generalNotes, extraLines, peintureAmount, peintureNote]);
 
   // Postes dégradés par rapport à l'entrée ("zoneKey::itemKey") — utilisé
   // pour mettre en évidence l'invite à facturer directement dans le
@@ -151,6 +199,9 @@ export function DraftEditor({
     return new Set(results.filter((r) => r.status === "degraded").map((r) => `${r.zoneKey}::${r.itemKey}`));
   }, [lease.moveInReport, report, zones]);
 
+  // Repère pour replier par défaut les sections financières annexes (voir `CollapsibleSection`
+  // ci-dessous) tant que la saisie de l'état des lieux proprement dit n'a pas commencé.
+  const inspectionStarted = React.useMemo(() => zones.some((z) => z.items.some((it) => it.condition)), [zones]);
   const itemsTotal = zones.reduce((sum, z) => sum + z.items.reduce((s, it) => s + it.deduction, 0), 0);
   const validExtraLines = extraLines.filter((l) => l.label.trim().length >= 2);
   const otherTotal = validExtraLines.reduce((s, l) => s + (l.kind === "realisee_locataire" ? 0 : l.amount), 0);
@@ -181,7 +232,17 @@ export function DraftEditor({
     setSaving(true);
     setError(null);
     try {
-      await persist();
+      const savedReport = await persist();
+      lastSavedSnapshotRef.current = JSON.stringify({
+        zones: savedReport.zones,
+        generalNotes,
+        extraLines,
+        peintureAmount,
+        peintureNote,
+      });
+      setDirty(false);
+      setLastSavedAt(new Date());
+      setAutosaveError(null);
       toast.success("Brouillon enregistré.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'enregistrer le brouillon.");
@@ -275,7 +336,15 @@ export function DraftEditor({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await persist();
+      const savedReport = await persist();
+      lastSavedSnapshotRef.current = JSON.stringify({
+        zones: savedReport.zones,
+        generalNotes,
+        extraLines,
+        peintureAmount,
+        peintureNote,
+      });
+      setDirty(false);
       const res = await submitMoveOutReport(accessToken, leaseId);
       onReportChange(res.report);
       toast.success("PV soumis pour validation à la direction générale.");
@@ -311,6 +380,8 @@ export function DraftEditor({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
+        <MoveOutStepper report={report} />
+
         {error && <p className="text-body-sm text-danger-fg">{error}</p>}
 
         {lease.arrears?.status === "late" && (
@@ -339,11 +410,19 @@ export function DraftEditor({
 
         <BillingReportSection zones={zones} />
 
-        <ExitLinesEditor lines={extraLines} onChange={setExtraLines} />
+        <CollapsibleSection
+          title="Autres retenues (main-d'œuvre, pénalités…)"
+          defaultOpen={inspectionStarted || validExtraLines.length > 0}
+        >
+          <ExitLinesEditor lines={extraLines} onChange={setExtraLines} />
+        </CollapsibleSection>
 
         {heldAdditionalDeposits.length > 0 && (
-          <div className="flex flex-col gap-4 border-t border-border pt-4">
-            <span className="font-label-sm uppercase tracking-wider text-ink-muted">Cautions supplémentaires</span>
+          <CollapsibleSection
+            title="Cautions supplémentaires"
+            defaultOpen={inspectionStarted || peintureAmount.length > 0 || Object.keys(additionalDepositRefundMethods).length > 0}
+          >
+            <div className="flex flex-col gap-4">
             {heldAdditionalDeposits.map((d) =>
               d.type === "peinture" ? (
                 <div key="peinture" className="flex flex-col gap-3 rounded-lg border border-border-subtle p-3">
@@ -421,7 +500,8 @@ export function DraftEditor({
                 </div>
               ),
             )}
-          </div>
+            </div>
+          </CollapsibleSection>
         )}
 
         <div className="flex flex-col gap-2">
@@ -476,10 +556,19 @@ export function DraftEditor({
           </Field>
         )}
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button type="button" variant="secondary" onClick={handleSave} disabled={saving}>
             {saving ? "Enregistrement…" : "Enregistrer le brouillon"}
           </Button>
+          <span className="text-body-xs text-ink-muted">
+            {autosaveError
+              ? autosaveError
+              : dirty
+                ? "Modifications non encore enregistrées…"
+                : lastSavedAt
+                  ? `Enregistré automatiquement à ${lastSavedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
+                  : "Enregistré."}
+          </span>
         </div>
 
         {report.reviewHistory.length > 0 && <ReviewHistoryList history={report.reviewHistory} />}
