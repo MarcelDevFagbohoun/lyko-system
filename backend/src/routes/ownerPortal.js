@@ -15,10 +15,12 @@
 const { Router } = require('express');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../config/db');
+const { ApiError } = require('../middleware/error');
 const { requireOwnerPortalToken } = require('../middleware/portalAuth');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
 const { getRecetteProprietaire } = require('../services/commission');
-const { streamOwnerStatementPdf, streamUtilityCarnetPdf } = require('../services/pdf');
+const { streamOwnerStatementPdf, streamUtilityCarnetPdf, streamOwnerPayoutReceiptPdf } = require('../services/pdf');
+const owners = require('../services/owners');
 const { getOwnerCarnet, resolveMonthWindow } = require('../services/utilityPoint');
 const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 const { isoDate } = require('../utils/dates');
@@ -239,6 +241,40 @@ router.get('/:token/statement.pdf', async (req, res, next) => {
         paidAt: p.paid_at,
         paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
       })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/owner-portal/:token/payouts/:payoutId/receipt.pdf — reçu d'un versement précis, pour que le
+// propriétaire le télécharge lui-même (demande utilisateur, 2026-11-11). `loadOwnerPayout` scope
+// strictement par `ownerId` (venant du token) : impossible d'accéder au versement d'un autre propriétaire
+// en devinant un autre `payoutId`.
+router.get('/:token/payouts/:payoutId/receipt.pdf', async (req, res, next) => {
+  try {
+    const { id: ownerId, tenantId } = req.portalOwner;
+    const payoutId = Number(req.params.payoutId);
+    if (!Number.isInteger(payoutId) || payoutId <= 0) throw new ApiError(400, 'Identifiant invalide');
+
+    const payout = await owners.loadOwnerPayout(tenantId, ownerId, payoutId);
+    const [ownerRows] = await pool.query('SELECT * FROM owners WHERE id = :id LIMIT 1', { id: ownerId });
+    const [tenantRows] = await pool.query('SELECT * FROM tenants WHERE id = :id LIMIT 1', { id: tenantId });
+
+    const issuance = await getOrCreateIssuance(tenantId, 'recu_versement', payout.id);
+    await registerDownload(issuance);
+
+    streamOwnerPayoutReceiptPdf(res, {
+      tenant: tenantRows[0],
+      owner: ownerRows[0],
+      payout,
+      issuer: {
+        first_name: payout.recorded_by_first_name,
+        last_name: payout.recorded_by_last_name,
+        role: payout.recorded_by_role,
+        stamp_path: payout.recorded_by_stamp_path,
+      },
+      verificationCode: issuance.verification_code,
     });
   } catch (err) {
     next(err);

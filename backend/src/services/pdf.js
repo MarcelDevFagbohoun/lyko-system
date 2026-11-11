@@ -637,6 +637,53 @@ function streamChargeReceiptPdf(res, { tenant, renter, charge, payment }) {
   });
 }
 
+/**
+ * Reçu de versement propriétaire (demande utilisateur, 2026-11-11 : « lorsqu'on fait un versement à un
+ * propriétaire, cela ne génère pas la quittance ») : remis au propriétaire à chaque reversement de loyers
+ * nets — même gabarit que les autres reçus (même tampon « PAYÉ »), mais dans l'autre sens : le cabinet
+ * certifie avoir VERSÉ au propriétaire, pas reçu de lui. Pas de nouvelle séquence de numérotation : le
+ * numéro de reçu dérive de l'identifiant du versement (`owner_payouts.id`), comme pour
+ * `streamChargeReceiptPdf` — fonctionne donc aussi pour les versements déjà enregistrés avant cette
+ * fonctionnalité (décision explicite de l'utilisateur).
+ */
+function streamOwnerPayoutReceiptPdf(res, { tenant, owner, payout, issuer, verificationCode }) {
+  const issuedOn = formatDateFr(isoDay(payout.created_at));
+  const issuedAt = `${issuedOn} à ${formatTimeHm(payout.created_at)}`;
+  const method = PAYMENT_METHOD_LABELS[payout.payment_method] ?? payout.payment_method;
+  renderReceiptDocument(res, {
+    tenant,
+    filename: `recu-versement-${payout.id}.pdf`,
+    title: 'REÇU DE VERSEMENT',
+    subtitle: `Période : ${payout.period_label}`,
+    meta: [['N° de reçu', `VST-${payout.id}`], verificationCode ? ['Code de vérification', verificationCode] : ['Délivré le', issuedAt]],
+    intro: { prefix: 'Reçu délivré le ', bold: issuedAt },
+    parties: [
+      ['Bénéficiaire', owner.name],
+      ['Entreprise / mandataire', tenant.company_name],
+      ['Mode de paiement', method],
+      ['Téléphone du bénéficiaire', owner.phone ?? '—'],
+    ],
+    detailLabel: 'Détail du versement',
+    lines: {
+      columns: [
+        { label: 'Désignation', width: 235 },
+        { label: 'Période', width: 160 },
+        { label: 'Montant', width: 100, align: 'right', bold: true },
+      ],
+      rows: [[payout.notes || 'Versement loyers nets', payout.period_label, D.fcfa(payout.amount)]],
+    },
+    total: { label: 'Montant versé', amount: D.fcfa(payout.amount), raw: payout.amount },
+    wordsPrefix: 'Arrêté le présent reçu à la somme de',
+    note:
+      `L'entreprise ${tenant.company_name} certifie avoir versé à ${owner.name} ` +
+      `la somme ci-dessus au titre de la période ${payout.period_label}. Ce reçu fait foi de paiement.`,
+    signatureTitle: 'Le cabinet / mandataire',
+    showPaidBadge: true,
+    issuer,
+    verificationCode,
+  });
+}
+
 // ── Contrat de bail : mise en page « cabinet d'avocats » — empattements (Times), noir chaud et filets fins, sans aplat de couleur. ──
 const SERIF = 'Times-Roman';
 const SERIF_BOLD = 'Times-Bold';
@@ -2319,6 +2366,7 @@ module.exports = {
   streamSubscriptionInvoicePdf,
   buildSubscriptionReceiptBuffer,
   streamChargeReceiptPdf,
+  streamOwnerPayoutReceiptPdf,
   streamLeaseContractPdf,
   streamOwnerStatementPdf,
   streamUtilityCarnetPdf,

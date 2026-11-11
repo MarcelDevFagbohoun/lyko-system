@@ -14,7 +14,8 @@ const {
   createDepositTransferSchema,
 } = require('../validators/owners');
 const { UNIT_DESIGNATIONS, PROPERTY_TYPES } = require('../constants/properties');
-const { streamOwnerStatementPdf, streamUtilityCarnetPdf } = require('../services/pdf');
+const { streamOwnerStatementPdf, streamUtilityCarnetPdf, streamOwnerPayoutReceiptPdf } = require('../services/pdf');
+const { getOrCreateIssuance, registerDownload } = require('../services/documentIssuance');
 const { getEscrowBalances, getDepositsHeldByOwner, getUnpaidOpeningDebtByOwner, pickRateValidAt } = require('../services/commission');
 const { toActor } = require('../utils/actor');
 const { getChargeAccount, listRemittances } = require('../services/utilityRemittance');
@@ -502,6 +503,41 @@ router.get('/:id/statement.pdf', canReadDocs, requireFeature('owner_portal'), as
         paidAt: p.paid_at,
         paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
       })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/owners/:id/payouts/:payoutId/receipt.pdf — reçu d'un versement précis (demande utilisateur,
+// 2026-11-11 : « lorsqu'on fait un versement à un propriétaire, cela ne génère pas la quittance »).
+// Fonctionne aussi pour les versements déjà enregistrés avant cette fonctionnalité (le code de
+// vérification se crée à la première génération, comme le relevé/carnet — voir `documentIssuance`).
+router.get('/:id/payouts/:payoutId/receipt.pdf', canReadDocs, requireFeature('owner_portal'), async (req, res, next) => {
+  const id = parseId(req);
+  const payoutId = Number(req.params.payoutId);
+  if (id === null || !Number.isInteger(payoutId) || payoutId <= 0) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const owner = await owners.loadOwner(pool, req.user.tenantId, id, scopeAgentId);
+    const payout = await owners.loadOwnerPayout(req.user.tenantId, id, payoutId);
+    const tenant = await owners.getTenantRow(req.user.tenantId);
+
+    const issuance = await getOrCreateIssuance(req.user.tenantId, 'recu_versement', payout.id);
+    await registerDownload(issuance);
+
+    streamOwnerPayoutReceiptPdf(res, {
+      tenant,
+      owner,
+      payout,
+      issuer: {
+        first_name: payout.recorded_by_first_name,
+        last_name: payout.recorded_by_last_name,
+        role: payout.recorded_by_role,
+        stamp_path: payout.recorded_by_stamp_path,
+      },
+      verificationCode: issuance.verification_code,
     });
   } catch (err) {
     next(err);

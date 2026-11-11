@@ -74,6 +74,13 @@ export function ownerPortalStatementPdfUrl(token: string) {
   return `${API_URL}/api/owner-portal/${token}/statement.pdf`;
 }
 
+/** Reçu d'un versement précis (demande utilisateur, 2026-11-11) — 5 téléchargements max + code de
+ * vérification, comme le relevé. Fonctionne aussi pour les versements déjà enregistrés avant cette
+ * fonctionnalité. */
+export function ownerPortalPayoutReceiptPdfUrl(token: string, payoutId: number) {
+  return `${API_URL}/api/owner-portal/${token}/payouts/${payoutId}/receipt.pdf`;
+}
+
 /** Carnet des charges en PDF (5 téléchargements max + code de vérification, comme le relevé). */
 export function ownerPortalCarnetPdfUrl(token: string, from: string, to: string) {
   return `${API_URL}/api/owner-portal/${token}/carnet-charges.pdf?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;

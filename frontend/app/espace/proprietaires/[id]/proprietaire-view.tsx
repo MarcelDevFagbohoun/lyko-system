@@ -20,6 +20,7 @@ import type { ChargeAccount } from "@/lib/api/charges";
 import {
   getOwner,
   statementPdfPath,
+  ownerPayoutReceiptPdfPath,
   type Owner,
   type OwnerProperty,
   type OwnerPayout,
@@ -417,6 +418,7 @@ function ProprietaireContent() {
                     <TableHead>Mode</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Enregistré par</TableHead>
+                    <TableHead className="text-right">Reçu</TableHead>
                   </tr>
                 </TableHeader>
                 <TableBody>
@@ -428,6 +430,16 @@ function ProprietaireContent() {
                       <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
                       <TableCell className="text-ink-soft">
                         {p.recordedBy ? `${p.recordedBy.name} (${p.recordedBy.roleLabel})` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => accessToken && openAuthenticatedPdf(ownerPayoutReceiptPdfPath(owner.id, p.id), accessToken)}
+                        >
+                          <FileDown size={14} />
+                          Reçu
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}

@@ -142,6 +142,26 @@ async function listOwnerPayouts(tenantId, ownerId) {
   return rows;
 }
 
+/**
+ * Un versement précis d'un propriétaire (reçu de versement, demande utilisateur 2026-11-11), avec
+ * l'émetteur (`recorded_by`, pour le cachet/signature du reçu). Scopé par `tenantId` ET `ownerId` — utilisé
+ * aussi bien côté employé que côté portail propriétaire, où `ownerId` vient du token et ne doit jamais
+ * permettre d'accéder au versement d'un AUTRE propriétaire.
+ */
+async function loadOwnerPayout(tenantId, ownerId, payoutId) {
+  const [rows] = await pool.query(
+    `SELECT op.*, u.first_name AS recorded_by_first_name, u.last_name AS recorded_by_last_name,
+            u.role AS recorded_by_role, u.stamp_path AS recorded_by_stamp_path
+     FROM owner_payouts op
+     JOIN users u ON u.id = op.recorded_by
+     WHERE op.id = :payoutId AND op.owner_id = :ownerId AND op.tenant_id = :tenantId
+     LIMIT 1`,
+    { payoutId, ownerId, tenantId },
+  );
+  if (!rows[0]) throw new ApiError(404, 'Versement introuvable');
+  return rows[0];
+}
+
 /** Historique des taux de commission d'un propriétaire. */
 async function listCommissionRates(tenantId, ownerId) {
   const [rows] = await pool.query(
@@ -586,6 +606,7 @@ module.exports = {
   listOwners,
   listOwnerPropertyUnits,
   listOwnerPayouts,
+  loadOwnerPayout,
   listCommissionRates,
   createOwner,
   updateOwner,

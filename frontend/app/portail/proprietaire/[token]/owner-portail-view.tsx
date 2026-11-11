@@ -7,6 +7,7 @@ import { API_URL, ApiError } from "@/lib/api/client";
 import {
   getOwnerPortalDashboard,
   ownerPortalStatementPdfUrl,
+  ownerPortalPayoutReceiptPdfUrl,
   type OwnerPortalDashboard,
 } from "@/lib/api/ownerPortal";
 import { formatFcfa, monthLabelFr } from "@/lib/utils";
@@ -201,6 +202,7 @@ export function OwnerPortailView() {
                         <TableHead className="text-right">Montant</TableHead>
                         <TableHead>Mode</TableHead>
                         <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Reçu</TableHead>
                       </tr>
                     </TableHeader>
                     <TableBody>
@@ -210,6 +212,17 @@ export function OwnerPortailView() {
                           <TableAmount>{formatFcfa(p.amount)}</TableAmount>
                           <TableCell className="text-ink-soft">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? p.paymentMethod}</TableCell>
                           <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => window.open(ownerPortalPayoutReceiptPdfUrl(token, p.id), "_blank", "noopener,noreferrer")}
+                            >
+                              <FileDown size={14} />
+                              Reçu
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

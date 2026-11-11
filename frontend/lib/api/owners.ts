@@ -289,6 +289,12 @@ export function statementPdfPath(ownerId: number) {
   return `/api/owners/${ownerId}/statement.pdf`;
 }
 
+/** Reçu d'un versement précis (demande utilisateur, 2026-11-11) — fonctionne aussi pour les versements
+ * déjà enregistrés avant cette fonctionnalité. */
+export function ownerPayoutReceiptPdfPath(ownerId: number, payoutId: number) {
+  return `/api/owners/${ownerId}/payouts/${payoutId}/receipt.pdf`;
+}
+
 export type UpdateCommissionRateInput = {
   rate: number;
   /** Facultatif : aujourd'hui par défaut côté serveur. */
