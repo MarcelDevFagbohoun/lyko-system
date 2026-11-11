@@ -424,6 +424,21 @@ function drawNote(doc, y, label, text) {
 }
 
 /**
+ * Badge « PAYÉ » (demande utilisateur, 2026-11-11) : rectangle très clair (fond vert pâle, bordure verte)
+ * avec le texte en vert, placé juste au-dessus du cachet/de la signature — sur les documents qui
+ * certifient un paiement DÉJÀ reçu (quittance, reçu d'entrée, reçu de charges), jamais sur ceux qui n'en
+ * sont pas (fiche de paie, avis de paiement, reçu d'opération interne). Largeur alignée sur la carte de
+ * signature à une seule colonne (`drawSignatureCards` avec une seule carte) pour rester bien placé au-dessus.
+ */
+function drawPaidBadge(doc, y, { width = 240, label = 'PAYÉ' } = {}) {
+  const x = LEFT + WIDTH - width;
+  const h = 26;
+  doc.roundedRect(x, y, width, h, 6).lineWidth(1).fillAndStroke(C.SUCCESS_BG, C.SUCCESS);
+  doc.font(F.BOLD).fontSize(11).fillColor(C.SUCCESS).text(label, x, y + 7, { width, align: 'center', characterSpacing: 2, lineBreak: false });
+  return y + h + 10;
+}
+
+/**
  * Cartes de signature (une ou deux). `cards` : [{ title, name, role?, date?, signatureFile?, stampFile?, hint? }].
  * Bandeau marine en tête de carte, zone de signature, nom et fonction dessous.
  */
@@ -601,6 +616,6 @@ function finishDocument(doc, { verificationCode = null, frontendHost = null, dow
 module.exports = {
   C, F, LEFT, WIDTH, CONTENT_TOP, fcfa, amountInWordsFr, sentenceAmount, imageIfExists,
   drawBanner, layoutActivityList, drawActivityList, drawContinuationBand, drawSection, drawInfoGrid, drawStatTiles, drawTable, drawTotalBar,
-  drawWordsLine, drawNote, drawSignatureCards, finishDocument, ensureRoom,
+  drawWordsLine, drawNote, drawSignatureCards, drawPaidBadge, finishDocument, ensureRoom,
   drawPlainHeader, drawPlainSection, drawPlainTable, drawPlainAmount, drawPlainTotal, drawPlainNote,
 };

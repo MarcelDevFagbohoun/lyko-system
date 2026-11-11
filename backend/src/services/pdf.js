@@ -219,7 +219,7 @@ function issuerCard(tenant, issuer, title) {
  * lettres, note, signature. `lines` : { columns, rows } ; `total` : { label, amount } ; `wordsPrefix` : début de
  * la phrase « Arrêté … à la somme de ».
  */
-function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, intro, partiesLabel = 'Parties', parties, detailLabel = 'Détail', lines, total, wordsPrefix, note, signatureTitle, issuer, verificationCode, extraRows = null }) {
+function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, intro, partiesLabel = 'Parties', parties, detailLabel = 'Détail', lines, total, wordsPrefix, note, signatureTitle, issuer, verificationCode, extraRows = null, showPaidBadge = false }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
@@ -241,6 +241,13 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
   y = D.drawPlainTotal(doc, y, total.label, total.amount);
   y = D.drawWordsLine(doc, y, total.raw, wordsPrefix, { color: D.C.DANGER }); // phrase « Arrêtée la présente… » en rouge
   if (note) y = D.drawPlainNote(doc, y + 2, note);
+  // Badge « PAYÉ » (demande utilisateur, 2026-11-11) : uniquement sur les documents qui certifient un
+  // paiement déjà reçu (quittance, reçu d'entrée, reçu de charges) — voir `drawPaidBadge`. On réserve la
+  // place pour le badge ET la carte de signature ensemble pour qu'un saut de page ne les sépare jamais.
+  if (showPaidBadge) {
+    y = D.ensureRoom(doc, y, 36 + 170 + 10);
+    y = D.drawPaidBadge(doc, y);
+  }
   y = D.drawSignatureCards(doc, y, [issuerCard(tenant, issuer, signatureTitle)], { section: false, plain: true });
 
   drawFooter(doc, { verificationCode });
@@ -310,6 +317,7 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
       `L'entreprise ${tenant.company_name} certifie avoir reçu de ${renter.first_name} ${renter.last_name} ` +
       `la somme ci-dessus au titre du loyer de ${propertyLabel(property)}, pour la période mentionnée. Merci pour votre confiance.`,
     signatureTitle: 'Le bailleur / mandataire',
+    showPaidBadge: true,
     issuer,
     verificationCode,
   });
@@ -363,6 +371,7 @@ function streamEntryReceiptPdf(res, { tenant, renter, property, lease, entryRece
       `la somme ci-dessus à la signature du bail de ${propertyLabel(property)}. Les frais d'agence sont ` +
       `non remboursables ; les cautions sont restituables selon les conditions du bail.`,
     signatureTitle: 'Le bailleur / mandataire',
+    showPaidBadge: true,
     issuer,
     verificationCode,
   });
@@ -627,6 +636,7 @@ function streamChargeReceiptPdf(res, { tenant, renter, charge, payment }) {
     wordsPrefix: 'Arrêté le présent reçu à la somme de',
     note: 'Reçu généré automatiquement pour le règlement de cette facture. Conservez-le comme preuve de paiement.',
     signatureTitle: 'Le bailleur / mandataire',
+    showPaidBadge: true,
     issuer: null,
   });
 }
