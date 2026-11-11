@@ -241,14 +241,16 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
   y = D.drawPlainTotal(doc, y, total.label, total.amount);
   y = D.drawWordsLine(doc, y, total.raw, wordsPrefix, { color: D.C.DANGER }); // phrase « Arrêtée la présente… » en rouge
   if (note) y = D.drawPlainNote(doc, y + 2, note);
-  // Badge « PAYÉ » (demande utilisateur, 2026-11-11) : uniquement sur les documents qui certifient un
-  // paiement déjà reçu (quittance, reçu d'entrée, reçu de charges) — voir `drawPaidBadge`. On réserve la
-  // place pour le badge ET la carte de signature ensemble pour qu'un saut de page ne les sépare jamais.
   if (showPaidBadge) {
-    y = D.ensureRoom(doc, y, 36 + 170 + 10);
-    y = D.drawPaidBadge(doc, y);
+    // Tampon « PAYÉ » superposé SUR la carte de signature déjà tracée (voir `drawPaidStamp`) — on calcule
+    // nous-mêmes le même saut de page que `drawSignatureCards` ferait, pour connaître à coup sûr le sommet
+    // réel de la carte (qu'il y ait eu saut de page ou non) et y dessiner le tampon par-dessus.
+    const cardTopY = D.ensureRoom(doc, y, 170 + 10);
+    y = D.drawSignatureCards(doc, cardTopY, [issuerCard(tenant, issuer, signatureTitle)], { section: false, plain: true });
+    D.drawPaidStamp(doc, D.LEFT + D.WIDTH - 240, cardTopY, 240);
+  } else {
+    y = D.drawSignatureCards(doc, y, [issuerCard(tenant, issuer, signatureTitle)], { section: false, plain: true });
   }
-  y = D.drawSignatureCards(doc, y, [issuerCard(tenant, issuer, signatureTitle)], { section: false, plain: true });
 
   drawFooter(doc, { verificationCode });
   doc.end();

@@ -424,18 +424,24 @@ function drawNote(doc, y, label, text) {
 }
 
 /**
- * Badge « PAYÉ » (demande utilisateur, 2026-11-11) : rectangle très clair (fond vert pâle, bordure verte)
- * avec le texte en vert, placé juste au-dessus du cachet/de la signature — sur les documents qui
- * certifient un paiement DÉJÀ reçu (quittance, reçu d'entrée, reçu de charges), jamais sur ceux qui n'en
- * sont pas (fiche de paie, avis de paiement, reçu d'opération interne). Largeur alignée sur la carte de
- * signature à une seule colonne (`drawSignatureCards` avec une seule carte) pour rester bien placé au-dessus.
+ * Tampon « PAYÉ » (demande utilisateur, 2026-11-11 ; affiné le même jour pour rester SUR le cachet, en
+ * rouge plutôt qu'au-dessus de la signature en vert) : rectangle fin légèrement incliné, en rouge, superposé
+ * sur la zone du cachet/signature — comme un vrai tampon encreur apposé sur un reçu papier. Dessiné en
+ * SURIMPRESSION de la carte de signature déjà tracée (`drawSignatureCards`), donc ne réserve AUCUN espace
+ * vertical supplémentaire : un reçu court qui tenait sur une page avant ce tampon continue d'y tenir.
+ * Uniquement sur les documents qui certifient un paiement DÉJÀ reçu (quittance, reçu d'entrée, reçu de
+ * charges), jamais sur ceux qui n'en sont pas (fiche de paie, avis de paiement, reçu d'opération interne).
  */
-function drawPaidBadge(doc, y, { width = 240, label = 'PAYÉ' } = {}) {
-  const x = LEFT + WIDTH - width;
-  const h = 26;
-  doc.roundedRect(x, y, width, h, 6).lineWidth(1).fillAndStroke(C.SUCCESS_BG, C.SUCCESS);
-  doc.font(F.BOLD).fontSize(11).fillColor(C.SUCCESS).text(label, x, y + 7, { width, align: 'center', characterSpacing: 2, lineBreak: false });
-  return y + h + 10;
+function drawPaidStamp(doc, cardX, cardY, cardW) {
+  const cx = cardX + cardW / 2;
+  const cy = cardY + 26 + 50; // centre de la zone cachet/signature de la carte (voir `drawSignatureCards`)
+  const w = 130;
+  const h = 32;
+  doc.save();
+  doc.rotate(-10, { origin: [cx, cy] });
+  doc.roundedRect(cx - w / 2, cy - h / 2, w, h, 5).lineWidth(1.6).fillAndStroke(C.DANGER_BG, C.DANGER);
+  doc.font(F.BOLD).fontSize(13).fillColor(C.DANGER).text('PAYÉ', cx - w / 2, cy - h / 2 + 9, { width: w, align: 'center', characterSpacing: 2.5, lineBreak: false });
+  doc.restore();
 }
 
 /**
@@ -616,6 +622,6 @@ function finishDocument(doc, { verificationCode = null, frontendHost = null, dow
 module.exports = {
   C, F, LEFT, WIDTH, CONTENT_TOP, fcfa, amountInWordsFr, sentenceAmount, imageIfExists,
   drawBanner, layoutActivityList, drawActivityList, drawContinuationBand, drawSection, drawInfoGrid, drawStatTiles, drawTable, drawTotalBar,
-  drawWordsLine, drawNote, drawSignatureCards, drawPaidBadge, finishDocument, ensureRoom,
+  drawWordsLine, drawNote, drawSignatureCards, drawPaidStamp, finishDocument, ensureRoom,
   drawPlainHeader, drawPlainSection, drawPlainTable, drawPlainAmount, drawPlainTotal, drawPlainNote,
 };
