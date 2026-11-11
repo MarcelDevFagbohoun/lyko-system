@@ -241,16 +241,10 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
   y = D.drawPlainTotal(doc, y, total.label, total.amount);
   y = D.drawWordsLine(doc, y, total.raw, wordsPrefix, { color: D.C.DANGER }); // phrase « Arrêtée la présente… » en rouge
   if (note) y = D.drawPlainNote(doc, y + 2, note);
-  if (showPaidBadge) {
-    // Tampon « PAYÉ » superposé SUR la carte de signature déjà tracée (voir `drawPaidStamp`) — on calcule
-    // nous-mêmes le même saut de page que `drawSignatureCards` ferait, pour connaître à coup sûr le sommet
-    // réel de la carte (qu'il y ait eu saut de page ou non) et y dessiner le tampon par-dessus.
-    const cardTopY = D.ensureRoom(doc, y, 170 + 10);
-    y = D.drawSignatureCards(doc, cardTopY, [issuerCard(tenant, issuer, signatureTitle)], { section: false, plain: true });
-    D.drawPaidStamp(doc, D.LEFT + D.WIDTH - 240, cardTopY, 240);
-  } else {
-    y = D.drawSignatureCards(doc, y, [issuerCard(tenant, issuer, signatureTitle)], { section: false, plain: true });
-  }
+  // Tampon « PAYÉ » (demande utilisateur, 2026-11-11) : dessiné par `drawSignatureCards` lui-même, EN
+  // DESSOUS du vrai cachet/signature (`paidStamp` sur la carte), pour que ceux-ci restent bien visibles
+  // par-dessus. Ne réserve aucun espace vertical en plus de la carte elle-même.
+  y = D.drawSignatureCards(doc, y, [{ ...issuerCard(tenant, issuer, signatureTitle), paidStamp: showPaidBadge }], { section: false, plain: true });
 
   drawFooter(doc, { verificationCode });
   doc.end();

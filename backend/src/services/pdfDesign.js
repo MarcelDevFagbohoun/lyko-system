@@ -425,12 +425,13 @@ function drawNote(doc, y, label, text) {
 
 /**
  * Tampon « PAYÉ » (demande utilisateur, 2026-11-11 ; affiné le même jour pour rester SUR le cachet, en
- * rouge plutôt qu'au-dessus de la signature en vert) : rectangle fin légèrement incliné, en rouge, superposé
- * sur la zone du cachet/signature — comme un vrai tampon encreur apposé sur un reçu papier. Dessiné en
- * SURIMPRESSION de la carte de signature déjà tracée (`drawSignatureCards`), donc ne réserve AUCUN espace
- * vertical supplémentaire : un reçu court qui tenait sur une page avant ce tampon continue d'y tenir.
- * Uniquement sur les documents qui certifient un paiement DÉJÀ reçu (quittance, reçu d'entrée, reçu de
- * charges), jamais sur ceux qui n'en sont pas (fiche de paie, avis de paiement, reçu d'opération interne).
+ * rouge, PUIS encore affiné pour que le VRAI cachet et la signature du comptable/DG restent au-dessus et
+ * bien lisibles — le tampon « PAYÉ » se dessine donc EN DESSOUS, comme fond, avant que `drawSignatureCards`
+ * ne dessine le cachet et la signature par-dessus) : rectangle fin légèrement incliné, en rouge, dans la
+ * zone du cachet/signature — comme un vrai tampon encreur apposé AVANT la signature sur un reçu papier.
+ * Ne réserve AUCUN espace vertical supplémentaire : un reçu court qui tenait sur une page continue d'y
+ * tenir. Uniquement sur les documents qui certifient un paiement DÉJÀ reçu (quittance, reçu d'entrée, reçu
+ * de charges), jamais sur ceux qui n'en sont pas (fiche de paie, avis de paiement, reçu d'opération interne).
  */
 function drawPaidStamp(doc, cardX, cardY, cardW) {
   const cx = cardX + cardW / 2;
@@ -445,8 +446,10 @@ function drawPaidStamp(doc, cardX, cardY, cardW) {
 }
 
 /**
- * Cartes de signature (une ou deux). `cards` : [{ title, name, role?, date?, signatureFile?, stampFile?, hint? }].
- * Bandeau marine en tête de carte, zone de signature, nom et fonction dessous.
+ * Cartes de signature (une ou deux). `cards` : [{ title, name, role?, date?, signatureFile?, stampFile?, hint?, paidStamp? }].
+ * Bandeau marine en tête de carte, zone de signature, nom et fonction dessous. `paidStamp: true` dessine le
+ * tampon « PAYÉ » (voir `drawPaidStamp`) AVANT le cachet/la signature, pour qu'ils restent bien visibles
+ * par-dessus (demande utilisateur, 2026-11-11 : « le cachet de l'admin/comptable doit être au-dessus »).
  */
 function drawSignatureCards(doc, y, cards, { section = true, plain = false } = {}) {
   // Cachet/signature agrandis (demande utilisateur, 2026-10-23) : la carte et ses deux zones d'image
@@ -472,8 +475,9 @@ function drawSignatureCards(doc, y, cards, { section = true, plain = false } = {
     }
     // Cachet + signature superposés (demande utilisateur, 2026-10-30) : à l'image d'une quittance signée à
     // la main, le cachet reste à l'emplacement central (celui qu'occupait la signature seule) et la
-    // signature est dessinée PAR-DESSUS, agrandie — d'où l'ordre : le cachet d'abord (le fond), la
-    // signature ensuite (par-dessus, opacité pleine pour rester lisible sur le cachet).
+    // signature est dessinée PAR-DESSUS, agrandie — d'où l'ordre : le tampon « PAYÉ » tout en dessous
+    // (s'il y en a un), puis le cachet, puis la signature par-dessus, opacité pleine pour rester lisible.
+    if (c.paidStamp) drawPaidStamp(doc, x, y, w);
     const boxY = y + 26;
     const boxH = 100;
     if (c.stampFile) {
