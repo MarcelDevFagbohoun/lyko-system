@@ -283,7 +283,9 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
     filename: `${receipt.receipt_number}.pdf`,
     title: 'QUITTANCE DE LOYER',
     subtitle: `Période : ${monthLabel}`,
-    meta: [['N° de reçu', receipt.receipt_number], verificationCode ? ['Code de vérification', verificationCode] : ['Délivrée le', issuedOn]],
+    // Heure incluse (pas seulement la date), comme dans la phrase d'intro juste en dessous — demande
+    // utilisateur, 2026-11-11.
+    meta: [['N° de reçu', receipt.receipt_number], verificationCode ? ['Code de vérification', verificationCode] : ['Délivrée le', issuedAt]],
     intro: { prefix: 'Quittance délivrée le ', bold: issuedAt },
     parties: [
       ['Locataire', `${renter.first_name} ${renter.last_name}`],
@@ -328,13 +330,16 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
 function streamEntryReceiptPdf(res, { tenant, renter, property, lease, entryReceipt, issuer, verificationCode }) {
   const snapshot = entryReceipt.snapshot;
   const issuedOn = formatDateFr(entryReceipt.issued_at.toISOString().slice(0, 10));
+  // Heure incluse (pas seulement la date), comme dans la phrase d'intro juste en dessous — demande
+  // utilisateur, 2026-11-11.
+  const issuedAt = `${issuedOn} à ${formatTimeHm(entryReceipt.issued_at)}`;
   renderReceiptDocument(res, {
     tenant,
     filename: `${entryReceipt.receipt_number}.pdf`,
     title: "REÇU D'ENTRÉE",
     subtitle: 'Signature du bail — sommes réglées à l\'entrée',
-    meta: [['N° de reçu', entryReceipt.receipt_number], verificationCode ? ['Code de vérification', verificationCode] : ['Délivré le', issuedOn]],
-    intro: { prefix: 'Reçu délivré le ', bold: `${issuedOn} à ${formatTimeHm(entryReceipt.issued_at)}` },
+    meta: [['N° de reçu', entryReceipt.receipt_number], verificationCode ? ['Code de vérification', verificationCode] : ['Délivré le', issuedAt]],
+    intro: { prefix: 'Reçu délivré le ', bold: issuedAt },
     parties: [
       ['Locataire', `${renter.first_name} ${renter.last_name}`],
       ['Bien loué', `${propertyLabel(property)}${propertyAddress(property) ? ', ' + propertyAddress(property) : ''}`],
