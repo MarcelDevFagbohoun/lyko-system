@@ -313,7 +313,11 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
       `L'entreprise ${tenant.company_name} certifie avoir reçu de ${renter.first_name} ${renter.last_name} ` +
       `la somme ci-dessus au titre du loyer de ${propertyLabel(property)}, pour la période mentionnée. Merci pour votre confiance.`,
     signatureTitle: 'Le bailleur / mandataire',
-    showPaidBadge: true,
+    // Tampon « PAYÉ » activable par employé (demande utilisateur, 2026-11-11) : la quittance affiche
+    // toujours le cachet de celui qui a réellement encaissé (`issuer`), donc c'est SON réglage
+    // personnel qui décide — jamais celui de qui télécharge ensuite. `issuer` est toujours renseigné
+    // ici (vient de `rent_payments.recorded_by`), mais on se protège d'un `null` par défaut.
+    showPaidBadge: issuer ? issuer.show_paid_stamp !== 0 : true,
     issuer,
     verificationCode,
   });
@@ -367,7 +371,9 @@ function streamEntryReceiptPdf(res, { tenant, renter, property, lease, entryRece
       `la somme ci-dessus à la signature du bail de ${propertyLabel(property)}. Les frais d'agence sont ` +
       `non remboursables ; les cautions sont restituables selon les conditions du bail.`,
     signatureTitle: 'Le bailleur / mandataire',
-    showPaidBadge: true,
+    // Même principe que la quittance de loyer : réglage personnel de l'employé qui a réellement
+    // encaissé (`issuer`), pas de qui télécharge (demande utilisateur, 2026-11-11).
+    showPaidBadge: issuer ? issuer.show_paid_stamp !== 0 : true,
     issuer,
     verificationCode,
   });
@@ -632,7 +638,10 @@ function streamChargeReceiptPdf(res, { tenant, renter, charge, payment }) {
     wordsPrefix: 'Arrêté le présent reçu à la somme de',
     note: 'Reçu généré automatiquement pour le règlement de cette facture. Conservez-le comme preuve de paiement.',
     signatureTitle: 'Le bailleur / mandataire',
-    showPaidBadge: true,
+    // Aucun employé précis n'est rattaché à ce reçu (`issuer: null`, toujours le cachet de
+    // l'entreprise) : un réglage personnel par employé n'a donc pas de sens ici. Un seul interrupteur
+    // pour tout le cabinet, réglable par le DG dans Réglages (demande utilisateur, 2026-11-11).
+    showPaidBadge: tenant.show_paid_stamp_charges !== 0,
     issuer: null,
   });
 }

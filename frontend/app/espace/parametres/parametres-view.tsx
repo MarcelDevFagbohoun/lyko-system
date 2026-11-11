@@ -71,6 +71,10 @@ function ParametresContent() {
   const [defaultRentTiming, setDefaultRentTiming] = React.useState<RentTiming>("avance");
   const [defaultEntryProration, setDefaultEntryProration] = React.useState<"aucun" | "prorata">("aucun");
   const [chargesEnabled, setChargesEnabled] = React.useState(true);
+  // Tampon « PAYÉ » sur le reçu de charges (demande utilisateur, 2026-11-11) — réglage unique pour
+  // tout le cabinet, ce reçu n'étant rattaché à aucun employé en particulier (contrairement à la
+  // quittance/au reçu d'entrée, réglables employé par employé dans « Mon compte »).
+  const [showPaidStampCharges, setShowPaidStampCharges] = React.useState(true);
   const [depositSbeeEnabled, setDepositSbeeEnabled] = React.useState(false);
   const [depositSonebEnabled, setDepositSonebEnabled] = React.useState(false);
   const [depositPeintureEnabled, setDepositPeintureEnabled] = React.useState(false);
@@ -101,6 +105,7 @@ function ParametresContent() {
         setDefaultRentTiming(res.settings.defaultRentTiming);
         setDefaultEntryProration(res.settings.defaultEntryProration);
         setChargesEnabled(res.settings.chargesEnabled !== false);
+        setShowPaidStampCharges(res.settings.showPaidStampCharges !== false);
         setDepositSbeeEnabled(res.settings.depositSbeeEnabled);
         setDepositSonebEnabled(res.settings.depositSonebEnabled);
         setDepositPeintureEnabled(res.settings.depositPeintureEnabled);
@@ -142,6 +147,7 @@ function ParametresContent() {
         defaultRentTiming,
         defaultEntryProration,
         chargesEnabled,
+        showPaidStampCharges,
         depositSbeeEnabled,
         depositSonebEnabled,
         depositPeintureEnabled,
@@ -456,6 +462,22 @@ function ParametresContent() {
                   <span className="block text-body-xs text-ink-muted">
                     Décoché : le menu Charges, les relevés et les crédits de charges aux propriétaires disparaissent pour toute l&apos;équipe.
                     Rien n&apos;est supprimé, vous pouvez le réactiver quand vous voulez.
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={showPaidStampCharges}
+                  onChange={(e) => setShowPaidStampCharges(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                />
+                <span>
+                  <span className="font-label-md text-ink">Tampon « PAYÉ » sur le reçu de charges</span>
+                  <span className="block text-body-xs text-ink-muted">
+                    Ce reçu affiche toujours le cachet de l&apos;entreprise (jamais celui d&apos;un employé en
+                    particulier) : un seul réglage pour tout le cabinet, contrairement à la quittance de loyer et
+                    au reçu d&apos;entrée (réglables par chaque employé dans « Mon compte »).
                   </span>
                 </span>
               </label>

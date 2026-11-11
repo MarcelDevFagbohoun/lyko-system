@@ -146,6 +146,10 @@ function toPublicUser(user, { permissions = [], mustChangePassword } = {}) {
     stampUrl: user.stamp_path ? toProtectedFileUrl(user.stamp_path) : null,
     // Photo de profil — purement visuelle dans l'app, jamais sur un document PDF.
     avatarUrl: user.avatar_path ? toProtectedFileUrl(user.avatar_path) : null,
+    // Tampon « PAYÉ » sur les quittances/reçus d'entrée que CET employé délivre lui-même (demande
+    // utilisateur, 2026-11-11) — réglable uniquement par ceux qui peuvent effectivement encaisser un
+    // loyer (`loyers_encaisser`, ou le DG) ; voir PATCH /my-profile ci-dessous. Par défaut activé.
+    showPaidStamp: user.show_paid_stamp === undefined ? true : !!user.show_paid_stamp,
   };
 }
 
@@ -760,7 +764,19 @@ router.patch(
       // champ prévaut toujours sur une demande de suppression du même champ.
       const removeAvatar = req.body?.removeAvatar === 'true' && !avatarFile;
       const removeStamp = req.body?.removeStamp === 'true' && !stampFile;
-      if (!avatarFile && !stampFile && !removeAvatar && !removeStamp) {
+      // Tampon « PAYÉ » personnel (demande utilisateur, 2026-11-11) : réservé à ceux qui peuvent
+      // réellement encaisser un loyer (même principe que le cachet lui-même n'a d'effet que pour eux),
+      // sinon n'importe quel employé pourrait régler un tampon qui n'apparaît jamais sur ses documents.
+      const showPaidStampRaw = req.body?.showPaidStamp;
+      const hasShowPaidStamp = showPaidStampRaw === 'true' || showPaidStampRaw === 'false';
+      if (hasShowPaidStamp && req.user.role !== 'dg') {
+        const [[perm]] = await pool.query(
+          'SELECT 1 FROM user_permissions WHERE user_id = :userId AND permission_key = :key LIMIT 1',
+          { userId: req.user.id, key: 'loyers_encaisser' },
+        );
+        if (!perm) throw new ApiError(403, "Vous n'avez pas accès à ce réglage");
+      }
+      if (!avatarFile && !stampFile && !removeAvatar && !removeStamp && !hasShowPaidStamp) {
         throw new ApiError(400, 'Aucun fichier reçu');
       }
 
@@ -795,6 +811,10 @@ router.patch(
       } else if (removeStamp) {
         if (current?.stamp_path) oldPaths.push(current.stamp_path);
         fields.push('stamp_path = NULL');
+      }
+      if (hasShowPaidStamp) {
+        fields.push('show_paid_stamp = :showPaidStamp');
+        params.showPaidStamp = showPaidStampRaw === 'true' ? 1 : 0;
       }
 
       if (fields.length > 0) {

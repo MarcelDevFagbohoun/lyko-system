@@ -69,6 +69,13 @@ const updateSettingsSchema = z.object({
     .optional()
     .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
 
+  // Tampon « PAYÉ » sur le reçu de charges — réglage unique pour tout le cabinet (demande utilisateur,
+  // 2026-11-11), ce reçu n'étant rattaché à aucun employé en particulier.
+  showPaidStampCharges: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
+
   // Charges SONEB/SBEE : part répercutée au locataire (le reste est gardé par l'entreprise comme frais de gestion).
   utilityPassThroughPercent: z.coerce.number().int().min(0).max(100).optional(),
   // Moment où la commission de l'entreprise est constatée : à l'encaissement du loyer ou au reversement au propriétaire.

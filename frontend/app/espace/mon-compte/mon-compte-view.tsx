@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Stamp, User as UserIcon, Camera, Phone, KeyRound, ChevronRight, Trash2, Undo2, ShieldCheck, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Stamp, User as UserIcon, Camera, Phone, KeyRound, ChevronRight, Trash2, Undo2, ShieldCheck, BadgeCheck, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { ApiError, API_URL } from "@/lib/api/client";
 import { RequireAuth } from "@/components/auth/require-auth";
@@ -76,6 +76,15 @@ function MonCompteContent() {
   const avatar = useImagePicker();
   const stamp = useImagePicker();
 
+  // Tampon « PAYÉ » personnel (demande utilisateur, 2026-11-11) : réglable seulement par qui peut
+  // réellement encaisser un loyer (le DG, ou tout employé ayant la permission `loyers_encaisser` —
+  // même permission qui donne accès au bouton « Encaisser » lui-même).
+  const canToggleStamp = !!user && (user.role === "dg" || user.permissions.includes("loyers_encaisser"));
+  const [showPaidStamp, setShowPaidStamp] = React.useState(user?.showPaidStamp ?? true);
+  React.useEffect(() => {
+    if (user) setShowPaidStamp(user.showPaidStamp);
+  }, [user]);
+
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -92,6 +101,7 @@ function MonCompteContent() {
         stamp: stamp.file ?? undefined,
         removeAvatar: avatar.removed,
         removeStamp: stamp.removed,
+        showPaidStamp: canToggleStamp && user && showPaidStamp !== user.showPaidStamp ? showPaidStamp : undefined,
       });
       avatar.reset();
       stamp.reset();
@@ -116,7 +126,8 @@ function MonCompteContent() {
   const roleLabel = tenant?.roleTitles[user.role] ?? user.role;
   const hasChanges = !!(
     avatar.file || stamp.file ||
-    (avatar.removed && user.avatarUrl) || (stamp.removed && user.stampUrl)
+    (avatar.removed && user.avatarUrl) || (stamp.removed && user.stampUrl) ||
+    (canToggleStamp && showPaidStamp !== user.showPaidStamp)
   );
 
   return (
@@ -194,6 +205,26 @@ function MonCompteContent() {
                 placeholderIcon={Stamp}
                 hasStored={!!user.stampUrl}
               />
+              {canToggleStamp && (
+                <label className="flex cursor-pointer items-start gap-2.5 px-5 py-4">
+                  <input
+                    type="checkbox"
+                    checked={showPaidStamp}
+                    onChange={(e) => setShowPaidStamp(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-border-strong text-primary focus-visible:ring-2 focus-visible:ring-primary"
+                  />
+                  <span>
+                    <span className="flex items-center gap-1.5 font-label-md text-ink">
+                      <BadgeCheck size={14} className="text-ink-soft" />
+                      Tampon « PAYÉ » sur mes quittances
+                    </span>
+                    <span className="block text-body-xs text-ink-muted">
+                      Affiché sur les quittances de loyer et reçus d&apos;entrée que vous délivrez vous-même.
+                      Décoché, votre cachet reste visible mais sans ce tampon.
+                    </span>
+                  </span>
+                </label>
+              )}
             </div>
           </Card>
 

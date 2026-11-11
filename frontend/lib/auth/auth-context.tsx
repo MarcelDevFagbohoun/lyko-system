@@ -20,6 +20,10 @@ export type AuthUser = {
   stampUrl: string | null;
   // Photo de profil — purement visuelle dans l'app, jamais sur un document PDF.
   avatarUrl: string | null;
+  // Tampon « PAYÉ » sur les quittances/reçus d'entrée délivrés par CET employé (demande utilisateur,
+  // 2026-11-11) — visible/réglable uniquement si `permissions` contient `loyers_encaisser`, ou si
+  // `role === "dg"`. Par défaut activé.
+  showPaidStamp: boolean;
 };
 
 export type RoleTitles = { dg: string; comptable: string; agent: string };
@@ -79,6 +83,7 @@ type AuthContextValue = AuthState & {
     stamp?: File;
     removeAvatar?: boolean;
     removeStamp?: boolean;
+    showPaidStamp?: boolean;
   }) => Promise<void>;
   refreshUser: () => Promise<void>;
 };
@@ -263,12 +268,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       stamp?: File;
       removeAvatar?: boolean;
       removeStamp?: boolean;
+      showPaidStamp?: boolean;
     }) => {
       const fd = new FormData();
       if (input.avatar) fd.append("avatar", input.avatar);
       else if (input.removeAvatar) fd.append("removeAvatar", "true");
       if (input.stamp) fd.append("stamp", input.stamp);
       else if (input.removeStamp) fd.append("removeStamp", "true");
+      if (input.showPaidStamp !== undefined) fd.append("showPaidStamp", String(input.showPaidStamp));
       await apiFetch("/api/auth/my-profile", {
         method: "PATCH",
         accessToken: accessTokenRef.current ?? undefined,

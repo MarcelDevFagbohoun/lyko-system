@@ -29,6 +29,10 @@ export type TenantSettings = {
   depositPeintureEnabled: boolean;
   /** Module Charges (SONEB/SBEE) activé ou non pour cette entreprise. */
   chargesEnabled: boolean;
+  /** Tampon « PAYÉ » sur le reçu de charges — réglage unique pour tout le cabinet, ce reçu n'étant
+   * rattaché à aucun employé en particulier (contrairement à la quittance/au reçu d'entrée, réglables
+   * employé par employé — voir `AuthUser.showPaidStamp`). */
+  showPaidStampCharges: boolean;
   /** Part des charges SONEB/SBEE répercutée au locataire (le reste est gardé comme frais de gestion). */
   utilityPassThroughPercent: number;
   /** Moment où la commission de l'entreprise est constatée. */
@@ -69,6 +73,7 @@ export function updateSettings(
     depositSonebEnabled?: boolean;
     depositPeintureEnabled?: boolean;
     chargesEnabled?: boolean;
+    showPaidStampCharges?: boolean;
     utilityPassThroughPercent?: number;
     commissionTiming?: "encaissement" | "reversement";
     /** null = supprimer le seuil. */
@@ -100,6 +105,7 @@ export function updateSettings(
   if (input.depositSonebEnabled !== undefined) fd.append("depositSonebEnabled", String(input.depositSonebEnabled));
   if (input.depositPeintureEnabled !== undefined) fd.append("depositPeintureEnabled", String(input.depositPeintureEnabled));
   if (input.chargesEnabled !== undefined) fd.append("chargesEnabled", String(input.chargesEnabled));
+  if (input.showPaidStampCharges !== undefined) fd.append("showPaidStampCharges", String(input.showPaidStampCharges));
   if (input.utilityPassThroughPercent !== undefined) fd.append("utilityPassThroughPercent", String(input.utilityPassThroughPercent));
   if (input.commissionTiming !== undefined) fd.append("commissionTiming", input.commissionTiming);
   if (input.expenseAlertThreshold !== undefined) fd.append("expenseAlertThreshold", input.expenseAlertThreshold === null ? "" : String(input.expenseAlertThreshold));

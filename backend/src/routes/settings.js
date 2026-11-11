@@ -65,6 +65,11 @@ function toPublicSettings(tenant) {
     depositPeintureEnabled: !!tenant.deposit_peinture_enabled,
     // Module Charges (SONEB/SBEE) : activable selon le besoin de l'entreprise.
     chargesEnabled: tenant.charges_enabled === undefined ? true : !!tenant.charges_enabled,
+    // Tampon « PAYÉ » sur le reçu de charges (demande utilisateur, 2026-11-11) : ce reçu n'est rattaché
+    // à aucun employé précis (toujours le cachet de l'entreprise), donc un seul réglage pour tout le
+    // cabinet — contrairement à la quittance/au reçu d'entrée, réglables employé par employé (voir
+    // `showPaidStamp` sur /api/auth/me). Par défaut activé.
+    showPaidStampCharges: tenant.show_paid_stamp_charges === undefined ? true : !!tenant.show_paid_stamp_charges,
     // Réglages comptables à effet sur les soldes, valables avec ou sans comptabilité avancée.
     utilityPassThroughPercent: Number(tenant.gl_utility_passthrough_percent ?? 100),
     commissionTiming: tenant.gl_commission_timing ?? 'encaissement',
@@ -185,6 +190,11 @@ router.patch(
       if (data.chargesEnabled !== undefined) {
         fields.push('charges_enabled = :chargesEnabled');
         params.chargesEnabled = data.chargesEnabled ? 1 : 0;
+      }
+
+      if (data.showPaidStampCharges !== undefined) {
+        fields.push('show_paid_stamp_charges = :showPaidStampCharges');
+        params.showPaidStampCharges = data.showPaidStampCharges ? 1 : 0;
       }
 
       if (data.defaultEntryProration !== undefined) {
