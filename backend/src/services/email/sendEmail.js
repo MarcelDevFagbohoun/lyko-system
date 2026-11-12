@@ -136,30 +136,35 @@ async function sendPasswordResetCodeEmail({ to, dgName, code }) {
   return sendViaResend({ to, subject: `${code} est votre code de réinitialisation`, html });
 }
 
-function platformExplanationHtml() {
-  return `
-    <ul style="margin:0 0 20px;padding-left:18px;font-size:14px;color:${INK};line-height:1.7;">
-      <li><strong>Propriétaires &amp; locataires</strong> : fiches, baux, cautions, états des lieux.</li>
-      <li><strong>Comptabilité</strong> : loyers encaissés, dépenses, charges SONEB/SBEE, et une comptabilité avancée (SYSCOHADA) si vous l'activez.</li>
-      <li><strong>Salaires</strong> : fiches de paie de votre personnel, signées par vous.</li>
-      <li><strong>Biens à vendre</strong> : catalogue interne de vos biens en vente.</li>
-      <li><strong>Employés</strong> : créez des comptes comptable/agent avec des accès précis.</li>
-    </ul>
-  `;
-}
-
+/**
+ * Email de bienvenue (demande utilisateur, 2026-11-12) : plus de liste détaillée des
+ * fonctionnalités (l'intérieur de l'outil parle déjà pour lui-même une fois connecté) — un
+ * texte chaleureux et orienté marketing, qui renvoie directement vers l'espace de travail.
+ */
 async function sendWelcomeEmail({ to, dgName, companyName }) {
   const html = wrapHtml(`
-    <h1 style="margin:0 0 12px;font-size:20px;">Bienvenue, ${escapeHtml(dgName)}</h1>
-    <p style="margin:0 0 16px;font-size:14px;color:${MUTED};">
-      Le compte de « ${escapeHtml(companyName)} » est prêt. Voici ce que vous pouvez faire dès maintenant :
+    <h1 style="margin:0 0 14px;font-size:22px;line-height:1.3;">Bienvenue dans la famille Africa Immo Management, ${escapeHtml(dgName)} ! 🎉</h1>
+    <p style="margin:0 0 16px;font-size:14px;color:${INK};line-height:1.7;">
+      Le compte de « ${escapeHtml(companyName)} » est maintenant actif. Vous venez de franchir une étape
+      importante : celle de gérer votre patrimoine immobilier avec un outil pensé pour vous faire gagner
+      du temps, rassurer vos propriétaires et professionnaliser chaque interaction avec vos locataires.
     </p>
-    ${platformExplanationHtml()}
-    <a href="${config.frontendUrl}/espace" style="display:inline-block;padding:10px 20px;background:${PRIMARY};color:#FFFFFF;text-decoration:none;border-radius:6px;font-size:14px;">
-      Ouvrir Africa Immo Management
+    <p style="margin:0 0 16px;font-size:14px;color:${INK};line-height:1.7;">
+      Fini les carnets, les fichiers Excel éparpillés et les relances oubliées : tout ce qui fait tourner
+      votre cabinet a désormais sa place, au même endroit, accessible en quelques clics, où que vous soyez.
+    </p>
+    <p style="margin:0 0 24px;font-size:14px;color:${INK};line-height:1.7;">
+      Nous sommes ravis de vous accompagner dans cette aventure. Votre espace vous attend — il ne reste
+      plus qu'à vous y installer.
+    </p>
+    <a href="${config.frontendUrl}/espace" style="display:inline-block;padding:12px 26px;background:${PRIMARY};color:#FFFFFF;text-decoration:none;border-radius:8px;font-size:15px;font-weight:600;">
+      Ouvrir mon espace Africa Immo Management
     </a>
-  `);
-  return sendViaResend({ to, subject: 'Bienvenue sur Africa Immo Management', html });
+    <p style="margin:24px 0 0;font-size:13px;color:${MUTED};">
+      Une question en cours de route ? Notre équipe reste à votre écoute.
+    </p>
+  `, { preheader: `Bienvenue ${dgName} — votre espace Africa Immo Management est prêt.` });
+  return sendViaResend({ to, subject: 'Bienvenue sur Africa Immo Management 🎉', html });
 }
 
 const FEATURE_LABELS = {
