@@ -118,7 +118,11 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
     const entryFee = Number(form.entryFeeAmount || "0");
     if (!Number.isFinite(entryFee) || entryFee < 0) e.entryFeeAmount = "Montant invalide";
     if (entryFee > 0 && !form.entryFeePaymentMethod) e.entryFeePaymentMethod = "Comment les frais d'agence ont-ils été reçus ?";
-    if (form.entryProration === "prorata" && prorataPreview.amount > 0 && !form.entryProrataPaymentMethod) {
+    // Ancien locataire : jamais de prorata d'entrée (bloc masqué, ProrataBlock) — donc jamais exiger
+    // son mode de paiement non plus, sinon un réglage par défaut de l'entreprise (defaultEntryProration
+    // = "prorata") bloque silencieusement l'enregistrement sans que l'agent puisse voir ni remplir ce
+    // champ devenu invisible (bug signalé par l'utilisateur, 2026-11-12).
+    if (tenantKind !== "ancien" && form.entryProration === "prorata" && prorataPreview.amount > 0 && !form.entryProrataPaymentMethod) {
       e.entryProrataPaymentMethod = "Comment le prorata d'entrée a-t-il été reçu ?";
     }
     const rentDueError = validateRentDue(rhythm, form.rentDueDay);
@@ -134,7 +138,7 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
       }
     }
     return e;
-  }, [form, prorataPreview.amount, rhythm]);
+  }, [form, prorataPreview.amount, rhythm, tenantKind]);
 
   // Aplatit le détail par type + mois en une liste de postes pour l'envoi — voir `openingDebtItems`
   // (CreateRenterInput). Vide si aucun mois n'a été coché pour aucun type (comportement historique :
