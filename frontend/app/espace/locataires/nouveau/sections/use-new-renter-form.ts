@@ -194,12 +194,16 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
             ? (form.depositPaymentMethod as PaymentMethod)
             : undefined,
         depositPaidAt: Number(form.depositAmount || "0") > 0 ? form.depositPaidAt : undefined,
-        entryFeeAmount: Number(form.entryFeeAmount || "0"),
+        // Ancien locataire : jamais de frais d'agence, quoi que porte le formulaire — aucune
+        // prestation de placement n'a été rendue pour lui, ce montant ne doit jamais être
+        // comptabilisé comme produit du cabinet (demande utilisateur, 2026-11-12). Le champ est déjà
+        // masqué pour ce cas (LeaseTermsFields), mais on sécurise aussi l'envoi lui-même.
+        entryFeeAmount: tenantKind === "ancien" ? 0 : Number(form.entryFeeAmount || "0"),
         entryFeePaymentMethod:
-          Number(form.entryFeeAmount || "0") > 0
+          tenantKind !== "ancien" && Number(form.entryFeeAmount || "0") > 0
             ? (form.entryFeePaymentMethod as PaymentMethod)
             : undefined,
-        entryFeePaidAt: Number(form.entryFeeAmount || "0") > 0 ? form.entryFeePaidAt : undefined,
+        entryFeePaidAt: tenantKind !== "ancien" && Number(form.entryFeeAmount || "0") > 0 ? form.entryFeePaidAt : undefined,
         entryProration: form.entryProration,
         entryProrataPaymentMethod:
           form.entryProration === "prorata" && prorataPreview.amount > 0
@@ -224,8 +228,11 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
         ...buildRentDuePayload(rhythm, form.rentDueDay),
         rentTiming: form.rentTiming,
         startDate: form.startDate,
-        openingDebtAmount: openingDebtItemsPayload.length ? undefined : Number(form.openingDebtAmount || "0"),
-        openingDebtItems: openingDebtItemsPayload.length ? openingDebtItemsPayload : undefined,
+        // Nouveau locataire : jamais d'impayé à l'entrée, quoi que porte le formulaire — il signe
+        // aujourd'hui, aucun impayé antérieur ne peut exister. Le champ est déjà masqué pour ce cas
+        // (BillingOptionsFields), mais on sécurise aussi l'envoi lui-même (demande utilisateur, 2026-11-12).
+        openingDebtAmount: tenantKind === "ancien" && openingDebtItemsPayload.length === 0 ? Number(form.openingDebtAmount || "0") : undefined,
+        openingDebtItems: tenantKind === "ancien" && openingDebtItemsPayload.length ? openingDebtItemsPayload : undefined,
         // Toujours transmis (plus seulement pour l'onboarding historique) : l'auto-suggestion ci-dessus
         // peut l'avoir coché pour un bail qui démarre après l'échéance du mois — jamais perdu à l'envoi.
         upToDateAtOnboarding: form.upToDateAtOnboarding,

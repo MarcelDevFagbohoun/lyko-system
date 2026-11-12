@@ -74,7 +74,7 @@ function LocatairesContent() {
             <Link href="/espace/locataires/nouveau" className="w-fit">
               <Button>
                 <UserPlus size={18} />
-                Nouveau locataire
+                Ajouter un locataire
               </Button>
             </Link>
           )}

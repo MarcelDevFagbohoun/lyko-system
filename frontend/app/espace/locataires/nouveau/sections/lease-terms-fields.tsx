@@ -7,7 +7,7 @@ import type { TenantRhythm } from "@/lib/api/accounting";
 import { DEPOSIT_PAYMENT_METHODS } from "./form-state";
 import type { FormSectionProps } from "./props";
 
-export function LeaseTermsFields({ form, set, touched, setTouched, errors, rhythm }: FormSectionProps & { rhythm: TenantRhythm | null; }) {
+export function LeaseTermsFields({ form, set, touched, setTouched, errors, rhythm, tenantKind }: FormSectionProps & { rhythm: TenantRhythm | null; tenantKind: "nouveau" | "ancien"; }) {
   return (
     <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -53,56 +53,69 @@ export function LeaseTermsFields({ form, set, touched, setTouched, errors, rhyth
               </Field>
             </div>
           )}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field
-              label="Frais d'agence à l'entrée (FCFA)"
-              htmlFor="entryFeeAmount"
-              hint="Pris directement au locataire, jamais reversé au propriétaire — 0 si aucun"
-              error={touched.entryFeeAmount ? errors.entryFeeAmount : undefined}
-            >
-              <Input
-                id="entryFeeAmount"
-                inputMode="numeric"
-                value={form.entryFeeAmount}
-                onChange={(e) => set("entryFeeAmount", e.target.value.replace(/\D/g, ""))}
-                onBlur={() => setTouched((t) => ({ ...t, entryFeeAmount: true }))}
-              />
-            </Field>
-          </div>
-          {Number(form.entryFeeAmount || "0") > 0 && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field
-                label="Frais d'agence reçus par"
-                htmlFor="entryFeePaymentMethod"
-                required
-                error={touched.entryFeePaymentMethod ? errors.entryFeePaymentMethod : undefined}
-              >
-                <select
-                  id="entryFeePaymentMethod"
-                  value={form.entryFeePaymentMethod}
-                  onChange={(e) => set("entryFeePaymentMethod", e.target.value)}
-                  onBlur={() => setTouched((t) => ({ ...t, entryFeePaymentMethod: true }))}
-                  className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          {/* Frais d'agence : rémunère le service de PLACEMENT du locataire — sans objet pour un
+              ancien locataire déjà en place avant Africa Immo Management (aucune prestation de
+              placement rendue). Masqué pour ne jamais être comptabilisé dans ce cas (demande
+              utilisateur, 2026-11-12). */}
+          {tenantKind === "ancien" ? (
+            <p className="rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-xs text-ink-muted">
+              Aucun frais d&apos;agence pour un ancien locataire : ce locataire était déjà en place, aucune
+              prestation de placement n&apos;a été rendue.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field
+                  label="Frais d'agence à l'entrée (FCFA)"
+                  htmlFor="entryFeeAmount"
+                  hint="Pris directement au locataire, jamais reversé au propriétaire — 0 si aucun"
+                  error={touched.entryFeeAmount ? errors.entryFeeAmount : undefined}
                 >
-                  <option value="" disabled>
-                    Choisir…
-                  </option>
-                  {DEPOSIT_PAYMENT_METHODS.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Reçus le" htmlFor="entryFeePaidAt">
-                <Input
-                  id="entryFeePaidAt"
-                  type="date"
-                  value={form.entryFeePaidAt}
-                  onChange={(e) => set("entryFeePaidAt", e.target.value)}
-                />
-              </Field>
-            </div>
+                  <Input
+                    id="entryFeeAmount"
+                    inputMode="numeric"
+                    value={form.entryFeeAmount}
+                    onChange={(e) => set("entryFeeAmount", e.target.value.replace(/\D/g, ""))}
+                    onBlur={() => setTouched((t) => ({ ...t, entryFeeAmount: true }))}
+                  />
+                </Field>
+              </div>
+              {Number(form.entryFeeAmount || "0") > 0 && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field
+                    label="Frais d'agence reçus par"
+                    htmlFor="entryFeePaymentMethod"
+                    required
+                    error={touched.entryFeePaymentMethod ? errors.entryFeePaymentMethod : undefined}
+                  >
+                    <select
+                      id="entryFeePaymentMethod"
+                      value={form.entryFeePaymentMethod}
+                      onChange={(e) => set("entryFeePaymentMethod", e.target.value)}
+                      onBlur={() => setTouched((t) => ({ ...t, entryFeePaymentMethod: true }))}
+                      className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <option value="" disabled>
+                        Choisir…
+                      </option>
+                      {DEPOSIT_PAYMENT_METHODS.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Reçus le" htmlFor="entryFeePaidAt">
+                    <Input
+                      id="entryFeePaidAt"
+                      type="date"
+                      value={form.entryFeePaidAt}
+                      onChange={(e) => set("entryFeePaidAt", e.target.value)}
+                    />
+                  </Field>
+                </div>
+              )}
+            </>
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <RentDueField

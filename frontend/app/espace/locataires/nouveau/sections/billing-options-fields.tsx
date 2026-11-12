@@ -28,12 +28,17 @@ export function BillingOptionsFields({ form, set, touched, setTouched, errors, i
               ))}
             </select>
           </Field>
-          <OpeningDebtItemsFields
-            items={form.openingDebtItems}
-            setItems={(items) => set("openingDebtItems", items)}
-            monthlyRent={form.monthlyRent}
-            error={touched.openingDebtItems ? errors.openingDebtItems : undefined}
-          />
+          {/* Impayés à l'entrée : sans objet pour un NOUVEAU locataire qui signe aujourd'hui — aucun
+              impayé antérieur ne peut exister. Réservé à l'onboarding d'un ancien locataire déjà en
+              place (demande utilisateur, 2026-11-12). */}
+          {isHistoricalStartDate && (
+            <OpeningDebtItemsFields
+              items={form.openingDebtItems}
+              setItems={(items) => set("openingDebtItems", items)}
+              monthlyRent={form.monthlyRent}
+              error={touched.openingDebtItems ? errors.openingDebtItems : undefined}
+            />
+          )}
           {isHistoricalStartDate && (
             <label
               htmlFor="upToDateAtOnboarding"

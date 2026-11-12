@@ -121,7 +121,7 @@ function NouveauContent() {
 
               <div className="flex flex-col gap-4 border-t border-border pt-5">
                 <span className="font-label-sm uppercase tracking-wider text-ink-muted">Bail</span>
-                <LeaseTermsFields form={form} set={set} touched={touched} setTouched={setTouched} errors={errors} rhythm={rhythm} />
+                <LeaseTermsFields form={form} set={set} touched={touched} setTouched={setTouched} errors={errors} rhythm={rhythm} tenantKind={tenantKind} />
                 <ProrataBlock form={form} set={set} touched={touched} setTouched={setTouched} errors={errors} isCalendaireRhythm={isCalendaireRhythm} isHistoricalStartDate={isHistoricalStartDate} prorataPreview={prorataPreview} />
                 <AdditionalDepositsBlock form={form} enabledTypes={enabledAdditionalDepositTypes} touchedByType={additionalDepositsTouched} setTouchedByType={setAdditionalDepositsTouched} errorsByType={additionalDepositErrors} setAdditionalDeposit={setAdditionalDeposit} />
                 <BillingOptionsFields form={form} set={set} touched={touched} setTouched={setTouched} errors={errors} isHistoricalStartDate={isHistoricalStartDate} />
