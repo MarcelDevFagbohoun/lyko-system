@@ -371,6 +371,33 @@ export function listRentPayments(accessToken: string, from: string, to: string) 
   );
 }
 
+/**
+ * Règlement d'un impayé à l'entrée (demande utilisateur, 2026-11-12 : « il faut que tous ces
+ * changements soient dans les opérations trésorerie »). `item` est rempli seulement si ce règlement
+ * correspond à UN poste du détail par type + mois (voir OpeningDebtItem, lib/api/renters.ts) — `null`
+ * pour un règlement global (bail sans ce détail).
+ */
+export type OpeningDebtPaymentEntry = {
+  id: number;
+  leaseId: number;
+  renter: { id: number; firstName: string; lastName: string };
+  unitCode: string;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  paymentMethodLabel: string;
+  paidAt: string;
+  notes: string | null;
+  recordedBy: Actor;
+  item: { debtType: string; debtTypeLabel: string; periodMonth: string; label: string | null } | null;
+};
+
+export function listOpeningDebtPayments(accessToken: string, from: string, to: string) {
+  return apiFetch<{ payments: OpeningDebtPaymentEntry[] }>(
+    `/api/accounting/opening-debt-payments?from=${from}&to=${to}`,
+    { accessToken },
+  );
+}
+
 export type OwnerPayoutEntry = {
   id: number;
   owner: { id: number; name: string };

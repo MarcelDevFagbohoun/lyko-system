@@ -24,15 +24,17 @@ import {
   accountingReportPdfPath,
   accountingExportXlsxPath,
   listRentPayments,
+  listOpeningDebtPayments,
   listOwnerPayouts,
   type Expense,
   type AccountingDashboard,
   type CardKey,
   type RentPaymentEntry,
+  type OpeningDebtPaymentEntry,
   type OwnerPayoutEntry,
 } from "@/lib/api/accounting";
 import { UTILITY_TYPE_LABELS } from "@/lib/constants/charges";
-import { formatFcfa, formatDateHeading, cn } from "@/lib/utils";
+import { formatFcfa, formatDateHeading, monthLabelFr, cn } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -82,6 +84,7 @@ export function ComptabiliteView() {
 // Regroupement par mois (fonctions de module : stables entre les rendus) — les paiements
 // de loyer par MOIS DE LOYER concerné, les versements par mois de règlement.
 const rentPaymentMonth = (p: RentPaymentEntry) => p.coversMonth;
+const openingDebtPaymentMonth = (p: OpeningDebtPaymentEntry) => p.paidAt;
 const ownerPayoutMonth = (p: OwnerPayoutEntry) => p.paidAt;
 
 function ComptabiliteContent() {
@@ -94,6 +97,7 @@ function ComptabiliteContent() {
   const [dashboard, setDashboard] = React.useState<AccountingDashboard | null>(null);
   const [expenses, setExpenses] = React.useState<Expense[] | null>(null);
   const [rentPayments, setRentPayments] = React.useState<RentPaymentEntry[] | null>(null);
+  const [openingDebtPayments, setOpeningDebtPayments] = React.useState<OpeningDebtPaymentEntry[] | null>(null);
   const [ownerPayouts, setOwnerPayouts] = React.useState<OwnerPayoutEntry[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [exportingXlsx, setExportingXlsx] = React.useState(false);
@@ -105,12 +109,14 @@ function ComptabiliteContent() {
       getDashboard(accessToken, from, to),
       listExpenses(accessToken, { from, to }),
       listRentPayments(accessToken, from, to),
+      listOpeningDebtPayments(accessToken, from, to),
       listOwnerPayouts(accessToken, from, to),
     ])
-      .then(([dash, exp, rp, op]) => {
+      .then(([dash, exp, rp, odp, op]) => {
         setDashboard(dash);
         setExpenses(exp.expenses);
         setRentPayments(rp.payments);
+        setOpeningDebtPayments(odp.payments);
         setOwnerPayouts(op.payouts);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger la comptabilité."));
@@ -134,6 +140,7 @@ function ComptabiliteContent() {
   // `expenseDate`) : l'ordre reçu du back-end est déjà décroissant sur ce
   // même champ, donc chaque groupe hérite naturellement du bon ordre interne.
   const rentGroups = useMonthGroups(rentPayments, rentPaymentMonth);
+  const openingDebtGroups = useMonthGroups(openingDebtPayments, openingDebtPaymentMonth);
   const payoutGroups = useMonthGroups(ownerPayouts, ownerPayoutMonth);
 
   const expenseGroups = React.useMemo(() => {
@@ -390,6 +397,81 @@ function ComptabiliteContent() {
                             <TableRow key={p.id}>
                               <TableCell>{p.renter.firstName} {p.renter.lastName}</TableCell>
                               <TableCell className="text-ink-soft">{p.unitCode}</TableCell>
+                              <TableAmount>{formatFcfa(p.amount)}</TableAmount>
+                              <TableCell className="text-ink-soft">{p.paymentMethodLabel}</TableCell>
+                              <TableCell className="text-ink-soft">{p.paidAt}</TableCell>
+                              <TableCell className="text-ink-soft">
+                                {p.recordedBy ? `${p.recordedBy.name} (${p.recordedBy.roleLabel})` : "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                      </TableBody>
+                    );
+                  })}
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Règlements des impayés à l'entrée (demande utilisateur, 2026-11-12 : « il faut que tous ces
+            changements soient dans les opérations trésorerie ») — détaillés par poste (type + mois)
+            quand ce bail a ce niveau de détail, sinon un règlement global (ancien comportement). */}
+        <Card className="border-success-border bg-success/5">
+          <CardHeader>
+            <CardTitle>Impayés à l&apos;entrée réglés</CardTitle>
+            <CardDescription>
+              Règlements encaissés sur la période sélectionnée pour les impayés déclarés à l&apos;entrée
+              (loyer, SBEE, SONEB, poubelle, autres), par mois de règlement.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {openingDebtPayments === null ? (
+              <p className="text-body-sm text-ink-muted">Chargement…</p>
+            ) : openingDebtPayments.length === 0 ? (
+              <p className="text-body-sm text-ink-muted">Aucun règlement d&apos;impayé à l&apos;entrée sur cette période.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <MonthGroupsToolbar count={openingDebtGroups.groups.length} allOpen={openingDebtGroups.allOpen} onSetAll={openingDebtGroups.setAll} />
+                <Table>
+                  <TableHeader>
+                    <tr>
+                      <TableHead>Locataire</TableHead>
+                      <TableHead>Unité</TableHead>
+                      <TableHead>Poste réglé</TableHead>
+                      <TableHead className="text-right">Montant</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Enregistré par</TableHead>
+                    </tr>
+                  </TableHeader>
+                  {openingDebtGroups.groups.map((g, i) => {
+                    const open = openingDebtGroups.isOpen(g.month, i);
+                    return (
+                      <TableBody key={g.month || "sans-date"}>
+                        <MonthHeaderRow
+                          colSpan={7}
+                          noun="Règlement"
+                          month={g.month}
+                          open={open}
+                          onToggle={() => openingDebtGroups.toggle(g.month, i)}
+                          summary={
+                            <>
+                              {countLabel(g.items.length, "règlement")} ·{" "}
+                              <span className="tabular font-label-md text-ink">{formatFcfa(sumBy(g.items, (p) => p.amount))}</span>
+                            </>
+                          }
+                        />
+                        {open &&
+                          g.items.map((p) => (
+                            <TableRow key={p.id}>
+                              <TableCell>{p.renter.firstName} {p.renter.lastName}</TableCell>
+                              <TableCell className="text-ink-soft">{p.unitCode}</TableCell>
+                              <TableCell className="text-ink-soft">
+                                {p.item
+                                  ? `${p.item.debtTypeLabel} · ${monthLabelFr(p.item.periodMonth)}${p.item.label ? ` (${p.item.label})` : ""}`
+                                  : "Impayé global"}
+                              </TableCell>
                               <TableAmount>{formatFcfa(p.amount)}</TableAmount>
                               <TableCell className="text-ink-soft">{p.paymentMethodLabel}</TableCell>
                               <TableCell className="text-ink-soft">{p.paidAt}</TableCell>

@@ -21,6 +21,7 @@ const {
   disposeFixedAssetSchema,
 } = require('../validators/fixedAssets');
 const { EXPENSE_CATEGORIES, EXPENSE_PAYMENT_METHODS } = require('../constants/expenses');
+const { OPENING_DEBT_TYPE_LABELS } = require('../constants/openingDebt');
 const { FIXED_ASSET_CATEGORIES } = require('../constants/fixedAssets');
 const { toActor } = require('../utils/actor');
 const { toProtectedFileUrl } = require('../utils/uploads');
@@ -664,6 +665,45 @@ router.get('/rent-payments', canAccounting, async (req, res, next) => {
         paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
         paidAt: isoDate(p.paid_at),
         recordedBy: toActor(p.recorder_first_name, p.recorder_last_name, p.recorder_role),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/accounting/opening-debt-payments?from=&to= — classification : règlements des impayés à
+// l'entrée (demande utilisateur, 2026-11-12 : « il faut que tous ces changements soient dans les
+// opérations trésorerie »). `item` est rempli seulement si ce règlement correspond à UN poste du
+// détail par type + mois (migration 151) — `null` pour un règlement global (ancien comportement).
+router.get('/opening-debt-payments', canAccounting, async (req, res, next) => {
+  const parsed = dashboardQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Période invalide', parsed.error.flatten().fieldErrors));
+  }
+  const { from, to } = parsed.data;
+  try {
+    const rows = await registers.listOpeningDebtPaymentRows(req.user.tenantId, from, to);
+    res.json({
+      payments: rows.map((p) => ({
+        id: p.id,
+        leaseId: p.lease_id,
+        renter: { id: p.renter_id, firstName: p.renter_first_name, lastName: p.renter_last_name },
+        unitCode: p.unit_code,
+        amount: Number(p.amount),
+        paymentMethod: p.payment_method,
+        paymentMethodLabel: PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method,
+        paidAt: isoDate(p.paid_at),
+        notes: p.notes,
+        recordedBy: toActor(p.recorder_first_name, p.recorder_last_name, p.recorder_role),
+        item: p.item_debt_type
+          ? {
+              debtType: p.item_debt_type,
+              debtTypeLabel: OPENING_DEBT_TYPE_LABELS[p.item_debt_type] ?? p.item_debt_type,
+              periodMonth: p.item_period_month,
+              label: p.item_label,
+            }
+          : null,
       })),
     });
   } catch (err) {

@@ -1,8 +1,9 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { RequireAuth } from "@/components/auth/require-auth";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, UserPlus, History } from "lucide-react";
 import { formatFcfa } from "@/lib/utils";
 import { PropertyUnitPicker } from "@/components/properties/property-unit-picker";
 import { OfflineNotice } from "@/components/system/offline-notice";
@@ -24,7 +25,16 @@ export function NouveauView() {
   );
 }
 
+/**
+ * Choix explicite fait par l'agent avant le formulaire (demande utilisateur, 2026-11-12 : « deux
+ * options nouveau locataire et ancien locataire ») — remplace l'ancienne déduction à partir de la
+ * seule date d'entrée. Tant qu'aucun choix n'est fait, le formulaire lui-même n'est pas affiché :
+ * voir `TenantKindPicker` plus bas.
+ */
+type TenantKind = "nouveau" | "ancien";
+
 function NouveauContent() {
+  const [tenantKind, setTenantKind] = React.useState<TenantKind | null>(null);
   const {
     accessToken,
     online,
@@ -48,7 +58,7 @@ function NouveauContent() {
     errors,
     additionalDepositErrors,
     handleSubmit,
-  } = useNewRenterForm();
+  } = useNewRenterForm(tenantKind ?? "nouveau");
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -63,14 +73,28 @@ function NouveauContent() {
 
         {result ? (
           <PortalLinkSuccessPanel renter={result} accessToken={accessToken} />
+        ) : !tenantKind ? (
+          <TenantKindPicker onSelect={setTenantKind} />
         ) : (
         <Card className="max-w-2xl">
           <CardHeader>
-            <CardTitle>Nouveau locataire</CardTitle>
-            <CardDescription>
-              Sélectionnez d&apos;abord une unité libre, puis renseignez le locataire et les
-              termes du bail. L&apos;état des lieux d&apos;entrée pourra être réalisé juste après.
-            </CardDescription>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle>{tenantKind === "ancien" ? "Ancien locataire" : "Nouveau locataire"}</CardTitle>
+                <CardDescription>
+                  {tenantKind === "ancien"
+                    ? "Locataire déjà en place avant Africa Immo Management : renseignez son bail et, le cas échéant, ses impayés à l'entrée."
+                    : "Sélectionnez d'abord une unité libre, puis renseignez le locataire et les termes du bail. L'état des lieux d'entrée pourra être réalisé juste après."}
+                </CardDescription>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTenantKind(null)}
+                className="shrink-0 text-body-xs text-ink-muted underline hover:text-ink"
+              >
+                Changer
+              </button>
+            </div>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-6" noValidate>
@@ -118,5 +142,48 @@ function NouveauContent() {
         )}
       </div>
     </div>
+  );
+}
+
+/** Écran de choix avant le formulaire (demande utilisateur, 2026-11-12). */
+function TenantKindPicker({ onSelect }: { onSelect: (kind: TenantKind) => void }) {
+  return (
+    <Card className="max-w-2xl">
+      <CardHeader>
+        <CardTitle>Quel type de locataire ?</CardTitle>
+        <CardDescription>Le formulaire s&apos;adapte ensuite selon votre choix.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => onSelect("nouveau")}
+            className="flex flex-col items-start gap-3 rounded-xl border border-border bg-surface p-4 text-left transition hover:border-primary hover:bg-surface-muted"
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-bg text-primary">
+              <UserPlus size={20} />
+            </span>
+            <span className="font-label-md text-ink">Nouveau locataire</span>
+            <span className="text-body-sm text-ink-soft">
+              Il signe aujourd&apos;hui et s&apos;installe maintenant — aucun impayé antérieur à déclarer.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect("ancien")}
+            className="flex flex-col items-start gap-3 rounded-xl border border-border bg-surface p-4 text-left transition hover:border-primary hover:bg-surface-muted"
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-bg text-primary">
+              <History size={20} />
+            </span>
+            <span className="font-label-md text-ink">Ancien locataire</span>
+            <span className="text-body-sm text-ink-soft">
+              Déjà en place avant Africa Immo Management — vous pourrez déclarer ses impayés
+              éventuels (loyer, SBEE, SONEB, poubelle, autres) et s&apos;il est à jour ou non.
+            </span>
+          </button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

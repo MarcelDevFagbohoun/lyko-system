@@ -10,12 +10,18 @@ import { previewEntryProrata } from "@/lib/utils";
 import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { useTenantRhythm } from "@/lib/hooks/use-tenant-rhythm";
 import { buildRentDuePayload, validateRentDue } from "@/components/renters/rent-due-field";
-import { todayIso } from "@/lib/dates";
 import { OPENING_DEBT_TYPES, type OpeningDebtItemInput } from "@/lib/api/renters";
 import { ADDITIONAL_DEPOSIT_TYPES, FormState, INITIAL } from "./form-state";
 import { CreatedRenter } from "./types";
 
-export function useNewRenterForm() {
+/**
+ * `tenantKind` : choix explicite fait par l'agent sur l'écran précédent (demande utilisateur,
+ * 2026-11-12 : « deux options nouveau locataire et ancien locataire ») — remplace l'ancienne
+ * déduction purement à partir de la date d'entrée (une date passée ne suffisait pas à distinguer une
+ * simple saisie tardive d'un véritable onboarding historique). Décide si les champs propres à un
+ * locataire déjà en place (impayés à l'entrée détaillés, « à jour sur son loyer ») sont affichés.
+ */
+export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
   const { accessToken, tenant } = useAuth();
   const online = useOnlineStatus();
   // Rythme de période de l'entreprise (étape 2b) : décide du champ d'échéance (jour du mois ou jours
@@ -64,10 +70,11 @@ export function useNewRenterForm() {
     if (!form.monthlyRent) set("monthlyRent", String(unit.monthlyRent));
   }
 
-  // Date d'entrée antérieure au mois en cours : onboarding d'un locataire
-  // déjà en place, pas une vraie nouvelle entrée — la question "à jour ?"
-  // n'a de sens que dans ce cas (voir services/rentTracking.js `computeArrears`).
-  const isHistoricalStartDate = form.startDate.slice(0, 7) < todayIso().slice(0, 7);
+  // Onboarding d'un locataire déjà en place, pas une vraie nouvelle entrée — décidé par le choix
+  // explicite de l'écran précédent (ci-dessus), plus jamais déduit de la seule date d'entrée. La
+  // question "à jour ?" et le détail des impayés à l'entrée n'ont de sens que dans ce cas (voir
+  // `computeArrears`, services/rentTracking.js).
+  const isHistoricalStartDate = tenantKind === "ancien";
 
   // Aperçu du prorata d'entrée (étape 42) — miroir exact du calcul serveur (`previewEntryProrata`,
   // lib/utils.ts) ; le montant réellement enregistré reste toujours recalculé par le serveur.

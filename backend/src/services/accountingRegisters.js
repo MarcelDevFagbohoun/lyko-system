@@ -54,6 +54,33 @@ async function listRentPaymentRows(tenantId, from, to) {
   return rows;
 }
 
+/**
+ * Règlements des impayés à l'entrée de la période (plus récents d'abord) — demande utilisateur,
+ * 2026-11-12 : « il faut que tous ces changements soient dans les opérations trésorerie ». Couvre
+ * aussi bien un règlement global (ancien comportement, `lease_opening_debt_payments` seule) qu'un
+ * règlement d'UN poste du détail par type + mois (migration 151) : dans ce cas, `lease_opening_debt_item_payments`
+ * porte le lien 1:1 vers la ligne `lease_opening_debt_payments` correspondante (jamais les deux de
+ * façon indépendante — voir `payOpeningDebtItem`, services/leasePayments.js), ce LEFT JOIN le retrouve.
+ */
+async function listOpeningDebtPaymentRows(tenantId, from, to) {
+  const [rows] = await pool.query(
+    `SELECT lodp.*, r.id AS renter_id, r.first_name AS renter_first_name, r.last_name AS renter_last_name,
+            u.code AS unit_code, ru.first_name AS recorder_first_name, ru.last_name AS recorder_last_name, ru.role AS recorder_role,
+            i.debt_type AS item_debt_type, i.period_month AS item_period_month, i.label AS item_label
+     FROM lease_opening_debt_payments lodp
+     JOIN leases l ON l.id = lodp.lease_id
+     JOIN renters r ON r.id = l.renter_id
+     JOIN property_units u ON u.id = l.unit_id
+     LEFT JOIN users ru ON ru.id = lodp.recorded_by
+     LEFT JOIN lease_opening_debt_item_payments lodip ON lodip.lease_payment_id = lodp.id
+     LEFT JOIN lease_opening_debt_items i ON i.id = lodip.item_id
+     WHERE lodp.tenant_id = :tenantId AND lodp.paid_at BETWEEN :from AND :to
+     ORDER BY lodp.paid_at DESC, lodp.id DESC`,
+    { tenantId, from, to },
+  );
+  return rows;
+}
+
 /** Versements aux propriétaires de la période (plus récents d'abord). */
 async function listOwnerPayoutRows(tenantId, from, to) {
   const [rows] = await pool.query(
@@ -69,4 +96,4 @@ async function listOwnerPayoutRows(tenantId, from, to) {
   return rows;
 }
 
-module.exports = { listUtilityArrearsRows, listRentPaymentRows, listOwnerPayoutRows };
+module.exports = { listUtilityArrearsRows, listRentPaymentRows, listOpeningDebtPaymentRows, listOwnerPayoutRows };
