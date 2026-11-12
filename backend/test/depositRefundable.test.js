@@ -13,20 +13,27 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { pool, closePool } = require('../src/config/db');
+const { createApp } = require('../src/app');
+const { signAccessToken } = require('../src/utils/jwt');
 const { startMoveOutReport } = require('../src/services/moveOutReport');
 const { checkAdditionalDepositRefunds, listLeaseDeposits } = require('../src/services/leaseDeposits');
 const { createBareFixture, teardown } = require('./gl/fixtures');
 
-let fx;
+let fx; let server; let baseUrl;
 
 before(async () => {
   fx = await createBareFixture();
+  server = createApp().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
 after(async () => {
+  await new Promise((r) => server.close(r));
   await teardown(fx.tenantId);
   await closePool();
 });
+const auth = () => ({ Authorization: `Bearer ${signAccessToken({ sub: fx.dgId, tenantId: fx.tenantId, role: 'dg' })}` });
 
 test('startMoveOutReport — caution de loyer NON remboursable : montant figé à 0 sur la fiche de sortie', async () => {
   await pool.query(
@@ -79,3 +86,47 @@ test('checkAdditionalDepositRefunds — une caution SBEE NON remboursable est ex
 
   await pool.query('DELETE FROM lease_deposits WHERE id IN (:a, :b)', { a: sbee.insertId, b: soneb.insertId });
 });
+
+test(
+  'finalizeMoveOut (bout en bout) — caution de loyer NON remboursable : deposit_status reste "held" à la sortie, jamais "returned" (bug corrigé, 2026-11-12 : elle disparaissait sinon de getDepositsHeldByOwner sans aucune écriture comptable)',
+  async () => {
+    await pool.query(
+      "UPDATE leases SET deposit_refundable = 0, deposit_amount = 50000, status = 'active' WHERE id = :id",
+      { id: fx.leaseId },
+    );
+    await startMoveOutReport(fx.tenantId, fx.dgId, fx.leaseId, null, '2026-02-01');
+
+    const getUrl = `${baseUrl}/api/leases/${fx.leaseId}/move-out-report`;
+    const cur = await (await fetch(getUrl, { headers: auth() })).json();
+    // Tous les éléments évalués en bon état (BE), aucune dégradation — pour isoler la seule question
+    // testée ici (le statut de la caution), jamais la mécanique des retenues déjà couverte ailleurs.
+    const zones = cur.report.zones.map((zone) => ({
+      ...zone,
+      items: zone.items.map((item) => ({ ...item, condition: 'BE' })),
+    }));
+    const patch = await fetch(getUrl, {
+      method: 'PATCH',
+      headers: { ...auth(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zones }),
+    });
+    assert.equal(patch.status, 200, JSON.stringify(await patch.clone().json().catch(() => null)));
+
+    const fin = await fetch(`${getUrl}/finalize`, { method: 'POST', headers: auth(), body: new FormData() });
+    assert.equal(fin.status, 200);
+    const { report } = await fin.json();
+    // Aucune retenue, caution figée à 0 dès le brouillon : rien à régler, montant à 0.
+    assert.equal(report.netRefund, 0);
+
+    const [[lease]] = await pool.query('SELECT status, deposit_status FROM leases WHERE id = :id', { id: fx.leaseId });
+    assert.equal(lease.status, 'ended', 'le bail se termine normalement');
+    assert.equal(lease.deposit_status, 'held', 'jamais "returned" pour une caution non remboursable — elle reste acquise au propriétaire, visible comme détenue');
+
+    // Remet en l'état pour ne pas affecter un éventuel test suivant réutilisant ce bail.
+    await pool.query('DELETE FROM move_out_reports WHERE lease_id = :id', { id: fx.leaseId });
+    await pool.query(
+      "UPDATE leases SET status = 'active', deposit_status = 'held', deposit_refundable = 1 WHERE id = :id",
+      { id: fx.leaseId },
+    );
+    await pool.query('UPDATE property_units SET status = :s WHERE id = :id', { s: 'loue', id: fx.unitId });
+  },
+);

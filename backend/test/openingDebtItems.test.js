@@ -63,7 +63,10 @@ test('création d\'un locataire avec un détail d\'impayés par type + mois : le
       unitId: unit2Id,
       monthlyRent: 50000,
       startDate: '2026-01-01',
-      upToDateAtOnboarding: true,
+      // `upToDateAtOnboarding: true` serait contradictoire ici (un poste loyer impayé est déclaré
+      // ci-dessous) — rejeté côté serveur depuis l'audit du 2026-11-12, voir
+      // `validators/renters.js` `forbidUpToDateWithLoyerOpeningDebt` et
+      // `upToDateVsOpeningDebtValidation.test.js`. Simplement omis ici : défaut `false`.
       openingDebtItems: [
         { debtType: 'loyer', periodMonth: month1, amount: 50000 },
         { debtType: 'sbee', periodMonth: month2, label: 'Facture en retard', amount: 15000 },

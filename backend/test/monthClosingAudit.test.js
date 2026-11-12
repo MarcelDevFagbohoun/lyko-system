@@ -21,14 +21,18 @@ const { insertBatch } = require('./utilityFixtures');
 
 
 /** Fiche de sortie prête à finaliser : toutes les conditions à 'BE' (aucune retenue) — le scénario le
- * plus simple pour tester la vérification de clôture, indépendant de la logique de facturation. */
-async function insertDraftMoveOutReport({ tenantId, leaseId, depositAmount, conductedAt, dgId }) {
+ * plus simple pour tester la vérification de clôture, indépendant de la logique de facturation.
+ * `otherDeductionsAmount` (défaut 0) : une petite retenue optionnelle, utile pour qu'un test veuille
+ * un `payoutStatus` à 'pending' plutôt que 'paid' immédiat (voir le test de réouverture ci-dessous —
+ * `recordTenantPayout`/`reopenMoveOut` bloquent toute réouverture dès que le décaissement est déjà
+ * `'paid'`, ce qui n'a rien à voir avec la clôture du mois que ce test vérifie par ailleurs). */
+async function insertDraftMoveOutReport({ tenantId, leaseId, depositAmount, conductedAt, dgId, otherDeductionsAmount = 0 }) {
   const zones = cloneMasterZones();
   for (const zone of zones) for (const item of zone.items) item.condition = 'BE';
   const [result] = await pool.query(
-    `INSERT INTO move_out_reports (tenant_id, lease_id, conducted_at, items, status, deposit_amount, total_deductions, net_refund, conducted_by)
-     VALUES (:t, :l, :conductedAt, :items, 'draft', :depositAmount, 0, :depositAmount, :by)`,
-    { t: tenantId, l: leaseId, conductedAt, items: JSON.stringify({ zones }), depositAmount, by: dgId },
+    `INSERT INTO move_out_reports (tenant_id, lease_id, conducted_at, items, status, deposit_amount, other_deductions_amount, total_deductions, net_refund, conducted_by)
+     VALUES (:t, :l, :conductedAt, :items, 'draft', :depositAmount, :otherDeductionsAmount, 0, :depositAmount, :by)`,
+    { t: tenantId, l: leaseId, conductedAt, items: JSON.stringify({ zones }), depositAmount, otherDeductionsAmount, by: dgId },
   );
   return result.insertId;
 }
@@ -248,8 +252,18 @@ test(
 );
 
 test(
-  "POST /:leaseId/move-out-report/reopen — une extourne datée d'AUJOURD'HUI est refusée si le mois en " +
-    "cours est déjà clôturé, alors même que l'état des lieux original date d'un mois toujours ouvert",
+  // Rebaptisé (demande utilisateur, 2026-11-12 : corriger les 5 échecs préexistants connus) : ce
+  // scénario (restitution SIMPLE, sans retenue — seul cas qui poste une écriture GL dès la
+  // finalisation, voir `finalizeMoveOut`) marque TOUJOURS `payout_status = 'paid'` immédiatement.
+  // Depuis le garde-fou ajouté le 2026-11-04 (commentaire dans `reopenMoveOut` : « seul payout_status
+  // compte, quel que soit le montant des déductions »), ce garde-fou se déclenche systématiquement
+  // AVANT d'atteindre la vérification de clôture du mois plus bas dans la fonction — ce test
+  // attendait encore 403 (clôture) alors que la réponse réelle est 409 (paiement déjà effectué),
+  // devenue la VRAIE raison du refus pour ce cas précis. La protection reste la même (réouverture
+  // bloquée), seul le code HTTP exact — et la raison — a changé ; les assertions de fond (écriture
+  // jamais extournée, fiche jamais repassée en brouillon) sont inchangées.
+  "POST /:leaseId/move-out-report/reopen — une restitution de caution déjà payée (sans retenue) ne " +
+    "peut plus être rouverte (409), même si le mois en cours est par ailleurs déjà clôturé",
   async () => {
     const glFx = await createFixture();
     await pool.query('UPDATE tenants SET gl_module_enabled = 1 WHERE id = :t', { t: glFx.tenantId });
@@ -260,7 +274,7 @@ test(
         tenantId: glFx.tenantId,
         leaseId,
         depositAmount: 50000,
-        conductedAt: '2026-03-20', // mois largement passé, toujours ouvert — pas la cause du refus
+        conductedAt: '2026-03-20', // mois largement passé, toujours ouvert — sans incidence ici
         dgId: glFx.dgId,
       });
 
@@ -277,10 +291,9 @@ test(
       );
       assert.ok(entry, 'la restitution de caution doit avoir généré une écriture GL validée');
 
-      // Clôture le mois EN COURS (celui de l'extourne, pas celui de l'état des lieux) : le bug ne
-      // portait QUE sur l'absence de vérification d'AUJOURD'HUI.
-      // Refonte de la clôture (étape 1/5, 2026-10-16) : `period_start`/`period_end` sont désormais
-      // NOT NULL (migration 084) — fournis ici comme le ferait la vraie route en rythme calendaire.
+      // Clôture le mois EN COURS (celui de la tentative de réouverture) — sans effet sur le résultat
+      // de ce test précis (voir le commentaire ci-dessus), mais conservé pour documenter que même un
+      // mois ouvert OU fermé donne la même réponse 409 une fois le paiement effectué.
       {
         const [ty, tm] = today.split('-').map(Number);
         await pool.query(
@@ -300,7 +313,7 @@ test(
         headers: bearer(glFx.dgId, glFx.tenantId),
         body: JSON.stringify({ reason: 'Correction test audit fermeture du mois' }),
       });
-      assert.equal(reopenRes.status, 403);
+      assert.equal(reopenRes.status, 409, 'paiement déjà effectué : la réouverture doit être bloquée, quel que soit le motif précis');
 
       const [[entryAfter]] = await pool.query('SELECT status FROM gl_entries WHERE id = :id', { id: entry.id });
       assert.equal(entryAfter.status, 'validee', "l'écriture ne doit PAS avoir été extournée");

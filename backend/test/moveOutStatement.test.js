@@ -88,12 +88,20 @@ test('point de sortie : main-d’œuvre + loyers impayés > caution → solde n�
   assert.equal(statement.shortfall, 30000);
   assert.equal(statement.netRefund, 0);
 
-  const noChoice = await fetch(`${url}/finalize`, { method: 'POST', headers: auth(), body: new FormData() });
+  // `finalize` lit un body JSON classique (`req.body?.xxx`, voir `moveOutReport.js`
+  // `finalizeMoveOut`) depuis la suppression de la signature numérique à la sortie (2026-11-02) —
+  // il n'y a plus aucun fichier à téléverser ici. Un `FormData` n'est jamais parsé par
+  // `express.json()`/`express.urlencoded()` (aucun `multer` sur cette route) : ses champs
+  // arrivaient silencieusement vides côté serveur, faisant échouer ce test à tort (corrigé à
+  // l'audit du 2026-11-12 — l'un des 5 échecs préexistants connus).
+  const noChoice = await fetch(`${url}/finalize`, { method: 'POST', headers: { ...auth(), 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
   assert.equal(noChoice.status, 400);
 
-  const form = new FormData();
-  form.set('balanceResolution', 'repairs_by_tenant');
-  const ok = await fetch(`${url}/finalize`, { method: 'POST', headers: auth(), body: form });
+  const ok = await fetch(`${url}/finalize`, {
+    method: 'POST',
+    headers: { ...auth(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ balanceResolution: 'repairs_by_tenant' }),
+  });
   assert.equal(ok.status, 200);
   const fin = (await ok.json()).report;
   assert.equal(fin.balanceDueAmount, 30000);
@@ -115,9 +123,13 @@ test('point de sortie positif : finalisation sans signature numérique', async (
     );
   }
   await insertDraftMoveOutReport({ tenantId: fx.tenantId, leaseId, depositAmount: 100000, conductedAt: '2026-03-20', dgId: fx.dgId });
-  const form = new FormData();
-  form.set('refundPaymentMethod', 'especes');
-  const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, { method: 'POST', headers: auth(), body: form });
+  // JSON, pas FormData — même raison que le test précédent (plus de signature/fichier à téléverser
+  // depuis le 2026-11-02, voir son commentaire).
+  const res = await fetch(`${baseUrl}/api/leases/${leaseId}/move-out-report/finalize`, {
+    method: 'POST',
+    headers: { ...auth(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refundPaymentMethod: 'especes' }),
+  });
   assert.equal(res.status, 200);
   const { report } = await res.json();
   assert.equal(report.netRefund, 100000);

@@ -46,7 +46,12 @@ test('GET /api/renters — bail actif : activeLease renseigné, lastEndedLease t
 });
 
 test('GET /api/renters — bail terminé : activeLease null, lastEndedLease renseigné (unité/propriétaire/loyer/date)', async () => {
-  await pool.query("UPDATE leases SET status = 'ended', end_date = '2026-09-30' WHERE id = :id", { id: fx.leaseId });
+  // `archived_at` requis depuis la migration 140 (demande utilisateur, 2026-11-03 : bouton
+  // « Archivé » explicite) — tant qu'il n'est pas posé, le locataire n'apparaît ni en actifs ni en
+  // archives ici (voir `services/renters.js` `listRenters`, visible seulement dans la boîte « État
+  // des lieux » jusqu'à l'archivage). Test mis à jour en conséquence (un des 5 échecs préexistants
+  // connus, corrigé à l'audit du 2026-11-12) : `status = 'ended'` seul ne suffit plus.
+  await pool.query("UPDATE leases SET status = 'ended', end_date = '2026-09-30', archived_at = '2026-09-30', archived_by = :by WHERE id = :id", { id: fx.leaseId, by: fx.dgId });
 
   const res = await fetch(`${baseUrl}/api/renters`, { headers: bearer(fx.dgId, fx.tenantId) });
   assert.equal(res.status, 200);
@@ -67,8 +72,9 @@ test('GET /api/renters — plusieurs baux terminés : lastEndedLease reflète le
     "INSERT INTO property_units (tenant_id, property_id, code, designation, status, monthly_rent, created_by) VALUES (:tenantId, :propertyId, 'U2', 'studio', 'libre', 30000, :by)",
     { tenantId: fx.tenantId, propertyId: fx.propertyId, by: fx.dgId },
   );
+  // `archived_at` posé dès l'insertion — même raison que le test précédent (migration 140).
   const [lease2] = await pool.query(
-    "INSERT INTO leases (tenant_id, renter_id, unit_id, start_date, end_date, monthly_rent, rent_due_day, deposit_amount, status, created_by) VALUES (:tenantId, :renterId, :unitId, '2026-01-01', '2026-06-30', 30000, 5, 0, 'ended', :by)",
+    "INSERT INTO leases (tenant_id, renter_id, unit_id, start_date, end_date, monthly_rent, rent_due_day, deposit_amount, status, archived_at, archived_by, created_by) VALUES (:tenantId, :renterId, :unitId, '2026-01-01', '2026-06-30', 30000, 5, 0, 'ended', '2026-06-30', :by, :by)",
     { tenantId: fx.tenantId, renterId: fx.renterId, unitId: unit2.insertId, by: fx.dgId },
   );
 

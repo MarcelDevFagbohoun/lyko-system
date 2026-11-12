@@ -195,7 +195,7 @@ function ChargesContent() {
 
         <UtilityAlertsCard hideWhenEmpty />
 
-        <OpeningDebtChargesCard hideWhenEmpty />
+        <OpeningDebtChargesCard />
 
         <ChargeMonthCard refreshKey={summaryRefreshKey} />
 

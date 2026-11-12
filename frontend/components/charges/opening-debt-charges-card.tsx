@@ -15,9 +15,10 @@ import { CADRES } from "@/lib/module-theme";
  * les charges ») — un locataire déjà en place peut avoir déclaré, à son onboarding, des factures
  * SBEE/SONEB antérieures non réglées (voir `OpeningDebtItemsFields`). Lecture seule : le règlement
  * se fait depuis la fiche du locataire (section « Impayés à l'entrée »), ce lien y mène directement.
- * `hideWhenEmpty` : sur l'accueil, aucune place n'est prise quand il n'y en a pas.
+ * Toujours masquée s'il n'y a rien à montrer (pas de message "à jour" ici, contrairement à
+ * `UtilityAlertsCard` — aucune place n'est jamais prise sur l'accueil quand il n'y en a pas).
  */
-export function OpeningDebtChargesCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolean }) {
+export function OpeningDebtChargesCard() {
   const { accessToken } = useAuth();
   const [items, setItems] = React.useState<OpeningDebtChargeItem[] | null>(null);
   const [failed, setFailed] = React.useState(false);
@@ -30,10 +31,10 @@ export function OpeningDebtChargesCard({ hideWhenEmpty = false }: { hideWhenEmpt
   }, [accessToken]);
 
   if (failed || items === null) return null;
-  if (items.length === 0) {
-    if (hideWhenEmpty) return null;
-    return null;
-  }
+  // Contrairement à `UtilityAlertsCard` (dont elle reprend la forme), cette carte n'a pas de message
+  // "à jour" pour le cas vide : elle n'est utile qu'avec quelque chose à montrer et reste toujours
+  // masquée sinon, que `hideWhenEmpty` soit passé ou non (code mort retiré à l'audit du 2026-11-12).
+  if (items.length === 0) return null;
 
   const total = items.reduce((sum, it) => sum + it.remaining, 0);
 

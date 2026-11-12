@@ -166,6 +166,26 @@ function requireAdditionalDepositMethodWhenPositive(data, ctx) {
   }
 }
 
+// Contradiction trouvée à l'audit du 2026-11-12 : rien côté serveur n'empêchait jusqu'ici d'envoyer
+// `upToDateAtOnboarding: true` EN MÊME TEMPS qu'un impayé de loyer déclaré à l'entrée — seul le
+// formulaire (use-new-renter-form.ts) décochait/masquait la case, un appel API direct passait sans
+// erreur. Un poste `openingDebtItems` de type 'loyer' compte, de même qu'un `openingDebtAmount` global
+// positif SANS aucun détail par type (repli « montant global historique », voir `openingDebtRouting.js`
+// côté lecture — compté comme 100 % loyer dans ce cas).
+function forbidUpToDateWithLoyerOpeningDebt(data, ctx) {
+  if (!data.upToDateAtOnboarding) return;
+  const items = data.openingDebtItems ?? [];
+  const hasLoyerItem = items.some((item) => item.debtType === 'loyer');
+  const hasLegacyLumpSum = items.length === 0 && data.openingDebtAmount > 0;
+  if (hasLoyerItem || hasLegacyLumpSum) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['upToDateAtOnboarding'],
+      message: "Incohérent avec un loyer impayé déclaré à l'entrée : ce locataire n'est pas à jour sur son loyer",
+    });
+  }
+}
+
 const createRenterSchema = z
   .object({
     firstName: nameSchema,
@@ -215,7 +235,8 @@ const createRenterSchema = z
   })
   .superRefine(requireDepositMethodWhenDepositPositive)
   .superRefine(requireEntryFeeMethodWhenPositive)
-  .superRefine(requireAdditionalDepositMethodWhenPositive);
+  .superRefine(requireAdditionalDepositMethodWhenPositive)
+  .superRefine(forbidUpToDateWithLoyerOpeningDebt);
 
 // Nouveau bail pour un locataire déjà existant (renouvellement / changement
 // d'unité) — alimente l'historique des contrats.
@@ -241,7 +262,8 @@ const createLeaseSchema = z
   })
   .superRefine(requireDepositMethodWhenDepositPositive)
   .superRefine(requireEntryFeeMethodWhenPositive)
-  .superRefine(requireAdditionalDepositMethodWhenPositive);
+  .superRefine(requireAdditionalDepositMethodWhenPositive)
+  .superRefine(forbidUpToDateWithLoyerOpeningDebt);
 
 const updateRenterSchema = z.object({
   firstName: nameSchema.optional(),

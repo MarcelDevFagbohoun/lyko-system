@@ -687,9 +687,16 @@ async function finalizeMoveOut(tenantId, userId, leaseId, scopeAgentId, { body }
 
     let finalizedAdditionalDeposits;
     if (!isCorrection) {
+      // Caution de loyer NON remboursable (demande utilisateur, 2026-11-12) : jamais marquée
+      // `'returned'` à la sortie — elle n'a jamais été rendue, elle reste `'held'` indéfiniment, acquise
+      // au propriétaire d'office, exactement comme une caution supplémentaire non remboursable
+      // (`checkAdditionalDepositRefunds`/`finalizeAdditionalDeposits` ci-dessous). La marquer
+      // `'returned'` la faisait disparaître à tort de `getDepositsHeldByOwner`/`loadHeldDeposits` (bug
+      // trouvé à l'audit du 2026-11-12) sans qu'aucune écriture comptable ne prenne le relais — l'argent
+      // réellement perçu et conservé n'apparaissait alors plus nulle part.
       await conn.query(
-        "UPDATE leases SET status = 'ended', end_date = :endDate, deposit_status = 'returned' WHERE id = :id",
-        { endDate: report.conducted_at, id: leaseId },
+        `UPDATE leases SET status = 'ended', end_date = :endDate, deposit_status = :depositStatus WHERE id = :id`,
+        { endDate: report.conducted_at, depositStatus: lease.deposit_refundable ? 'returned' : 'held', id: leaseId },
       );
       await conn.query("UPDATE property_units SET status = 'libre' WHERE id = :id", { id: lease.unit_id });
 
