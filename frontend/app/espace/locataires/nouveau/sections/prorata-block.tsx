@@ -7,6 +7,10 @@ import { DEPOSIT_PAYMENT_METHODS } from "./form-state";
 import type { FormSectionProps } from "./props";
 
 export function ProrataBlock({ form, set, touched, setTouched, errors, isCalendaireRhythm, isHistoricalStartDate, prorataPreview }: FormSectionProps & { isCalendaireRhythm: boolean; isHistoricalStartDate: boolean; prorataPreview: { days: number; amount: number; dueDate: string }; }) {
+  // Sans objet pour un ANCIEN locataire : il n'« entre » pas aujourd'hui au sens qui justifierait
+  // un prorata de premier mois — il occupait déjà le logement avant Africa Immo Management
+  // (demande utilisateur, 2026-11-12).
+  if (isHistoricalStartDate) return null;
   return (
     <>
           {/* Prorata d'entrée (étape 42) : calendaire uniquement (hypothèse "jour du mois",

@@ -204,12 +204,19 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
             ? (form.entryFeePaymentMethod as PaymentMethod)
             : undefined,
         entryFeePaidAt: tenantKind !== "ancien" && Number(form.entryFeeAmount || "0") > 0 ? form.entryFeePaidAt : undefined,
-        entryProration: form.entryProration,
+        // Ancien locataire : jamais de prorata d'entrée, quoi que porte le formulaire — il
+        // n'« entre » pas aujourd'hui au sens qui justifierait une facturation prorata du premier
+        // mois, il occupait déjà le logement. Le bloc est déjà masqué pour ce cas (ProrataBlock),
+        // mais on sécurise aussi l'envoi lui-même (demande utilisateur, 2026-11-12).
+        entryProration: tenantKind === "ancien" ? "aucun" : form.entryProration,
         entryProrataPaymentMethod:
-          form.entryProration === "prorata" && prorataPreview.amount > 0
+          tenantKind !== "ancien" && form.entryProration === "prorata" && prorataPreview.amount > 0
             ? (form.entryProrataPaymentMethod as PaymentMethod)
             : undefined,
-        entryProrataPaidAt: form.entryProration === "prorata" && prorataPreview.amount > 0 ? form.entryProrataPaidAt : undefined,
+        entryProrataPaidAt:
+          tenantKind !== "ancien" && form.entryProration === "prorata" && prorataPreview.amount > 0
+            ? form.entryProrataPaidAt
+            : undefined,
         additionalDeposits: Object.fromEntries(
           enabledAdditionalDepositTypes
             .filter((t) => Number(form.additionalDeposits[t.key].amount || "0") > 0)
