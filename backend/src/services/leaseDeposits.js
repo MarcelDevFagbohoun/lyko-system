@@ -33,6 +33,7 @@ function toPublic(row) {
     type: row.type,
     typeLabel: ADDITIONAL_DEPOSIT_LABELS[row.type] ?? row.type,
     amount: Number(row.amount),
+    refundable: !!row.refundable,
     status: row.status,
     receivedAt: isoDate(row.received_at),
     receivedMethod: row.received_method,
@@ -73,14 +74,18 @@ async function recordAdditionalDeposits(conn, { tenantId, leaseId, renterName, c
 
     const paymentMethod = entry.paymentMethod;
     const paidAt = entry.paidAt;
+    // Remboursable ou non (demande utilisateur, 2026-11-12) : par défaut remboursable — une caution
+    // NON remboursable n'entre jamais dans le décompte de sortie, voir `checkAdditionalDepositRefunds`
+    // ci-dessous (exclue de la sélection des cautions encore « détenues »).
+    const refundable = entry.refundable === false ? 0 : 1;
     // Bug corrigé (audit fermeture du mois, point 1, 16/10/2026) : une caution supplémentaire — un vrai
     // mouvement de trésorerie — ne vérifiait jamais la clôture du mois. Toujours appelée DANS la
     // transaction déjà ouverte par l'appelant (création du bail) : la version verrouillée suffit ici.
     await assertPeriodOpenLocked(conn, tenantId, paidAt);
     const [result] = await conn.query(
-      `INSERT INTO lease_deposits (tenant_id, lease_id, type, amount, status, received_at, received_method, created_by)
-       VALUES (:tenantId, :leaseId, :type, :amount, 'held', :paidAt, :paymentMethod, :createdBy)`,
-      { tenantId, leaseId, type, amount, paidAt, paymentMethod, createdBy },
+      `INSERT INTO lease_deposits (tenant_id, lease_id, type, amount, refundable, status, received_at, received_method, created_by)
+       VALUES (:tenantId, :leaseId, :type, :amount, :refundable, 'held', :paidAt, :paymentMethod, :createdBy)`,
+      { tenantId, leaseId, type, amount, refundable, paidAt, paymentMethod, createdBy },
     );
 
     if (paymentMethod && (await isModuleActive(conn, tenantId))) {
@@ -176,8 +181,12 @@ async function settleUnpaidUtilityCharges(conn, { tenantId, leaseId, utilityType
  * réutilisés par `finalizeAdditionalDeposits` pour ne jamais recalculer deux fois).
  */
 async function checkAdditionalDepositRefunds(conn, { tenantId, leaseId, peintureDeductionAmount = 0, refundMethods = {} }) {
+  // Une caution NON remboursable (demande utilisateur, 2026-11-12) est exclue ici : jamais traitée au
+  // décompte de sortie, elle reste `status = 'held'` indéfiniment — acquise au propriétaire d'office,
+  // quel que soit l'état du logement. `listLeaseDeposits` (consulté sur la fiche du bail) continue de
+  // la montrer, avec son statut `refundable: false`, pour que l'agent sache qu'elle ne sera jamais rendue.
   const [rows] = await conn.query(
-    "SELECT * FROM lease_deposits WHERE tenant_id = :tenantId AND lease_id = :leaseId AND status = 'held'",
+    "SELECT * FROM lease_deposits WHERE tenant_id = :tenantId AND lease_id = :leaseId AND status = 'held' AND refundable = 1",
     { tenantId, leaseId },
   );
   if (rows.length === 0) return { rows: [], peintureOverflow: 0 };

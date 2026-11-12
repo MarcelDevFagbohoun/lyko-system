@@ -81,6 +81,8 @@ function toPublicLease(row) {
     monthlyRent: Number(row.lease_monthly_rent ?? row.monthly_rent),
     depositAmount: Number(row.deposit_amount),
     depositStatus: row.deposit_status,
+    // Caution remboursable ou non (demande utilisateur, 2026-11-12).
+    depositRefundable: !!row.deposit_refundable,
     openingDebtAmount: Number(row.opening_debt_amount ?? 0),
     upToDateAtOnboarding: !!row.up_to_date_at_onboarding,
     entryFeeAmount: Number(row.entry_fee_amount ?? 0),

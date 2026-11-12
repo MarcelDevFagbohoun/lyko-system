@@ -6,7 +6,7 @@ import { RENT_TIMING_LABELS, type RentTiming } from "@/lib/api/renters";
 import type { FormSectionProps } from "./props";
 import { OpeningDebtItemsFields } from "./opening-debt-items-fields";
 
-export function BillingOptionsFields({ form, set, touched, setTouched, errors, isHistoricalStartDate }: FormSectionProps & { isHistoricalStartDate: boolean; }) {
+export function BillingOptionsFields({ form, set, touched, setTouched, errors, isHistoricalStartDate, hasLoyerOpeningDebt }: FormSectionProps & { isHistoricalStartDate: boolean; hasLoyerOpeningDebt: boolean; }) {
   return (
     <>
           <Field
@@ -39,7 +39,14 @@ export function BillingOptionsFields({ form, set, touched, setTouched, errors, i
               error={touched.openingDebtItems ? errors.openingDebtItems : undefined}
             />
           )}
-          {isHistoricalStartDate && (
+          {/* Contradictoire avec un loyer impayé déclaré ci-dessus : décochée et non cochable dans ce
+              cas (demande utilisateur, 2026-11-12) — l'auto-décochage est géré dans use-new-renter-form.ts. */}
+          {isHistoricalStartDate && hasLoyerOpeningDebt && (
+            <p className="rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-xs text-ink-muted">
+              Un loyer impayé est déclaré ci-dessus : ce locataire n&apos;est donc pas à jour sur son loyer.
+            </p>
+          )}
+          {isHistoricalStartDate && !hasLoyerOpeningDebt && (
             <label
               htmlFor="upToDateAtOnboarding"
               className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm text-ink"

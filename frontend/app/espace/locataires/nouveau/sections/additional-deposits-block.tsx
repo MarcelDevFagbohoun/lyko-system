@@ -5,7 +5,7 @@ import { Field, Input } from "@/components/ui/input";
 import { type AdditionalDepositType } from "@/lib/api/renters";
 import { DEPOSIT_PAYMENT_METHODS, ADDITIONAL_DEPOSIT_TYPES, type FormState } from "./form-state";
 
-export function AdditionalDepositsBlock({ form, enabledTypes, touchedByType, setTouchedByType, errorsByType, setAdditionalDeposit }: { form: FormState; enabledTypes: typeof ADDITIONAL_DEPOSIT_TYPES; touchedByType: Partial<Record<AdditionalDepositType, boolean>>; setTouchedByType: React.Dispatch<React.SetStateAction<Partial<Record<AdditionalDepositType, boolean>>>>; errorsByType: Partial<Record<AdditionalDepositType, string>>; setAdditionalDeposit: (type: AdditionalDepositType, patch: Partial<{ amount: string; paymentMethod: string; paidAt: string }>) => void; }) {
+export function AdditionalDepositsBlock({ form, enabledTypes, touchedByType, setTouchedByType, errorsByType, setAdditionalDeposit }: { form: FormState; enabledTypes: typeof ADDITIONAL_DEPOSIT_TYPES; touchedByType: Partial<Record<AdditionalDepositType, boolean>>; setTouchedByType: React.Dispatch<React.SetStateAction<Partial<Record<AdditionalDepositType, boolean>>>>; errorsByType: Partial<Record<AdditionalDepositType, string>>; setAdditionalDeposit: (type: AdditionalDepositType, patch: Partial<{ amount: string; paymentMethod: string; paidAt: string; refundable: boolean }>) => void; }) {
   return (
     <>
           {enabledTypes.length > 0 && (
@@ -63,6 +63,26 @@ export function AdditionalDepositsBlock({ form, enabledTypes, touchedByType, set
                           />
                         </Field>
                       </div>
+                    )}
+                    {Number(entry.amount || "0") > 0 && (
+                      // Remboursable ou non (demande utilisateur, 2026-11-12) : si non remboursable,
+                      // cette caution reste acquise au propriétaire d'office, jamais rendue à la sortie.
+                      <label
+                        htmlFor={`${amountId}-refundable`}
+                        className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm text-ink"
+                      >
+                        <input
+                          id={`${amountId}-refundable`}
+                          type="checkbox"
+                          checked={entry.refundable}
+                          onChange={(e) => setAdditionalDeposit(t.key, { refundable: e.target.checked })}
+                          className="mt-0.5"
+                        />
+                        <span>
+                          Caution remboursable au départ du locataire (décocher si acquise au propriétaire
+                          d&apos;office et jamais rendue).
+                        </span>
+                      </label>
                     )}
                   </div>
                 );

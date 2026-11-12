@@ -19,39 +19,60 @@ export function LeaseTermsFields({ form, set, touched, setTouched, errors, rhyth
             </Field>
           </div>
           {Number(form.depositAmount || "0") > 0 && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field
-                label="Caution reçue par"
-                htmlFor="depositPaymentMethod"
-                required
-                error={touched.depositPaymentMethod ? errors.depositPaymentMethod : undefined}
-              >
-                <select
-                  id="depositPaymentMethod"
-                  value={form.depositPaymentMethod}
-                  onChange={(e) => set("depositPaymentMethod", e.target.value)}
-                  onBlur={() => setTouched((t) => ({ ...t, depositPaymentMethod: true }))}
-                  className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field
+                  label="Caution reçue par"
+                  htmlFor="depositPaymentMethod"
+                  required
+                  error={touched.depositPaymentMethod ? errors.depositPaymentMethod : undefined}
                 >
-                  <option value="" disabled>
-                    Choisir…
-                  </option>
-                  {DEPOSIT_PAYMENT_METHODS.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
+                  <select
+                    id="depositPaymentMethod"
+                    value={form.depositPaymentMethod}
+                    onChange={(e) => set("depositPaymentMethod", e.target.value)}
+                    onBlur={() => setTouched((t) => ({ ...t, depositPaymentMethod: true }))}
+                    className="h-[38px] w-full rounded border border-border-strong bg-surface px-3 text-body-md text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    <option value="" disabled>
+                      Choisir…
                     </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Reçue le" htmlFor="depositPaidAt">
-                <Input
-                  id="depositPaidAt"
-                  type="date"
-                  value={form.depositPaidAt}
-                  onChange={(e) => set("depositPaidAt", e.target.value)}
+                    {DEPOSIT_PAYMENT_METHODS.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Reçue le" htmlFor="depositPaidAt">
+                  <Input
+                    id="depositPaidAt"
+                    type="date"
+                    value={form.depositPaidAt}
+                    onChange={(e) => set("depositPaidAt", e.target.value)}
+                  />
+                </Field>
+              </div>
+              {/* Remboursable ou non (demande utilisateur, 2026-11-12) : si non remboursable, cette
+                  caution ne sera jamais rendue à la sortie, quel que soit l'état du logement — acquise
+                  au propriétaire d'office. */}
+              <label
+                htmlFor="depositRefundable"
+                className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm text-ink"
+              >
+                <input
+                  id="depositRefundable"
+                  type="checkbox"
+                  checked={form.depositRefundable}
+                  onChange={(e) => set("depositRefundable", e.target.checked)}
+                  className="mt-0.5"
                 />
-              </Field>
-            </div>
+                <span>
+                  Caution remboursable au départ du locataire (décocher si cette caution est acquise au
+                  propriétaire d&apos;office et ne sera jamais rendue).
+                </span>
+              </label>
+            </>
           )}
           {/* Frais d'agence : rémunère le service de PLACEMENT du locataire — sans objet pour un
               ancien locataire déjà en place avant Africa Immo Management (aucune prestation de

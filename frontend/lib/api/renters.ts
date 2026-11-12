@@ -280,6 +280,8 @@ export type AdditionalDeposit = {
   type: AdditionalDepositType;
   typeLabel: string;
   amount: number;
+  /** Remboursable ou non (demande utilisateur, 2026-11-12) — si false, jamais rendue, acquise au propriétaire d'office. */
+  refundable: boolean;
   status: "held" | "returned";
   receivedAt: string | null;
   receivedMethod: PaymentMethod | null;
@@ -295,6 +297,8 @@ export type Lease = {
   monthlyRent: number;
   depositAmount: number;
   depositStatus: "held" | "returned";
+  /** Remboursable ou non (demande utilisateur, 2026-11-12) — si false, jamais rendue, acquise au propriétaire d'office. */
+  depositRefundable: boolean;
   /** Impayés déclarés à la création du bail (locataire déjà en place avant Africa Immo Management), 0 si aucun. */
   openingDebtAmount: number;
   // Paid/remaining/payments : uniquement renvoyés par GET /api/renters/:id
@@ -429,6 +433,8 @@ export type CreateRenterInput = {
   // Défaut : startDate si omis (la caution est presque toujours encaissée le
   // jour de la signature du bail).
   depositPaidAt?: string;
+  /** Remboursable ou non (demande utilisateur, 2026-11-12) — par défaut true (comportement historique). Sans effet si depositAmount est 0. */
+  depositRefundable?: boolean;
   /** Frais d'agence pris directement au locataire à l'entrée — 100 % produit du cabinet, jamais reversé au propriétaire. */
   entryFeeAmount?: number;
   // Requis côté serveur seulement si entryFeeAmount > 0 (voir routes/renters.js
@@ -475,7 +481,7 @@ export type CreateRenterInput = {
    * simplement ignoré côté serveur. Mode de règlement requis seulement si le montant est > 0.
    */
   additionalDeposits?: Partial<
-    Record<AdditionalDepositType, { amount: number; paymentMethod?: PaymentMethod; paidAt?: string }>
+    Record<AdditionalDepositType, { amount: number; paymentMethod?: PaymentMethod; paidAt?: string; refundable?: boolean }>
   >;
 };
 

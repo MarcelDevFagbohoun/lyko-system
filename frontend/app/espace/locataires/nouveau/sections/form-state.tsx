@@ -32,13 +32,15 @@ export type FormState = {
   depositAmount: string;
   depositPaymentMethod: string;
   depositPaidAt: string;
+  /** Caution remboursable ou non (demande utilisateur, 2026-11-12) — si false, jamais rendue à la sortie, acquise au propriétaire d'office. */
+  depositRefundable: boolean;
   entryFeeAmount: string;
   entryFeePaymentMethod: string;
   entryFeePaidAt: string;
   entryProration: "aucun" | "prorata";
   entryProrataPaymentMethod: string;
   entryProrataPaidAt: string;
-  additionalDeposits: Record<AdditionalDepositType, { amount: string; paymentMethod: string; paidAt: string }>;
+  additionalDeposits: Record<AdditionalDepositType, { amount: string; paymentMethod: string; paidAt: string; refundable: boolean }>;
   rentDueDay: string;
   rentTiming: RentTiming;
   startDate: string;
@@ -59,6 +61,7 @@ export const INITIAL: FormState = {
   depositAmount: "",
   depositPaymentMethod: "",
   depositPaidAt: todayIso(),
+  depositRefundable: true,
   entryFeeAmount: "",
   entryFeePaymentMethod: "",
   entryFeePaidAt: todayIso(),
@@ -66,9 +69,9 @@ export const INITIAL: FormState = {
   entryProrataPaymentMethod: "",
   entryProrataPaidAt: todayIso(),
   additionalDeposits: {
-    sbee: { amount: "", paymentMethod: "", paidAt: todayIso() },
-    soneb: { amount: "", paymentMethod: "", paidAt: todayIso() },
-    peinture: { amount: "", paymentMethod: "", paidAt: todayIso() },
+    sbee: { amount: "", paymentMethod: "", paidAt: todayIso(), refundable: true },
+    soneb: { amount: "", paymentMethod: "", paidAt: todayIso(), refundable: true },
+    peinture: { amount: "", paymentMethod: "", paidAt: todayIso(), refundable: true },
   },
   rentDueDay: "5",
   rentTiming: "avance",

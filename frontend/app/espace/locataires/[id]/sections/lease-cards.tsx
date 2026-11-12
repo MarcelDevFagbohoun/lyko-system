@@ -59,6 +59,8 @@ export function NewLeaseCard({
   const [depositAmount, setDepositAmount] = React.useState("");
   const [depositPaymentMethod, setDepositPaymentMethod] = React.useState("");
   const [depositPaidAt, setDepositPaidAt] = React.useState(new Date().toISOString().slice(0, 10));
+  // Remboursable ou non (demande utilisateur, 2026-11-12) — par défaut remboursable.
+  const [depositRefundable, setDepositRefundable] = React.useState(true);
   const [rentDueDay, setRentDueDay] = React.useState("5");
   const [startDate, setStartDate] = React.useState(new Date().toISOString().slice(0, 10));
   // Rythme de période de l'entreprise (étape 2b) : même champ d'échéance que la création d'un locataire.
@@ -93,6 +95,7 @@ export function NewLeaseCard({
         depositAmount: deposit,
         depositPaymentMethod: deposit > 0 ? (depositPaymentMethod as PaymentMethod) : undefined,
         depositPaidAt: deposit > 0 ? depositPaidAt : undefined,
+        depositRefundable,
         ...buildRentDuePayload(rhythm, rentDueDay),
         startDate,
       });
@@ -169,6 +172,24 @@ export function NewLeaseCard({
                 <Input id="newLeaseDepositPaidAt" type="date" value={depositPaidAt} onChange={(e) => setDepositPaidAt(e.target.value)} />
               </Field>
             </div>
+          )}
+          {Number(depositAmount || "0") > 0 && (
+            <label
+              htmlFor="newLeaseDepositRefundable"
+              className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5 text-body-sm text-ink"
+            >
+              <input
+                id="newLeaseDepositRefundable"
+                type="checkbox"
+                checked={depositRefundable}
+                onChange={(e) => setDepositRefundable(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Caution remboursable au départ du locataire (décocher si acquise au propriétaire d&apos;office
+                et jamais rendue).
+              </span>
+            </label>
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <RentDueField rhythm={rhythm} value={rentDueDay} onChange={setRentDueDay} />
@@ -248,7 +269,13 @@ export function LeaseCard({
           <Metric
             label="Caution"
             value={formatFcfa(lease.depositAmount)}
-            sub={lease.depositStatus === "held" ? "Conservée" : "Restituée"}
+            sub={
+              !lease.depositRefundable
+                ? "Non remboursable"
+                : lease.depositStatus === "held"
+                  ? "Conservée"
+                  : "Restituée"
+            }
           />
           <Metric label="Entrée dans les lieux" value={lease.startDate} />
           <Metric
@@ -298,8 +325,8 @@ export function LeaseCard({
                 <div key={d.type} className="flex flex-col gap-1 rounded-lg border border-border-subtle p-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-label-sm text-ink">{d.typeLabel}</span>
-                    <Badge variant={d.status === "held" ? "info" : "success"}>
-                      {d.status === "held" ? "Conservée" : "Restituée"}
+                    <Badge variant={!d.refundable ? "warning" : d.status === "held" ? "info" : "success"}>
+                      {!d.refundable ? "Non remboursable" : d.status === "held" ? "Conservée" : "Restituée"}
                     </Badge>
                   </div>
                   <span className="text-body-md text-ink">{formatFcfa(d.amount)}</span>

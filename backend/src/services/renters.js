@@ -24,7 +24,7 @@ const UPLOADS_ROOT = path.join(__dirname, '../../uploads');
 // liste et la fiche (le propriétaire est une fiche à part depuis l'étape 5 :
 // jointure sur owners plutôt que des colonnes texte sur properties).
 const LEASE_UNIT_PROPERTY_SELECT = `
-  l.id AS lease_id, l.monthly_rent AS lease_monthly_rent, l.deposit_amount,
+  l.id AS lease_id, l.monthly_rent AS lease_monthly_rent, l.deposit_amount, l.deposit_refundable,
   l.deposit_status, l.opening_debt_amount, l.up_to_date_at_onboarding,
   l.entry_fee_amount, l.entry_fee_received_at, l.entry_fee_received_method,
   l.entry_proration, l.entry_prorata_amount, l.entry_prorata_days, l.entry_prorata_due_date,
@@ -614,14 +614,15 @@ async function insertLeaseWithEntries(conn, { tenantId, userId, renterId, renter
   }
 
   const [leaseResult] = await conn.query(
-    `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, rent_due_day, rent_due_offset_days, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
-       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :dueDay, :dueOffsetDays, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,
+    `INSERT INTO leases (tenant_id, unit_id, renter_id, monthly_rent, deposit_amount, deposit_refundable, rent_due_day, rent_due_offset_days, rent_timing, start_date, created_by, opening_debt_amount, up_to_date_at_onboarding, entry_fee_amount, entry_proration, entry_prorata_amount, entry_prorata_days, entry_prorata_due_date)
+       VALUES (:tenantId, :unitId, :renterId, :rent, :deposit, :depositRefundable, :dueDay, :dueOffsetDays, :rentTiming, :startDate, :createdBy, :openingDebtAmount, :upToDate, :entryFeeAmount, :entryProration, :entryProrataAmount, :entryProrataDays, :entryProrataDueDate)`,
     {
       tenantId,
       unitId: data.unitId,
       renterId,
       rent,
       deposit: data.depositAmount,
+      depositRefundable: data.depositRefundable === false ? 0 : 1,
       dueDay: isCalendaireLease ? data.rentDueDay : null,
       dueOffsetDays: isCalendaireLease ? null : data.rentDueOffsetDays,
       rentTiming,

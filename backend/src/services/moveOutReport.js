@@ -139,7 +139,11 @@ async function startMoveOutReport(tenantId, userId, leaseId, scopeAgentId, condu
 
   const moveInRow = await loadInspectionReportRow(pool, 'move_in_reports', leaseId);
   const zones = moveInRow ? cloneZonesFrom(normalizeStoredItems(moveInRow.items)) : cloneMasterZones();
-  const depositAmount = Number(lease.deposit_amount);
+  // Caution NON remboursable (demande utilisateur, 2026-11-12) : jamais disponible au décompte de
+  // sortie — ni à rendre, ni à utiliser pour couvrir des dégradations — acquise au propriétaire
+  // d'office. Montant figé à 0 ici fait suivre tout le reste (totalDeductions/netRefund, écritures
+  // GL) sans aucun autre changement, exactement comme un bail sans caution du tout.
+  const depositAmount = lease.deposit_refundable ? Number(lease.deposit_amount) : 0;
 
   await pool.query(
     `INSERT INTO move_out_reports

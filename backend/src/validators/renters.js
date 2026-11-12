@@ -85,6 +85,10 @@ const depositFields = {
   depositAmount: amountSchema.default(0),
   depositPaymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement de la caution invalide' }) }).optional(),
   depositPaidAt: dateSchema.optional(),
+  // Remboursable ou non (demande utilisateur, 2026-11-12) : par défaut remboursable (comportement
+  // historique) — une caution NON remboursable n'entre jamais dans le décompte de sortie, voir
+  // `moveOutReport.js`. Sans effet tant que `depositAmount` est 0.
+  depositRefundable: z.coerce.boolean().default(true),
 };
 
 function requireDepositMethodWhenDepositPositive(data, ctx) {
@@ -137,6 +141,9 @@ const additionalDepositEntrySchema = z.object({
   amount: amountSchema,
   paymentMethod: z.enum(PAYMENT_METHODS, { errorMap: () => ({ message: 'Mode de règlement invalide' }) }).optional(),
   paidAt: dateSchema.optional(),
+  // Même principe que `depositRefundable` ci-dessus, par caution supplémentaire (demande utilisateur,
+  // 2026-11-12) — par défaut remboursable.
+  refundable: z.coerce.boolean().default(true),
 });
 const additionalDepositsFields = {
   additionalDeposits: z

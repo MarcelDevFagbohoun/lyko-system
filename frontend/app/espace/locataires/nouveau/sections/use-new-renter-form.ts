@@ -40,7 +40,7 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function setAdditionalDeposit(type: AdditionalDepositType, patch: Partial<{ amount: string; paymentMethod: string; paidAt: string }>) {
+  function setAdditionalDeposit(type: AdditionalDepositType, patch: Partial<{ amount: string; paymentMethod: string; paidAt: string; refundable: boolean }>) {
     setForm((f) => ({
       ...f,
       additionalDeposits: { ...f.additionalDeposits, [type]: { ...f.additionalDeposits[type], ...patch } },
@@ -98,6 +98,17 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prorataPreview.days, isHistoricalStartDate]);
+
+  // Un loyer impayé déclaré à l'entrée contredit « à jour sur son loyer » — décoché automatiquement
+  // (et rendu non cochable, voir BillingOptionsFields) dès qu'au moins un mois loyer est coché dans
+  // les impayés à l'entrée (demande utilisateur, 2026-11-12).
+  const hasLoyerOpeningDebt = Object.keys(form.openingDebtItems.loyer).length > 0;
+  React.useEffect(() => {
+    if (hasLoyerOpeningDebt && form.upToDateAtOnboarding) {
+      set("upToDateAtOnboarding", false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasLoyerOpeningDebt]);
 
   const errors = React.useMemo(() => {
     const e: Partial<Record<keyof FormState, string>> = {};
@@ -198,6 +209,9 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
             ? (form.depositPaymentMethod as PaymentMethod)
             : undefined,
         depositPaidAt: Number(form.depositAmount || "0") > 0 ? form.depositPaidAt : undefined,
+        // Remboursable ou non (demande utilisateur, 2026-11-12) — sans effet tant que depositAmount
+        // est 0, mais toujours transmis.
+        depositRefundable: form.depositRefundable,
         // Ancien locataire : jamais de frais d'agence, quoi que porte le formulaire — aucune
         // prestation de placement n'a été rendue pour lui, ce montant ne doit jamais être
         // comptabilisé comme produit du cabinet (demande utilisateur, 2026-11-12). Le champ est déjà
@@ -232,6 +246,8 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
                   amount: Number(entry.amount),
                   paymentMethod: entry.paymentMethod as PaymentMethod,
                   paidAt: entry.paidAt,
+                  // Remboursable ou non (demande utilisateur, 2026-11-12).
+                  refundable: entry.refundable,
                 },
               ];
             }),
@@ -285,6 +301,7 @@ export function useNewRenterForm(tenantKind: "nouveau" | "ancien") {
     enabledAdditionalDepositTypes,
     handleSelectUnit,
     isHistoricalStartDate,
+    hasLoyerOpeningDebt,
     prorataPreview,
     errors,
     additionalDepositErrors,
