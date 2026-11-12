@@ -11,6 +11,7 @@ import { useOnlineStatus } from "@/lib/offline/use-online-status";
 import { useTenantRhythm } from "@/lib/hooks/use-tenant-rhythm";
 import { buildRentDuePayload, validateRentDue } from "@/components/renters/rent-due-field";
 import { todayIso } from "@/lib/dates";
+import { OPENING_DEBT_TYPES, type OpeningDebtItemInput } from "@/lib/api/renters";
 import { ADDITIONAL_DEPOSIT_TYPES, FormState, INITIAL } from "./form-state";
 import { CreatedRenter } from "./types";
 
@@ -116,10 +117,30 @@ export function useNewRenterForm() {
     const rentDueError = validateRentDue(rhythm, form.rentDueDay);
     if (rentDueError) e.rentDueDay = rentDueError;
     if (!form.startDate) e.startDate = "Date requise";
-    const openingDebt = Number(form.openingDebtAmount || "0");
-    if (!Number.isFinite(openingDebt) || openingDebt < 0) e.openingDebtAmount = "Montant invalide";
+    // Détail des impayés à l'entrée par type + mois (demande utilisateur, 2026-11-12) : chaque mois
+    // coché doit avoir un montant saisi (> 0) — un mois coché sans montant ne serait pas un vrai poste.
+    for (const type of OPENING_DEBT_TYPES) {
+      for (const amount of Object.values(form.openingDebtItems[type])) {
+        if (!amount || Number(amount) <= 0) {
+          e.openingDebtItems = "Chaque mois coché doit avoir un montant supérieur à 0";
+        }
+      }
+    }
     return e;
   }, [form, prorataPreview.amount, rhythm]);
+
+  // Aplatit le détail par type + mois en une liste de postes pour l'envoi — voir `openingDebtItems`
+  // (CreateRenterInput). Vide si aucun mois n'a été coché pour aucun type (comportement historique :
+  // le serveur reçoit alors `openingDebtAmount: 0`, aucun poste).
+  const openingDebtItemsPayload = React.useMemo<OpeningDebtItemInput[]>(() => {
+    const out: OpeningDebtItemInput[] = [];
+    for (const type of OPENING_DEBT_TYPES) {
+      for (const [periodMonth, amount] of Object.entries(form.openingDebtItems[type])) {
+        if (Number(amount) > 0) out.push({ debtType: type, periodMonth, amount: Number(amount) });
+      }
+    }
+    return out;
+  }, [form.openingDebtItems]);
 
   // Cautions supplémentaires (étape 43) — même principe que la caution de loyer/les frais d'agence
   // ci-dessus : mode de règlement requis seulement si un montant est saisi.
@@ -142,7 +163,7 @@ export function useNewRenterForm() {
     setTouched({
       firstName: true, lastName: true, phone: true, email: true,
       monthlyRent: true, depositAmount: true, depositPaymentMethod: true, rentDueDay: true, startDate: true,
-      openingDebtAmount: true, entryFeeAmount: true, entryFeePaymentMethod: true, entryProrataPaymentMethod: true,
+      openingDebtAmount: true, openingDebtItems: true, entryFeeAmount: true, entryFeePaymentMethod: true, entryProrataPaymentMethod: true,
     });
     setAdditionalDepositsTouched(Object.fromEntries(enabledAdditionalDepositTypes.map((t) => [t.key, true])));
     if (!isValid || !accessToken || !selectedUnit) return;
@@ -196,7 +217,8 @@ export function useNewRenterForm() {
         ...buildRentDuePayload(rhythm, form.rentDueDay),
         rentTiming: form.rentTiming,
         startDate: form.startDate,
-        openingDebtAmount: Number(form.openingDebtAmount || "0"),
+        openingDebtAmount: openingDebtItemsPayload.length ? undefined : Number(form.openingDebtAmount || "0"),
+        openingDebtItems: openingDebtItemsPayload.length ? openingDebtItemsPayload : undefined,
         // Toujours transmis (plus seulement pour l'onboarding historique) : l'auto-suggestion ci-dessus
         // peut l'avoir coché pour un bail qui démarre après l'échéance du mois — jamais perdu à l'envoi.
         upToDateAtOnboarding: form.upToDateAtOnboarding,

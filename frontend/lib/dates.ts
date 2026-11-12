@@ -19,3 +19,18 @@ export function monthEnd(month: string): string {
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return `${month}-${String(last).padStart(2, "0")}`;
 }
+
+/**
+ * Les `count` derniers mois (AAAA-MM), du plus récent au plus ancien, le mois en cours inclus en
+ * premier — fenêtre utilisée pour les impayés à l'entrée (demande utilisateur, 2026-11-12, miroir
+ * exact de `OPENING_DEBT_MONTHS_BACK` côté backend).
+ */
+export function lastNMonths(count: number): string[] {
+  const now = new Date();
+  const months: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return months;
+}

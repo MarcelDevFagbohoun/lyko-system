@@ -8,6 +8,7 @@ const PDFDocument = require('pdfkit');
 const { EXPENSE_CATEGORIES } = require('../constants/expenses');
 const { UTILITY_TYPES } = require('../constants/charges');
 const { resolveRoleLabels } = require('../constants/roles');
+const { OPENING_DEBT_TYPE_LABELS } = require('../constants/openingDebt');
 const { paymentPeriodKey, periodEndOf } = require('./rentTracking');
 const config = require('../config/env');
 const D = require('./pdfDesign');
@@ -219,7 +220,7 @@ function issuerCard(tenant, issuer, title) {
  * lettres, note, signature. `lines` : { columns, rows } ; `total` : { label, amount } ; `wordsPrefix` : début de
  * la phrase « Arrêté … à la somme de ».
  */
-function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, intro, partiesLabel = 'Parties', parties, detailLabel = 'Détail', lines, total, wordsPrefix, note, signatureTitle, issuer, verificationCode, extraRows = null, showPaidBadge = false }) {
+function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, intro, partiesLabel = 'Parties', parties, detailLabel = 'Détail', lines, total, wordsPrefix, note, signatureTitle, issuer, verificationCode, extraRows = null, extraSectionLabel = null, showPaidBadge = false }) {
   const doc = new PDFDocument({ size: 'A4', margins: PAGE_MARGINS, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
@@ -237,7 +238,10 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
   y = D.drawPlainAmount(doc, y, total.label, total.amount);
   y = D.drawPlainSection(doc, y, detailLabel);
   y = D.drawPlainTable(doc, y, lines.columns, lines.rows);
-  if (extraRows) y = D.drawPlainTable(doc, y, extraRows.columns, extraRows.rows);
+  if (extraRows) {
+    if (extraSectionLabel) y = D.drawPlainSection(doc, y + 6, extraSectionLabel);
+    y = D.drawPlainTable(doc, y, extraRows.columns, extraRows.rows);
+  }
   y = D.drawPlainTotal(doc, y, total.label, total.amount);
   y = D.drawWordsLine(doc, y, total.raw, wordsPrefix, { color: D.C.DANGER }); // phrase « Arrêtée la présente… » en rouge
   if (note) y = D.drawPlainNote(doc, y + 2, note);
@@ -272,7 +276,7 @@ function renderReceiptDocument(res, { tenant, filename, title, subtitle, meta, i
  * avant cette fonctionnalité. Plus de « signature » séparée (demande
  * utilisateur, 2026-11-02).
  */
-function streamReceiptPdf(res, { tenant, renter, property, lease, payment, receipt, issuer, verificationCode }) {
+function streamReceiptPdf(res, { tenant, renter, property, lease, payment, receipt, issuer, verificationCode, openingDebt = null }) {
   // Bail calendaire : nom du mois ; bail non-calendaire : plage de dates réelle de la période
   // (étape 2c — `covers_month` y est NULL, voir migration 085).
   const periodKey = paymentPeriodKey(payment);
@@ -281,6 +285,9 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
   const issuedOn = formatDateFr(receipt.issued_at.toISOString().slice(0, 10));
   const issuedAt = `${issuedOn} à ${formatTimeHm(receipt.issued_at)}`;
   const method = PAYMENT_METHOD_LABELS[payment.payment_method] ?? payment.payment_method;
+  // Impayés à l'entrée encore dus (demande utilisateur, 2026-11-12) : rappelés sur CETTE quittance
+  // tant qu'il en reste, même si ce paiement précis n'y touche pas — jusqu'au règlement définitif.
+  const openingDebtRows = openingDebtExtraRows(openingDebt);
   renderReceiptDocument(res, {
     tenant,
     filename: `${receipt.receipt_number}.pdf`,
@@ -320,7 +327,34 @@ function streamReceiptPdf(res, { tenant, renter, property, lease, payment, recei
     showPaidBadge: issuer ? issuer.show_paid_stamp !== 0 : true,
     issuer,
     verificationCode,
+    extraRows: openingDebtRows,
+    extraSectionLabel: openingDebtRows ? "Impayés à l'entrée encore dus" : null,
   });
+}
+
+/**
+ * Tableau des impayés à l'entrée encore dus, pour `extraRows` de `streamReceiptPdf` — `null` si rien
+ * n'est dû (n'apparaît alors pas du tout sur la quittance). Détail par poste (type + mois, en rouge)
+ * si ce bail a ce niveau de détail, sinon une seule ligne globale.
+ */
+function openingDebtExtraRows(openingDebt) {
+  if (!openingDebt || openingDebt.remaining <= 0) return null;
+  const columns = [
+    { label: 'Poste', width: 235 },
+    { label: 'Mois concerné', width: 160 },
+    { label: 'Reste dû', width: 100, align: 'right', bold: true, color: D.C.DANGER },
+  ];
+  if (!openingDebt.items.length) {
+    return { columns, rows: [['Impayés déclarés à l\'entrée', '—', D.fcfa(openingDebt.remaining)]] };
+  }
+  return {
+    columns,
+    rows: openingDebt.items.map((item) => [
+      `${OPENING_DEBT_TYPE_LABELS[item.debtType]}${item.label ? ` · ${item.label}` : ''}`,
+      formatMonthLabel(item.periodMonth),
+      D.fcfa(item.remaining),
+    ]),
+  };
 }
 
 /**
@@ -2389,4 +2423,5 @@ module.exports = {
   formatPeriodLabel,
   formatDateFr,
   rentDueOffsetPhrase,
+  openingDebtExtraRows,
 };

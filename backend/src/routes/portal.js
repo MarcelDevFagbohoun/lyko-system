@@ -169,7 +169,7 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
 
   try {
     const { id: renterId, tenantId } = req.portalRenter;
-    const { lease, payment, receipt, renter, tenant, issuer } = await portal.getRentReceiptData(tenantId, renterId, paymentId);
+    const { lease, payment, receipt, renter, tenant, issuer, openingDebt } = await portal.getRentReceiptData(tenantId, renterId, paymentId);
 
     // Limite de 5 téléchargements + code de vérification (étape 29) — la
     // même quittance (ce paiement précis), pas le lien du portail : le
@@ -191,6 +191,7 @@ router.get('/:token/payments/:paymentId/receipt.pdf', async (req, res, next) => 
       receipt,
       issuer,
       verificationCode: issuance.verification_code,
+      openingDebt,
     });
   } catch (err) {
     next(err);

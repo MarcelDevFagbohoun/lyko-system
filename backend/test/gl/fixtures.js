@@ -122,6 +122,11 @@ async function teardown(tenantId) {
   await pool.query('DELETE FROM utility_payments WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM utility_charges WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM late_fees WHERE tenant_id = :tenantId', p);
+  // Détail des impayés à l'entrée par type + mois (migration 151, demande utilisateur 2026-11-12) :
+  // à supprimer AVANT `lease_opening_debt_payments` — `lease_opening_debt_item_payments.lease_payment_id`
+  // y pointe en ON DELETE RESTRICT (jamais l'inverse, pour ne jamais perdre silencieusement un paiement).
+  await pool.query('DELETE FROM lease_opening_debt_item_payments WHERE tenant_id = :tenantId', p);
+  await pool.query('DELETE FROM lease_opening_debt_items WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM lease_opening_debt_payments WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM lease_balance_snapshots WHERE tenant_id = :tenantId', p);
   await pool.query('DELETE FROM expenses WHERE tenant_id = :tenantId', p);

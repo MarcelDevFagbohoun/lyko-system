@@ -13,6 +13,7 @@ const { pool } = require('../config/db');
 const { ApiError } = require('../middleware/error');
 const { findByShareToken, registerDownload } = require('../services/documentIssuance');
 const { streamReceiptPdf } = require('../services/pdf');
+const { getOpeningDebtReceiptSummary } = require('../services/leasePayments');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
 
 const router = Router();
@@ -82,6 +83,10 @@ router.get('/:token', async (req, res, next) => {
 
     await registerDownload(issuance);
 
+    // Impayés à l'entrée encore dus (demande utilisateur, 2026-11-12) — même règle que les autres
+    // points d'accès à cette quittance : affichés jusqu'au règlement complet.
+    const openingDebt = await getOpeningDebtReceiptSummary(issuance.tenant_id, lease);
+
     const label = unitDesignationLabel(lease);
     streamReceiptPdf(res, {
       tenant: tenantRows[0],
@@ -92,6 +97,7 @@ router.get('/:token', async (req, res, next) => {
       receipt: receiptRows[0],
       issuer: issuerRows[0] || null,
       verificationCode: issuance.verification_code,
+      openingDebt,
     });
   } catch (err) {
     next(err);

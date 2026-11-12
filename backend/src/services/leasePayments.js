@@ -470,6 +470,37 @@ async function getOpeningDebtRemaining(conn, tenantId, lease) {
   return Number(lease.opening_debt_amount) - Number(rows[0].paid);
 }
 
+/**
+ * Résumé des impayés à l'entrée encore dus, pour affichage sur la quittance de loyer (demande
+ * utilisateur, 2026-11-12 : « les impayés doivent apparaître jusqu'au paiement définitif ») — tant
+ * qu'il reste un centime dû, chaque quittance émise pour ce bail l'affiche ; `null` dès que le solde
+ * est à zéro (plus rien à rappeler). Détail par poste (type + mois) si ce bail a été créé avec ce
+ * détail (voir migration 151), sinon une seule ligne globale (ancien comportement, toujours valide).
+ */
+async function getOpeningDebtReceiptSummary(tenantId, lease) {
+  const remaining = await getOpeningDebtRemaining(pool, tenantId, lease);
+  if (remaining <= 0) return null;
+
+  const [itemRows] = await pool.query(
+    `SELECT i.id, i.debt_type, i.period_month, i.label, i.amount,
+            COALESCE((SELECT SUM(amount) FROM lease_opening_debt_item_payments WHERE item_id = i.id), 0) AS paid
+     FROM lease_opening_debt_items i
+     WHERE i.lease_id = :leaseId AND i.tenant_id = :tenantId
+     ORDER BY i.period_month ASC, i.debt_type ASC, i.id ASC`,
+    { leaseId: lease.id, tenantId },
+  );
+  const items = itemRows
+    .map((r) => ({
+      debtType: r.debt_type,
+      periodMonth: r.period_month,
+      label: r.label,
+      remaining: Number(r.amount) - Number(r.paid),
+    }))
+    .filter((i) => i.remaining > 0);
+
+  return { remaining, items };
+}
+
 /** Règle (totalement ou partiellement) la dette initiale déclarée à la création du bail. */
 async function payOpeningDebt(tenantId, userId, leaseId, scopeAgentId, data) {
   const conn = await pool.getConnection();
@@ -543,6 +574,63 @@ async function payOpeningDebt(tenantId, userId, leaseId, scopeAgentId, data) {
   }
 }
 
+/**
+ * Détail des impayés à l'entrée par type + mois (demande utilisateur, 2026-11-12), avec le solde
+ * restant et le statut de CHAQUE poste — jamais stockés, toujours recalculés en sommant les
+ * règlements réels (même principe que `getOpeningDebtRemaining`), triés du mois le plus ancien au
+ * plus récent.
+ */
+async function listOpeningDebtItems(tenantId, leaseId, scopeAgentId) {
+  await loadLease(pool, tenantId, leaseId, scopeAgentId);
+  const [rows] = await pool.query(
+    `SELECT i.id, i.debt_type, i.period_month, i.label, i.amount,
+            COALESCE((SELECT SUM(amount) FROM lease_opening_debt_item_payments WHERE item_id = i.id), 0) AS paid
+     FROM lease_opening_debt_items i
+     WHERE i.lease_id = :leaseId AND i.tenant_id = :tenantId
+     ORDER BY i.period_month ASC, i.debt_type ASC, i.id ASC`,
+    { leaseId, tenantId },
+  );
+  return rows.map((r) => {
+    const amount = Number(r.amount);
+    const paid = Number(r.paid);
+    const remaining = amount - paid;
+    const status = remaining <= 0 ? 'payee' : paid > 0 ? 'partiellement_payee' : 'impayee';
+    return { id: r.id, debtType: r.debt_type, periodMonth: r.period_month, label: r.label, amount, paid, remaining, status };
+  });
+}
+
+/**
+ * Règle (totalement ou partiellement) UN poste précis du détail des impayés à l'entrée (demande
+ * utilisateur, 2026-11-12). Délègue entièrement l'écriture comptable, le verrouillage anti-double-
+ * paiement et la génération de l'écriture au règlement global existant (`payOpeningDebt` ci-dessus) —
+ * ce poste n'est qu'un découpage informatif du même solde, jamais une seconde source de vérité :
+ * chaque règlement de poste crée AUSSI, automatiquement, la ligne `lease_opening_debt_payments`
+ * correspondante, pour que tout ce qui lit déjà ce solde global (comptabilité, commissions, suivi des
+ * retards) continue de fonctionner sans rien changer.
+ */
+async function payOpeningDebtItem(tenantId, userId, leaseId, itemId, scopeAgentId, data) {
+  const [itemRows] = await pool.query(
+    `SELECT i.amount, COALESCE((SELECT SUM(amount) FROM lease_opening_debt_item_payments WHERE item_id = i.id), 0) AS paid
+     FROM lease_opening_debt_items i WHERE i.id = :itemId AND i.lease_id = :leaseId AND i.tenant_id = :tenantId LIMIT 1`,
+    { itemId, leaseId, tenantId },
+  );
+  const item = itemRows[0];
+  if (!item) throw new ApiError(404, 'Poste introuvable');
+  const itemRemaining = Number(item.amount) - Number(item.paid);
+  if (itemRemaining <= 0) throw new ApiError(409, 'Ce poste est déjà réglé');
+  if (data.amount > itemRemaining) {
+    throw new ApiError(400, `Le montant dépasse le solde restant de ce poste (${itemRemaining} FCFA)`);
+  }
+
+  const { paymentId, remaining: leaseRemaining } = await payOpeningDebt(tenantId, userId, leaseId, scopeAgentId, data);
+  await pool.query(
+    `INSERT INTO lease_opening_debt_item_payments (tenant_id, item_id, lease_payment_id, amount, recorded_by)
+     VALUES (:tenantId, :itemId, :paymentId, :amount, :recordedBy)`,
+    { tenantId, itemId, paymentId, amount: data.amount, recordedBy: userId },
+  );
+  return { paymentId, itemRemaining: itemRemaining - data.amount, leaseRemaining };
+}
+
 /** Données de la quittance PDF d'un paiement de loyer. */
 async function getRentReceiptData(tenantId, leaseId, paymentId, scopeAgentId) {
   const lease = await loadLease(pool, tenantId, leaseId, scopeAgentId);
@@ -569,6 +657,9 @@ async function getRentReceiptData(tenantId, leaseId, paymentId, scopeAgentId) {
   const [issuerRows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', {
     id: paymentRows[0].recorded_by,
   });
+  // Impayés à l'entrée encore dus (demande utilisateur, 2026-11-12) : affichés sur CETTE quittance de
+  // loyer jusqu'à leur règlement complet, même s'ils sont sans rapport avec le paiement qui la génère.
+  const openingDebt = await getOpeningDebtReceiptSummary(tenantId, lease);
   return {
     lease,
     payment: paymentRows[0],
@@ -576,6 +667,7 @@ async function getRentReceiptData(tenantId, leaseId, paymentId, scopeAgentId) {
     renter: renterRows[0],
     tenant: tenantRows[0],
     issuer: issuerRows[0] || null,
+    openingDebt,
   };
 }
 
@@ -662,6 +754,9 @@ module.exports = {
   createLateFee,
   listBalanceSnapshots,
   payOpeningDebt,
+  listOpeningDebtItems,
+  payOpeningDebtItem,
+  getOpeningDebtReceiptSummary,
   getRentReceiptData,
   getEntryReceiptData,
   getReceiptShareToken,

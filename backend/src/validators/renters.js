@@ -5,6 +5,7 @@ const { phoneSchema, nameSchema, normalizeBeninPhone } = require('./auth');
 const { RENT_TIMING_KEYS } = require('../constants/rentTiming');
 const { idempotencyKeySchema } = require('./idempotency');
 const { ADDITIONAL_DEPOSIT_TYPES } = require('../constants/leaseDeposits');
+const { OPENING_DEBT_TYPE_KEYS, OPENING_DEBT_MONTHS_BACK } = require('../constants/openingDebt');
 
 const emailSchema = z
   .string()
@@ -54,6 +55,26 @@ const amountSchema = z.coerce
   .max(1_000_000_000, 'Montant hors limite');
 
 const PAYMENT_METHODS = ['especes', 'mobile_money', 'virement', 'cheque'];
+
+// Détail des impayés à l'entrée par type + mois (demande utilisateur, 2026-11-12) — voir
+// constants/openingDebt.js. `periodMonth` doit rester dans les 12 derniers mois (même fenêtre que le
+// sélecteur côté front) : un mois futur ou trop ancien n'a pas de sens pour un impayé déjà constaté.
+function isWithinOpeningDebtWindow(periodMonth) {
+  const now = new Date();
+  const [y, m] = periodMonth.split('-').map(Number);
+  const target = y * 12 + (m - 1);
+  const current = now.getUTCFullYear() * 12 + now.getUTCMonth();
+  return target <= current && target > current - OPENING_DEBT_MONTHS_BACK;
+}
+const openingDebtItemSchema = z.object({
+  debtType: z.enum(OPENING_DEBT_TYPE_KEYS, { errorMap: () => ({ message: 'Type d\'impayé invalide' }) }),
+  periodMonth: monthSchema.refine(isWithinOpeningDebtWindow, {
+    message: `Le mois doit être dans les ${OPENING_DEBT_MONTHS_BACK} derniers mois`,
+  }),
+  label: optionalText(150),
+  amount: amountSchema.refine((v) => v > 0, 'Le montant doit être supérieur à 0'),
+});
+const openingDebtItemsSchema = z.array(openingDebtItemSchema).max(60).optional();
 
 // Création d'un locataire + son bail sur une Unité locative EXISTANTE (le
 // Bien/l'Unité sont gérés depuis le module « Nos Biens » — voir routes/properties.js).
@@ -173,6 +194,11 @@ const createRenterSchema = z
     // jamais modifié ensuite — se règle via son propre cycle de paiements,
     // voir POST /:leaseId/opening-debt/payments (routes/leases.js).
     openingDebtAmount: amountSchema.default(0),
+    // Détail par type + mois (demande utilisateur, 2026-11-12) — quand fourni, remplace
+    // `openingDebtAmount` ci-dessus : le serveur recalcule le total comme la somme de ces postes
+    // (voir `insertLeaseWithEntries`, services/renters.js). `openingDebtAmount` reste utilisable seul
+    // pour un montant global sans détail (ancien comportement, toujours valide).
+    openingDebtItems: openingDebtItemsSchema,
     // À l'opposé : locataire déjà en place, mais SANS aucun impayé — évite
     // que la date d'entrée réelle (souvent ancienne) ne fasse remonter un
     // faux retard depuis avant l'enregistrement sur la plateforme (voir
@@ -203,6 +229,7 @@ const createLeaseSchema = z
     rentTiming: z.enum(RENT_TIMING_KEYS, { errorMap: () => ({ message: 'Convention de paiement invalide' }) }).optional(),
     startDate: dateSchema,
     openingDebtAmount: amountSchema.default(0),
+    openingDebtItems: openingDebtItemsSchema,
     upToDateAtOnboarding: z.coerce.boolean().default(false),
   })
   .superRefine(requireDepositMethodWhenDepositPositive)
@@ -298,6 +325,9 @@ module.exports = {
   createLateFeeSchema,
   createLateFeePaymentSchema,
   createOpeningDebtPaymentSchema,
+  // Règlement d'UN poste détaillé (type + mois) — même forme que le règlement global ci-dessus
+  // (demande utilisateur, 2026-11-12) ; réexporté sous son propre nom pour la lisibilité des routes.
+  createOpeningDebtItemPaymentSchema: createOpeningDebtPaymentSchema,
   updateContractSchema,
   PAYMENT_METHODS,
   // Primitives réutilisées par validators/inspections.js (états des lieux par zones).

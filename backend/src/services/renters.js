@@ -591,6 +591,15 @@ async function prepareLeaseTerms(conn, tenantId, unit, data) {
 async function insertLeaseWithEntries(conn, { tenantId, userId, renterId, renterName, data, terms }) {
   const { rent, rentTiming, isCalendaireLease, entryProration, prorata, entryProrataAmount } = terms;
 
+  // Détail des impayés à l'entrée par type + mois (demande utilisateur, 2026-11-12) : quand fourni, le
+  // total écrit sur `leases.opening_debt_amount` est TOUJOURS recalculé ici, côté serveur, comme la
+  // somme des postes — jamais une valeur envoyée séparément par le front, pour qu'elle ne puisse
+  // jamais diverger de ce que montre le détail (voir migration 151).
+  const openingDebtItems = data.openingDebtItems ?? [];
+  const openingDebtAmount = openingDebtItems.length
+    ? openingDebtItems.reduce((sum, item) => sum + Number(item.amount), 0)
+    : data.openingDebtAmount;
+
   // Verrou anti-double-attribution (audit du flux financier, 2026-11-03) : `loadAvailableUnit` (appelée
   // par `createRenter`/`createLease` avant `beginTransaction`) ne fait qu'une lecture non verrouillée —
   // deux créations concurrentes sur la même unité libre pouvaient toutes les deux passer ce contrôle et
@@ -618,7 +627,7 @@ async function insertLeaseWithEntries(conn, { tenantId, userId, renterId, renter
       rentTiming,
       startDate: data.startDate,
       createdBy: userId,
-      openingDebtAmount: data.openingDebtAmount,
+      openingDebtAmount,
       upToDate: data.upToDateAtOnboarding ? 1 : 0,
       entryFeeAmount: data.entryFeeAmount,
       entryProration,
@@ -628,6 +637,22 @@ async function insertLeaseWithEntries(conn, { tenantId, userId, renterId, renter
     },
   );
   const leaseId = leaseResult.insertId;
+
+  for (const item of openingDebtItems) {
+    await conn.query(
+      `INSERT INTO lease_opening_debt_items (tenant_id, lease_id, debt_type, period_month, label, amount, created_by)
+       VALUES (:tenantId, :leaseId, :debtType, :periodMonth, :label, :amount, :createdBy)`,
+      {
+        tenantId,
+        leaseId,
+        debtType: item.debtType,
+        periodMonth: item.periodMonth,
+        label: item.label ?? null,
+        amount: item.amount,
+        createdBy: userId,
+      },
+    );
+  }
 
   await recordDepositReceived(conn, {
     tenantId,

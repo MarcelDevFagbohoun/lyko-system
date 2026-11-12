@@ -241,6 +241,39 @@ export type OpeningDebtPayment = {
   recordedBy: Actor;
 };
 
+/**
+ * Détail des impayés à l'entrée par type + mois (demande utilisateur, 2026-11-12) — voir
+ * `lease_opening_debt_items` (backend). `periodMonth` au format AAAA-MM, dans les 12 derniers mois.
+ */
+export type OpeningDebtType = "loyer" | "sbee" | "soneb" | "poubelle" | "autre";
+export const OPENING_DEBT_TYPE_LABELS: Record<OpeningDebtType, string> = {
+  loyer: "Loyer",
+  sbee: "Facture SBEE (électricité)",
+  soneb: "Facture SONEB (eau)",
+  poubelle: "Frais de poubelle",
+  autre: "Autres",
+};
+/** Même ordre que `OPENING_DEBT_TYPES` (backend, constants/openingDebt.js). */
+export const OPENING_DEBT_TYPES: OpeningDebtType[] = ["loyer", "sbee", "soneb", "poubelle", "autre"];
+/** Fenêtre de sélection des mois — même valeur que `OPENING_DEBT_MONTHS_BACK` (backend). */
+export const OPENING_DEBT_MONTHS_BACK = 12;
+export type OpeningDebtItemInput = {
+  debtType: OpeningDebtType;
+  periodMonth: string;
+  label?: string;
+  amount: number;
+};
+export type OpeningDebtItem = {
+  id: number;
+  debtType: OpeningDebtType;
+  periodMonth: string;
+  label: string | null;
+  amount: number;
+  paid: number;
+  remaining: number;
+  status: "payee" | "partiellement_payee" | "impayee";
+};
+
 /** Cautions supplémentaires (étape 43) — SBEE/SONEB (garantie contre les impayés de charges) et peinture. */
 export type AdditionalDepositType = "sbee" | "soneb" | "peinture";
 export type AdditionalDeposit = {
@@ -424,8 +457,17 @@ export type CreateRenterInput = {
   /** Optionnel — si omis, le serveur retombe sur le réglage par défaut de l'entreprise (Paramètres). */
   rentTiming?: RentTiming;
   startDate: string;
-  /** Onboarding d'un locataire déjà en place : impayés déjà dus avant Africa Immo Management, 0 si aucun. */
+  /**
+   * Onboarding d'un locataire déjà en place : impayés déjà dus avant Africa Immo Management, 0 si
+   * aucun. Ignoré si `openingDebtItems` est fourni (le serveur recalcule alors ce montant comme la
+   * somme des postes ci-dessous — ne jamais envoyer les deux comme des sources indépendantes).
+   */
   openingDebtAmount?: number;
+  /**
+   * Détail par type + mois (demande utilisateur, 2026-11-12) — remplace `openingDebtAmount` quand
+   * fourni. Le serveur recalcule toujours `openingDebtAmount` = somme de ces postes.
+   */
+  openingDebtItems?: OpeningDebtItemInput[];
   /** Onboarding : locataire déjà en place mais SANS aucun impayé — évite un faux retard depuis une date d'entrée ancienne. */
   upToDateAtOnboarding?: boolean;
   /**
@@ -681,6 +723,29 @@ export function payOpeningDebt(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+/** Détail des impayés à l'entrée par type + mois — vide si ce bail n'a pas été créé avec ce détail. */
+export function getOpeningDebtItems(accessToken: string, leaseId: number) {
+  return apiFetch<{ items: OpeningDebtItem[] }>(`/api/leases/${leaseId}/opening-debt/items`, { accessToken });
+}
+
+/** Règle (total ou partiel) UN poste précis du détail des impayés à l'entrée. */
+export function payOpeningDebtItem(
+  accessToken: string,
+  leaseId: number,
+  itemId: number,
+  input: { amount: number; paymentMethod: PaymentMethod; paidAt: string; notes?: string; idempotencyKey?: string },
+) {
+  return apiFetch<{ paymentId: number; itemRemaining: number; leaseRemaining: number }>(
+    `/api/leases/${leaseId}/opening-debt/items/${itemId}/payments`,
+    {
+      method: "POST",
+      accessToken,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 /** Historique des soldes figés à chaque clôture de mois (audit) pour un bail. */

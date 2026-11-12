@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Field, Input } from "@/components/ui/input";
+import { Field } from "@/components/ui/input";
 import { RENT_TIMING_LABELS, type RentTiming } from "@/lib/api/renters";
 import type { FormSectionProps } from "./props";
+import { OpeningDebtItemsFields } from "./opening-debt-items-fields";
 
 export function BillingOptionsFields({ form, set, touched, setTouched, errors, isHistoricalStartDate }: FormSectionProps & { isHistoricalStartDate: boolean; }) {
   return (
@@ -27,20 +28,12 @@ export function BillingOptionsFields({ form, set, touched, setTouched, errors, i
               ))}
             </select>
           </Field>
-          <Field
-            label="Impayés existants à l'entrée (FCFA)"
-            htmlFor="openingDebtAmount"
-            hint="Locataire déjà en place avant Africa Immo Management, avec un impayé connu — 0 si aucun"
-            error={touched.openingDebtAmount ? errors.openingDebtAmount : undefined}
-          >
-            <Input
-              id="openingDebtAmount"
-              inputMode="numeric"
-              value={form.openingDebtAmount}
-              onChange={(e) => set("openingDebtAmount", e.target.value.replace(/\D/g, ""))}
-              onBlur={() => setTouched((t) => ({ ...t, openingDebtAmount: true }))}
-            />
-          </Field>
+          <OpeningDebtItemsFields
+            items={form.openingDebtItems}
+            setItems={(items) => set("openingDebtItems", items)}
+            monthlyRent={form.monthlyRent}
+            error={touched.openingDebtItems ? errors.openingDebtItems : undefined}
+          />
           {isHistoricalStartDate && (
             <label
               htmlFor="upToDateAtOnboarding"

@@ -11,6 +11,7 @@ const {
   createLateFeeSchema,
   createLateFeePaymentSchema,
   createOpeningDebtPaymentSchema,
+  createOpeningDebtItemPaymentSchema,
   updateContractSchema,
 } = require('../validators/renters');
 const {
@@ -308,6 +309,50 @@ router.post('/:leaseId/opening-debt/payments', canPayments, async (req, res, nex
   }
 });
 
+// GET /api/leases/:leaseId/opening-debt/items — détail des impayés à l'entrée par type + mois
+// (demande utilisateur, 2026-11-12). Vide pour un bail créé avant cette fonctionnalité, ou créé sans
+// détail (montant global seul) — le front retombe alors sur l'ancien affichage à un seul total.
+router.get('/:leaseId/opening-debt/items', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  if (!Number.isInteger(leaseId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const items = await leasePayments.listOpeningDebtItems(req.user.tenantId, leaseId, scopeAgentId);
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leases/:leaseId/opening-debt/items/:itemId/payments — règle UN poste précis du détail
+// des impayés à l'entrée (demande utilisateur, 2026-11-12). Même règle de fond que le règlement
+// global ci-dessus (voir `payOpeningDebtItem`) : ce n'est qu'un découpage du même solde.
+router.post('/:leaseId/opening-debt/items/:itemId/payments', canPayments, async (req, res, next) => {
+  const leaseId = Number(req.params.leaseId);
+  const itemId = Number(req.params.itemId);
+  if (!Number.isInteger(leaseId) || !Number.isInteger(itemId)) return next(new ApiError(400, 'Identifiant invalide'));
+
+  const parsed = createOpeningDebtItemPaymentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new ApiError(400, 'Formulaire invalide', parsed.error.flatten().fieldErrors));
+  }
+  const data = parsed.data;
+
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const { paymentId, itemRemaining, leaseRemaining } = await leasePayments.payOpeningDebtItem(
+      req.user.tenantId, req.user.id, leaseId, itemId, scopeAgentId, data,
+    );
+    logger.info('Poste d\'impayé à l\'entrée réglé', {
+      tenantId: req.user.tenantId, leaseId, itemId, paymentId, amount: data.amount, by: req.user.id,
+    });
+    res.status(201).json({ paymentId, itemRemaining, leaseRemaining });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/leases/:leaseId/payments/:paymentId/receipt.pdf
 router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req, res, next) => {
   const leaseId = Number(req.params.leaseId);
@@ -318,7 +363,7 @@ router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req,
 
   try {
     const scopeAgentId = await resolvePropertyScope(req.user);
-    const { lease, payment, receipt, renter, tenant, issuer } = await leasePayments.getRentReceiptData(
+    const { lease, payment, receipt, renter, tenant, issuer, openingDebt } = await leasePayments.getRentReceiptData(
       req.user.tenantId,
       leaseId,
       paymentId,
@@ -333,6 +378,7 @@ router.get('/:leaseId/payments/:paymentId/receipt.pdf', canPayments, async (req,
       payment,
       receipt,
       issuer,
+      openingDebt,
     });
   } catch (err) {
     next(err);

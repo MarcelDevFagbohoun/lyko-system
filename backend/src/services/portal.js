@@ -10,6 +10,7 @@ const { ApiError } = require('../middleware/error');
 const { claimIdempotencyKey } = require('./paymentGuards');
 const complaintEvents = require('./complaintEvents');
 const { notifyLeaseStaff } = require('./push/notifyLeaseEvent');
+const { getOpeningDebtReceiptSummary } = require('./leasePayments');
 
 /**
  * Charge le bail ACTIF du locataire authentifié par son token (ou lève 404).
@@ -187,8 +188,19 @@ async function getRentReceiptData(tenantId, renterId, paymentId) {
   const [issuerRows] = await pool.query('SELECT * FROM users WHERE id = :id LIMIT 1', {
     id: paymentRows[0].recorded_by,
   });
+  // Impayés à l'entrée encore dus (demande utilisateur, 2026-11-12) — même règle que côté agent
+  // (`leasePayments.getRentReceiptData`) : affichés jusqu'au règlement complet.
+  const openingDebt = await getOpeningDebtReceiptSummary(tenantId, lease);
 
-  return { lease, payment: paymentRows[0], receipt: receiptRows[0], renter, tenant, issuer: issuerRows[0] || null };
+  return {
+    lease,
+    payment: paymentRows[0],
+    receipt: receiptRows[0],
+    renter,
+    tenant,
+    issuer: issuerRows[0] || null,
+    openingDebt,
+  };
 }
 
 /** Données du reçu de SON règlement de charges. */

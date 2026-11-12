@@ -1,7 +1,22 @@
 "use client";
 
-import { type RentTiming, type AdditionalDepositType } from "@/lib/api/renters";
+import { type RentTiming, type AdditionalDepositType, type OpeningDebtType } from "@/lib/api/renters";
 import { todayIso } from "@/lib/dates";
+
+/**
+ * Détail des impayés à l'entrée par type + mois (demande utilisateur, 2026-11-12) : pour chaque type,
+ * les mois sélectionnés (AAAA-MM) avec leur montant saisi — « loyer » est pré-rempli automatiquement
+ * depuis `monthlyRent` à la sélection d'un mois (surchargeable), les autres types démarrent vides.
+ */
+export type OpeningDebtItemsState = Record<OpeningDebtType, Record<string, string>>;
+
+export const EMPTY_OPENING_DEBT_ITEMS: OpeningDebtItemsState = {
+  loyer: {},
+  sbee: {},
+  soneb: {},
+  poubelle: {},
+  autre: {},
+};
 
 
 export type FormState = {
@@ -28,6 +43,7 @@ export type FormState = {
   rentTiming: RentTiming;
   startDate: string;
   openingDebtAmount: string;
+  openingDebtItems: OpeningDebtItemsState;
   upToDateAtOnboarding: boolean;
 };
 
@@ -58,6 +74,7 @@ export const INITIAL: FormState = {
   rentTiming: "avance",
   startDate: todayIso(),
   openingDebtAmount: "",
+  openingDebtItems: EMPTY_OPENING_DEBT_ITEMS,
   upToDateAtOnboarding: false,
 };
 
