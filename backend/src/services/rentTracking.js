@@ -2,6 +2,11 @@
 
 const { pool } = require('../config/db');
 const { UNIT_DESIGNATIONS } = require('../constants/properties');
+const {
+  RELANCES_TYPES,
+  leaseIdsWithOpeningDebtItems,
+  getOpeningDebtRemainingByLease,
+} = require('./openingDebtRouting');
 
 const DESIGNATION_LABELS = Object.fromEntries(UNIT_DESIGNATIONS.map((d) => [d.key, d.label]));
 
@@ -593,6 +598,13 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null, asOfDate = nu
     leaseIds,
   );
   const openingDebtPaidByLease = new Map(openingDebtPaid.map((r) => [r.lease_id, Number(r.paid)]));
+  // Routage des impayés à l'entrée par type (demande utilisateur, 2026-11-12) : seul le poste
+  // « loyer » doit encore gonfler le retard affiché au Centre de relance — SBEE/SONEB et
+  // poubelle/autre sont désormais affichés ailleurs (carte Charges / Alertes), voir
+  // `openingDebtRouting.js`. Un bail SANS AUCUN poste détaillé (dette héritée en vrac, avant la
+  // ventilation par type, migration 151) garde son comportement historique : tout compte comme loyer.
+  const leaseIdsHavingItems = await leaseIdsWithOpeningDebtItems(leaseIds);
+  const loyerRemainingByLease = await getOpeningDebtRemainingByLease(leaseIds, RELANCES_TYPES, asOfDate);
 
   // Pénalités de retard non réglées (étape 44bis) — même principe que la dette initiale ci-dessus :
   // solde restant = montants appliqués moins ce qui a déjà été réglé, sommé par bail (un bail peut avoir
@@ -628,7 +640,9 @@ async function listPortfolioArrears(tenantId, scopeAgentId = null, asOfDate = nu
       rhythm,
       asOfDate,
     });
-    const openingDebtRemaining = Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0);
+    const openingDebtRemaining = leaseIdsHavingItems.has(lease.id)
+      ? (loyerRemainingByLease.get(lease.id) || 0)
+      : Number(lease.opening_debt_amount) - (openingDebtPaidByLease.get(lease.id) || 0);
     const lateFeesRemaining = (lateFeesAppliedByLease.get(lease.id) || 0) - (lateFeesPaidByLease.get(lease.id) || 0);
     // Un bail peut devoir de l'argent pour TROIS raisons indépendantes : du
     // loyer en retard (calculé au jour près), un reliquat de dette initiale

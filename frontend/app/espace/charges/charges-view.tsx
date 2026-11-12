@@ -24,6 +24,7 @@ import { formatFcfa, cn, newIdempotencyKey } from "@/lib/utils";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { useCan } from "@/lib/auth/use-can";
 import { UtilityAlertsCard } from "@/components/charges/utility-alerts-card";
+import { OpeningDebtChargesCard } from "@/components/charges/opening-debt-charges-card";
 import { ChargeMonthCard } from "@/components/charges/charge-month-card";
 import { PaymentLinkCard } from "@/components/payments/payment-link-card";
 import { Badge } from "@/components/ui/badge";
@@ -193,6 +194,8 @@ function ChargesContent() {
         )}
 
         <UtilityAlertsCard hideWhenEmpty />
+
+        <OpeningDebtChargesCard hideWhenEmpty />
 
         <ChargeMonthCard refreshKey={summaryRefreshKey} />
 

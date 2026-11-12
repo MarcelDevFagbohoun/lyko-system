@@ -21,6 +21,8 @@ const { toActor } = require('../utils/actor');
 const { resolvePropertyScope } = require('../services/scope');
 const { resolveMonthWindow } = require('../services/utilityPoint');
 const { listUtilityAlerts } = require('../services/utilityAlerts');
+const { CHARGES_TYPES, listOpeningDebtItemsRemaining } = require('../services/openingDebtRouting');
+const { OPENING_DEBT_TYPE_LABELS } = require('../constants/openingDebt');
 const readings = require('../services/utilityReadings');
 const logger = require('../utils/logger');
 
@@ -299,6 +301,37 @@ router.get('/utility-alerts', async (req, res, next) => {
     const scopeAgentId = await resolvePropertyScope(req.user);
     const alerts = await listUtilityAlerts(req.user.tenantId, { scopeAgentId });
     res.json({ alerts });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/opening-debt-charges — impayés à l'entrée SBEE/SONEB encore dus (demande utilisateur,
+// 2026-11-12 : « si c'est SBEE dans les charges ») — à régler via la fiche du locataire (section
+// Impayés à l'entrée), listés ici pour que l'équipe Charges ne les perde pas de vue.
+router.get('/opening-debt-charges', async (req, res, next) => {
+  try {
+    const scopeAgentId = await resolvePropertyScope(req.user);
+    const items = await listOpeningDebtItemsRemaining(req.user.tenantId, scopeAgentId, CHARGES_TYPES);
+    res.json({
+      items: items.map((it) => ({
+        itemId: it.itemId,
+        leaseId: it.leaseId,
+        renterId: it.renterId,
+        renterName: it.renterName,
+        phone: it.phone,
+        unitCode: it.unitCode,
+        propertyCode: it.propertyCode,
+        debtType: it.debtType,
+        debtTypeLabel: OPENING_DEBT_TYPE_LABELS[it.debtType] ?? it.debtType,
+        periodMonth: it.periodMonth,
+        label: it.label,
+        amount: it.amount,
+        paid: it.paid,
+        remaining: it.remaining,
+      })),
+      total: items.reduce((sum, it) => sum + it.remaining, 0),
+    });
   } catch (err) {
     next(err);
   }

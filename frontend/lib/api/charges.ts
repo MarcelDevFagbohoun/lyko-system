@@ -339,7 +339,10 @@ export type UtilityAlertType =
   | "releve_a_valider"
   | "facture_mere_non_declaree"
   | "ecart_eleve"
-  | "charges_a_reverser";
+  | "charges_a_reverser"
+  // Impayés à l'entrée « poubelle »/« autre » encore dus (demande utilisateur, 2026-11-12) : routés
+  // ici faute de place ailleurs (pas du loyer, pas une charge SBEE/SONEB suivie par compteur).
+  | "impaye_entree_autre";
 
 export type UtilityAlert = {
   key: string;
@@ -355,6 +358,9 @@ export type UtilityAlert = {
   utilityType?: UtilityType;
   amount?: number | null;
   daysLate?: number;
+  leaseId?: number;
+  renterId?: number;
+  renterName?: string;
   href: string;
 };
 
@@ -488,6 +494,32 @@ export function getUtilityPoint(accessToken: string, filters: { ownerId?: number
 
 export function getUtilityAlerts(accessToken: string) {
   return apiFetch<{ alerts: UtilityAlert[] }>("/api/utility-alerts", { accessToken });
+}
+
+/**
+ * Impayés à l'entrée SBEE/SONEB encore dus (demande utilisateur, 2026-11-12) — à régler depuis la
+ * fiche du locataire (section Impayés à l'entrée) ; listés ici seulement pour que l'équipe Charges
+ * les ait sous les yeux, sans action directe possible depuis cette carte.
+ */
+export type OpeningDebtChargeItem = {
+  itemId: number;
+  leaseId: number;
+  renterId: number;
+  renterName: string;
+  phone: string;
+  unitCode: string;
+  propertyCode: string;
+  debtType: "sbee" | "soneb";
+  debtTypeLabel: string;
+  periodMonth: string;
+  label: string | null;
+  amount: number;
+  paid: number;
+  remaining: number;
+};
+
+export function getOpeningDebtCharges(accessToken: string) {
+  return apiFetch<{ items: OpeningDebtChargeItem[]; total: number }>("/api/opening-debt-charges", { accessToken });
 }
 
 /** Chemin du carnet PDF d'un propriétaire (téléchargé avec le jeton, voir `openAuthenticatedPdf`). */

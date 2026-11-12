@@ -19,7 +19,9 @@
 
 const { pool } = require('../config/db');
 const { UTILITY_TYPES, UTILITY_TYPE_KEYS, UTILITY_ALERT_RULES: RULES, DIFFERENCE_ALERT_PCT } = require('../constants/charges');
+const { OPENING_DEBT_TYPE_LABELS } = require('../constants/openingDebt');
 const { getChargeAccounts, getOldestUnremittedDates } = require('./utilityRemittance');
+const { ALERTES_TYPES, listOpeningDebtItemsRemaining } = require('./openingDebtRouting');
 const { isoDate } = require('../utils/dates');
 
 const UTILITY_LABEL = Object.fromEntries(UTILITY_TYPES.map((t) => [t.key, t.label.split(' ')[0]]));
@@ -258,15 +260,50 @@ async function remittanceAlerts(tenantId, today) {
   return alerts;
 }
 
+/**
+ * Impayés à l'entrée « poubelle » / « autre » encore dus (demande utilisateur, 2026-11-12 : « si
+ * c'est SBEE dans les charges, et autres doit être dans les alertes ») — un seul type d'impayé ne
+ * rentrant nulle part ailleurs (pas du loyer, pas une charge SBEE/SONEB suivie par compteur), donc
+ * signalé ici pour ne pas être oublié. Une alerte par BAIL, regroupant tous ses postes restants de
+ * ces deux types (un locataire peut avoir plusieurs mois dus à la fois).
+ */
+async function openingDebtOtherAlerts(tenantId, scopeAgentId) {
+  const items = await listOpeningDebtItemsRemaining(tenantId, scopeAgentId, ALERTES_TYPES);
+  if (items.length === 0) return [];
+  const byLease = new Map();
+  for (const it of items) {
+    if (!byLease.has(it.leaseId)) byLease.set(it.leaseId, { ...it, total: 0, count: 0, debtTypes: new Set() });
+    const entry = byLease.get(it.leaseId);
+    entry.total += it.remaining;
+    entry.count += 1;
+    entry.debtTypes.add(it.debtType);
+  }
+  return [...byLease.values()].map((entry) => ({
+    key: `impaye_entree_autre:${entry.leaseId}`,
+    type: 'impaye_entree_autre',
+    severity: 'info',
+    title: `${formatFcfa(entry.total)} d'impayés à l'entrée (${[...entry.debtTypes].map((t) => OPENING_DEBT_TYPE_LABELS[t] ?? t).join(', ')}) — ${entry.renterName}`,
+    detail: `${entry.unitCode} (${entry.propertyCode}) : ${entry.count} poste${entry.count > 1 ? 's' : ''} déclaré${entry.count > 1 ? 's' : ''} à l'entrée, encore non réglé${entry.count > 1 ? 's' : ''}.`,
+    leaseId: entry.leaseId,
+    renterId: entry.renterId,
+    renterName: entry.renterName,
+    unitCode: entry.unitCode,
+    propertyCode: entry.propertyCode,
+    amount: entry.total,
+    href: `/espace/locataires/${entry.renterId}`,
+  }));
+}
+
 async function listUtilityAlerts(tenantId, { scopeAgentId = null, today = new Date().toISOString().slice(0, 10) } = {}) {
-  const [missing, drafts, mainPayment, anomalies, remittance] = await Promise.all([
+  const [missing, drafts, mainPayment, anomalies, remittance, openingDebtOther] = await Promise.all([
     releveManquantAlerts(tenantId, today, scopeAgentId),
     draftBatchAlerts(tenantId, today, scopeAgentId),
     mainPaymentAlerts(tenantId, today, scopeAgentId),
     anomalyAlerts(tenantId, today, scopeAgentId),
     scopeAgentId == null ? remittanceAlerts(tenantId, today) : Promise.resolve([]),
+    openingDebtOtherAlerts(tenantId, scopeAgentId),
   ]);
-  const alerts = [...missing, ...drafts, ...mainPayment, ...anomalies, ...remittance];
+  const alerts = [...missing, ...drafts, ...mainPayment, ...anomalies, ...remittance, ...openingDebtOther];
   alerts.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
   return alerts;
 }
