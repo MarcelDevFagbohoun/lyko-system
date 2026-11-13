@@ -1,0 +1,96 @@
+# Intégration continue — lancée à chaque push et à chaque pull request.
+# Un échec ici = ne pas déployer. Reproduire en local :
+#   backend  : cd backend  && npm run lint && npm test
+#   frontend : cd frontend && npx tsc --noEmit -p . && npm run lint && npm test && npm run build
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un nouveau push sur la même branche annule l'exécution précédente, devenue inutile.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Aucun secret ni donnée réelle dans git
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-no-secrets.sh
+
+  backend:
+    name: Backend — lint + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # Même moteur et mêmes réglages que la production (compose.prod.yml).
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pci_root_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      # `scripts/test.js` crée lui-même la base `<DB_NAME>_test` et y applique les migrations.
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: ci_root_password
+      DB_NAME: lyko_system
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20 # même version que backend/Dockerfile
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Réglages MySQL identiques à la production
+        run: >-
+          mysql -h 127.0.0.1 -u root -pci_root_password
+          -e "SET GLOBAL character_set_server = utf8mb4, collation_server = utf8mb4_unicode_ci"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  frontend:
+    name: Frontend — types + lint + tests + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # `node --test` exécute directement les tests .ts
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - run: npm ci
+      # `tests/backend-parity.test.ts` charge le vrai code serveur pour vérifier que les calculs
+      # affichés (prorata, imputation des loyers) sont identiques des deux côtés.
+      - run: npm ci
+        working-directory: backend
+      - run: npx tsc --noEmit -p .
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:4000

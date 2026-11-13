@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import { ApiError } from "@/lib/api/client";
 import {
   adminLogin, adminMe, adminTenants, adminRefunds, adminPaymentIssues, adminApprove, adminReject, adminPay, adminMarkPaid, adminRefresh, adminGrant, adminSetInternal, adminRevokePartner,
-  admin2faSetup, admin2faEnable, admin2faDisable, adminAudit, adminContactMessages, adminMarkContactMessageRead,
+  admin2faSetup, admin2faEnable, admin2faDisable, adminAudit, adminContactMessages, adminMarkContactMessageRead, adminErrors,
   getAdminToken, setAdminToken, type AdminTenant, type AuditEntry, type ContactMessage,
 } from "@/lib/api/admin";
 import { ACCOUNT_TYPE_LABELS, type PlanKey, type Refund } from "@/lib/api/billing";
@@ -15,6 +15,7 @@ import { CatalogEditor } from "./catalog-editor";
 import { PartnerDialog } from "./partner-dialog";
 import { StatsPanel } from "./stats-panel";
 import { PlatformFeaturesPanel } from "./platform-features-panel";
+import { ErrorsPanel } from "./errors-panel";
 import { PartnerBadge } from "@/components/billing/partner-badge";
 import { PAYMENT_OUTCOME } from "@/lib/billing-plans";
 import { Badge } from "@/components/ui/badge";
@@ -102,7 +103,8 @@ const STATUS_BADGE: Record<string, { label: string; variant: "neutral" | "succes
 };
 
 function Dashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
-  const [tab, setTab] = React.useState<"stats" | "refunds" | "payments" | "tenants" | "catalog" | "modules" | "security" | "audit" | "messages">("stats");
+  const [tab, setTab] = React.useState<"stats" | "refunds" | "payments" | "tenants" | "catalog" | "modules" | "security" | "audit" | "messages" | "errors">("stats");
+  const [openErrors, setOpenErrors] = React.useState(0);
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [issues, setIssues] = React.useState<PaymentIssue[]>([]);
   const [contactMessages, setContactMessages] = React.useState<ContactMessage[]>([]);
@@ -120,6 +122,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
     Promise.all([adminRefunds(token), adminTenants(token), adminPaymentIssues(token), adminContactMessages(token)])
       .then(([r, t, i, c]) => { setRefunds(r.refunds); setTenants(t.tenants); setIssues(i.issues); setContactMessages(c.messages); })
       .catch((e) => { if (e instanceof ApiError && e.status === 401) onLogout(); else setMessage(e instanceof ApiError ? e.message : "Chargement impossible."); });
+    // À part : le compteur d'erreurs ne doit jamais empêcher le reste du back-office de charger.
+    adminErrors(token).then((r) => setOpenErrors(r.openCount)).catch(() => {});
   }, [token, onLogout]);
   React.useEffect(() => load(), [load]);
 
@@ -143,6 +147,9 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
             <Button variant={tab === "tenants" ? "primary" : "secondary"} onClick={() => setTab("tenants")}>Entreprises</Button>
             <Button variant={tab === "messages" ? "primary" : "secondary"} onClick={() => setTab("messages")}>
               Messages{contactMessages.some((m) => m.status === "new") ? ` (${contactMessages.filter((m) => m.status === "new").length})` : ""}
+            </Button>
+            <Button variant={tab === "errors" ? "primary" : "secondary"} onClick={() => setTab("errors")}>
+              Erreurs{openErrors ? ` (${openErrors})` : ""}
             </Button>
             <Button variant={tab === "catalog" ? "primary" : "secondary"} onClick={() => setTab("catalog")}>Offres et prix</Button>
             <Button variant={tab === "modules" ? "primary" : "secondary"} onClick={() => setTab("modules")}>Modules</Button>
@@ -243,6 +250,7 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
         {tab === "catalog" && <CatalogEditor token={token} />}
         {tab === "modules" && <PlatformFeaturesPanel token={token} />}
         {tab === "audit" && <AuditPanel token={token} />}
+        {tab === "errors" && <ErrorsPanel token={token} onLogout={onLogout} onOpenCount={setOpenErrors} />}
         {tab === "security" && <SecurityPanel token={token} />}
         {tab === "messages" && (
           <ContactMessagesPanel
@@ -394,7 +402,7 @@ function TenantDialog({ dialog, onClose, onSubmit, token }: {
 const ACTION_LABELS: Record<string, string> = {
   login: "Connexion", login_failed: "Connexion refusée", login_2fa_failed: "Code 2FA refusé", "2fa_enabled": "2FA activée", "2fa_disabled": "2FA désactivée",
   refund_approve: "Remboursement accepté", refund_reject: "Remboursement refusé", refund_pay: "Virement de remboursement",
-  tenant_grant: "Offre attribuée", tenant_partner_grant: "Abonnement partenaire attribué", tenant_partner_extend: "Abonnement partenaire prolongé", tenant_partner_revoke: "Partenariat terminé", tenant_set_internal: "Passage en interne", catalog_save: "Offres modifiées", catalog_reset: "Offres réinitialisées",
+  tenant_grant: "Offre attribuée", tenant_partner_grant: "Abonnement partenaire attribué", tenant_partner_extend: "Abonnement partenaire prolongé", tenant_partner_revoke: "Partenariat terminé", tenant_set_internal: "Passage en interne", error_resolved: "Erreur marquée corrigée", catalog_save: "Offres modifiées", catalog_reset: "Offres réinitialisées",
 };
 
 /** Messages reçus via le formulaire de contact de la page d'accueil (voir components/marketing/contact-section.tsx). */

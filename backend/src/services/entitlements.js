@@ -106,7 +106,7 @@ async function assertWithinLimit(tenantId, kind, conn, adding = 1) {
 }
 
 // Routes qui restent ouvertes à une entreprise sans abonnement actif (renouvellement, connexion, pages publiques).
-const OPEN_PREFIXES = ['/health', '/auth', '/contact', '/billing', '/admin', '/portal', '/owner-portal', '/marketplace-accounts', '/verify', '/pay', '/recu', '/online-payments', '/webhooks', '/marketplace/public'];
+const OPEN_PREFIXES = ['/health', '/auth', '/contact', '/client-errors', '/billing', '/admin', '/portal', '/owner-portal', '/marketplace-accounts', '/verify', '/pay', '/recu', '/online-payments', '/webhooks', '/marketplace/public'];
 
 /**
  * Coupure CÔTÉ SERVEUR : toute requête authentifiée d'une entreprise dont l'abonnement n'est pas actif reçoit 402.

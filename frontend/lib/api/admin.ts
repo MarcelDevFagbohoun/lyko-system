@@ -24,6 +24,25 @@ export const admin2faDisable = (t: string, password: string, code: string) =>
   apiFetch<{ ok: true }>("/api/admin/2fa/disable", { accessToken: t, method: "POST", headers: json, body: JSON.stringify({ password, code }) });
 export type AuditEntry = { id: number; adminEmail: string | null; action: string; target: string | null; details: string | null; ip: string | null; createdAt: string };
 export const adminAudit = (t: string) => apiFetch<{ entries: AuditEntry[] }>("/api/admin/audit", { accessToken: t });
+export type PlatformErrorKind = "api" | "job" | "process" | "frontend";
+export type PlatformError = {
+  id: number;
+  kind: PlatformErrorKind;
+  message: string;
+  stack: string | null;
+  location: string | null;
+  tenantId: number | null;
+  companyName: string | null;
+  occurrences: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+};
+/** Suivi des erreurs (serveur, tâches planifiées, écrans) — une ligne par erreur distincte. */
+export const adminErrors = (t: string, status: "open" | "resolved" = "open") =>
+  apiFetch<{ openCount: number; errors: PlatformError[] }>(`/api/admin/errors?status=${status}`, { accessToken: t });
+export const adminResolveError = (t: string, id: number) =>
+  apiFetch<{ ok: true }>(`/api/admin/errors/${id}/resolve`, { accessToken: t, method: "POST" });
 export const adminTenants = (t: string) => apiFetch<{ tenants: AdminTenant[] }>("/api/admin/tenants", { accessToken: t });
 export type PaymentIssue = { id: number; reference: string; status: "pending" | "failed" | "anomaly"; reason: string | null; planKey: string; months: number; kind: string; amount: number; creditApplied: number; createdAt: string; companyName: string };
 export const adminPaymentIssues = (t: string) => apiFetch<{ issues: PaymentIssue[] }>("/api/admin/payment-issues", { accessToken: t });

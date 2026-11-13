@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { UserPlus, Pencil, Search } from "lucide-react";
+import { UserPlus, Pencil, Search, FileSpreadsheet } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { listRenters, type RenterListItem } from "@/lib/api/renters";
 import { ApiError } from "@/lib/api/client";
@@ -40,7 +40,7 @@ function StatutBadge({ renter }: { renter: RenterListItem }) {
 }
 
 function LocatairesContent() {
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const canManage = useCan("locataires");
   const [renters, setRenters] = React.useState<RenterListItem[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -71,12 +71,23 @@ function LocatairesContent() {
             </p>
           </div>
           {canManage && (
-            <Link href="/espace/locataires/nouveau" className="w-fit">
-              <Button>
-                <UserPlus size={18} />
-                Ajouter un locataire
-              </Button>
-            </Link>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {/* Import en masse (demande utilisateur, 2026-11-13) — réservé au DG, comme la route serveur. */}
+              {user?.role === "dg" && (
+                <Link href="/espace/import" className="w-full sm:w-fit">
+                  <Button variant="secondary" className="w-full sm:w-auto">
+                    <FileSpreadsheet size={18} />
+                    Importer depuis Excel
+                  </Button>
+                </Link>
+              )}
+              <Link href="/espace/locataires/nouveau" className="w-full sm:w-fit">
+                <Button className="w-full sm:w-auto">
+                  <UserPlus size={18} />
+                  Ajouter un locataire
+                </Button>
+              </Link>
+            </div>
           )}
         </div>
 

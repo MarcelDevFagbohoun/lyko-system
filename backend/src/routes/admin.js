@@ -120,6 +120,52 @@ router.get('/audit', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Suivi des erreurs (migration 153, services/errorTracker.js) ──────────────────────────────
+// Erreurs serveur, tâches planifiées en échec et écrans en erreur, regroupées par erreur distincte.
+const errorStatusSchema = z.enum(['open', 'resolved']).default('open');
+router.get('/errors', async (req, res, next) => {
+  try {
+    const status = errorStatusSchema.parse(req.query.status);
+    const [rows] = await pool.query(
+      `SELECT e.id, e.kind, e.message, e.stack, e.location, e.tenant_id, t.company_name, e.occurrences,
+              e.first_seen_at, e.last_seen_at, e.resolved_at
+       FROM platform_error_events e
+       LEFT JOIN tenants t ON t.id = e.tenant_id
+       WHERE e.resolved_at IS ${status === 'open' ? 'NULL' : 'NOT NULL'}
+       ORDER BY e.last_seen_at DESC LIMIT 200`,
+    );
+    const [[{ openCount }]] = await pool.query('SELECT COUNT(*) AS openCount FROM platform_error_events WHERE resolved_at IS NULL');
+    res.json({
+      openCount,
+      errors: rows.map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        message: r.message,
+        stack: r.stack,
+        location: r.location,
+        tenantId: r.tenant_id,
+        companyName: r.company_name,
+        occurrences: r.occurrences,
+        firstSeenAt: r.first_seen_at,
+        lastSeenAt: r.last_seen_at,
+        resolvedAt: r.resolved_at,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+// « Corrigé » : sort l'erreur de la liste ouverte. Si elle se reproduit, elle revient d'elle-même
+// (et une nouvelle alerte part) — voir `recordError`.
+router.post('/errors/:id/resolve', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new ApiError(400, 'Identifiant invalide');
+    const [result] = await pool.query('UPDATE platform_error_events SET resolved_at = NOW() WHERE id = :id AND resolved_at IS NULL', { id });
+    if (result.affectedRows) await audit(req, 'error_resolved', String(id));
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // Messages du formulaire de contact public (page d'accueil) — voir routes/contact.js.
 router.get('/contact-messages', async (_req, res, next) => {
   try {

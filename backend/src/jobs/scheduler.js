@@ -17,6 +17,7 @@
 
 const cron = require('node-cron');
 const logger = require('../utils/logger');
+const { recordError } = require('../services/errorTracker');
 const { runMonthlyRentDigest } = require('./monthlyRentDigest');
 const { runPaymentStatusJob } = require('./paymentStatusJob');
 const { runDailyArrearsDigest } = require('./dailyArrearsDigest');
@@ -37,6 +38,9 @@ function runSafely(label, fn) {
       logger.info(`Tâche planifiée terminée : ${label}`, { durationMs: Date.now() - startedAt });
     } catch (err) {
       logger.error(`Tâche planifiée en échec : ${label}`, { error: err.message, stack: err.stack });
+      // Une relance ou une échéance d'abonnement qui ne part pas est invisible pour l'utilisateur :
+      // remontée dans le back-office (onglet « Erreurs ») + alerte e-mail.
+      await recordError({ kind: 'job', error: err, location: label });
     }
   };
 }

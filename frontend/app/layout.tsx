@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { GeistSans } from "geist/font/sans";
 import { ServiceWorkerRegister } from "@/components/system/sw-register";
+import { ErrorReporter } from "@/components/system/error-reporter";
 import { AuthProvider } from "@/lib/auth/auth-context";
 import { ToastProvider } from "@/lib/toast/toast-context";
 import { ToastStack } from "@/components/ui/toast";
@@ -46,7 +47,10 @@ export default function RootLayout({
     <html lang="fr" className={`${inter.variable} ${GeistSans.variable}`}>
       <body>
         <ToastProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <ErrorReporter />
+            {children}
+          </AuthProvider>
           <ToastStack />
         </ToastProvider>
         <ServiceWorkerRegister />

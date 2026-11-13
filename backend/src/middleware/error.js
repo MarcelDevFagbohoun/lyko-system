@@ -39,6 +39,9 @@ function errorHandler(err, req, res, _next) {
   const status = err.status || (err.name === 'MulterError' ? 400 : 500);
   if (status >= 500) {
     logger.error('Erreur non gérée', { message: err.message, stack: err.stack, path: req.originalUrl });
+    // Visible dans le back-office (onglet « Erreurs ») + alerte e-mail — jamais bloquant, voir errorTracker.js.
+    // Import tardif : errorTracker dépend du pool MySQL, que ce module (chargé partout) n'a pas à tirer.
+    require('../services/errorTracker').recordRequestError(err, req);
   }
   res.status(status).json({
     error: status >= 500 && config.isProd ? 'Erreur interne du serveur' : err.message,

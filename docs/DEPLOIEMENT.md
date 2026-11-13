@@ -84,24 +84,64 @@ docker compose -f compose.prod.yml logs -f api          # vérifier les migratio
 
 ## 4. Sauvegardes
 
-`deploy/backup-db.sh` : dump `mysqldump --single-transaction` compressé dans `backups/`,
-rotation 14 jours. À planifier sur l'hôte :
+`deploy/backup-db.sh` fait une sauvegarde **complète** : dump `mysqldump --single-transaction`
+de la base, archive des fichiers téléversés (volume `uploads`), puis — selon le `.env` —
+chiffrement et envoi **hors du serveur**. Une sauvegarde qui reste sur le même disque que la
+base disparaît avec lui (panne, piratage, erreur de manipulation).
+
+### Mise en place (une fois)
+
+1. **Phrase secrète** : `openssl rand -base64 32` → `BACKUP_PASSPHRASE=` dans le `.env`
+   (sans espace). **La noter aussi hors du serveur** (gestionnaire de mots de passe, papier
+   au coffre) : sans elle les sauvegardes sont illisibles, y compris la copie du `.env`.
+2. **Stockage externe** : `sudo apt install rclone gnupg`, puis `rclone config` pour créer
+   une destination (Backblaze B2, S3, Google Drive, autre serveur en SFTP…). Renseigner
+   `BACKUP_REMOTE=nom:dossier` — un dossier **dédié** aux sauvegardes (la rotation y supprime
+   tout fichier de plus de 90 jours).
+3. **Planifier** sur l'hôte :
 
 ```cron
-30 2 * * *  cd /opt/lyko-system && ./deploy/backup-db.sh >> /var/log/lyko-backup.log 2>&1
+30 2 * * *  cd /opt/africa-immo && ./deploy/backup-db.sh >> /var/log/africa-immo-backup.log 2>&1
+0 4 * * 0   cd /opt/africa-immo && ./deploy/restore-test.sh >> /var/log/africa-immo-restore-test.log 2>&1
 ```
 
-Sauvegarder aussi le volume **`uploads`** (logos, cachets, signatures) et le fichier
-**`.env`** (hors dépôt) — par ex. `docker run --rm -v lyko-system_uploads:/u -v $PWD/backups:/b alpine tar czf /b/uploads-$(date +%F).tgz -C /u .`
+Sans `BACKUP_PASSPHRASE`, la sauvegarde reste locale et en clair (comportement d'origine) ;
+`BACKUP_REMOTE` sans `BACKUP_PASSPHRASE` est refusé. Rotation : 14 jours en local, 90 jours
+à distance (`BACKUP_RETENTION_DAYS`, `BACKUP_REMOTE_RETENTION_DAYS`).
 
-**Restauration** :
+### Vérifier qu'une sauvegarde est restaurable
+
+`deploy/restore-test.sh` restaure la dernière sauvegarde dans une base jetable
+(`<DB_NAME>_restore_test`, jamais la production), compare tables et lignes à la production,
+relit l'archive des fichiers, puis supprime la base jetable. Code de sortie non nul = la
+sauvegarde n'est pas fiable. À lancer à la main après la mise en place, puis chaque semaine.
+
+### Restauration réelle
 
 ```bash
-gunzip -c backups/lyko_system-AAAA-MM-JJ_HHMMSS.sql.gz \
+# Récupérer les fichiers si le serveur est perdu : rclone copy nom:dossier backups/
+# Base (retirer l'étape gpg si la sauvegarde n'est pas chiffrée) :
+gpg --decrypt backups/lyko_system-AAAA-MM-JJ_HHMMSS.sql.gz.gpg | gunzip -c \
   | docker compose -f compose.prod.yml exec -T db mysql -u root -p"$DB_ROOT_PASSWORD" lyko_system
+# Fichiers téléversés :
+gpg --decrypt backups/uploads-AAAA-MM-JJ_HHMMSS.tar.gz.gpg \
+  | docker compose -f compose.prod.yml exec -T api tar xzf - -C /app/uploads
+# .env (serveur neuf) :
+gpg --decrypt backups/env-AAAA-MM-JJ_HHMMSS.gpg > .env
 ```
 
-## 5. Exploitation
+## 5. Suivi des erreurs et disponibilité
+
+Les erreurs serveur (500), les tâches planifiées en échec et les écrans qui plantent chez les
+utilisateurs sont enregistrés et affichés dans le **back-office, onglet « Erreurs »**, regroupés
+par erreur distincte. Une alerte e-mail part vers `PLATFORM_ADMIN_EMAIL` à chaque erreur
+**nouvelle** (ou qui revient après avoir été marquée « Corrigé »).
+
+Limite : si le serveur entier ou la base est hors service, rien ne peut être enregistré ni
+envoyé depuis celui-ci. Ajouter une **sonde externe** gratuite (UptimeRobot, Better Stack…)
+sur `https://<API_DOMAIN>/api/health`, avec alerte e-mail/SMS, pour être prévenu d'une panne totale.
+
+## 6. Exploitation
 
 | Besoin | Commande |
 |---|---|
@@ -112,7 +152,7 @@ gunzip -c backups/lyko_system-AAAA-MM-JJ_HHMMSS.sql.gz \
 | Redémarrer le proxy | `docker compose -f compose.prod.yml restart caddy` |
 | Arrêt complet | `docker compose -f compose.prod.yml down` (garde les volumes) |
 
-## 6. Sécurité — rappels (voir aussi `AVANCEMENT.md` § Étape 12a)
+## 7. Sécurité — rappels (voir aussi `AVANCEMENT.md` § Étape 12a)
 
 - **Pare-feu hôte** : n'ouvrir que 22 (SSH, idéalement filtré), 80, 443. `db` et `api`
   n'ont **pas** de `ports:` — inutile de les exposer.
@@ -126,7 +166,7 @@ gunzip -c backups/lyko_system-AAAA-MM-JJ_HHMMSS.sql.gz \
 - **Mises à jour d'image** : `docker compose -f compose.prod.yml pull && up -d` régulièrement
   pour `mysql:8.0` et `caddy:2-alpine` ; rebuild pour les correctifs Node/déps applicatives.
 
-## 7. Dépannage
+## 8. Dépannage
 
 | Symptôme | Piste |
 |---|---|

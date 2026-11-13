@@ -68,6 +68,8 @@ router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
 // Formulaire de contact public (page d'accueil) : aucune authentification, aucun tenant.
 router.use('/contact', contactRoutes);
+// Signalement d'un écran en erreur par le navigateur (suivi des erreurs du back-office).
+router.use('/client-errors', require('./clientErrors'));
 // Fichiers téléversés authentifiés (photos, justificatifs, cachets/
 // signatures, avatars — étape 49, audit sécurité) : `requireAuth` posé DANS
 // `files.js` lui-même, pas de piège d'ordre de montage particulier ici.
@@ -77,6 +79,8 @@ router.use('/properties', propertyRoutes);
 router.use('/owners', ownerRoutes);
 router.use('/notes', noteRoutes);
 router.use('/renters', renterRoutes);
+// Import en masse depuis Excel (propriétaires, logements, locataires) — DG uniquement.
+router.use('/import', require('./bulkImport'));
 router.use('/leases', leaseRoutes);
 router.use('/inspection-catalog', inspectionCatalogRoutes);
 router.use('/inspections', inspectionToolsRoutes);

@@ -892,4 +892,9 @@ module.exports = {
   updateRenter,
   updateRenterNotes,
   regeneratePortalLink,
+  // Réutilisés par l'import Excel (services/bulkImport.js) pour créer les baux avec exactement les
+  // mêmes règles que le formulaire, dans SA transaction unique.
+  prepareLeaseTerms,
+  insertLeaseWithEntries,
+  loadDepositTogglesRow,
 };

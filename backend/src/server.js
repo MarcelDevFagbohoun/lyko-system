@@ -5,6 +5,7 @@ const config = require('./config/env');
 const logger = require('./utils/logger');
 const { pingDatabase, closePool } = require('./config/db');
 const { startScheduler } = require('./jobs/scheduler');
+const { recordError } = require('./services/errorTracker');
 
 const app = createApp();
 
@@ -41,6 +42,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('unhandledRejection', (reason) => {
   logger.error('Rejet de promesse non géré', { reason: String(reason) });
+  recordError({ kind: 'process', error: reason instanceof Error ? reason : new Error(String(reason)), location: 'Promesse rejetée non gérée' });
 });
 // Filet de sécurité multi-entreprise : certaines bibliothèques tierces (le
 // décodeur PNG utilisé par PDFKit pour insérer une image dans un PDF, par ex.
@@ -53,6 +55,7 @@ process.on('unhandledRejection', (reason) => {
 // reconnecte seul), donc poursuivre est plus sûr ici que redémarrer à chaud.
 process.on('uncaughtException', (err) => {
   logger.error('Exception non capturée — API maintenue en ligne', { error: err.message, stack: err.stack });
+  recordError({ kind: 'process', error: err, location: 'Exception non capturée' });
 });
 
 module.exports = server;
